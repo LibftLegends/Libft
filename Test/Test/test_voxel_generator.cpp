@@ -722,6 +722,109 @@ FT_TEST(test_terrain_generation_accepts_custom_biome_without_tree_template)
     return (1);
 }
 
+FT_TEST(test_terrain_generation_config_deserializes_standalone_override_owned)
+{
+    terrain_generation_config source_config;
+    terrain_generation_config loaded_config;
+    terrain_tree_template_block template_blocks[2];
+    terrain_tree_template tree_template;
+    ft_byte_buffer buffer;
+    uint32_t index;
+
+    terrain_default_generation_config(source_config);
+    terrain_default_generation_config(loaded_config);
+    template_blocks[0] = {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK};
+    template_blocks[1] = {0, 1, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK};
+    tree_template.blocks = template_blocks;
+    tree_template.block_count = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_config
+        .set_biome_tree_template_override(0U, &tree_template));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_serialize(
+        source_config, buffer));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_deserialize(
+        loaded_config, buffer));
+    template_blocks[0].block_id = TERRAIN_GENERATOR_CACTUS_BLOCK;
+    template_blocks[1].block_id = TERRAIN_GENERATOR_CACTUS_BLOCK;
+    FT_ASSERT_EQ(&loaded_config.tree_templates[loaded_config.tree_template_count
+        - 1U], loaded_config.biomes[0].tree_template);
+    index = 0U;
+    while (index < loaded_config.biomes[0].tree_template->block_count)
+    {
+        FT_ASSERT_EQ(source_config.biomes[0].tree_template->blocks[index]
+            .block_id, loaded_config.biomes[0].tree_template->blocks[index]
+            .block_id);
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    return (1);
+}
+
+FT_TEST(test_terrain_generation_config_template_removal_repairs_features)
+{
+    terrain_generation_config config;
+    terrain_tree_template first_template;
+    terrain_tree_template second_template;
+    uint32_t first_index;
+    uint32_t second_index;
+
+    terrain_default_generation_config(config);
+    first_template = terrain_small_oak_tree_template();
+    second_template = terrain_small_cactus_tree_template();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_add_tree_template(
+        config, first_template, &first_index));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_add_tree_template(
+        config, second_template, &second_index));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.features[0].set_template(
+        &config.tree_templates[second_index]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_remove_tree_template(
+        config, first_index));
+    FT_ASSERT_EQ(&config.tree_templates[first_index],
+        config.features[0].template_data);
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
+        config.features[0].template_data->blocks[0].block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_clear_tree_templates(
+        config));
+    FT_ASSERT_EQ(ft_nullptr, config.features[0].template_data);
+    return (1);
+}
+
+FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
+{
+    terrain_generation_config config;
+    terrain_tree_template tree_template;
+    terrain_feature_rule feature;
+    uint32_t initial_template_count;
+    uint32_t index;
+
+    terrain_default_generation_config(config);
+    tree_template = terrain_small_cactus_tree_template();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+        0U, &tree_template));
+    initial_template_count = config.tree_template_count;
+    index = 0U;
+    while (index < 65U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+            0U, &tree_template));
+        index += 1U;
+    }
+    FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, feature.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, feature.set_template(&tree_template));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, feature));
+    initial_template_count = config.tree_template_count;
+    index = 0U;
+    while (index < 65U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, feature));
+        index += 1U;
+    }
+    FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
+    return (1);
+}
+
 FT_TEST(test_terrain_generate_chunk_clears_previous_voxel_data)
 {
     game_voxel_chunk regenerated_chunk;

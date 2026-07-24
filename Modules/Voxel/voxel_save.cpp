@@ -663,8 +663,8 @@ int32_t terrain_generation_config_deserialize(
                 &override_template);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            error_code = loaded_config.biomes[index]
-                .set_tree_template_override(&override_template);
+            error_code = loaded_config.set_biome_tree_template_override(
+                index, &override_template);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
         }
