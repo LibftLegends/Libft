@@ -2184,6 +2184,7 @@ int32_t terrain_generation_config::set_biome_mountain_ridges_enabled(
 int32_t terrain_generation_config::set_biome_tree_template_override(
     uint32_t biome_index, const terrain_tree_template *value) noexcept
 {
+    int32_t error_code;
     uint32_t template_index;
 
     if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
@@ -2191,7 +2192,18 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
     if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     if (value == ft_nullptr)
+    {
+        template_index = 0U;
+        while (template_index < this->tree_template_count)
+        {
+            if (this->biomes[biome_index].tree_template
+                == &this->tree_templates[template_index])
+                return (terrain_generation_config_remove_tree_template(
+                    *this, template_index));
+            template_index += 1U;
+        }
         return (this->biomes[biome_index].set_tree_template_override(value));
+    }
     if (terrain_template_is_valid(value) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     template_index = 0U;
@@ -2200,11 +2212,11 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
         if (this->biomes[biome_index].tree_template
             == &this->tree_templates[template_index])
         {
-            if (terrain_copy_tree_template(*value,
+            error_code = terrain_copy_tree_template(*value,
                     this->tree_template_blocks[template_index],
-                    &this->tree_templates[template_index])
-                != FT_ERR_SUCCESS)
-                return (FT_ERR_INVALID_ARGUMENT);
+                    &this->tree_templates[template_index]);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
             this->biomes[biome_index].tree_template =
                 &this->tree_templates[template_index];
             return (FT_ERR_SUCCESS);
@@ -2213,11 +2225,11 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
     }
     if (this->tree_template_count >= TERRAIN_MAX_TREE_TEMPLATES)
         return (FT_ERR_FULL);
-    if (terrain_copy_tree_template(*value,
+    error_code = terrain_copy_tree_template(*value,
             this->tree_template_blocks[this->tree_template_count],
-            &this->tree_templates[this->tree_template_count])
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
+            &this->tree_templates[this->tree_template_count]);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     this->biomes[biome_index].tree_template =
         &this->tree_templates[this->tree_template_count];
     this->tree_template_count += 1U;
@@ -2229,11 +2241,43 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
 {
     int32_t error_code;
     uint32_t template_index;
+    uint32_t other_feature_index;
+    const terrain_tree_template *old_template;
 
     if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (feature_index >= TERRAIN_MAX_FEATURE_RULES)
         return (FT_ERR_OUT_OF_RANGE);
+    if (feature.is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    old_template = this->features[feature_index].template_data;
+    if (feature.template_data == ft_nullptr && old_template != ft_nullptr)
+    {
+        template_index = 0U;
+        while (template_index < this->tree_template_count)
+        {
+            if (old_template == &this->tree_templates[template_index])
+                break ;
+            template_index += 1U;
+        }
+        if (template_index < this->tree_template_count)
+        {
+            other_feature_index = 0U;
+            while (other_feature_index < TERRAIN_MAX_FEATURE_RULES)
+            {
+                if (other_feature_index != feature_index
+                    && this->features[other_feature_index].template_data
+                        == old_template)
+                    return (FT_ERR_INVALID_OPERATION);
+                other_feature_index += 1U;
+            }
+            this->features[feature_index].template_data = ft_nullptr;
+            error_code = terrain_generation_config_remove_tree_template(
+                *this, template_index);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+        }
+    }
     if (feature.template_data != ft_nullptr)
     {
         if (terrain_template_is_valid(feature.template_data) == FT_FALSE)
@@ -2675,6 +2719,14 @@ int32_t terrain_generation_config_remove_tree_template(
         return (FT_ERR_NOT_INITIALISED);
     if (template_index >= config.tree_template_count)
         return (FT_ERR_OUT_OF_RANGE);
+    feature_index = 0U;
+    while (feature_index < TERRAIN_MAX_FEATURE_RULES)
+    {
+        if (config.features[feature_index].template_data
+            == &config.tree_templates[template_index])
+            return (FT_ERR_INVALID_OPERATION);
+        feature_index += 1U;
+    }
     biome_index = 0U;
     while (biome_index < TERRAIN_MAX_CUSTOM_BIOMES)
     {
@@ -2700,14 +2752,6 @@ int32_t terrain_generation_config_remove_tree_template(
         }
         config.biomes[biome_index].tree_template_count = kept_count;
         biome_index += 1U;
-    }
-    feature_index = 0U;
-    while (feature_index < TERRAIN_MAX_FEATURE_RULES)
-    {
-        if (config.features[feature_index].template_data
-            == &config.tree_templates[template_index])
-            config.features[feature_index].template_data = ft_nullptr;
-        feature_index += 1U;
     }
     index = template_index;
     while (index + 1U < config.tree_template_count)
@@ -2752,6 +2796,13 @@ int32_t terrain_generation_config_clear_tree_templates(
 
     if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
+    index = 0U;
+    while (index < TERRAIN_MAX_FEATURE_RULES)
+    {
+        if (config.features[index].template_data != ft_nullptr)
+            return (FT_ERR_INVALID_OPERATION);
+        index += 1U;
+    }
     config.tree_template_count = 0U;
     index = 0U;
     while (index < TERRAIN_MAX_TREE_TEMPLATES)

@@ -192,20 +192,29 @@ FT_TEST(test_network_send_receive_ipv4)
     ssize_t send_result;
     char buffer[16];
     ssize_t bytes_received;
+    uint16_t server_port;
 
     if (server_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     server_configuration._type = SocketType::SERVER;
-    server_configuration._port = 54340;
+    server_configuration._port = 0;
     std::strncpy(server_configuration._ip, "127.0.0.1",
         sizeof(server_configuration._ip) - 1);
     server_configuration._ip[sizeof(server_configuration._ip) - 1] = '\0';
     if (server_socket.initialize(server_configuration) != FT_ERR_SUCCESS)
         return (0);
+    address_length = sizeof(address_storage);
+    if (getsockname(server_socket.get_file_descriptor(),
+            reinterpret_cast<struct sockaddr *>(&address_storage),
+            &address_length) != 0
+        || address_storage.ss_family != AF_INET)
+        return (0);
+    server_port = ntohs(reinterpret_cast<struct sockaddr_in *>
+        (&address_storage)->sin_port);
     if (client_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     client_configuration._type = SocketType::CLIENT;
-    client_configuration._port = 54340;
+    client_configuration._port = server_port;
     std::strncpy(client_configuration._ip, "127.0.0.1",
         sizeof(client_configuration._ip) - 1);
     client_configuration._ip[sizeof(client_configuration._ip) - 1] = '\0';
@@ -347,6 +356,7 @@ FT_TEST(test_network_poll_ipv6_ready)
     int poll_result;
     char buffer[16];
     ssize_t bytes_received;
+    uint16_t server_port;
 
     if (server_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
@@ -355,9 +365,17 @@ FT_TEST(test_network_poll_ipv6_ready)
         sizeof(server_configuration._ip) - 1);
     server_configuration._ip[sizeof(server_configuration._ip) - 1] = '\0';
     server_configuration._address_family = AF_INET6;
-    server_configuration._port = 54343;
+    server_configuration._port = 0;
     if (server_socket.initialize(server_configuration) != FT_ERR_SUCCESS)
         return (0);
+    address_length = sizeof(address_storage);
+    if (getsockname(server_socket.get_file_descriptor(),
+            reinterpret_cast<struct sockaddr *>(&address_storage),
+            &address_length) != 0
+        || address_storage.ss_family != AF_INET6)
+        return (0);
+    server_port = ntohs(reinterpret_cast<struct sockaddr_in6 *>
+        (&address_storage)->sin6_port);
     if (client_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     client_configuration._type = SocketType::CLIENT;
@@ -365,7 +383,7 @@ FT_TEST(test_network_poll_ipv6_ready)
         sizeof(client_configuration._ip) - 1);
     client_configuration._ip[sizeof(client_configuration._ip) - 1] = '\0';
     client_configuration._address_family = AF_INET6;
-    client_configuration._port = 54343;
+    client_configuration._port = server_port;
     if (client_socket.initialize(client_configuration) != FT_ERR_SUCCESS)
         return (0);
     address_length = sizeof(address_storage);

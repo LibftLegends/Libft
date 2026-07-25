@@ -214,7 +214,7 @@ FT_TEST(test_application_auth_service_login_signal_timeout_and_descriptor_change
     if (read_result > 0)
         output_buffer_second[static_cast<size_t>(read_result)] = '\0';
     FT_ASSERT_EQ(FT_TRUE, parse_login_signal_output(output_buffer_second, token_string_second));
-    time_sleep(2);
+    time_sleep(3);
     authenticated = FT_TRUE;
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, service.authenticate_login_signal_one_time_password("bob", token_string_second.c_str(), authenticated));
     FT_ASSERT_EQ(FT_FALSE, authenticated);

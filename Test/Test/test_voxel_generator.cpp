@@ -784,6 +784,11 @@ FT_TEST(test_terrain_generation_config_template_removal_repairs_features)
         config.features[0].template_data);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
         config.features[0].template_data->blocks[0].block_id);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION,
+        terrain_generation_config_remove_tree_template(config, first_index));
+    terrain_feature_rule cleared_feature;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cleared_feature.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, cleared_feature));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_clear_tree_templates(
         config));
     FT_ASSERT_EQ(ft_nullptr, config.features[0].template_data);
@@ -807,7 +812,11 @@ FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
     while (index < 65U)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+            0U, ft_nullptr));
+        FT_ASSERT_EQ(initial_template_count - 1U, config.tree_template_count);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
             0U, &tree_template));
+        FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
         index += 1U;
     }
     FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
@@ -818,7 +827,14 @@ FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
     index = 0U;
     while (index < 65U)
     {
+        terrain_feature_rule cleared_feature;
+
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, cleared_feature.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U,
+            cleared_feature));
+        FT_ASSERT_EQ(initial_template_count - 1U, config.tree_template_count);
         FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, feature));
+        FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
         index += 1U;
     }
     FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
