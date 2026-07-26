@@ -256,26 +256,34 @@ FT_TEST(test_udp_send_receive_ipv4)
     char buffer[16];
     socklen_t address_length;
     ssize_t receive_result;
+    uint16_t server_port;
 
     if (server_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     server_configuration._type = SocketType::SERVER;
     server_configuration._protocol = IPPROTO_UDP;
-    server_configuration._port = 54341;
+    server_configuration._port = 0;
     if (server.initialize() != FT_ERR_SUCCESS)
         return (0);
     if (server.initialize(server_configuration) != FT_ERR_SUCCESS)
         return (0);
+    address_length = sizeof(destination_address);
+    if (getsockname(server.get_fd(),
+            reinterpret_cast<struct sockaddr *>(&destination_address),
+            &address_length) != 0
+        || destination_address.ss_family != AF_INET)
+        return (0);
+    server_port = ntohs(reinterpret_cast<const struct sockaddr_in *>(
+        &destination_address)->sin_port);
     if (client_configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     client_configuration._type = SocketType::CLIENT;
     client_configuration._protocol = IPPROTO_UDP;
-    client_configuration._port = 54341;
+    client_configuration._port = server_port;
     if (client.initialize() != FT_ERR_SUCCESS)
         return (0);
     if (client.initialize(client_configuration) != FT_ERR_SUCCESS)
         return (0);
-    destination_address = server.get_address();
     message = "data";
     send_result = client.send_to(message, ft_strlen(message), 0,
         reinterpret_cast<const struct sockaddr*>(&destination_address),

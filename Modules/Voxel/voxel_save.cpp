@@ -7,7 +7,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 3U;
+static const uint32_t TERRAIN_SAVE_VERSION = 5U;
 
 static int32_t terrain_save_append_i32(ft_byte_buffer &buffer,
     int32_t value) noexcept
@@ -461,6 +461,30 @@ int32_t terrain_generation_config_serialize(
     error_code = buffer.append_u32_le(config.underground_structures.ravine_depth);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cave_small_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cave_large_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cave_large_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cave_entrance_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cave_entrance_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u8(config.underground_structures.enable_cavern_rooms);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cavern_room_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.underground_structures.cavern_room_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u8(config.fluids.enable_rivers);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -549,6 +573,14 @@ int32_t terrain_generation_config_deserialize(
     int32_t underground_maximum_height;
     uint32_t ravine_width;
     uint32_t ravine_depth;
+    uint32_t cave_small_radius;
+    uint32_t cave_large_radius;
+    uint32_t cave_large_chance_percent;
+    uint32_t cave_entrance_chance_percent;
+    uint32_t cave_entrance_radius;
+    uint8_t enable_cavern_rooms;
+    uint32_t cavern_room_chance_percent;
+    uint32_t cavern_room_radius;
     uint8_t enable_rivers;
     uint8_t enable_lakes;
     int32_t river_noise_scale;
@@ -773,6 +805,30 @@ int32_t terrain_generation_config_deserialize(
     error_code = buffer.read_u32_le(&ravine_depth);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.read_u32_le(&cave_small_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cave_large_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cave_large_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cave_entrance_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cave_entrance_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u8(&enable_cavern_rooms);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cavern_room_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&cavern_room_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.read_u8(&enable_rivers);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -834,6 +890,19 @@ int32_t terrain_generation_config_deserialize(
         return (error_code);
     error_code = loaded_config.underground_structures.set_shape(
         ravine_width, ravine_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = loaded_config.underground_structures.set_cave_shape(
+        cave_small_radius, cave_large_radius, cave_large_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = loaded_config.underground_structures.set_cave_entrances(
+        cave_entrance_chance_percent, cave_entrance_radius);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = loaded_config.underground_structures.set_cavern_rooms(
+        static_cast<ft_bool>(enable_cavern_rooms),
+        cavern_room_chance_percent, cavern_room_radius);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.fluids.set_enabled(

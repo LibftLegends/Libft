@@ -40,6 +40,14 @@ static int32_t create_application_database(const char *file_path)
     return (FT_ERR_SUCCESS);
 }
 
+static std::chrono::system_clock::time_point g_test_authentication_clock_time;
+
+static std::chrono::system_clock::time_point
+    test_authentication_clock_now(void)
+{
+    return (g_test_authentication_clock_time);
+}
+
 static ft_bool parse_login_signal_output(const char *output_buffer, ft_string &token_output)
 {
     const char *separator_position;
@@ -214,10 +222,13 @@ FT_TEST(test_application_auth_service_login_signal_timeout_and_descriptor_change
     if (read_result > 0)
         output_buffer_second[static_cast<size_t>(read_result)] = '\0';
     FT_ASSERT_EQ(FT_TRUE, parse_login_signal_output(output_buffer_second, token_string_second));
-    time_sleep(3);
+    g_test_authentication_clock_time = std::chrono::system_clock::now();
+    time_set_clock_now_hook(test_authentication_clock_now);
+    g_test_authentication_clock_time += std::chrono::seconds(2);
     authenticated = FT_TRUE;
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, service.authenticate_login_signal_one_time_password("bob", token_string_second.c_str(), authenticated));
     FT_ASSERT_EQ(FT_FALSE, authenticated);
+    time_reset_clock_now_hook();
     FT_ASSERT_EQ(0, close(pipe_second[1]));
     FT_ASSERT_EQ(0, close(pipe_second[0]));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.destroy());

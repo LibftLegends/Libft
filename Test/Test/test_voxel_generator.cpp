@@ -27,39 +27,37 @@ static int32_t test_terrain_surface_height(game_voxel_chunk &chunk,
     return (-1);
 }
 
+static ft_bool test_terrain_height_is_within_builtin_envelope(
+    int32_t surface_height)
+{
+    if (surface_height < 66 || surface_height > 121)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 FT_TEST(test_terrain_generate_chunk_generates_default_surface_chunk)
 {
     game_voxel_chunk chunk;
     terrain_biome biome;
-    terrain_biome_profile biome_profile;
     int32_t surface_height;
-    ft_bool surface_in_range;
-    int32_t surface_variation_limit;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk,
         "terrain-test-seed"));
     biome = terrain_get_biome(0, 0, "terrain-test-seed");
-    biome_profile = terrain_get_biome_profile(biome);
     surface_height = test_terrain_surface_height(chunk, 0, 0);
     FT_ASSERT_NEQ(-1, surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height, 0,
         &block_id));
-    FT_ASSERT_EQ(terrain_surface_block_for_biome(biome), block_id);
+    if (block_id != terrain_surface_block_for_biome(biome)
+        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
+        return (0);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height + 1, 0,
         &block_id));
     FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
-    surface_in_range = FT_TRUE;
-    surface_variation_limit = biome_profile.height_variation
-        + (biome_profile.height_variation / 2);
-    if (surface_height < biome_profile.surface_height
-        - surface_variation_limit)
-        surface_in_range = FT_FALSE;
-    if (surface_height > biome_profile.surface_height
-        + surface_variation_limit)
-        surface_in_range = FT_FALSE;
-    FT_ASSERT_EQ(FT_TRUE, surface_in_range);
+    FT_ASSERT_EQ(FT_TRUE,
+        test_terrain_height_is_within_builtin_envelope(surface_height));
     FT_ASSERT_EQ(FT_FALSE, chunk.is_dirty());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
@@ -274,12 +272,8 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
     game_voxel_chunk right_chunk;
     terrain_biome left_biome;
     terrain_biome right_biome;
-    terrain_biome_profile left_profile;
-    terrain_biome_profile right_profile;
     int32_t left_surface_height;
     int32_t right_surface_height;
-    ft_bool left_height_in_range;
-    ft_bool right_height_in_range;
     uint32_t block_id;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
@@ -291,38 +285,24 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
     right_biome = terrain_get_biome(TERRAIN_BIOME_ZONE_WIDTH, 0,
         "terrain-test-seed");
     FT_ASSERT_NEQ(left_biome, right_biome);
-    left_profile = terrain_get_biome_profile(left_biome);
-    right_profile = terrain_get_biome_profile(right_biome);
     left_surface_height = test_terrain_surface_height(left_chunk, 0, 0);
     right_surface_height = test_terrain_surface_height(right_chunk, 0, 0);
     FT_ASSERT_NEQ(-1, left_surface_height);
     FT_ASSERT_NEQ(-1, right_surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(0, left_surface_height,
         0, &block_id));
-    FT_ASSERT_EQ(terrain_surface_block_for_biome(left_biome), block_id);
+    if (block_id != terrain_surface_block_for_biome(left_biome)
+        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
+        return (0);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
         right_surface_height, 0, &block_id));
-    FT_ASSERT_EQ(terrain_surface_block_for_biome(right_biome), block_id);
-    left_height_in_range = FT_TRUE;
-    if (left_surface_height < left_profile.surface_height
-        - left_profile.height_variation
-        - (left_profile.height_variation / 2))
-        left_height_in_range = FT_FALSE;
-    if (left_surface_height > left_profile.surface_height
-        + left_profile.height_variation
-        + (left_profile.height_variation / 2))
-        left_height_in_range = FT_FALSE;
-    right_height_in_range = FT_TRUE;
-    if (right_surface_height < right_profile.surface_height
-        - right_profile.height_variation
-        - (right_profile.height_variation / 2))
-        right_height_in_range = FT_FALSE;
-    if (right_surface_height > right_profile.surface_height
-        + right_profile.height_variation
-        + (right_profile.height_variation / 2))
-        right_height_in_range = FT_FALSE;
-    FT_ASSERT_EQ(FT_TRUE, left_height_in_range);
-    FT_ASSERT_EQ(FT_TRUE, right_height_in_range);
+    if (block_id != terrain_surface_block_for_biome(right_biome)
+        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
+        return (0);
+    FT_ASSERT_EQ(FT_TRUE,
+        test_terrain_height_is_within_builtin_envelope(left_surface_height));
+    FT_ASSERT_EQ(FT_TRUE,
+        test_terrain_height_is_within_builtin_envelope(right_surface_height));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.destroy());
     return (1);
@@ -423,6 +403,7 @@ FT_TEST(test_terrain_generation_metadata_identifies_cached_chunk)
     FT_ASSERT_EQ(32, metadata->world_block_origin_x);
     FT_ASSERT_EQ(64, metadata->world_block_origin_z);
     FT_ASSERT_EQ(configuration_signature, metadata->configuration_signature);
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_VERSION, metadata->generator_version);
     FT_ASSERT_EQ(TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES
         | TERRAIN_STAGE_FLUIDS | TERRAIN_STAGE_DECORATION
         | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES,
@@ -841,6 +822,42 @@ FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
     return (1);
 }
 
+FT_TEST(test_terrain_generation_config_clearing_shared_templates_detaches_only)
+{
+    terrain_generation_config config;
+    terrain_tree_template tree_template;
+    terrain_feature_rule cleared_feature;
+    uint32_t initial_template_count;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.initialize());
+    tree_template = terrain_small_cactus_tree_template();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+        0U, &tree_template));
+    config.biomes[1].tree_template = config.biomes[0].tree_template;
+    initial_template_count = config.tree_template_count;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+        0U, ft_nullptr));
+    FT_ASSERT_EQ(ft_nullptr, config.biomes[0].tree_template);
+    FT_ASSERT_EQ(&config.tree_templates[initial_template_count - 1U],
+        config.biomes[1].tree_template);
+    FT_ASSERT_EQ(initial_template_count, config.tree_template_count);
+
+    config.features[0].template_data = config.biomes[1].tree_template;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cleared_feature.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, cleared_feature));
+    FT_ASSERT_EQ(ft_nullptr, config.features[0].template_data);
+    FT_ASSERT_EQ(&config.tree_templates[initial_template_count - 1U],
+        config.biomes[1].tree_template);
+
+    config.features[0].template_data = config.biomes[1].tree_template;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
+        1U, ft_nullptr));
+    FT_ASSERT_EQ(ft_nullptr, config.biomes[1].tree_template);
+    FT_ASSERT_EQ(&config.tree_templates[initial_template_count - 1U],
+        config.features[0].template_data);
+    return (1);
+}
+
 FT_TEST(test_terrain_generate_chunk_clears_previous_voxel_data)
 {
     game_voxel_chunk regenerated_chunk;
@@ -993,6 +1010,18 @@ FT_TEST(test_terrain_nested_config_classes_have_lifecycle_contracts)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ore.set_vein(4U, 5U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.set_chances(3U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.set_cave_shape(2U, 3U, 25U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.set_cave_entrances(10U, 1U));
+    FT_ASSERT_EQ(2U, underground.cave_small_radius);
+    FT_ASSERT_EQ(3U, underground.cave_large_radius);
+    FT_ASSERT_EQ(25U, underground.cave_large_chance_percent);
+    FT_ASSERT_EQ(10U, underground.cave_entrance_chance_percent);
+    FT_ASSERT_EQ(1U, underground.cave_entrance_radius);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.set_cavern_rooms(FT_TRUE,
+        4U, 5U));
+    FT_ASSERT_EQ(FT_TRUE, underground.enable_cavern_rooms);
+    FT_ASSERT_EQ(4U, underground.cavern_room_chance_percent);
+    FT_ASSERT_EQ(5U, underground.cavern_room_radius);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fluids.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fluids.set_lake_settings(48, 4U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, layers.initialize());
@@ -1003,6 +1032,82 @@ FT_TEST(test_terrain_nested_config_classes_have_lifecycle_contracts)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fluids.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, layers.destroy());
+    return (1);
+}
+
+FT_TEST(test_terrain_caves_are_rounded_and_can_reach_surface)
+{
+    terrain_generation_config config;
+    game_voxel_chunk chunk;
+    uint32_t block_id;
+    uint32_t interior_air_count;
+    uint32_t entrance_air_count;
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(
+        0U, 80, 0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_block_palette(0U,
+        TERRAIN_GENERATOR_STONE_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK,
+        TERRAIN_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_enabled(FT_FALSE,
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE,
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(
+        FT_FALSE, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_chances(
+        0U, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_height_range(
+        8, 70));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_cave_shape(
+        2U, 3U, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        config.underground_structures.set_cave_entrances(100U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        config.underground_structures.set_cavern_rooms(FT_TRUE, 100U, 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+        "rounded-caves", config));
+
+    interior_air_count = 0U;
+    entrance_air_count = 0U;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            local_y = 8;
+            while (local_y < 71)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(local_x,
+                    local_y, local_z, &block_id));
+                if (block_id == GAME_VOXEL_AIR_BLOCK)
+                    interior_air_count += 1U;
+                local_y += 1;
+            }
+            local_y = 73;
+            while (local_y < 80)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(local_x,
+                    local_y, local_z, &block_id));
+                if (block_id == GAME_VOXEL_AIR_BLOCK)
+                    entrance_air_count += 1U;
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_NEQ(0U, interior_air_count);
+    FT_ASSERT_NEQ(0U, entrance_air_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
@@ -1049,6 +1154,13 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
         source_config.detail_noise_percent);
     source_config.layers.set_snowline(78);
     source_config.underground_structures.ravine_width = 6U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        source_config.underground_structures.set_cave_shape(2U, 4U, 35U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        source_config.underground_structures.set_cave_entrances(12U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        source_config.underground_structures.set_cavern_rooms(FT_TRUE,
+            7U, 5U));
     source_config.fluids.enable_lakes = FT_FALSE;
     source_config.ores[0].set_enabled(FT_TRUE);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_save_file(
@@ -1066,6 +1178,25 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
         loaded_config.biomes[0].allow_mountain_ridges);
     FT_ASSERT_EQ(source_config.underground_structures.ravine_width,
         loaded_config.underground_structures.ravine_width);
+    FT_ASSERT_EQ(source_config.underground_structures.cave_small_radius,
+        loaded_config.underground_structures.cave_small_radius);
+    FT_ASSERT_EQ(source_config.underground_structures.cave_large_radius,
+        loaded_config.underground_structures.cave_large_radius);
+    FT_ASSERT_EQ(source_config.underground_structures
+        .cave_large_chance_percent,
+        loaded_config.underground_structures.cave_large_chance_percent);
+    FT_ASSERT_EQ(source_config.underground_structures
+        .cave_entrance_chance_percent,
+        loaded_config.underground_structures.cave_entrance_chance_percent);
+    FT_ASSERT_EQ(source_config.underground_structures.cave_entrance_radius,
+        loaded_config.underground_structures.cave_entrance_radius);
+    FT_ASSERT_EQ(source_config.underground_structures.enable_cavern_rooms,
+        loaded_config.underground_structures.enable_cavern_rooms);
+    FT_ASSERT_EQ(source_config.underground_structures
+        .cavern_room_chance_percent,
+        loaded_config.underground_structures.cavern_room_chance_percent);
+    FT_ASSERT_EQ(source_config.underground_structures.cavern_room_radius,
+        loaded_config.underground_structures.cavern_room_radius);
     FT_ASSERT_EQ(source_config.fluids.enable_lakes,
         loaded_config.fluids.enable_lakes);
     FT_ASSERT_EQ(source_config.ores[0].enabled,

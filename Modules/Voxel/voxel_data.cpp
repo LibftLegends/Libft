@@ -450,7 +450,11 @@ terrain_underground_structure_config::terrain_underground_structure_config()
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       enable_ravines(FT_FALSE), enable_cave_rooms(FT_FALSE),
       ravine_chance_percent(0U), cave_room_chance_percent(0U),
-      minimum_height(0), maximum_height(0), ravine_width(0U), ravine_depth(0U)
+      minimum_height(0), maximum_height(0), ravine_width(0U), ravine_depth(0U),
+      cave_small_radius(0U), cave_large_radius(0U),
+      cave_large_chance_percent(0U), cave_entrance_chance_percent(0U),
+      cave_entrance_radius(0U), enable_cavern_rooms(FT_FALSE),
+      cavern_room_chance_percent(0U), cavern_room_radius(0U)
 {
     return ;
 }
@@ -474,6 +478,14 @@ int32_t terrain_underground_structure_config::initialize() noexcept
     this->maximum_height = 0;
     this->ravine_width = 0U;
     this->ravine_depth = 0U;
+    this->cave_small_radius = 0U;
+    this->cave_large_radius = 0U;
+    this->cave_large_chance_percent = 0U;
+    this->cave_entrance_chance_percent = 0U;
+    this->cave_entrance_radius = 0U;
+    this->enable_cavern_rooms = FT_FALSE;
+    this->cavern_room_chance_percent = 0U;
+    this->cavern_room_radius = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -495,6 +507,14 @@ int32_t terrain_underground_structure_config::initialize(
     this->maximum_height = other.maximum_height;
     this->ravine_width = other.ravine_width;
     this->ravine_depth = other.ravine_depth;
+    this->cave_small_radius = other.cave_small_radius;
+    this->cave_large_radius = other.cave_large_radius;
+    this->cave_large_chance_percent = other.cave_large_chance_percent;
+    this->cave_entrance_chance_percent = other.cave_entrance_chance_percent;
+    this->cave_entrance_radius = other.cave_entrance_radius;
+    this->enable_cavern_rooms = other.enable_cavern_rooms;
+    this->cavern_room_chance_percent = other.cavern_room_chance_percent;
+    this->cavern_room_radius = other.cavern_room_radius;
     this->_initialised_state = other._initialised_state;
     return (FT_ERR_SUCCESS);
 }
@@ -512,6 +532,14 @@ uint32_t terrain_underground_structure_config::destroy() noexcept
     this->maximum_height = 0;
     this->ravine_width = 0U;
     this->ravine_depth = 0U;
+    this->cave_small_radius = 0U;
+    this->cave_large_radius = 0U;
+    this->cave_large_chance_percent = 0U;
+    this->cave_entrance_chance_percent = 0U;
+    this->cave_entrance_radius = 0U;
+    this->enable_cavern_rooms = FT_FALSE;
+    this->cavern_room_chance_percent = 0U;
+    this->cavern_room_radius = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -576,6 +604,46 @@ int32_t terrain_underground_structure_config::set_shape(uint32_t width,
         return (FT_ERR_NOT_INITIALISED);
     this->ravine_width = width;
     this->ravine_depth = depth;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_underground_structure_config::set_cave_shape(
+    uint32_t small_radius, uint32_t large_radius,
+    uint32_t large_chance) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (small_radius == 0U || large_radius < small_radius
+        || large_radius > 16U || large_chance > 100U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->cave_small_radius = small_radius;
+    this->cave_large_radius = large_radius;
+    this->cave_large_chance_percent = large_chance;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_underground_structure_config::set_cave_entrances(
+    uint32_t chance, uint32_t radius) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (chance > 100U || radius == 0U || radius > 8U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->cave_entrance_chance_percent = chance;
+    this->cave_entrance_radius = radius;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_underground_structure_config::set_cavern_rooms(
+    ft_bool enabled, uint32_t chance, uint32_t radius) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (chance > 100U || radius < 5U || radius > 32U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->enable_cavern_rooms = enabled;
+    this->cavern_room_chance_percent = chance;
+    this->cavern_room_radius = radius;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1953,6 +2021,9 @@ static int32_t terrain_apply_default_generation_config(
     config.underground_structures.set_chances(4U, 3U);
     config.underground_structures.set_height_range(8, 120);
     config.underground_structures.set_shape(2U, 20U);
+    config.underground_structures.set_cave_shape(2U, 3U, 20U);
+    config.underground_structures.set_cave_entrances(8U, 1U);
+    config.underground_structures.set_cavern_rooms(FT_FALSE, 2U, 5U);
     config.fluids.set_enabled(FT_TRUE, FT_TRUE);
     config.fluids.set_river_settings(96, 3);
     config.fluids.set_lake_settings(48, 4U);
@@ -2040,6 +2111,57 @@ static int32_t terrain_config_require_initialised(
     if (config.is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
     return (FT_ERR_SUCCESS);
+}
+
+static uint32_t terrain_generation_config_count_template_references(
+    const terrain_generation_config &config,
+    const terrain_tree_template *tree_template) noexcept
+{
+    uint32_t reference_count;
+    uint32_t index;
+    uint32_t template_index;
+    uint32_t biome_template_index;
+
+    reference_count = 0U;
+    template_index = 0U;
+    while (template_index < config.tree_template_count)
+    {
+        if (&config.tree_templates[template_index] == tree_template)
+            break ;
+        template_index += 1U;
+    }
+    index = 0U;
+    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    {
+        if (config.biomes[index].tree_template == tree_template)
+            reference_count += 1U;
+        index += 1U;
+    }
+    index = 0U;
+    while (index < TERRAIN_MAX_FEATURE_RULES)
+    {
+        if (config.features[index].template_data == tree_template)
+            reference_count += 1U;
+        index += 1U;
+    }
+    if (template_index < config.tree_template_count)
+    {
+        index = 0U;
+        while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+        {
+            biome_template_index = 0U;
+            while (biome_template_index
+                < config.biomes[index].tree_template_count)
+            {
+                if (config.biomes[index].tree_template_indices[
+                        biome_template_index] == template_index)
+                    reference_count += 1U;
+                biome_template_index += 1U;
+            }
+            index += 1U;
+        }
+    }
+    return (reference_count);
 }
 
 int32_t terrain_generation_config::set_sea_level(int32_t value) noexcept
@@ -2198,8 +2320,14 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
         {
             if (this->biomes[biome_index].tree_template
                 == &this->tree_templates[template_index])
-                return (terrain_generation_config_remove_tree_template(
-                    *this, template_index));
+            {
+                if (terrain_generation_config_count_template_references(*this,
+                        &this->tree_templates[template_index]) <= 1U)
+                    return (terrain_generation_config_remove_tree_template(
+                        *this, template_index));
+                return (this->biomes[biome_index]
+                    .set_tree_template_override(value));
+            }
             template_index += 1U;
         }
         return (this->biomes[biome_index].set_tree_template_override(value));
@@ -2241,7 +2369,6 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
 {
     int32_t error_code;
     uint32_t template_index;
-    uint32_t other_feature_index;
     const terrain_tree_template *old_template;
 
     if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
@@ -2262,20 +2389,15 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
         }
         if (template_index < this->tree_template_count)
         {
-            other_feature_index = 0U;
-            while (other_feature_index < TERRAIN_MAX_FEATURE_RULES)
-            {
-                if (other_feature_index != feature_index
-                    && this->features[other_feature_index].template_data
-                        == old_template)
-                    return (FT_ERR_INVALID_OPERATION);
-                other_feature_index += 1U;
-            }
             this->features[feature_index].template_data = ft_nullptr;
-            error_code = terrain_generation_config_remove_tree_template(
-                *this, template_index);
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
+            if (terrain_generation_config_count_template_references(*this,
+                    old_template) == 0U)
+            {
+                error_code = terrain_generation_config_remove_tree_template(
+                    *this, template_index);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+            }
         }
     }
     if (feature.template_data != ft_nullptr)
@@ -2557,6 +2679,22 @@ uint32_t terrain_generation_config_signature(
         .ravine_width) << 30;
     signature ^= static_cast<uint64_t>(config.underground_structures
         .ravine_depth) << 34;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cave_small_radius) << 38;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cave_large_radius) << 42;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cave_large_chance_percent) << 46;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cave_entrance_chance_percent) << 50;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cave_entrance_radius) << 54;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .enable_cavern_rooms) << 5;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cavern_room_chance_percent) << 11;
+    signature ^= static_cast<uint64_t>(config.underground_structures
+        .cavern_room_radius) << 18;
     signature ^= static_cast<uint64_t>(config.layers.enable_beaches) << 38;
     signature ^= static_cast<uint64_t>(config.layers.enable_snow_caps) << 39;
     signature ^= static_cast<uint64_t>(config.layers.beach_depth) << 40;
@@ -2918,6 +3056,17 @@ ft_bool terrain_generation_config_is_valid(
         || config.underground_structures.cave_room_chance_percent > 100
         || config.underground_structures.minimum_height
             > config.underground_structures.maximum_height
+        || config.underground_structures.cave_small_radius == 0U
+        || config.underground_structures.cave_large_radius
+            < config.underground_structures.cave_small_radius
+        || config.underground_structures.cave_large_radius > 16U
+        || config.underground_structures.cave_large_chance_percent > 100U
+        || config.underground_structures.cave_entrance_chance_percent > 100U
+        || config.underground_structures.cave_entrance_radius == 0U
+        || config.underground_structures.cave_entrance_radius > 8U
+        || config.underground_structures.cavern_room_chance_percent > 100U
+        || config.underground_structures.cavern_room_radius < 5U
+        || config.underground_structures.cavern_room_radius > 32U
         || config.mountain_ridge_scale <= 0
         || config.erosion_noise_scale <= 0)
         return (FT_FALSE);

@@ -17,9 +17,6 @@ all: $(TARGET)
 FORCE:
 
 $(TARGET): $(OBJS) $(LIBFT_ARCHIVE)
-	@# Rescan the archive so cross-module references inside the combined test library resolve.
-	@$(MAKE) -C $(LIBFT_ROOT_DIR) $(LIBFT_ARCHIVE) COMPILE_FLAGS="$(COMPILE_FLAGS)" \
-		OPT_LEVEL=$(OPT_LEVEL)
 	@$(RM) $@
 ifeq ($(UNAME_S),Darwin)
 	@$(CXX) $(CFLAGS) -o $@ $(OBJS) $(LIBFT_ARCHIVE) $(LDFLAGS)

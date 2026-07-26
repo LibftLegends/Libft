@@ -2,6 +2,7 @@
 #include "socket_class.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno_internal.hpp"
+#include <cstdio>
 #include <fcntl.h>
 
 #include "../Basic/limits.hpp"

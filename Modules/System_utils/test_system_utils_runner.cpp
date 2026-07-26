@@ -418,6 +418,7 @@ static int32_t execute_test_function(const s_test_case *test,
 #if defined(SIGIOT) && SIGIOT != SIGABRT
     std::signal(SIGIOT, SIG_DFL);
 #endif
+#if !defined(_WIN32) && !defined(_WIN64)
     sigset_t unblocked_signals;
     sigemptyset(&unblocked_signals);
     sigaddset(&unblocked_signals, SIGABRT);
@@ -434,6 +435,7 @@ static int32_t execute_test_function(const s_test_case *test,
     sigaddset(&unblocked_signals, SIGIOT);
 #endif
     (void)pthread_sigmask(SIG_UNBLOCK, &unblocked_signals, nullptr);
+#endif
     su_service_clear_signal_handlers();
     su_service_force_no_fork(FT_FALSE);
 

@@ -37,7 +37,7 @@ class game_voxel_region;
 # define TERRAIN_MAX_TREE_TEMPLATES 64U
 # define TERRAIN_MAX_BIOME_TREE_TEMPLATES 16U
 # define TERRAIN_MAX_TREE_TEMPLATE_BLOCKS 32U
-# define TERRAIN_GENERATOR_VERSION 3U
+# define TERRAIN_GENERATOR_VERSION 4U
 # define TERRAIN_STAGE_BASE_TERRAIN 1U
 # define TERRAIN_STAGE_CAVES 2U
 # define TERRAIN_STAGE_FLUIDS 4U
@@ -225,6 +225,12 @@ class terrain_underground_structure_config
         int32_t set_chances(uint32_t ravine, uint32_t cave_room) noexcept;
         int32_t set_height_range(int32_t minimum, int32_t maximum) noexcept;
         int32_t set_shape(uint32_t width, uint32_t depth) noexcept;
+        int32_t set_cave_shape(uint32_t small_radius, uint32_t large_radius,
+            uint32_t large_chance) noexcept;
+        int32_t set_cave_entrances(uint32_t chance,
+            uint32_t radius) noexcept;
+        int32_t set_cavern_rooms(ft_bool enabled, uint32_t chance,
+            uint32_t radius) noexcept;
 
         ft_bool enable_ravines;
         ft_bool enable_cave_rooms;
@@ -234,6 +240,14 @@ class terrain_underground_structure_config
         int32_t maximum_height;
         uint32_t ravine_width;
         uint32_t ravine_depth;
+        uint32_t cave_small_radius;
+        uint32_t cave_large_radius;
+        uint32_t cave_large_chance_percent;
+        uint32_t cave_entrance_chance_percent;
+        uint32_t cave_entrance_radius;
+        ft_bool enable_cavern_rooms;
+        uint32_t cavern_room_chance_percent;
+        uint32_t cavern_room_radius;
 };
 
 class terrain_fluid_config

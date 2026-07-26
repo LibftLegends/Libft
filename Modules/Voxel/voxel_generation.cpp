@@ -23,6 +23,7 @@ static const int32_t TERRAIN_CAVE_PRIMARY_SCALE = 24;
 static const int32_t TERRAIN_CAVE_DETAIL_SCALE = 9;
 static const int32_t TERRAIN_BEDROCK_FLOOR_Y = 0;
 static const int32_t TERRAIN_CAVE_SURFACE_MARGIN = 7;
+static const int32_t TERRAIN_CAVE_CELL_SIZE = 12;
 static const int32_t TERRAIN_COLUMN_CACHE_COUNT =
     GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH;
 
@@ -206,6 +207,7 @@ static int32_t terrain_region_cross_chunk_block_writer(int32_t world_block_x,
 static int32_t terrain_column_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
     const terrain_biome_profile &biome_profile,
+    ft_bool allow_mountain_ridges,
     const terrain_generation_config &config) noexcept
 {
     double large_noise;
@@ -223,7 +225,8 @@ static int32_t terrain_column_height(uint64_t seed_value,
     total_noise = (large_noise * static_cast<double>(variation))
         + (detail_noise * static_cast<double>(variation)
             * static_cast<double>(config.detail_noise_percent) / 100.0);
-    if (config.enable_mountain_ridges == FT_TRUE)
+    if (config.enable_mountain_ridges == FT_TRUE
+        && allow_mountain_ridges == FT_TRUE)
     {
         double ridge_noise;
 
@@ -261,7 +264,7 @@ static double terrain_zone_blend_factor(int32_t local_coordinate) noexcept
         blend_factor = 0.0;
     if (blend_factor > 1.0)
         blend_factor = 1.0;
-    return (blend_factor);
+    return (terrain_smooth_factor(blend_factor));
 }
 
 static int32_t terrain_blend_height(int32_t left_height, int32_t right_height,
@@ -274,7 +277,7 @@ static int32_t terrain_blend_height(int32_t left_height, int32_t right_height,
 
 static int32_t terrain_smooth_biome_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_biome_profile &biome_profile,
+    const terrain_biome_definition &biome_definition,
     const terrain_generation_config &config) noexcept
 {
     int32_t biome_zone_x;
@@ -294,43 +297,51 @@ static int32_t terrain_smooth_biome_height(uint64_t seed_value,
     zone_local_x = world_block_x - (biome_zone_x * TERRAIN_BIOME_ZONE_WIDTH);
     zone_local_z = world_block_z - (biome_zone_z * TERRAIN_BIOME_ZONE_WIDTH);
     height = terrain_column_height(seed_value, world_block_x, world_block_z,
-        biome_profile, config);
-    if (zone_local_x < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+        biome_definition.profile, biome_definition.allow_mountain_ridges,
+        config);
+    if (config.enable_biome_transitions == FT_TRUE
+        && zone_local_x < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
     {
         neighbor_x = world_block_x - TERRAIN_BIOME_ZONE_WIDTH;
         neighbor_biome = terrain_select_biome(config, seed_value, neighbor_x,
             world_block_z);
         neighbor_profile = config.biomes[neighbor_biome].profile;
-        neighbor_height = terrain_column_height(seed_value, neighbor_x,
-            world_block_z, neighbor_profile, config);
+        neighbor_height = terrain_column_height(seed_value, world_block_x,
+            world_block_z, neighbor_profile,
+            config.biomes[neighbor_biome].allow_mountain_ridges, config);
         blend_factor = terrain_zone_blend_factor(zone_local_x);
         height = terrain_blend_height(neighbor_height, height, blend_factor);
     }
-    else if (zone_local_x >= (TERRAIN_BIOME_ZONE_WIDTH
+    else if (config.enable_biome_transitions == FT_TRUE
+        && zone_local_x >= (TERRAIN_BIOME_ZONE_WIDTH
             - TERRAIN_BIOME_ZONE_BLEND_WIDTH))
     {
         neighbor_x = world_block_x + TERRAIN_BIOME_ZONE_WIDTH;
         neighbor_biome = terrain_select_biome(config, seed_value, neighbor_x,
             world_block_z);
         neighbor_profile = config.biomes[neighbor_biome].profile;
-        neighbor_height = terrain_column_height(seed_value, neighbor_x,
-            world_block_z, neighbor_profile, config);
+        neighbor_height = terrain_column_height(seed_value, world_block_x,
+            world_block_z, neighbor_profile,
+            config.biomes[neighbor_biome].allow_mountain_ridges, config);
         blend_factor = terrain_zone_blend_factor(
             (TERRAIN_BIOME_ZONE_WIDTH - 1) - zone_local_x);
         height = terrain_blend_height(height, neighbor_height, blend_factor);
     }
-    if (zone_local_z < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+    if (config.enable_biome_transitions == FT_TRUE
+        && zone_local_z < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
     {
         neighbor_z = world_block_z - TERRAIN_BIOME_ZONE_WIDTH;
         neighbor_biome = terrain_select_biome(config, seed_value, world_block_x,
             neighbor_z);
         neighbor_profile = config.biomes[neighbor_biome].profile;
         neighbor_height = terrain_column_height(seed_value, world_block_x,
-            neighbor_z, neighbor_profile, config);
+            world_block_z, neighbor_profile,
+            config.biomes[neighbor_biome].allow_mountain_ridges, config);
         blend_factor = terrain_zone_blend_factor(zone_local_z);
         height = terrain_blend_height(neighbor_height, height, blend_factor);
     }
-    else if (zone_local_z >= (TERRAIN_BIOME_ZONE_WIDTH
+    else if (config.enable_biome_transitions == FT_TRUE
+        && zone_local_z >= (TERRAIN_BIOME_ZONE_WIDTH
             - TERRAIN_BIOME_ZONE_BLEND_WIDTH))
     {
         neighbor_z = world_block_z + TERRAIN_BIOME_ZONE_WIDTH;
@@ -338,7 +349,8 @@ static int32_t terrain_smooth_biome_height(uint64_t seed_value,
             neighbor_z);
         neighbor_profile = config.biomes[neighbor_biome].profile;
         neighbor_height = terrain_column_height(seed_value, world_block_x,
-            neighbor_z, neighbor_profile, config);
+            world_block_z, neighbor_profile,
+            config.biomes[neighbor_biome].allow_mountain_ridges, config);
         blend_factor = terrain_zone_blend_factor(
             (TERRAIN_BIOME_ZONE_WIDTH - 1) - zone_local_z);
         height = terrain_blend_height(height, neighbor_height, blend_factor);
@@ -350,40 +362,37 @@ static int32_t terrain_sample_height(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, const terrain_generation_config &config) noexcept
 {
     uint32_t biome;
-    terrain_biome_profile biome_profile;
+    uint32_t biome_index;
     int32_t minimum_height;
     int32_t maximum_height;
+    int32_t candidate_minimum;
+    int32_t candidate_maximum;
     int32_t height;
 
     biome = terrain_select_biome(config, seed_value, world_block_x, world_block_z);
-    biome_profile = config.biomes[biome].profile;
     height = terrain_smooth_biome_height(seed_value, world_block_x,
-        world_block_z, biome_profile, config);
-    minimum_height = biome_profile.surface_height
-        - biome_profile.height_variation
-        - (biome_profile.height_variation / 2);
-    maximum_height = biome_profile.surface_height
-        + biome_profile.height_variation
-        + (biome_profile.height_variation / 2);
-    if (height < minimum_height)
-        return (minimum_height);
-    if (height > maximum_height)
-        return (maximum_height);
-    return (height);
-}
-
-static int32_t terrain_clamp_height_to_profile(int32_t height,
-    const terrain_biome_profile &biome_profile) noexcept
-{
-    int32_t minimum_height;
-    int32_t maximum_height;
-
-    minimum_height = biome_profile.surface_height
-        - biome_profile.height_variation
-        - (biome_profile.height_variation / 2);
-    maximum_height = biome_profile.surface_height
-        + biome_profile.height_variation
-        + (biome_profile.height_variation / 2);
+        world_block_z, config.biomes[biome], config);
+    minimum_height = config.biomes[0].profile.surface_height
+        - config.biomes[0].profile.height_variation
+        - (config.biomes[0].profile.height_variation / 2);
+    maximum_height = config.biomes[0].profile.surface_height
+        + config.biomes[0].profile.height_variation
+        + (config.biomes[0].profile.height_variation / 2);
+    biome_index = 1U;
+    while (biome_index < config.biome_count)
+    {
+        candidate_minimum = config.biomes[biome_index].profile.surface_height
+            - config.biomes[biome_index].profile.height_variation
+            - (config.biomes[biome_index].profile.height_variation / 2);
+        candidate_maximum = config.biomes[biome_index].profile.surface_height
+            + config.biomes[biome_index].profile.height_variation
+            + (config.biomes[biome_index].profile.height_variation / 2);
+        if (candidate_minimum < minimum_height)
+            minimum_height = candidate_minimum;
+        if (candidate_maximum > maximum_height)
+            maximum_height = candidate_maximum;
+        biome_index += 1U;
+    }
     if (height < minimum_height)
         return (minimum_height);
     if (height > maximum_height)
@@ -393,7 +402,6 @@ static int32_t terrain_clamp_height_to_profile(int32_t height,
 
 static int32_t terrain_smooth_heightfield(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_biome_profile &biome_profile,
     const terrain_generation_config &config) noexcept
 {
     int32_t offset_x;
@@ -426,10 +434,9 @@ static int32_t terrain_smooth_heightfield(uint64_t seed_value,
         offset_z += 1;
     }
     if (sample_count <= 0)
-        return (terrain_clamp_height_to_profile(terrain_sample_height(
-            seed_value, world_block_x, world_block_z, config), biome_profile));
-    return (terrain_clamp_height_to_profile(weighted_height / sample_count,
-        biome_profile));
+        return (terrain_sample_height(seed_value, world_block_x,
+            world_block_z, config));
+    return (weighted_height / sample_count);
 }
 
 static ft_bool terrain_should_place_feature(uint64_t seed_value,
@@ -469,40 +476,148 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
     double detail_noise;
     double ravine_detail_threshold;
     int32_t cave_surface_margin;
+    int32_t cell_x;
+    int32_t cell_y;
+    int32_t cell_z;
+    int32_t offset_x;
+    int32_t offset_y;
+    int32_t offset_z;
+    int32_t candidate_cell_x;
+    int32_t candidate_cell_y;
+    int32_t candidate_cell_z;
+    int32_t center_x;
+    int32_t center_y;
+    int32_t center_z;
+    int32_t distance_x;
+    int32_t distance_y;
+    int32_t distance_z;
+    int32_t radius;
+    int32_t height_range;
+    uint64_t candidate_seed;
+    ft_bool large_cave;
+    ft_bool cavern_room;
+    ft_bool entrance_candidate;
 
-    if (config.underground_structures.enable_cave_rooms == FT_FALSE
-        && config.underground_structures.enable_ravines == FT_FALSE)
-        return (FT_FALSE);
     if (world_block_y < config.underground_structures.minimum_height
-        || world_block_y > config.underground_structures.maximum_height)
+        || world_block_y > surface_height)
         return (FT_FALSE);
-    cave_surface_margin = TERRAIN_CAVE_SURFACE_MARGIN;
-    if (config.underground_structures.ravine_depth > 0U)
-        cave_surface_margin = static_cast<int32_t>(
-            config.underground_structures.ravine_depth);
-    if (world_block_y >= surface_height - cave_surface_margin)
+    if (config.underground_structures.enable_ravines == FT_TRUE)
+    {
+        cave_surface_margin = TERRAIN_CAVE_SURFACE_MARGIN;
+        if (config.underground_structures.ravine_depth > 0U)
+            cave_surface_margin = static_cast<int32_t>(
+                config.underground_structures.ravine_depth);
+        if (world_block_y >= config.underground_structures.minimum_height
+            && world_block_y <= config.underground_structures.maximum_height
+            && world_block_y < surface_height - cave_surface_margin)
+        {
+            primary_noise = terrain_cave_noise(seed_value, world_block_x,
+                world_block_y, world_block_z, TERRAIN_CAVE_PRIMARY_SCALE,
+                TERRAIN_CAVE_PRIMARY_SALT);
+            detail_noise = terrain_cave_noise(seed_value, world_block_x,
+                world_block_y, world_block_z, TERRAIN_CAVE_DETAIL_SCALE,
+                TERRAIN_CAVE_DETAIL_SALT);
+            ravine_detail_threshold = -0.12
+                + (static_cast<double>(config.underground_structures
+                    .ravine_width) * 0.04);
+            if (terrain_should_place_feature(seed_value, world_block_x,
+                    world_block_z, UINT64_C(0xD1CEB00C),
+                    config.underground_structures.ravine_chance_percent)
+                    == FT_TRUE
+                && primary_noise > 0.34
+                && detail_noise > ravine_detail_threshold)
+                return (FT_TRUE);
+        }
+    }
+    if (config.underground_structures.enable_cave_rooms == FT_FALSE
+        || config.underground_structures.cave_room_chance_percent == 0U
+        || config.underground_structures.cave_small_radius == 0U)
         return (FT_FALSE);
-    primary_noise = terrain_cave_noise(seed_value, world_block_x,
-        world_block_y, world_block_z, TERRAIN_CAVE_PRIMARY_SCALE,
-        TERRAIN_CAVE_PRIMARY_SALT);
-    detail_noise = terrain_cave_noise(seed_value, world_block_x,
-        world_block_y, world_block_z, TERRAIN_CAVE_DETAIL_SCALE,
-        TERRAIN_CAVE_DETAIL_SALT);
-    ravine_detail_threshold = -0.12
-        + (static_cast<double>(config.underground_structures.ravine_width)
-            * 0.04);
-    if (config.underground_structures.enable_ravines == FT_TRUE
-        && terrain_should_place_feature(seed_value, world_block_x,
-            world_block_z, UINT64_C(0xD1CEB00C),
-            config.underground_structures.ravine_chance_percent) == FT_TRUE
-        && primary_noise > 0.34 && detail_noise > ravine_detail_threshold)
-        return (FT_TRUE);
-    if (config.underground_structures.enable_cave_rooms == FT_TRUE
-        && terrain_should_place_feature(seed_value, world_block_x,
-            world_block_z, UINT64_C(0xCA7E700D),
-            config.underground_structures.cave_room_chance_percent) == FT_TRUE
-        && primary_noise > 0.58 && detail_noise > -0.25)
-        return (FT_TRUE);
+    cell_x = terrain_floor_div(world_block_x, TERRAIN_CAVE_CELL_SIZE);
+    cell_y = terrain_floor_div(world_block_y, TERRAIN_CAVE_CELL_SIZE);
+    cell_z = terrain_floor_div(world_block_z, TERRAIN_CAVE_CELL_SIZE);
+    offset_x = -1;
+    while (offset_x <= 1)
+    {
+        offset_y = -1;
+        while (offset_y <= 1)
+        {
+            offset_z = -1;
+            while (offset_z <= 1)
+            {
+                candidate_cell_x = cell_x + offset_x;
+                candidate_cell_y = cell_y + offset_y;
+                candidate_cell_z = cell_z + offset_z;
+                candidate_seed = terrain_mix_u64(seed_value
+                    ^ static_cast<uint64_t>(static_cast<int64_t>(
+                        candidate_cell_x)) * UINT64_C(0x9E3779B97F4A7C15)
+                    ^ static_cast<uint64_t>(static_cast<int64_t>(
+                        candidate_cell_y)) * UINT64_C(0xC2B2AE3D27D4EB4F)
+                    ^ static_cast<uint64_t>(static_cast<int64_t>(
+                        candidate_cell_z)) * UINT64_C(0x165667B19E3779F9)
+                    ^ UINT64_C(0xCA7E700D));
+                if ((candidate_seed % 100U)
+                    < config.underground_structures.cave_room_chance_percent)
+                {
+                    center_x = candidate_cell_x * TERRAIN_CAVE_CELL_SIZE
+                        + 2 + static_cast<int32_t>((candidate_seed >> 8)
+                            % (TERRAIN_CAVE_CELL_SIZE - 4));
+                    center_z = candidate_cell_z * TERRAIN_CAVE_CELL_SIZE
+                        + 2 + static_cast<int32_t>((candidate_seed >> 16)
+                            % (TERRAIN_CAVE_CELL_SIZE - 4));
+                    height_range = config.underground_structures.maximum_height
+                        - config.underground_structures.minimum_height + 1;
+                    if (height_range < 1)
+                        height_range = 1;
+                    center_y = config.underground_structures.minimum_height
+                        + static_cast<int32_t>((candidate_seed >> 24)
+                            % static_cast<uint64_t>(height_range));
+                    large_cave = ((candidate_seed >> 32) % 100U
+                        < config.underground_structures
+                            .cave_large_chance_percent);
+                    cavern_room = (config.underground_structures
+                        .enable_cavern_rooms == FT_TRUE
+                        && ((candidate_seed >> 48) % 100U
+                            < config.underground_structures
+                                .cavern_room_chance_percent));
+                    if (cavern_room == FT_TRUE)
+                        radius = static_cast<int32_t>(config
+                            .underground_structures.cavern_room_radius);
+                    else if (large_cave == FT_TRUE)
+                        radius = static_cast<int32_t>(config
+                            .underground_structures.cave_large_radius);
+                    else
+                        radius = static_cast<int32_t>(config
+                            .underground_structures.cave_small_radius);
+                    distance_x = world_block_x - center_x;
+                    distance_y = world_block_y - center_y;
+                    distance_z = world_block_z - center_z;
+                    if (distance_x * distance_x + distance_y * distance_y
+                        + distance_z * distance_z <= radius * radius
+                        && world_block_y < surface_height
+                            - TERRAIN_CAVE_SURFACE_MARGIN)
+                        return (FT_TRUE);
+                    entrance_candidate = ((candidate_seed >> 40) % 100U
+                        < config.underground_structures
+                            .cave_entrance_chance_percent);
+                    if (entrance_candidate == FT_TRUE
+                        && world_block_y <= surface_height
+                        && world_block_y >= center_y
+                        && world_block_y < surface_height
+                        && (distance_x * distance_x + distance_z * distance_z
+                            <= static_cast<int32_t>(config
+                                .underground_structures.cave_entrance_radius)
+                                * static_cast<int32_t>(config
+                                    .underground_structures
+                                    .cave_entrance_radius)))
+                        return (FT_TRUE);
+                }
+                offset_z += 1;
+            }
+            offset_y += 1;
+        }
+        offset_x += 1;
+    }
     return (FT_FALSE);
 }
 
@@ -771,7 +886,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             deep_block_id = column_cache[column_index].deep_block_id;
             place_shrub = column_cache[column_index].can_place_shrubs;
             column_height = terrain_smooth_heightfield(seed_value,
-                world_block_x, world_block_z, biome_profile, config);
+                world_block_x, world_block_z, config);
             column_cache[column_index].column_height = column_height;
             if (column_height < 0)
                 column_height = 0;

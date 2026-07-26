@@ -41,8 +41,12 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `terrain_ore_rule` - Lifecycle-managed optional deterministic ore policy with block, depth,
   vein, chance, and enabled settings. Coal, iron, and gold are disabled by
   default.
-- `terrain_underground_structure_config` - Lifecycle-managed caves, cave
-  rooms, and ravine generation ranges and densities.
+- `terrain_underground_structure_config` - Lifecycle-managed rounded cave
+  rooms, optional surface entrances, and ravine generation ranges and
+  densities. Cave radii, large-cave frequency, entrance frequency, and
+  optional rounded cavern rooms are configurable through
+  `set_cave_shape(...)`, `set_cave_entrances(...)`, and
+  `set_cavern_rooms(...)`.
 - `terrain_fluid_config` - Lifecycle-managed deterministic rivers and lakes.
 - `terrain_layer_config` - Lifecycle-managed beaches, underwater sediment,
   and a broad height-based snowline for snow caps across compatible terrain.
@@ -140,9 +144,16 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - Generated chunks persist metadata and are regenerated only when their seed,
   origin, configuration signature, or generator version changes. Direct block
   edits invalidate that cache.
+- The generator version is bumped whenever deterministic terrain synthesis
+  changes, so saved chunks produced by an older height/transition algorithm
+  are regenerated instead of being reused as if they were current.
 - The Minecraft world/save layer owns the terrain policy values. It should initialize
   one `terrain_generation_context` after loading the world and pass that
   context to chunk generation; Libft owns the encoding and persistence logic.
+- The saved terrain policy and immutable generation context are the reusable
+  inputs for later chunk regeneration; biome profiles, transition settings,
+  noise scales, ridge/erosion settings, and layer policies do not need to be
+  reconstructed from generated blocks.
 - Libft owns the versioned binary encoding and file I/O for the saved terrain
   policy. The Minecraft layer chooses the world-save path and supplies the
   loaded policy, but does not define the on-disk format.

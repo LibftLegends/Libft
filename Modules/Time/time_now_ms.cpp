@@ -6,24 +6,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static t_time_clock_now_hook    g_time_now_ms_hook = ft_nullptr;
-
-void    time_set_clock_now_hook(t_time_clock_now_hook hook)
-{
-    if (hook != ft_nullptr)
-    {
-        g_time_now_ms_hook = hook;
-        return ;
-    }
-    g_time_now_ms_hook = ft_nullptr;
-    return ;
-}
-
-void    time_reset_clock_now_hook(void)
-{
-    g_time_now_ms_hook = ft_nullptr;
-    return ;
-}
+extern t_time_clock_now_hook g_time_clock_now_hook;
 
 int64_t    time_now_ms(void)
 {
@@ -31,8 +14,8 @@ int64_t    time_now_ms(void)
     std::chrono::milliseconds milliseconds;
     int64_t milliseconds_count;
 
-    if (g_time_now_ms_hook != ft_nullptr)
-        time_now = g_time_now_ms_hook();
+    if (g_time_clock_now_hook != ft_nullptr)
+        time_now = g_time_clock_now_hook();
     else
         time_now = std::chrono::system_clock::now();
     milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_now.time_since_epoch());
