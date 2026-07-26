@@ -53,6 +53,10 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `terrain_generation_context` - Holds one validated, immutable generation
   snapshot for a Minecraft world. The world/save owner should initialize it
   once after loading its terrain policy and reuse it for every chunk.
+- `terrain_world_chunk_coordinate` - Experimental coarse world-coordinate
+  holder backed by two `ft_big_number` values. It keeps arbitrarily large
+  signed chunk coordinates out of the per-block generation loops and exposes
+  a stable coordinate hash for chunk-local generation.
 - `terrain_generation_config_signature(...)` - Produces a stable signature for
   generation cache validation.
 - `terrain_get_block_metadata(block_id)` - Looks up the metadata entry for a known block id.
@@ -111,6 +115,11 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   the terrain policy used by a world save.
 - `terrain_generate_chunk_with_context(...)` - Generates from a previously
   initialized context without revalidating the policy for every chunk.
+- `terrain_generate_chunk_at_world_coordinate(...)` - Experimental generation
+  entry point for a big-number chunk coordinate. The coordinate is promoted
+  to the seed once per chunk while generation continues with native local
+  coordinates. This is a branch experiment and does not yet provide seamless
+  cross-chunk continuity for all legacy world-coordinate callbacks.
 - `terrain_generate_chunk(..., const terrain_generation_config &config)` -
   Generates using caller-owned runtime settings without changing libft data.
 - `terrain_generate_chunk_in_region(...)` - Generates a chunk through a

@@ -5,6 +5,7 @@
 
 # include "../Game/game_voxel_chunk.hpp"
 # include "../Basic/class_nullptr.hpp"
+# include "../CPP_class/class_big_number.hpp"
 # include "../Buffer/byte_buffer.hpp"
 # include <stdint.h>
 
@@ -456,6 +457,37 @@ class terrain_generation_context
         uint32_t configuration_signature() const noexcept;
 };
 
+class terrain_world_chunk_coordinate
+{
+    private:
+        ft_big_number _chunk_x;
+        ft_big_number _chunk_z;
+        uint8_t _initialised_state;
+
+    public:
+        terrain_world_chunk_coordinate() noexcept;
+        terrain_world_chunk_coordinate(
+            const terrain_world_chunk_coordinate &other) noexcept = delete;
+        terrain_world_chunk_coordinate(
+            terrain_world_chunk_coordinate &&other) noexcept = delete;
+        ~terrain_world_chunk_coordinate() noexcept;
+        terrain_world_chunk_coordinate &operator=(
+            const terrain_world_chunk_coordinate &other) noexcept = delete;
+        terrain_world_chunk_coordinate &operator=(
+            terrain_world_chunk_coordinate &&other) noexcept = delete;
+        int32_t initialize() noexcept;
+        int32_t initialize(
+            const terrain_world_chunk_coordinate &other) noexcept;
+        uint32_t destroy() noexcept;
+        uint32_t move(terrain_world_chunk_coordinate &other) noexcept;
+        ft_bool is_initialised() const noexcept;
+        int32_t set_chunk_coordinates(const char *chunk_x,
+            const char *chunk_z) noexcept;
+        const ft_big_number &chunk_x() const noexcept;
+        const ft_big_number &chunk_z() const noexcept;
+        uint64_t hash() const noexcept;
+};
+
 int32_t terrain_default_generation_config(
     terrain_generation_config &config) noexcept;
 int32_t terrain_generation_config_add_tree_template(
@@ -559,6 +591,9 @@ int32_t terrain_generate_chunk_with_context(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const char *seed_string,
     const terrain_generation_context &context) noexcept;
+int32_t terrain_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
+    const terrain_world_chunk_coordinate &coordinate,
+    const char *seed_string, const terrain_generation_config &config) noexcept;
 int32_t terrain_generate_chunk_in_region(game_voxel_region &region,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const char *seed_string, const terrain_generation_config &config) noexcept;

@@ -419,6 +419,38 @@ FT_TEST(test_terrain_generation_metadata_identifies_cached_chunk)
     return (1);
 }
 
+FT_TEST(test_terrain_big_world_coordinate_keeps_generation_local)
+{
+    terrain_world_chunk_coordinate coordinate;
+    terrain_generation_config config;
+    game_voxel_chunk first_chunk;
+    game_voxel_chunk second_chunk;
+    uint32_t first_block_id;
+    uint32_t second_block_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.set_chunk_coordinates(
+        "92233720368547758081234567890", "-184467440737095516161234567890"));
+    FT_ASSERT_NEQ(0U, coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_at_world_coordinate(
+        first_chunk, coordinate, "big-coordinate-test", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_at_world_coordinate(
+        second_chunk, coordinate, "big-coordinate-test", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.read_block(7, 80, 9,
+        &first_block_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.read_block(7, 80, 9,
+        &second_block_id));
+    FT_ASSERT_EQ(first_block_id, second_block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.destroy());
+    return (1);
+}
+
 FT_TEST(test_terrain_generation_metadata_survives_chunk_serialization)
 {
     game_voxel_chunk source_chunk;

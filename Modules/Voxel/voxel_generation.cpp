@@ -810,7 +810,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     const char *seed_string,
     const terrain_generation_config &requested_config,
     ft_bool configuration_validated, ft_bool signature_precomputed,
-    uint32_t precomputed_signature) noexcept
+    uint32_t precomputed_signature, ft_bool coordinate_seed_overridden,
+    uint64_t coordinate_seed) noexcept
 {
     terrain_generation_config config;
 
@@ -848,6 +849,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
         return (FT_ERR_INVALID_ARGUMENT);
 
     seed_value = terrain_seed_value(seed_string);
+    if (coordinate_seed_overridden == FT_TRUE)
+        seed_value = terrain_mix_u64(seed_value ^ coordinate_seed);
     if (signature_precomputed == FT_TRUE)
         configuration_signature = precomputed_signature;
     else
@@ -1123,7 +1126,8 @@ int32_t terrain_generate_chunk(game_voxel_chunk &chunk,
     const char *seed_string, const terrain_generation_config &config) noexcept
 {
     return (terrain_generate_chunk_snapshot(chunk, world_block_origin_x,
-        world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U));
+        world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U,
+        FT_FALSE, 0U));
 }
 
 int32_t terrain_generate_chunk_with_context(game_voxel_chunk &chunk,
@@ -1134,7 +1138,17 @@ int32_t terrain_generate_chunk_with_context(game_voxel_chunk &chunk,
         return (FT_ERR_INVALID_OPERATION);
     return (terrain_generate_chunk_snapshot(chunk, world_block_origin_x,
         world_block_origin_z, seed_string, context.config(), FT_TRUE, FT_TRUE,
-        context.configuration_signature()));
+        context.configuration_signature(), FT_FALSE, 0U));
+}
+
+int32_t terrain_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
+    const terrain_world_chunk_coordinate &coordinate,
+    const char *seed_string, const terrain_generation_config &config) noexcept
+{
+    if (coordinate.is_initialised() == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (terrain_generate_chunk_snapshot(chunk, 0, 0, seed_string, config,
+        FT_FALSE, FT_FALSE, 0U, FT_TRUE, coordinate.hash()));
 }
 
 int32_t terrain_generate_chunk_in_region(game_voxel_region &region,
@@ -1177,7 +1191,7 @@ int32_t terrain_generate_chunk_in_region_with_context(
         return (FT_ERR_INVALID_ARGUMENT);
     return (terrain_generate_chunk_snapshot(*chunk, world_block_origin_x,
         world_block_origin_z, seed_string, region_config, FT_TRUE, FT_FALSE,
-        0U));
+        0U, FT_FALSE, 0U));
 }
 
 #endif
