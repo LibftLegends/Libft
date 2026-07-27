@@ -427,8 +427,8 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
     if (directory_stream->closed)
     {
         int32_t unlock_result = directory_stream->mutex.unlock();
-    if (unlock_result != FT_ERR_SUCCESS)
-        cmp_set_error_code(error_code_out, unlock_result);
+        if (unlock_result != FT_ERR_SUCCESS)
+            cmp_set_error_code(error_code_out, unlock_result);
         cmp_set_error_code(error_code_out, FT_ERR_INVALID_STATE);
         return (ft_nullptr);
     }

@@ -34,12 +34,14 @@ t_time  time_now(void)
         current_time = g_time_clock_now_hook();
         seconds_count = std::chrono::duration_cast<std::chrono::seconds>(
             current_time.time_since_epoch()).count();
-        if (std::numeric_limits<std::time_t>::is_signed == FT_TRUE
-            && seconds_count < static_cast<int64_t>(
-                std::numeric_limits<std::time_t>::min()))
+        if constexpr (std::numeric_limits<std::time_t>::is_signed
+            && sizeof(std::time_t) < sizeof(int64_t))
         {
-            (void)(FT_ERR_OUT_OF_RANGE);
-            return (-1);
+            if (seconds_count < std::numeric_limits<std::time_t>::min())
+            {
+                (void)(FT_ERR_OUT_OF_RANGE);
+                return (-1);
+            }
         }
         if (std::numeric_limits<std::time_t>::is_signed == FT_FALSE
             && seconds_count < 0)
