@@ -42,7 +42,11 @@ namespace
 
     static void test_cleanup_runtime_artifacts(const test_path &root_path)
     {
-        test_remove_path(root_path / "test_failures.log");
+        const char *preserve_failure_log; // CI_DIAGNOSTIC: Hold the optional failure-log preservation flag.
+
+        preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG"); // CI_DIAGNOSTIC: Preserve failure details for CI diagnosis.
+        if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
+            test_remove_path(root_path / "test_failures.log"); // CI_DIAGNOSTIC: Remove the diagnostic log outside CI diagnosis.
         test_remove_path(root_path / "test_file_io.txt");
         test_remove_path(root_path / "test_cmp_system_io.txt");
         test_remove_path(root_path / "test_su_file_stream.txt");
