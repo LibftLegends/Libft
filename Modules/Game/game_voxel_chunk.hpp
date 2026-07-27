@@ -83,6 +83,7 @@ class game_voxel_chunk
 #endif
         game_voxel_chunk_section _sections[GAME_VOXEL_CHUNK_SECTION_COUNT];
         ft_bool     _dirty;
+        ft_bool     _generation_protected;
         game_voxel_generation_metadata _generation_metadata;
         uint8_t     _initialised_state;
         static thread_local int32_t _last_error;
@@ -107,9 +108,12 @@ class game_voxel_chunk
             uint32_t *block_id) const noexcept;
         int32_t write_block(int32_t local_x, int32_t local_y, int32_t local_z,
             uint32_t block_id) noexcept;
+        int32_t write_generated_block(int32_t local_x, int32_t local_y,
+            int32_t local_z, uint32_t block_id) noexcept;
         ft_bool is_dirty() const noexcept;
         void clear_dirty() noexcept;
         void clear_generation_metadata() noexcept;
+        ft_bool is_generation_protected() const noexcept;
         int32_t set_generation_metadata(
             const game_voxel_generation_metadata &metadata) noexcept;
         const game_voxel_generation_metadata &get_generation_metadata()

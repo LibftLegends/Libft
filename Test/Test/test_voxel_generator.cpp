@@ -479,6 +479,38 @@ FT_TEST(test_terrain_generation_metadata_survives_chunk_serialization)
     return (1);
 }
 
+FT_TEST(test_terrain_generation_preserves_player_protected_chunk)
+{
+    terrain_generation_config config;
+    game_voxel_chunk chunk;
+    game_voxel_chunk restored_chunk;
+    ft_byte_buffer buffer;
+    uint32_t block_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+        "protected-chunk", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
+        TERRAIN_GENERATOR_BEDROCK_BLOCK));
+    FT_ASSERT_EQ(FT_TRUE, chunk.is_generation_protected());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.serialize(buffer));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.deserialize(buffer));
+    FT_ASSERT_EQ(FT_TRUE, restored_chunk.is_generation_protected());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(restored_chunk, 1000,
+        1000,
+        "different-world", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.read_block(0, 0, 0,
+        &block_id));
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_BEDROCK_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
 FT_TEST(test_terrain_templates_are_owned_and_signature_is_content_based)
 {
     terrain_generation_config first_config;
@@ -1054,6 +1086,11 @@ FT_TEST(test_terrain_nested_config_classes_have_lifecycle_contracts)
     FT_ASSERT_EQ(FT_TRUE, underground.enable_cavern_rooms);
     FT_ASSERT_EQ(4U, underground.cavern_room_chance_percent);
     FT_ASSERT_EQ(5U, underground.cavern_room_radius);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, underground.set_cavern_rooms(FT_FALSE,
+        0U, 0U));
+    FT_ASSERT_EQ(FT_FALSE, underground.enable_cavern_rooms);
+    FT_ASSERT_EQ(0U, underground.cavern_room_chance_percent);
+    FT_ASSERT_EQ(0U, underground.cavern_room_radius);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fluids.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fluids.set_lake_settings(48, 4U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, layers.initialize());

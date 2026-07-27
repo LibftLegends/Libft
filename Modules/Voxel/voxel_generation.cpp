@@ -59,7 +59,7 @@ static int32_t terrain_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
             local_y = 0;
             while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
             {
-                error_code = chunk.write_block(local_x, local_y, local_z,
+                error_code = chunk.write_generated_block(local_x, local_y, local_z,
                     GAME_VOXEL_AIR_BLOCK);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
@@ -176,7 +176,7 @@ static int32_t terrain_place_tree_with_writer(game_voxel_chunk &chunk,
         if (target_x >= 0 && target_x < GAME_VOXEL_CHUNK_WIDTH
             && target_y >= 0 && target_y < GAME_VOXEL_CHUNK_HEIGHT
             && target_z >= 0 && target_z < GAME_VOXEL_CHUNK_DEPTH)
-            error_code = chunk.write_block(target_x, target_y, target_z,
+            error_code = chunk.write_generated_block(target_x, target_y, target_z,
                 tree_template.blocks[block_index].block_id);
         else
             error_code = config.cross_chunk_block_writer(
@@ -716,7 +716,7 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
             if (terrain_block_is_solid(block_id) == FT_TRUE
                 && block_id != TERRAIN_GENERATOR_BEDROCK_BLOCK)
             {
-                error_code = chunk.write_block(target_x, target_y, target_z,
+                error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
@@ -844,6 +844,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     int32_t column_index;
     int32_t feature_margin;
 
+    if (chunk.is_generation_protected() == FT_TRUE)
+        return (FT_ERR_SUCCESS);
     if (configuration_validated == FT_FALSE
         && terrain_generation_config_is_valid(config) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -914,7 +916,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     block_id = subsurface_block_id;
                 else
                     block_id = deep_block_id;
-                error_code = chunk.write_block(local_x, local_y, local_z,
+                error_code = chunk.write_generated_block(local_x, local_y, local_z,
                     block_id);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
@@ -927,7 +929,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 while (local_y >= 0 && local_y > column_height
                     - static_cast<int32_t>(config.layers.beach_depth))
                 {
-                    error_code = chunk.write_block(local_x, local_y, local_z,
+                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
                         config.layers.beach_block_id);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
@@ -939,7 +941,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     - static_cast<int32_t>(config.layers.beach_depth)
                     - static_cast<int32_t>(config.layers.underwater_depth))
                 {
-                    error_code = chunk.write_block(local_x, local_y, local_z,
+                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
                         config.layers.underwater_block_id);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
@@ -968,7 +970,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     world_block_z, TERRAIN_FEATURE_SHRUB_SALT,
                     config.biomes[biome].shrub_chance_percent) == FT_TRUE)
             {
-                error_code = chunk.write_block(local_x,
+                error_code = chunk.write_generated_block(local_x,
                     column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET,
                     local_z, TERRAIN_GENERATOR_SHRUB_BLOCK);
                 if (error_code != FT_ERR_SUCCESS)
@@ -982,7 +984,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 while (local_y <= config.sea_level
                     && local_y < GAME_VOXEL_CHUNK_HEIGHT)
                 {
-                    error_code = chunk.write_block(local_x, local_y, local_z,
+                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
                         TERRAIN_GENERATOR_WATER_BLOCK);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);

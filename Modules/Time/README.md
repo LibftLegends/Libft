@@ -64,7 +64,7 @@ The `Time` module provides wall-clock time, monotonic time, duration structs, ti
 - `time_async_sleep_is_complete(...)` - Reports whether the sleep has elapsed.
 - `time_async_sleep_remaining_ms(...)` - Returns remaining delay.
 - `time_async_sleep_poll(...)` - Polls sleep state through an event loop.
-- `time_set_clock_now_hook(...)` / `time_reset_clock_now_hook()` - Install or remove the clock hook.
+- `time_set_clock_now_hook(...)` / `time_reset_clock_now_hook()` - Install or remove a thread-local test clock hook; changing the hook affects only the calling thread.
 - `time_benchmark_init(...)` / `time_benchmark_reset(...)` - Initialize or clear benchmark accumulators.
 - `time_benchmark_add_sample(...)` / `time_benchmark_add_duration(...)` - Add timing samples.
 - `time_benchmark_snapshot(...)` and benchmark getters - Read sample count, average, jitter, min, max, and error state.

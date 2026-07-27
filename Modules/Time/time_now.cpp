@@ -4,10 +4,11 @@
 #include <chrono>
 #include <ctime>
 #include <cerrno>
+#include <limits>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-t_time_clock_now_hook g_time_clock_now_hook = ft_nullptr;
+thread_local t_time_clock_now_hook g_time_clock_now_hook = ft_nullptr;
 
 void    time_set_clock_now_hook(t_time_clock_now_hook hook)
 {
@@ -25,13 +26,35 @@ t_time  time_now(void)
 {
     std::chrono::system_clock::time_point current_time;
     std::time_t standard_time;
+    int64_t seconds_count;
     int32_t error_code;
 
     if (g_time_clock_now_hook != ft_nullptr)
     {
         current_time = g_time_clock_now_hook();
-        standard_time = std::chrono::duration_cast<std::chrono::seconds>(
+        seconds_count = std::chrono::duration_cast<std::chrono::seconds>(
             current_time.time_since_epoch()).count();
+        if (std::numeric_limits<std::time_t>::is_signed == FT_TRUE
+            && seconds_count < static_cast<int64_t>(
+                std::numeric_limits<std::time_t>::min()))
+        {
+            (void)(FT_ERR_OUT_OF_RANGE);
+            return (-1);
+        }
+        if (std::numeric_limits<std::time_t>::is_signed == FT_FALSE
+            && seconds_count < 0)
+        {
+            (void)(FT_ERR_OUT_OF_RANGE);
+            return (-1);
+        }
+        if (seconds_count >= 0
+            && static_cast<uint64_t>(seconds_count)
+                > static_cast<uint64_t>(std::numeric_limits<std::time_t>::max()))
+        {
+            (void)(FT_ERR_OUT_OF_RANGE);
+            return (-1);
+        }
+        standard_time = static_cast<std::time_t>(seconds_count);
     }
     else
         standard_time = ::time(ft_nullptr);

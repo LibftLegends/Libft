@@ -639,6 +639,13 @@ int32_t terrain_underground_structure_config::set_cavern_rooms(
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
+    if (enabled == FT_FALSE)
+    {
+        this->enable_cavern_rooms = FT_FALSE;
+        this->cavern_room_chance_percent = 0U;
+        this->cavern_room_radius = 0U;
+        return (FT_ERR_SUCCESS);
+    }
     if (chance > 100U || radius < 5U || radius > 32U)
         return (FT_ERR_INVALID_ARGUMENT);
     this->enable_cavern_rooms = enabled;
@@ -2023,7 +2030,7 @@ static int32_t terrain_apply_default_generation_config(
     config.underground_structures.set_shape(2U, 20U);
     config.underground_structures.set_cave_shape(2U, 3U, 20U);
     config.underground_structures.set_cave_entrances(8U, 1U);
-    config.underground_structures.set_cavern_rooms(FT_FALSE, 2U, 5U);
+    config.underground_structures.set_cavern_rooms(FT_FALSE, 0U, 0U);
     config.fluids.set_enabled(FT_TRUE, FT_TRUE);
     config.fluids.set_river_settings(96, 3);
     config.fluids.set_lake_settings(48, 4U);
@@ -3065,8 +3072,12 @@ ft_bool terrain_generation_config_is_valid(
         || config.underground_structures.cave_entrance_radius == 0U
         || config.underground_structures.cave_entrance_radius > 8U
         || config.underground_structures.cavern_room_chance_percent > 100U
-        || config.underground_structures.cavern_room_radius < 5U
-        || config.underground_structures.cavern_room_radius > 32U
+        || (config.underground_structures.enable_cavern_rooms == FT_TRUE
+            && (config.underground_structures.cavern_room_radius < 5U
+                || config.underground_structures.cavern_room_radius > 32U))
+        || (config.underground_structures.enable_cavern_rooms == FT_FALSE
+            && (config.underground_structures.cavern_room_chance_percent != 0U
+                || config.underground_structures.cavern_room_radius != 0U))
         || config.mountain_ridge_scale <= 0
         || config.erosion_noise_scale <= 0)
         return (FT_FALSE);

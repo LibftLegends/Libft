@@ -134,6 +134,117 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `terrain_get_biome_index(...)` - Queries the active configured biome index
   for runtime HUD/debug integration, including custom slots.
 
+## World-generation settings reference
+
+Call `terrain_default_generation_config(config)` first. It initializes all
+nested settings and applies the built-in defaults below. Setters must be called
+after initialization; percentages are inclusive `0`-`100` values, and boolean
+arguments use `FT_TRUE` / `FT_FALSE`.
+
+### Top-level `terrain_generation_config`
+
+| Setting or method | Meaning | Built-in default / constraints |
+| --- | --- | --- |
+| `set_sea_level(value)` | Water-fill height in world blocks. | `72`; any signed height. |
+| `set_noise_scales(large, detail, percent)` | Main terrain scale, detail scale, and detail contribution. Smaller scales create more frequent variation. | `32`, `8`, `50%`; scales must be positive, percent `0`-`100`. |
+| `set_water_chance_percent(value)` | Per-column seeded chance for extra water in eligible low terrain, in addition to river/lake noise. This is not the percentage of the world that becomes water. | `0%`; `0`-`100`. Recommended `0`-`5%`. |
+| `set_biome_count(value)` | Number of active biome slots. | `5`; `1`-`TERRAIN_MAX_CUSTOM_BIOMES` (`16`). |
+| `set_biome_selector(selector, user_data)` | Optional callback that chooses the biome for a world position. | Built-in selector when callback is null. |
+| `set_biome_transitions_enabled(value)` | Smooths height changes between biome zones. | Enabled. |
+| `set_mountain_ridges_enabled(value)` | Enables the global mountain-ridge pass. | Enabled. |
+| `set_mountain_ridge_settings(scale, strength)` | Ridge frequency and height influence. | `48`, `8`; scale must be positive. |
+| `set_erosion_enabled(value)` | Enables erosion noise in terrain height. | Enabled. |
+| `set_erosion_settings(scale, strength)` | Erosion frequency and influence. | `24`, `3`; scale must be positive. |
+| `set_cross_chunk_features_enabled(value)` | Allows features to cross chunk boundaries. | Enabled. Requires a cross-chunk writer for actual routing. |
+| `set_cross_chunk_writer(writer, user_data)` | Receives generated blocks outside the current chunk. | No callback by default. |
+| `set_feature_count(value)` | Number of custom feature rules used. | `0`; maximum `TERRAIN_MAX_FEATURE_RULES` (`16`). |
+| `set_ore_rule_count(value)` | Number of ore rules used. | `3`; maximum `TERRAIN_MAX_ORE_RULES` (`16`). |
+
+### Biomes: `terrain_biome_definition`
+
+Each active biome has a height profile, three block layers, decoration policy,
+and optional terrain policies. The built-in five slots are plains, hills,
+desert, snow, and mountains.
+
+| Setting or method | Meaning | Constraints / default behavior |
+| --- | --- | --- |
+| `set_biome_height_profile(index, surface, variation, topsoil)` | Baseline surface height, seeded height variation, and topsoil depth. | Variation and topsoil must be non-negative. |
+| `set_biome_block_palette(index, surface, subsurface, deep)` | Block ids for the top, subsurface, and deep terrain layers. | Block ids must be known when the final config is validated. |
+| `set_biome_decoration_policy(index, shrubs, trees, shrub_chance, tree_chance)` | On eligible surface columns, each percentage is the seeded chance that the corresponding decoration attempt is made. It is not the percentage of all blocks or all terrain. | Each chance is `0`-`100`; built-in defaults are shrubs enabled at `6%`, trees enabled at `18%`. Recommended shrubs `3`-`8%`, trees `10`-`20%`. |
+| `set_biome_snow_caps_enabled(index, value)` | Allows the global snow-cap pass in this biome. | Enabled by default. |
+| `set_biome_mountain_ridges_enabled(index, value)` | Allows the global ridge pass in this biome. | Enabled by default. |
+| `set_biome_tree_template_override(index, template)` | Replaces the biome's normal tree choices. | Null removes the override. |
+
+### Underground structures
+
+`terrain_underground_structure_config` controls caves, ravines, and surface
+entrances. The built-in policy is ravines and cave rooms enabled, with height
+range `8`-`120`, ravine chance `4%`, cave-room chance `3%`, ravine shape
+`2 x 20`, cave radii `2`-`3`, large-cave chance `20%`, entrance chance `8%`
+with radius `1`, and cavern rooms disabled.
+
+| Method | Meaning | Constraints |
+| --- | --- | --- |
+| `set_enabled(ravines, cave_rooms)` | Enables the original ravine and cave-room passes. | Boolean flags. |
+| `set_chances(ravine, cave_room)` | `ravine` is the seeded chance for a ravine candidate at an eligible underground block; noise and the configured height/surface limits must also match. `cave_room` is the seeded chance that each nearby 12-block cave cell produces a room candidate. A successful room can carve many blocks, so the result is not a direct percentage of underground blocks. | `0`-`100%`. Recommended ravines `2`-`5%`, cave rooms `2`-`5%`; built-in defaults are `4%` and `3%`. |
+| `set_height_range(minimum, maximum)` | Vertical range in which underground structures may form. | Minimum must not exceed maximum. |
+| `set_shape(width, depth)` | Ravine width and depth. | Non-negative values. |
+| `set_cave_shape(small_radius, large_radius, large_chance)` | Chooses the radius of ordinary cave rooms and the conditional chance that a selected room uses the larger radius. Rooms are placed in underground 12-block cells and can occur at any configured height. | Small radius must be non-zero; large radius must be at least the small radius and at most `16`; chance `0`-`100%`. Recommended `2`-`4` blocks, with large-cave chance `10`-`25%`; built-in values are radii `2`/`3` and `20%`. |
+| `set_cave_entrances(chance, radius)` | After a cave-room candidate succeeds, this is the conditional chance that the room also receives a vertical surface entrance. Entrances can only occur from the room center height upward to the terrain surface and are limited by the entrance radius. | Chance `0`-`100%`; radius `1`-`8`. Recommended `5`-`12%` and radius `1`-`2`; built-in values are `8%` and radius `1`. |
+| `set_cavern_rooms(enabled, chance, radius)` | After a cave-room candidate succeeds, this is the conditional chance that the room becomes a large cavern instead of a normal/large cave. Caverns are underground and respect the surface margin; they do not automatically open to the surface. | When disabled, pass `FT_FALSE, 0U, 0U`; values are normalized to zero. When enabled, radius is `5`-`32` and chance is `0`-`100%`. Recommended `2`-`8%` with radius `6`-`12`; use `0%` when a normal cave system is desired. |
+
+### Fluids: `terrain_fluid_config`
+
+| Method | Meaning | Built-in default / constraints |
+| --- | --- | --- |
+| `set_enabled(rivers, lakes)` | Enables river and lake passes independently. | Both enabled. |
+| `set_river_settings(scale, width)` | River noise frequency and river width. | `96`, `3`; scale positive, width non-negative. |
+| `set_lake_settings(scale, chance)` | In eligible low terrain, noise first identifies lake-shaped areas; this chance then decides whether the seeded lake candidate is filled. The final lake coverage is therefore lower than the configured percentage. | `48`, `4%`; scale positive, chance `0`-`100%`. Recommended `2`-`8%`; built-in `4%`. |
+
+### Layers: `terrain_layer_config`
+
+| Method | Meaning | Built-in default / constraints |
+| --- | --- | --- |
+| `set_enabled(beaches, snow_caps)` | Enables beach and snow-cap passes. | Both enabled. |
+| `set_depths(beach, underwater, snow)` | Depth of beach, underwater sediment, and snow-cap layers. | Built-in `3`, `2`, `2`. |
+| `set_snowline(minimum_height)` | Minimum surface height eligible for snow caps. | `84`; must be non-negative. |
+| `set_block_palette(beach, underwater, snow)` | Block ids for the three layer passes. | Built-in palette is sand, sand, snow. |
+
+### Ores and custom features
+
+`terrain_ore_rule` exposes `set_range(minimum, maximum)`,
+`set_vein(size, chance)`, and `set_enabled(value)`. The vein chance is checked
+for each eligible solid block in the configured height range; it is not the
+percentage of blocks that become ore because a successful check places a whole
+vein. As a starting point, use `2`-`8%` for common ores and `1`-`3%` for rare
+ores. The built-in rules reserve
+coal (`8`-`120`, vein `8`, `12%`), iron (`4`-`80`, vein `6`, `8%`), and gold
+(`4`-`48`, vein `4`, `4%`); all three are disabled by default. These built-in
+percentages are intentionally generous starting values for the small test
+worlds, not universal balance recommendations.
+
+`terrain_feature_rule` exposes `set_template(...)`,
+`set_biome_range(biome, minimum_height, maximum_height)`,
+`set_chance(...)`, and `set_requires_dry_land(...)`. Its chance is checked once
+per eligible feature-placement column after the biome, height, and dry-land
+filters pass. Recommended values are `5`-`15%` for common trees/structures and
+`1`-`5%` for rare structures. A feature is only placed when its template,
+biome/height range, chance, and dry-land requirements all match. Feature rules
+are disabled until included in the active feature count.
+
+Example:
+
+```cpp
+terrain_generation_config config;
+terrain_default_generation_config(config);
+config.set_sea_level(68);
+config.set_noise_scales(40, 10, 65);
+config.underground_structures.set_cavern_rooms(FT_TRUE, 6U, 8U);
+config.fluids.set_enabled(FT_FALSE, FT_TRUE);
+terrain_generate_chunk(chunk, 0, 0, "world-seed", config);
+config.destroy();
+```
+
 ## Voxel Behavior
 
 - Biomes are selected in world-space zones so adjacent chunks line up cleanly across region boundaries.

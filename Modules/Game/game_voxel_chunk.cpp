@@ -11,7 +11,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #define GAME_VOXEL_CHUNK_MAGIC 0x474D4348U
-#define GAME_VOXEL_CHUNK_VERSION 2U
+#define GAME_VOXEL_CHUNK_VERSION 3U
 
 thread_local int32_t game_voxel_chunk_section::_last_error = FT_ERR_SUCCESS;
 thread_local int32_t game_voxel_chunk::_last_error = FT_ERR_SUCCESS;
@@ -385,7 +385,8 @@ int32_t game_voxel_chunk::set_error(int32_t error_code) noexcept
 }
 
 game_voxel_chunk::game_voxel_chunk() noexcept
-    : _sections(), _dirty(FT_FALSE), _generation_metadata(),
+    : _sections(), _dirty(FT_FALSE), _generation_protected(FT_FALSE),
+    _generation_metadata(),
     _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -430,6 +431,7 @@ int32_t game_voxel_chunk::initialize() noexcept
         section_index += 1;
     }
     this->_dirty = FT_FALSE;
+    this->_generation_protected = FT_FALSE;
     this->clear_generation_metadata();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (this->set_error(FT_ERR_SUCCESS));
@@ -451,6 +453,7 @@ int32_t game_voxel_chunk::destroy() noexcept
         section_index += 1;
     }
     this->_dirty = FT_FALSE;
+    this->_generation_protected = FT_FALSE;
     this->clear_generation_metadata();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (this->set_error(FT_ERR_SUCCESS));
@@ -474,6 +477,7 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
         if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
             (void)this->destroy();
         this->_dirty = FT_FALSE;
+        this->_generation_protected = FT_FALSE;
         this->clear_generation_metadata();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (this->set_error(FT_ERR_SUCCESS));
@@ -494,8 +498,10 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
         section_index += 1;
     }
     this->_dirty = other._dirty;
+    this->_generation_protected = other._generation_protected;
     this->_generation_metadata = other._generation_metadata;
     other.clear_generation_metadata();
+    other._generation_protected = FT_FALSE;
     other._dirty = FT_FALSE;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
     return (this->set_error(FT_ERR_SUCCESS));
@@ -539,7 +545,29 @@ int32_t game_voxel_chunk::write_block(int32_t local_x, int32_t local_y,
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
     this->_dirty = FT_TRUE;
+    this->_generation_protected = FT_TRUE;
     this->clear_generation_metadata();
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_voxel_chunk::write_generated_block(int32_t local_x,
+    int32_t local_y, int32_t local_z, uint32_t block_id) noexcept
+{
+    uint8_t section_index;
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::write_generated_block");
+    if (local_x < 0 || local_x >= GAME_VOXEL_CHUNK_WIDTH || local_y < 0
+        || local_y >= GAME_VOXEL_CHUNK_HEIGHT || local_z < 0
+        || local_z >= GAME_VOXEL_CHUNK_DEPTH)
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    section_index = static_cast<uint8_t>(local_y >> 4);
+    error_code = this->_sections[section_index].set_block(
+        game_voxel_chunk::local_index(local_x, local_y, local_z), block_id);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    this->_dirty = FT_TRUE;
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
@@ -564,6 +592,11 @@ void game_voxel_chunk::clear_generation_metadata() noexcept
     this->_generation_metadata.generator_version = 0U;
     this->_generation_metadata.valid = FT_FALSE;
     return ;
+}
+
+ft_bool game_voxel_chunk::is_generation_protected() const noexcept
+{
+    return (this->_generation_protected);
 }
 
 int32_t game_voxel_chunk::set_generation_metadata(
@@ -650,6 +683,9 @@ int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
     error_code = buffer.append_u8(this->_generation_metadata.valid);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u8(this->_generation_protected);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u64_le(this->_generation_metadata.seed_value);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -689,6 +725,7 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
     uint32_t version;
     uint8_t section_index;
     uint8_t metadata_valid;
+    uint8_t generation_protected;
     uint64_t metadata_seed_value;
     uint32_t metadata_origin_x;
     uint32_t metadata_origin_z;
@@ -712,6 +749,8 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     }
     error_code = buffer.read_u8(&metadata_valid);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = buffer.read_u8(&generation_protected);
     if (error_code == FT_ERR_SUCCESS)
         error_code = buffer.read_u64_le(&metadata_seed_value);
     if (error_code == FT_ERR_SUCCESS)
@@ -737,7 +776,13 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
         (void)this->destroy();
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     }
+    if (generation_protected > 1U)
+    {
+        (void)this->destroy();
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    }
     this->_generation_metadata.valid = static_cast<ft_bool>(metadata_valid);
+    this->_generation_protected = static_cast<ft_bool>(generation_protected);
     this->_generation_metadata.seed_value = metadata_seed_value;
     this->_generation_metadata.world_block_origin_x = static_cast<int32_t>(
         metadata_origin_x);

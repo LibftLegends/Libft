@@ -6,7 +6,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-extern t_time_clock_now_hook g_time_clock_now_hook;
+extern thread_local t_time_clock_now_hook g_time_clock_now_hook;
 
 int64_t    time_now_ms(void)
 {
