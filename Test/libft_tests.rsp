@@ -1,0 +1,1 @@
+objs_test_opt0/main.o objs_test_opt0/Test/test_voxel_block_metadata.o objs_test_opt0/Test/test_voxel_generator.o objs_test_opt0/Test/test_voxel_mesh.o -Wl,--start-group C:/Users/Adyem/Documents/Game_development/Minecraft/Libft/Test/Full_Libft_test.a -Wl,--end-group
