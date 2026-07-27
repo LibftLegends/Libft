@@ -955,7 +955,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 while (local_y >= 0 && local_y > column_height
                     - static_cast<int32_t>(config.layers.snow_cap_depth))
                 {
-                    error_code = chunk.write_block(local_x, local_y, local_z,
+                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
                         config.layers.snow_cap_block_id);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
