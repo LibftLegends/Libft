@@ -137,6 +137,7 @@ jobs:
             Test/ci_windows_failures.log
             Test/ci_windows_secure_wipe_runtime.log
             Test/ci_windows_secure_wipe_runtime.err
-            windows_startup_diagnostics.log # TEMP_DIAGNOSTIC_REMOVE: Remove after heap diagnosis.
+            # TEMP_DIAGNOSTIC_REMOVE: Remove this path after heap diagnosis.
+            windows_startup_diagnostics.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
