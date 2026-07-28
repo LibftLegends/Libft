@@ -48,6 +48,18 @@ struct s_runtime_file_guard
 
 static std::string runtime_project_root(void)
 {
+#if defined(_WIN32) || defined(_WIN64)
+    char current_directory[32768];
+    DWORD written_size;
+
+    written_size = GetCurrentDirectoryA(
+        static_cast<DWORD>(sizeof(current_directory)), current_directory);
+    if (written_size == 0
+        || written_size >= static_cast<DWORD>(sizeof(current_directory)))
+        return (std::string());
+    return (std::string(current_directory,
+        static_cast<std::size_t>(written_size)));
+#else
     std::filesystem::path candidate_directory;
 
     candidate_directory = std::filesystem::current_path();
@@ -68,6 +80,7 @@ static std::string runtime_project_root(void)
         candidate_directory = parent_directory;
     }
     return (std::string());
+#endif
 }
 
 static int32_t runtime_write_source_file(const char *source_path,
