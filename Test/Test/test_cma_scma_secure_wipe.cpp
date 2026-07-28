@@ -113,21 +113,13 @@ static int32_t runtime_run_command(const std::string &command)
 {
     int system_status;
     FILE *log_file;
-#if !defined(_WIN32) && !defined(_WIN64)
     std::string logged_command;
-#endif
 
-#if defined(_WIN32) || defined(_WIN64)
-    system_status = system(command.c_str());
-    if (system_status == 0 || system_status == 1)
-        return (1);
-#else
     logged_command = command;
     logged_command += " > secure_wipe_runtime.err 2>&1";
     system_status = system(logged_command.c_str());
     if (system_status == 0)
         return (1);
-#endif
     if (system_status != 0)
     {
         log_file = fopen("secure_wipe_runtime.log", "a");
@@ -137,15 +129,12 @@ static int32_t runtime_run_command(const std::string &command)
                 system_status);
             fclose(log_file);
         }
-#if defined(_WIN32) || defined(_WIN64)
         log_file = fopen("secure_wipe_runtime.cmd", "wb");
         if (log_file != ft_nullptr)
         {
             fprintf(log_file, "@echo off\r\n%s\r\n", command.c_str());
             fclose(log_file);
-            (void)system("cmd /c secure_wipe_runtime.cmd > secure_wipe_runtime.err 2>&1");
         }
-#endif
         return (0);
     }
     return (1);
@@ -407,13 +396,18 @@ static int32_t runtime_compile_and_run_helper(void)
     compiler = getenv("CXX");
     if (compiler == ft_nullptr || compiler[0] == '\0')
 #if defined(_WIN32) || defined(_WIN64)
-        compiler = "C:/ProgramData/mingw64/mingw64/bin/g++.exe";
+        compiler = "g++";
 #else
         compiler = "g++";
 #endif
+#if defined(_WIN32) || defined(_WIN64)
+    compile_command = compiler;
+#else
     compile_command = "\"";
     compile_command += compiler;
-    compile_command += "\" -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
+    compile_command += "\"";
+#endif
+    compile_command += " -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
     compile_command += " -Wno-missing-declarations -DLIBFT_TEST_BUILD";
     compile_command += " -DLIBFT_INTERNAL_HEADERS -I\"";
     compile_command += project_root;
@@ -432,7 +426,7 @@ static int32_t runtime_compile_and_run_helper(void)
     compile_command += " -pthread -lz";
 #elif defined(_WIN32) || defined(_WIN64)
     compile_command += " -pthread -Wl,--allow-multiple-definition";
-    compile_command += " -lz -lws2_32 -lgdi32 -lwinmm -lopengl32";
+    compile_command += " -lz -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32";
 #else
     compile_command += " -pthread -Wl,--allow-multiple-definition -rdynamic";
     compile_command += " -lz -ldl";

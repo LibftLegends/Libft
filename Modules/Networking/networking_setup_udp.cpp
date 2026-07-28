@@ -269,10 +269,18 @@ int32_t udp_socket::bind_socket(const SocketConfig &config)
 
 int32_t udp_socket::connect_socket(const SocketConfig &config)
 {
+    socklen_t address_length;
+
     if (config._type != SocketType::CLIENT)
         return (FT_ERR_SUCCESS);
+    if (config._address_family == AF_INET)
+        address_length = sizeof(struct sockaddr_in);
+    else if (config._address_family == AF_INET6)
+        address_length = sizeof(struct sockaddr_in6);
+    else
+        return (FT_ERR_CONFIGURATION);
     if (nw_connect(this->_socket_fd, reinterpret_cast<const struct sockaddr *>(&this->_address),
-            sizeof(this->_address)) < 0)
+            address_length) < 0)
         return (FT_ERR_SOCKET_CONNECT_FAILED);
     return (FT_ERR_SUCCESS);
 }

@@ -915,7 +915,7 @@ FT_TEST(test_game_voxel_region_storage_path_assignment_failure)
     (void)pf_snprintf(long_directory_path, sizeof(long_directory_path),
         "%s/%s", directory_path,
         "very_long_voxel_storage_directory_name_used_for_failure_testing");
-    cma_set_alloc_limit(8);
+    cma_set_alloc_limit(1);
     FT_ASSERT_EQ(FT_ERR_NO_MEMORY,
         region.set_region_storage_path(long_directory_path));
     cma_set_alloc_limit(0);

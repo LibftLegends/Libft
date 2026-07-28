@@ -82,6 +82,10 @@ jobs:
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+          if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
+          if (Test-Path test_failures.log) { Get-Content test_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
+          if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
+          if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.
 
       # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
@@ -97,6 +101,8 @@ jobs:
             if [ -f secure_wipe_runtime.err ]; then cp secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
             cat "Test/ci_ubuntu_${test_name}_output.log" # CI_DIAGNOSTIC: Print targeted output into the Actions log.
             cat "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Print exact assertion details into the Actions log.
+            if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Print runtime status into the Actions log.
+            if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Print runtime compiler errors into the Actions log.
           done # CI_DIAGNOSTIC: Finish all targeted reruns.
           uname -a # CI_DIAGNOSTIC: Record the Ubuntu kernel and architecture.
           c++ --version # CI_DIAGNOSTIC: Record the active C++ compiler.

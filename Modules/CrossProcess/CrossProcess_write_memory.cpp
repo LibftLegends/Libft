@@ -56,7 +56,8 @@ int32_t cp_write_memory(const cross_process_message &message,
     if (has_error_slot == FT_TRUE)
     {
         error_offset = compute_offset(message.error_memory_address, message.stack_base_address);
-        if (error_offset + sizeof(int32_t) > message.remote_memory_size
+        if (error_offset > message.remote_memory_size
+            || sizeof(int32_t) > message.remote_memory_size - error_offset
             || error_offset < data_offset)
         {
             has_failure = FT_TRUE;

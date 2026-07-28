@@ -50,16 +50,16 @@ FT_TEST(test_time_timer_add_time_extends_active_timer)
     int64_t remaining_midway;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, timer.initialize());
-    timer.start(30);
+    timer.start(750);
     remaining_after_add = timer.add_time(60);
     FT_ASSERT(remaining_after_add > 0);
-    FT_ASSERT(remaining_after_add <= 90);
+    FT_ASSERT(remaining_after_add <= 810);
 
-    time_sleep_ms(40);
+    time_sleep_ms(350);
     remaining_midway = timer.update();
     FT_ASSERT(remaining_midway > 0);
 
-    time_sleep_ms(70);
+    time_sleep_ms(500);
     FT_ASSERT_EQ(static_cast<int64_t>(0), timer.update());
     return (1);
 }

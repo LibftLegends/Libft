@@ -433,6 +433,7 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
         return (ft_nullptr);
     }
     DIR *dir = reinterpret_cast<DIR*>(directory_stream->file_descriptor);
+    errno = 0;
     struct dirent *entry = readdir(dir);
     if (!entry)
     {
