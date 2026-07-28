@@ -906,6 +906,7 @@ FT_TEST(test_game_voxel_region_storage_path_assignment_failure)
     char directory_path[256];
     char long_directory_path[256];
     game_voxel_region region;
+    void *allocation_guard;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_make_temp_path(directory_path,
         sizeof(directory_path)));
@@ -915,10 +916,14 @@ FT_TEST(test_game_voxel_region_storage_path_assignment_failure)
     (void)pf_snprintf(long_directory_path, sizeof(long_directory_path),
         "%s/%s", directory_path,
         "very_long_voxel_storage_directory_name_used_for_failure_testing");
+    allocation_guard = ft_nullptr;
     cma_set_alloc_limit(1);
+    allocation_guard = cma_malloc(1);
+    FT_ASSERT(allocation_guard != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_NO_MEMORY,
         region.set_region_storage_path(long_directory_path));
     cma_set_alloc_limit(0);
+    cma_free(allocation_guard);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.set_region_storage_path(directory_path));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.destroy());
     test_voxel_cleanup_region_dir(directory_path);

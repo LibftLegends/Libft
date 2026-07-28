@@ -119,6 +119,10 @@ int32_t cp_write_memory(const cross_process_message &message,
     if (operation_error != FT_ERR_SUCCESS)
         return (operation_error);
     if (has_failure == FT_TRUE)
+    {
+        if (failure_error == FT_ERR_INVALID_ARGUMENT)
+            errno = EINVAL;
         return (failure_error);
+    }
     return (FT_ERR_SUCCESS);
 }
