@@ -30,6 +30,9 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/pthread.hpp"
 #include "../Errno/errno.hpp"
+#if defined(_WIN32) || defined(_WIN64)
+# include <windows.h>
+#endif
 
 int32_t cmp_readline_terminal_width(int32_t *width_out);
 #ifdef LIBFT_TEST_BUILD
@@ -55,6 +58,31 @@ struct s_test_case
     const char *module;
     const char *name;
 };
+
+void ft_test_runner_write_startup_diagnostic(const char *message)
+{
+    // TEMP_DIAGNOSTIC_REMOVE: Delete this startup tracing function after diagnosis.
+#if defined(_WIN32) || defined(_WIN64)
+    HANDLE file_handle;
+    DWORD bytes_written;
+    DWORD message_length;
+
+    if (message == NULL)
+        return ;
+    message_length = static_cast<DWORD>(std::strlen(message));
+    file_handle = CreateFileA("windows_startup_diagnostics.log",
+        FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file_handle == INVALID_HANDLE_VALUE)
+        return ;
+    (void)WriteFile(file_handle, message, message_length, &bytes_written,
+        NULL);
+    (void)CloseHandle(file_handle);
+#else
+    (void)message;
+#endif
+    return ;
+}
 
 static int32_t *get_test_count(void)
 {
@@ -127,11 +155,29 @@ static int32_t ensure_test_capacity(int32_t required_capacity)
     }
     allocation_size = sizeof(s_test_case)
         * static_cast<ft_size_t>(new_capacity);
+    // TEMP_DIAGNOSTIC_REMOVE: Delete startup allocation tracing after diagnosis.
+    if (*test_capacity == 0)
+        ft_test_runner_write_startup_diagnostic(
+            "registry:initial-allocation-before-realloc\n");
+    else
+        ft_test_runner_write_startup_diagnostic(
+            "registry:growing-before-realloc\n");
     new_tests = std::realloc(*tests, allocation_size);
     if (new_tests == NULL)
+    {
+        ft_test_runner_write_startup_diagnostic(
+            "registry:realloc-returned-null\n");
         return (FT_ERR_NO_MEMORY);
+    }
     *tests = static_cast<s_test_case *>(new_tests);
     *test_capacity = new_capacity;
+    // TEMP_DIAGNOSTIC_REMOVE: Delete allocation completion tracing after diagnosis.
+    if (new_capacity == FT_TEST_RUNNER_INITIAL_CAPACITY)
+        ft_test_runner_write_startup_diagnostic(
+            "registry:initial-allocation-complete\n");
+    else
+        ft_test_runner_write_startup_diagnostic(
+            "registry:growing-allocation-complete\n");
     return (FT_ERR_SUCCESS);
 }
 
@@ -190,6 +236,8 @@ static void sort_tests(void)
         {
             return (std::strcmp(left_test.module, right_test.module) < 0);
         });
+    // TEMP_DIAGNOSTIC_REMOVE: Delete sort phase tracing after diagnosis.
+    ft_test_runner_write_startup_diagnostic("runner:sort-complete\n");
     return ;
 }
 
@@ -559,6 +607,9 @@ int32_t ft_register_test(t_test_func func, const char *description, const char *
     test_case.module = module;
     test_case.name = name;
     test_count = get_test_count();
+    // TEMP_DIAGNOSTIC_REMOVE: Delete registration boundary tracing after diagnosis.
+    if (*test_count == 0)
+        ft_test_runner_write_startup_diagnostic("registry:first-test\n");
     error_code = ensure_test_capacity(*test_count + 1);
     if (error_code != FT_ERR_SUCCESS)
     {
@@ -567,6 +618,9 @@ int32_t ft_register_test(t_test_func func, const char *description, const char *
     tests = get_tests();
     tests[*test_count] = test_case;
     *test_count = *test_count + 1;
+    if (*test_count == 4096 || *test_count == 4097)
+        ft_test_runner_write_startup_diagnostic(
+            "registry:capacity-boundary-crossed\n");
     return (FT_ERR_SUCCESS);
 }
 
@@ -626,10 +680,13 @@ int32_t ft_run_registered_tests(void)
     int32_t hide_successful_tests;
     int32_t terminal_width;
     int32_t show_running_line;
+    // TEMP_DIAGNOSTIC_REMOVE: Delete runner startup tracing after diagnosis.
+    ft_test_runner_write_startup_diagnostic("runner:entered\n");
     log_file = fopen("test_failures.log", "w");
     if (log_file)
         fclose(log_file);
     sort_tests();
+    ft_test_runner_write_startup_diagnostic("runner:tests-sorted\n");
     tests = get_tests();
     test_count = get_test_count();
     name_filter = get_name_filter();
