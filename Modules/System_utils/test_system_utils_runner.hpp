@@ -17,8 +17,6 @@ typedef int32_t (*t_test_func)(void);
 #endif
 
 int32_t ft_register_test(t_test_func func, const char *description, const char *module, const char *name);
-// TEMP_DIAGNOSTIC_REMOVE: Delete after the Windows heap corruption is identified.
-void ft_test_runner_write_startup_diagnostic(const char *message);
 void ft_test_fail(const char *expression, const char *file, int32_t line);
 void ft_test_fail_values(const char *expression, const char *file, int32_t line,
     const char *expected_value, const char *actual_value);

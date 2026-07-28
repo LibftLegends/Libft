@@ -49,8 +49,6 @@ int main(int argc, char **argv)
     std::error_code error_code;
     test_path executable_path;
     test_path root_path;
-    // TEMP_DIAGNOSTIC_REMOVE: Delete main-entry tracing after diagnosis.
-    ft_test_runner_write_startup_diagnostic("main:entered\n");
     if (argc > 0 && argv != NULL && argv[0] != NULL)
     {
         executable_path = test_path(argv[0]);

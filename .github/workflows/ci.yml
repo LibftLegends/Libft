@@ -68,7 +68,7 @@ jobs:
         shell: powershell
         id: windows_tests
         env:
-          FT_TEST_HIDE_SUCCESSFUL: '0' # CI_DIAGNOSTIC: Keep the last reached test visible for native crash diagnosis.
+          FT_TEST_HIDE_SUCCESSFUL: '1' # CI_DIAGNOSTIC: Silence successful Windows tests while preserving failures.
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Windows runs.
         run: |
           $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
@@ -83,7 +83,6 @@ jobs:
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
-          if (Test-Path windows_startup_diagnostics.log) { Get-Content windows_startup_diagnostics.log } # TEMP_DIAGNOSTIC_REMOVE: Print heap-startup phase markers until diagnosis is complete.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
           if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
           if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
@@ -137,7 +136,5 @@ jobs:
             Test/ci_windows_failures.log
             Test/ci_windows_secure_wipe_runtime.log
             Test/ci_windows_secure_wipe_runtime.err
-            # TEMP_DIAGNOSTIC_REMOVE: Remove this path after heap diagnosis.
-            windows_startup_diagnostics.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
