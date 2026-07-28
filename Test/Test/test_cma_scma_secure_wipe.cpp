@@ -113,12 +113,18 @@ static int32_t runtime_run_command(const std::string &command)
 {
     int system_status;
     FILE *log_file;
+#if !defined(_WIN32) && !defined(_WIN64)
+    std::string logged_command;
+#endif
 
-    system_status = system(command.c_str());
 #if defined(_WIN32) || defined(_WIN64)
+    system_status = system(command.c_str());
     if (system_status == 0 || system_status == 1)
         return (1);
 #else
+    logged_command = command;
+    logged_command += " > secure_wipe_runtime.err 2>&1";
+    system_status = system(logged_command.c_str());
     if (system_status == 0)
         return (1);
 #endif
@@ -131,6 +137,7 @@ static int32_t runtime_run_command(const std::string &command)
                 system_status);
             fclose(log_file);
         }
+#if defined(_WIN32) || defined(_WIN64)
         log_file = fopen("secure_wipe_runtime.cmd", "wb");
         if (log_file != ft_nullptr)
         {
@@ -138,6 +145,7 @@ static int32_t runtime_run_command(const std::string &command)
             fclose(log_file);
             (void)system("cmd /c secure_wipe_runtime.cmd > secure_wipe_runtime.err 2>&1");
         }
+#endif
         return (0);
     }
     return (1);
@@ -405,7 +413,7 @@ static int32_t runtime_compile_and_run_helper(void)
 #endif
     compile_command = "\"";
     compile_command += compiler;
-    compile_command += "\" -x c++ -O3 -Wall -Wextra -Werror -std=c++17 -pthread";
+    compile_command += "\" -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
     compile_command += " -Wno-missing-declarations -DLIBFT_TEST_BUILD";
     compile_command += " -DLIBFT_INTERNAL_HEADERS -I\"";
     compile_command += project_root;

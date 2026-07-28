@@ -565,10 +565,17 @@ int32_t cmp_file_exists(const char *path, int32_t *exists_out,
 int32_t cmp_file_delete(const char *path, int32_t *error_code_out)
 {
     int32_t error_code;
+    struct stat path_status;
 
     if (path == ft_nullptr)
     {
         error_code = FT_ERR_INVALID_ARGUMENT;
+        cmp_set_error_code(error_code_out, error_code);
+        return (error_code);
+    }
+    if (stat(path, &path_status) == 0 && S_ISDIR(path_status.st_mode))
+    {
+        error_code = FT_ERR_INVALID_OPERATION;
         cmp_set_error_code(error_code_out, error_code);
         return (error_code);
     }

@@ -71,8 +71,14 @@ jobs:
           FT_TEST_HIDE_SUCCESSFUL: '0' # CI_DIAGNOSTIC: Show every Windows test result while diagnosing the runner failure.
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Windows runs.
         run: |
-          & .\Test\libft_tests.exe 2>&1 | Tee-Object -FilePath Test\ci_windows_full_output.log # CI_DIAGNOSTIC: Capture and display the complete Windows test output.
-          $test_status = $LASTEXITCODE # CI_DIAGNOSTIC: Preserve the executable exit status after Tee-Object.
+          $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
+          try {
+            & .\Test\libft_tests.exe *> Test\ci_windows_full_output.log # CI_DIAGNOSTIC: Capture stdout and stderr without a native-command pipeline.
+            $test_status = $LASTEXITCODE # CI_DIAGNOSTIC: Preserve the executable exit status.
+          }
+          catch {
+            $_ | Out-File -FilePath Test\ci_windows_full_output.log -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
+          }
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
