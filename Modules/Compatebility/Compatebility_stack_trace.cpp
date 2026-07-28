@@ -17,7 +17,7 @@
 # include <execinfo.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 # include <dlfcn.h>
 #endif
 
@@ -202,6 +202,7 @@ static int32_t    cmp_stack_trace_symbolize_windows_addr2line(const void *addres
 #else
     preferred_base = 0x00400000ULL;
 #endif
+
     frame_address = reinterpret_cast<DWORD64>(address);
     relative_address = frame_address;
     if (module_base != 0 && frame_address >= module_base)
@@ -389,6 +390,34 @@ static int32_t    cmp_stack_trace_symbolize_windows(const void *address,
 }
 #endif
 
+#if defined(__APPLE__)
+static int32_t    cmp_stack_trace_symbolize_macos(const void *address,
+        char *symbol_buffer, ft_size_t symbol_buffer_size,
+        char *location_buffer, ft_size_t location_buffer_size)
+{
+    Dl_info info;
+    const char *symbol_name;
+    int32_t formatted_length;
+
+    if (address == NULL || symbol_buffer == NULL || location_buffer == NULL
+        || symbol_buffer_size == 0 || location_buffer_size == 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    symbol_buffer[0] = '\0';
+    location_buffer[0] = '\0';
+    if (dladdr(address, &info) == 0 || info.dli_sname == NULL)
+        return (FT_ERR_NOT_FOUND);
+    symbol_name = info.dli_sname;
+    if (symbol_name[0] == '_')
+        symbol_name += 1;
+    formatted_length = pf_snprintf(symbol_buffer, symbol_buffer_size,
+        "%s", symbol_name);
+    if (formatted_length < 0
+        || static_cast<ft_size_t>(formatted_length) >= symbol_buffer_size)
+        return (FT_ERR_OUT_OF_RANGE);
+    return (FT_ERR_SUCCESS);
+}
+#endif
+
 ft_size_t    cmp_stack_trace_capture(void **frames, ft_size_t capacity,
         ft_size_t skip_count)
 {
@@ -528,6 +557,9 @@ int32_t    cmp_stack_trace_symbolize_address(const void *address,
         symbol_buffer_size, location_buffer, location_buffer_size));
 #elif defined(_WIN32)
     return (cmp_stack_trace_symbolize_windows(address, symbol_buffer,
+        symbol_buffer_size, location_buffer, location_buffer_size));
+#elif defined(__APPLE__)
+    return (cmp_stack_trace_symbolize_macos(address, symbol_buffer,
         symbol_buffer_size, location_buffer, location_buffer_size));
 #else
     (void)address;
