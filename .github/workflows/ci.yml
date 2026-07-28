@@ -68,7 +68,7 @@ jobs:
         shell: powershell
         id: windows_tests
         env:
-          FT_TEST_HIDE_SUCCESSFUL: '1' # CI_DIAGNOSTIC: Limit output while preserving failing test details.
+          FT_TEST_HIDE_SUCCESSFUL: '0' # CI_DIAGNOSTIC: Keep the last reached test visible for native crash diagnosis.
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Windows runs.
         run: |
           $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
