@@ -286,8 +286,7 @@ FT_TEST(test_udp_send_receive_ipv4)
         return (0);
     message = "data";
     send_result = client.send_to(message, ft_strlen(message), 0,
-        reinterpret_cast<const struct sockaddr*>(&destination_address),
-        sizeof(struct sockaddr_in));
+        ft_nullptr, 0);
     if (send_result != static_cast<ssize_t>(ft_strlen(message)))
         return (0);
     address_length = sizeof(destination_address);

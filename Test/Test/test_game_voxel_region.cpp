@@ -915,7 +915,10 @@ FT_TEST(test_game_voxel_region_storage_path_assignment_failure)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.initialize(0, 0, directory_path));
     (void)pf_snprintf(long_directory_path, sizeof(long_directory_path),
         "%s/%s", directory_path,
-        "very_long_voxel_storage_directory_name_used_for_failure_testing");
+        "very_long_voxel_storage_directory_name_used_for_failure_testing_"
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "cccccccccccccccccccccccccccccccccccccccccccccccc");
     allocation_guard = ft_nullptr;
     cma_set_alloc_limit(1);
     allocation_guard = cma_malloc(1);

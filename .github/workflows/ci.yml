@@ -79,11 +79,12 @@ jobs:
           catch {
             $_ | Out-File -FilePath Test\ci_windows_full_output.log -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
           }
+          Write-Host "Windows test exit code: $test_status" # CI_DIAGNOSTIC: Make native process failures explicit.
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
-          if (Test-Path test_failures.log) { Get-Content test_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
+          if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
           if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
           if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.

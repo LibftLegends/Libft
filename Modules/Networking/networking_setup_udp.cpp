@@ -359,7 +359,11 @@ ssize_t udp_socket::send_to(const void *data, ft_size_t size, int32_t flags,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (-1);
     }
-    send_result = nw_sendto(this->_socket_fd, data, size, flags, destination_address, address_length);
+    if (destination_address == ft_nullptr)
+        send_result = nw_send(this->_socket_fd, data, size, flags);
+    else
+        send_result = nw_sendto(this->_socket_fd, data, size, flags,
+            destination_address, address_length);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (send_result);
 }

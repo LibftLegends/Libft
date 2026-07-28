@@ -356,7 +356,17 @@ static void reset_mutex_failure_overrides(void)
 
 static void report_runner_failure(const char *message)
 {
-    (void)message;
+    FILE *failure_log;
+
+    if (message == NULL)
+        message = "unknown test runner failure";
+    std::fprintf(stderr, "TEST RUNNER FAILURE: %s\n", message);
+    failure_log = std::fopen("test_failures.log", "a");
+    if (failure_log != NULL)
+    {
+        std::fprintf(failure_log, "TEST RUNNER FAILURE: %s\n", message);
+        std::fclose(failure_log);
+    }
     return ;
 }
 
