@@ -22,6 +22,9 @@ all: $(TARGET)
 .PHONY: FORCE
 FORCE:
 
+$(OBJDIR) $(DEBUG_OBJDIR) $(EFFICIENCY_OBJDIR):
+	@$(MKDIR) $@
+
 $(TARGET): $(OBJS) $(LIBFT_ARCHIVE)
 	@$(RM) $@
 ifeq ($(UNAME_S),Darwin)

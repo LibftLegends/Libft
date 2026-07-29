@@ -378,9 +378,9 @@ ssize_t udp_socket::send_to(const void *data, ft_size_t size, int32_t flags,
     }
     if (destination_address != ft_nullptr
         && ((destination_address->sa_family == AF_INET
-                && address_length < sizeof(struct sockaddr_in))
+                && address_length < static_cast<socklen_t>(sizeof(struct sockaddr_in)))
             || (destination_address->sa_family == AF_INET6
-                && address_length < sizeof(struct sockaddr_in6))))
+                && address_length < static_cast<socklen_t>(sizeof(struct sockaddr_in6)))))
     {
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (-1);
