@@ -306,14 +306,14 @@ int32_t game_currency_rate::set_error(int32_t error_code) noexcept
 
 int32_t game_currency_rate::get_error() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_currency_rate::get_error");
     return (game_currency_rate::_last_error);
 }
 
 const char *game_currency_rate::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_currency_rate::get_error_str");
     return (ft_strerror(game_currency_rate::_last_error));
 }

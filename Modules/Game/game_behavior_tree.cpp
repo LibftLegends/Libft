@@ -196,14 +196,14 @@ int32_t game_behavior_composite::destroy() noexcept
 
 int32_t game_behavior_composite::get_error() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_behavior_composite::get_error");
     return (game_behavior_node::get_error());
 }
 
 const char *game_behavior_composite::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_behavior_composite::get_error_str");
     return (ft_strerror(this->get_error()));
 }
@@ -539,14 +539,14 @@ int32_t game_behavior_tree::tick(game_behavior_context &context) noexcept
 
 int32_t game_behavior_tree::get_error() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_behavior_tree::get_error");
     return (game_behavior_tree::_last_error);
 }
 
 const char *game_behavior_tree::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_behavior_tree::get_error_str");
     return (ft_strerror(game_behavior_tree::_last_error));
 }

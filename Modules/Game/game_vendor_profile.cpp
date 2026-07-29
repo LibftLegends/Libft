@@ -439,14 +439,14 @@ void game_vendor_profile::set_tax_rate(double tax_rate) noexcept
 
 int32_t game_vendor_profile::get_error() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_vendor_profile::get_error");
     return (game_vendor_profile::_last_error);
 }
 
 const char *game_vendor_profile::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+    errno_abort_if_uninitialised(this->_initialised_state,
         "game_vendor_profile::get_error_str");
     return (ft_strerror(game_vendor_profile::_last_error));
 }
