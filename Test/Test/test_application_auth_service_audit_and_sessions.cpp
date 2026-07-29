@@ -190,7 +190,7 @@ FT_TEST(test_application_auth_service_session_timeout_expires_and_list_updates)
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.register_user("alice", "s3cret"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.register_user("bob", "hunter2"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, service.set_login_session_timeout_seconds(1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, service.set_login_session_timeout_seconds(5));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.login_user("alice", "s3cret", "192.168.1.10", string_output, logged_in));
     FT_ASSERT_EQ(FT_TRUE, logged_in);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.login_user("bob", "hunter2", "192.168.1.11", string_output, logged_in));
@@ -200,7 +200,7 @@ FT_TEST(test_application_auth_service_session_timeout_expires_and_list_updates)
     FT_ASSERT_EQ(2U, usernames.size());
     FT_ASSERT_EQ(FT_TRUE, vector_contains_string(usernames, "alice"));
     FT_ASSERT_EQ(FT_TRUE, vector_contains_string(usernames, "bob"));
-    time_sleep(3);
+    time_sleep(7);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, service.get_logged_in_usernames(usernames));
     FT_ASSERT_EQ(0U, usernames.size());
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, service.get_login_session_timestamp("alice", timestamp_output));
