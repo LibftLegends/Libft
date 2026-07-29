@@ -368,11 +368,10 @@ static int32_t runtime_compile_and_run_helper(void)
 {
     s_runtime_file_guard file_guard;
     std::string project_root;
-    std::filesystem::path project_root_path;
-    std::filesystem::path source_path;
-    std::filesystem::path executable_path;
-    std::filesystem::path archive_path;
-    std::filesystem::path modules_path;
+    std::string source_path;
+    std::string executable_path;
+    std::string archive_path;
+    std::string modules_path;
     const char *compiler;
     std::string compile_command;
     std::string run_command;
@@ -381,14 +380,28 @@ static int32_t runtime_compile_and_run_helper(void)
     project_root = runtime_project_root();
     if (project_root.empty())
         return (0);
-    project_root_path = std::filesystem::path(project_root);
-    source_path = project_root_path / "Test" / "secure_wipe_runtime_child.cpp";
-    executable_path = project_root_path / "Test" / "secure_wipe_runtime_child.exe";
-    archive_path = project_root_path / "Test" / "Full_Libft_test.a";
-    modules_path = project_root_path / "Modules";
+#if defined(_WIN32) || defined(_WIN64)
+    source_path = project_root + "\\Test\\secure_wipe_runtime_child.cpp";
+    executable_path = project_root + "\\Test\\secure_wipe_runtime_child.exe";
+    archive_path = project_root + "\\Test\\Full_Libft_test.a";
+    modules_path = project_root + "\\Modules";
+#else
+    {
+        std::filesystem::path project_root_path;
+
+        project_root_path = std::filesystem::path(project_root);
+        source_path = (project_root_path / "Test"
+            / "secure_wipe_runtime_child.cpp").string();
+        executable_path = (project_root_path / "Test"
+            / "secure_wipe_runtime_child.exe").string();
+        archive_path = (project_root_path / "Test"
+            / "Full_Libft_test.a").string();
+        modules_path = (project_root_path / "Modules").string();
+    }
+#endif
     formatted_length = pf_snprintf(file_guard.source_path,
         sizeof(file_guard.source_path), "%s",
-        source_path.string().c_str());
+        source_path.c_str());
     if (formatted_length < 0
         || static_cast<ft_size_t>(formatted_length)
             >= sizeof(file_guard.source_path))
@@ -396,7 +409,7 @@ static int32_t runtime_compile_and_run_helper(void)
     file_guard.source_path_active = FT_TRUE;
     formatted_length = pf_snprintf(file_guard.executable_path,
         sizeof(file_guard.executable_path), "%s",
-        executable_path.string().c_str());
+        executable_path.c_str());
     if (formatted_length < 0
         || static_cast<ft_size_t>(formatted_length)
             >= sizeof(file_guard.executable_path))
@@ -426,14 +439,14 @@ static int32_t runtime_compile_and_run_helper(void)
     compile_command += project_root;
     compile_command += "\"";
     compile_command += " -I\"";
-    compile_command += modules_path.string();
+    compile_command += modules_path;
     compile_command += "\"";
     compile_command += " \"";
     compile_command += file_guard.source_path;
     compile_command += "\"";
     compile_command += " -x none ";
     compile_command += "\"";
-    compile_command += archive_path.string();
+    compile_command += archive_path;
     compile_command += "\"";
 #ifdef __APPLE__
     compile_command += " -pthread -lz";
