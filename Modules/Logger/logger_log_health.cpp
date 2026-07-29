@@ -628,6 +628,7 @@ void ft_log_enable_remote_health(ft_bool enable)
 #ifdef LIBFT_TEST_BUILD
 void ft_log_destroy_remote_health_for_tests(void)
 {
+    ft_log_enable_remote_health(FT_FALSE);
     (void)g_health_states.destroy();
     return ;
 }

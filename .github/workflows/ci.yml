@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -40,6 +40,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          brew untap aws/tap 2>/dev/null || true
           brew install llvm cmake pkg-config python openssl@3 sqlite3
 
       - name: Install Windows dependencies
@@ -113,7 +114,7 @@ jobs:
       # CI_DIAGNOSTIC: Upload targeted logs so assertion details remain available after the job ends.
       - name: Upload Ubuntu diagnostic logs
         if: always() && failure() && runner.os == 'Linux' # CI_DIAGNOSTIC: Upload evidence whenever Ubuntu tests fail.
-        uses: actions/upload-artifact@v4 # CI_DIAGNOSTIC: Store diagnostic output for offline inspection.
+        uses: actions/upload-artifact@v6 # CI_DIAGNOSTIC: Store diagnostic output for offline inspection.
         with:
           name: ubuntu-test-diagnostics-${{ github.run_id }} # CI_DIAGNOSTIC: Give each diagnostic bundle a unique name.
           path: | # CI_DIAGNOSTIC: Include full and targeted output plus assertion logs.
@@ -128,7 +129,7 @@ jobs:
       # CI_DIAGNOSTIC: Upload Windows output while the cross-platform test failures are being diagnosed.
       - name: Upload Windows diagnostic logs
         if: always() && failure() && runner.os == 'Windows' # CI_DIAGNOSTIC: Upload evidence whenever Windows tests fail.
-        uses: actions/upload-artifact@v4 # CI_DIAGNOSTIC: Store Windows test and runtime evidence.
+        uses: actions/upload-artifact@v6 # CI_DIAGNOSTIC: Store Windows test and runtime evidence.
         with:
           name: windows-test-diagnostics-${{ github.run_id }} # CI_DIAGNOSTIC: Give each diagnostic bundle a unique name.
           path: | # CI_DIAGNOSTIC: Include Windows test output and runtime failure details.

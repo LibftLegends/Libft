@@ -500,6 +500,7 @@ void ft_log_reset_async_metrics()
 #ifdef LIBFT_TEST_BUILD
 void ft_log_destroy_async_runtime_for_tests(void)
 {
+    ft_log_enable_async(FT_FALSE);
     (void)g_log_queue.destroy();
     return ;
 }
