@@ -2,7 +2,9 @@
 
 stale_count=0
 
-for object_path in "$@"; do
+count_object_path()
+{
+    object_path="$1"
     dependency_path="${object_path%.o}.d"
     object_is_stale=0
     if [ ! -f "$object_path" ] || [ ! -f "$dependency_path" ]; then
@@ -21,6 +23,18 @@ for object_path in "$@"; do
     if [ "$object_is_stale" -eq 1 ]; then
         stale_count=$((stale_count + 1))
     fi
-done
+}
+
+if [ "$#" -eq 2 ] && [ "$1" = "--file" ]; then
+    while IFS= read -r object_path; do
+        if [ -n "$object_path" ]; then
+            count_object_path "$object_path"
+        fi
+    done < "$2"
+else
+    for object_path in "$@"; do
+        count_object_path "$object_path"
+    done
+fi
 
 printf '%s\n' "$stale_count"

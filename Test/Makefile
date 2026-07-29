@@ -13,6 +13,9 @@ TEST_LIBFT_DEBUG_ARCHIVE_TARGET := Test/Full_Libft_test_debug.a
 TEST_BUILD_PROGRESS_FILE := $(OBJDIR)/.stale_object_progress
 DEBUG_BUILD_PROGRESS_FILE := $(DEBUG_OBJDIR)/.stale_object_progress
 EFFICIENCY_BUILD_PROGRESS_FILE := $(EFFICIENCY_OBJDIR)/.stale_object_progress
+TEST_BUILD_OBJECT_LIST := $(OBJDIR)/.stale_object_paths
+DEBUG_BUILD_OBJECT_LIST := $(DEBUG_OBJDIR)/.stale_object_paths
+EFFICIENCY_BUILD_OBJECT_LIST := $(EFFICIENCY_OBJDIR)/.stale_object_paths
 
 all: $(TARGET)
 
@@ -35,15 +38,21 @@ $(DEBUG_OBJS): | $(DEBUG_BUILD_PROGRESS_FILE)
 $(EFFICIENCY_OBJS): | $(EFFICIENCY_BUILD_PROGRESS_FILE)
 
 $(TEST_BUILD_PROGRESS_FILE): FORCE | $(OBJDIR)
-	@stale_count=$$(bash ../mk/count_stale_objects.sh $(OBJS)); \
+	$(file >$(TEST_BUILD_OBJECT_LIST),$(firstword $(OBJS)))
+	$(foreach object,$(wordlist 2,$(words $(OBJS)),$(OBJS)),$(file >>$(TEST_BUILD_OBJECT_LIST),$(object)))
+	@stale_count=$$(bash ../mk/count_stale_objects.sh --file "$(TEST_BUILD_OBJECT_LIST)"); \
         printf '0\n%s\n' "$$stale_count" > "$@"
 
 $(DEBUG_BUILD_PROGRESS_FILE): FORCE | $(DEBUG_OBJDIR)
-	@stale_count=$$(bash ../mk/count_stale_objects.sh $(DEBUG_OBJS)); \
+	$(file >$(DEBUG_BUILD_OBJECT_LIST),$(firstword $(DEBUG_OBJS)))
+	$(foreach object,$(wordlist 2,$(words $(DEBUG_OBJS)),$(DEBUG_OBJS)),$(file >>$(DEBUG_BUILD_OBJECT_LIST),$(object)))
+	@stale_count=$$(bash ../mk/count_stale_objects.sh --file "$(DEBUG_BUILD_OBJECT_LIST)"); \
         printf '0\n%s\n' "$$stale_count" > "$@"
 
 $(EFFICIENCY_BUILD_PROGRESS_FILE): FORCE | $(EFFICIENCY_OBJDIR)
-	@stale_count=$$(bash ../mk/count_stale_objects.sh $(EFFICIENCY_OBJS)); \
+	$(file >$(EFFICIENCY_BUILD_OBJECT_LIST),$(firstword $(EFFICIENCY_OBJS)))
+	$(foreach object,$(wordlist 2,$(words $(EFFICIENCY_OBJS)),$(EFFICIENCY_OBJS)),$(file >>$(EFFICIENCY_BUILD_OBJECT_LIST),$(object)))
+	@stale_count=$$(bash ../mk/count_stale_objects.sh --file "$(EFFICIENCY_BUILD_OBJECT_LIST)"); \
         printf '0\n%s\n' "$$stale_count" > "$@"
 
 Basic:
@@ -164,6 +173,14 @@ $(OBJDIR)/%.o: %.cpp
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
+		progress_lock="$(TEST_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(TEST_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(TEST_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(TEST_BUILD_PROGRESS_FILE)"; \
+		printf '%b        [Test] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
+		rmdir "$$progress_lock"; \
 		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
@@ -325,6 +342,14 @@ $(DEBUG_OBJDIR)/%.o: %.cpp
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
+		progress_lock="$(DEBUG_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(DEBUG_BUILD_PROGRESS_FILE)"; \
+		printf '%b        [Test Debug] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
+		rmdir "$$progress_lock"; \
 		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
@@ -383,6 +408,14 @@ $(EFFICIENCY_OBJDIR)/%.o: %.cpp
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
+		progress_lock="$(EFFICIENCY_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(EFFICIENCY_BUILD_PROGRESS_FILE)"; \
+		printf '%b        [Test Efficiency] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
+		rmdir "$$progress_lock"; \
 		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
