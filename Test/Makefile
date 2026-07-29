@@ -10,6 +10,9 @@ include ../mk/test/config.mk
 
 TEST_LIBFT_ARCHIVE_TARGET := Test/Full_Libft_test.a
 TEST_LIBFT_DEBUG_ARCHIVE_TARGET := Test/Full_Libft_test_debug.a
+TEST_BUILD_PROGRESS_FILE := $(OBJDIR)/.stale_object_progress
+DEBUG_BUILD_PROGRESS_FILE := $(DEBUG_OBJDIR)/.stale_object_progress
+EFFICIENCY_BUILD_PROGRESS_FILE := $(EFFICIENCY_OBJDIR)/.stale_object_progress
 
 all: $(TARGET)
 
@@ -26,6 +29,22 @@ else
 	@$(RM) $@.rsp
 endif
 	@printf '\033[1;35m[LIBFT BUILD] Test executable ready (%s)\033[0m\n' "$(TARGET)"
+
+$(OBJS): | $(TEST_BUILD_PROGRESS_FILE)
+$(DEBUG_OBJS): | $(DEBUG_BUILD_PROGRESS_FILE)
+$(EFFICIENCY_OBJS): | $(EFFICIENCY_BUILD_PROGRESS_FILE)
+
+$(TEST_BUILD_PROGRESS_FILE): FORCE | $(OBJDIR)
+	@stale_count=$$(bash ../mk/count_stale_objects.sh $(OBJS)); \
+        printf '0\n%s\n' "$$stale_count" > "$@"
+
+$(DEBUG_BUILD_PROGRESS_FILE): FORCE | $(DEBUG_OBJDIR)
+	@stale_count=$$(bash ../mk/count_stale_objects.sh $(DEBUG_OBJS)); \
+        printf '0\n%s\n' "$$stale_count" > "$@"
+
+$(EFFICIENCY_BUILD_PROGRESS_FILE): FORCE | $(EFFICIENCY_OBJDIR)
+	@stale_count=$$(bash ../mk/count_stale_objects.sh $(EFFICIENCY_OBJS)); \
+        printf '0\n%s\n' "$$stale_count" > "$@"
 
 Basic:
 	@echo "Building basic test executable ($(TARGET))"
@@ -156,8 +175,14 @@ $(OBJDIR)/%.o: %.cpp
 	$(FIXDEP); \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
-		count=$$(find $(OBJDIR) -name '*.o' 2>/dev/null | wc -l | tr -d ' '); \
-		printf '%b        [Test] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$count $(TOTAL_SRCS) "$(LIBFT_TEST_COLOR_OFF)"; \
+		progress_lock="$(TEST_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(TEST_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(TEST_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(TEST_BUILD_PROGRESS_FILE)"; \
+		rmdir "$$progress_lock"; \
+		printf '%b        [Test] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 	fi
 
 $(OBJDIR)/Test/test_promise.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Template\"
@@ -311,8 +336,14 @@ $(DEBUG_OBJDIR)/%.o: %.cpp
 	$(FIXDEP); \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
-		count=$$(find $(DEBUG_OBJDIR) -name '*.o' 2>/dev/null | wc -l | tr -d ' '); \
-		printf '%b        [Test Debug] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$count $(TOTAL_SRCS) "$(LIBFT_TEST_COLOR_OFF)"; \
+		progress_lock="$(DEBUG_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(DEBUG_BUILD_PROGRESS_FILE)"; \
+		rmdir "$$progress_lock"; \
+		printf '%b        [Test Debug] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 	fi
 
 $(EFFICIENCY_TARGET): $(EFFICIENCY_OBJS)
@@ -363,8 +394,14 @@ $(EFFICIENCY_OBJDIR)/%.o: %.cpp
 	$(FIXDEP); \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
-		count=$$(find $(EFFICIENCY_OBJDIR) -name '*.o' 2>/dev/null | wc -l | tr -d ' '); \
-		printf '%b        [Test Efficiency] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$count $(EFF_TOTAL_SRCS) "$(LIBFT_TEST_COLOR_OFF)"; \
+		progress_lock="$(EFFICIENCY_BUILD_PROGRESS_FILE).lock"; \
+		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		current_count=$$(sed -n '1p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
+		total_count=$$(sed -n '2p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
+		current_count=$$((current_count + 1)); \
+		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(EFFICIENCY_BUILD_PROGRESS_FILE)"; \
+		rmdir "$$progress_lock"; \
+		printf '%b        [Test Efficiency] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 	fi
 
 $(EFFICIENCY_LIBFT_ARCHIVE): FORCE

@@ -54,16 +54,18 @@ module_name=${module_name%.a}
 module_name=${module_name%_debug}
 module_name=${module_name%_test}
 
-last_count=0
-last_total=1
-last_file=""
-
 "$@" > "$raw_log_file" 2>&1 &
 child_pid=$!
 wait "$child_pid"
 status=$?
 child_pid=""
 printf '%s\n' "$status" > "$status_file"
+
+stale_total=$(sed -n '/Building file /p' "$raw_log_file" | wc -l | tr -d ' ')
+if [ "$stale_total" -eq 0 ]; then
+    stale_total=1
+fi
+stale_count=0
 
 while IFS= read -r line; do
     printf '%s\n' "$line" >> "$log_file"
@@ -72,17 +74,11 @@ while IFS= read -r line; do
             continue
             ;;
         *"Building file "*)
-            count=$(printf '%s\n' "$line" | sed -n 's/.*(\([0-9][0-9]*\)\/\([0-9][0-9]*\)).*/\1/p')
-            total=$(printf '%s\n' "$line" | sed -n 's/.*(\([0-9][0-9]*\)\/\([0-9][0-9]*\)).*/\2/p')
             file=$(printf '%s\n' "$line" | sed -n 's/.*Building file \(.*\) ([0-9][0-9]*\/[0-9][0-9]*).*/\1/p')
-            if [ -n "$count" ] && [ -n "$total" ]; then
-                last_count="$count"
-                last_total="$total"
-                last_file="$file"
-                if [ "$batch_output" -ne 1 ]; then
-                    printf '%s        [%s] Building file %s (%d/%d)%s\n' \
-                        "$light_blue" "$module_name" "$file" "$count" "$total" "$reset"
-                fi
+            stale_count=$((stale_count + 1))
+            if [ "$batch_output" -ne 1 ]; then
+                printf '%s        [%s] Building file %s (%d/%d)%s\n' \
+                    "$light_blue" "$module_name" "$file" "$stale_count" "$stale_total" "$reset"
             fi
             ;;
         *"Module archive ready "*)
