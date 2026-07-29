@@ -260,15 +260,28 @@ static int32_t game_voxel_region_file_size(FILE *file,
 
     if (file_size == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
+#if defined(_WIN32) || defined(_WIN64)
+    current_position = _ftelli64(file);
+#else
     current_position = std::ftell(file);
+#endif
     if (current_position < 0)
         return (FT_ERR_IO);
     if (std::fseek(file, 0, SEEK_END) != 0)
         return (FT_ERR_IO);
+#if defined(_WIN32) || defined(_WIN64)
+    end_position = _ftelli64(file);
+#else
     end_position = std::ftell(file);
+#endif
     if (end_position < 0)
         return (FT_ERR_IO);
-    if (std::fseek(file, current_position, SEEK_SET) != 0)
+#if defined(_WIN32) || defined(_WIN64)
+    if (_fseeki64(file, current_position, SEEK_SET) != 0)
+#else
+    if (current_position > LONG_MAX
+        || std::fseek(file, current_position, SEEK_SET) != 0)
+#endif
         return (FT_ERR_IO);
     *file_size = static_cast<uint64_t>(end_position);
     return (FT_ERR_SUCCESS);

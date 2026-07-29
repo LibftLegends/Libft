@@ -781,8 +781,8 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
         (void)this->destroy();
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     }
-    this->_generation_metadata.valid = static_cast<ft_bool>(metadata_valid);
-    this->_generation_protected = static_cast<ft_bool>(generation_protected);
+    this->_generation_metadata.valid = metadata_valid;
+    this->_generation_protected = generation_protected;
     this->_generation_metadata.seed_value = metadata_seed_value;
     this->_generation_metadata.world_block_origin_x = static_cast<int32_t>(
         metadata_origin_x);
