@@ -61,8 +61,29 @@ jobs:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Unix runs.
         run: | # CI_DIAGNOSTIC: Capture the complete Unix test output while preserving the test exit status.
-          set -o pipefail # CI_DIAGNOSTIC: Make tee preserve a failing test-suite status.
-          ./Test/libft_tests 2>&1 | tee Test/ci_unix_full_output.log # CI_DIAGNOSTIC: Save and display the full Unix test output.
+          set +e
+          set -o pipefail
+          ./Test/libft_tests 2>&1 | tee Test/ci_unix_full_output.log
+          test_status=${PIPESTATUS[0]}
+          if [ "$test_status" -ne 0 ]; then
+            if command -v gdb >/dev/null 2>&1; then
+              gdb -q -batch \
+                -ex 'set pagination off' \
+                -ex 'set env FT_TEST_HIDE_SUCCESSFUL 0' \
+                -ex run \
+                -ex 'thread apply all bt full' \
+                --args ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+            elif command -v lldb >/dev/null 2>&1; then
+              lldb --batch \
+                -o 'settings set target.env-vars FT_TEST_HIDE_SUCCESSFUL=0' \
+                -o run \
+                -o 'thread backtrace all' \
+                -- ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+            else
+              printf '%s\n' 'No debugger was available for stack trace capture.' | tee Test/ci_unix_stack_trace.log
+            fi
+          fi
+          exit "$test_status"
 
       - name: Run test suite on Windows
         if: runner.os == 'Windows'
@@ -123,6 +144,7 @@ jobs:
             Test/ci_ubuntu_*_secure_wipe_runtime.log
             Test/ci_ubuntu_*_secure_wipe_runtime.err
             Test/ci_unix_full_output.log
+            Test/ci_unix_stack_trace.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original test failure if a log is unavailable.
 
