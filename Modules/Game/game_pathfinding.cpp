@@ -404,7 +404,7 @@ game_pathfinding::game_pathfinding() noexcept
     return ;
 }
 
-game_pathfinding::~game_pathfinding()
+game_pathfinding::~game_pathfinding() noexcept
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return ;

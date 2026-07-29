@@ -121,7 +121,7 @@ int32_t game_experience_table::lock_internal(ft_bool *lock_acquired) const noexc
 {
     int32_t lock_error;
 
-    errno_abort_if_uninitialised(this->_initialised_state, "game_experience_table::lock_internal");
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_experience_table::lock_internal");
     if (lock_acquired != ft_nullptr)
         *lock_acquired = FT_FALSE;
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
@@ -348,7 +348,7 @@ int32_t game_experience_table::set_levels(const int32_t *levels, int32_t count) 
     int32_t resize_result;
     int32_t level_index;
 
-    errno_abort_if_uninitialised(this->_initialised_state, "game_experience_table::set_levels");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_experience_table::set_levels");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -447,7 +447,7 @@ int32_t game_experience_table::generate_levels_scaled(int32_t count, int32_t bas
     double total;
     int32_t index;
 
-    errno_abort_if_uninitialised(this->_initialised_state, "game_experience_table::generate_levels_scaled");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_experience_table::generate_levels_scaled");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -529,14 +529,14 @@ int32_t game_experience_table::check_for_error() const noexcept
 int32_t game_experience_table::get_error() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        errno_abort_if_uninitialised(this->_initialised_state, "game_experience_table::get_error");
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_experience_table::get_error");
     return (game_experience_table::_last_error);
 }
 
 const char *game_experience_table::get_error_str() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        errno_abort_if_uninitialised(this->_initialised_state, "game_experience_table::get_error_str");
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_experience_table::get_error_str");
     return (ft_strerror(this->get_error()));
 }
 

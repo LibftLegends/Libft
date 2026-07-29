@@ -25,6 +25,7 @@ FT_TEST(test_game_world_replay_restore_before_capture_reports_state)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(1, 0));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
                  value.restore_snapshot(world_pointer, character, inventory));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
 
@@ -43,6 +44,7 @@ FT_TEST(test_game_world_replay_restore_null_world_reports_argument)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.import_snapshot(input));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
                  value.restore_snapshot(world_pointer, character, inventory));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
 
@@ -65,6 +67,7 @@ FT_TEST(test_game_world_replay_clear_then_export_is_empty)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize());
     value.clear_snapshot();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.export_snapshot(output));
     FT_ASSERT(output.empty() == FT_TRUE);
     return (1);
@@ -82,6 +85,7 @@ FT_TEST(test_game_world_replay_zero_tick_restore_reports_state)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(1, 0));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
                  value.replay_ticks(world_pointer, character, inventory, 0));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
 
@@ -97,6 +101,7 @@ FT_TEST(test_game_world_replay_negative_tick_restore_reports_state)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(1, 0));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
                  value.replay_ticks(world_pointer, character, inventory, -1));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
 

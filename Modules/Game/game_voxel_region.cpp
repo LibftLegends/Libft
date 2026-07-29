@@ -255,8 +255,8 @@ static int32_t game_voxel_write_region_table(FILE *file,
 static int32_t game_voxel_region_file_size(FILE *file,
     uint64_t *file_size) noexcept
 {
-    long current_position;
-    long end_position;
+    int64_t current_position;
+    int64_t end_position;
 
     if (file_size == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -669,7 +669,8 @@ int32_t game_voxel_region::load_region(int32_t world_x,
             uint8_t *raw_chunk_data;
 
             raw_chunk_data = ft_nullptr;
-            if (std::fseek(file, static_cast<long>(table[slot].offset),
+            if (std::fseek(file,
+                    static_cast<decltype(std::ftell(file))>(table[slot].offset),
                     SEEK_SET) != 0)
                 error_code = FT_ERR_IO;
             else

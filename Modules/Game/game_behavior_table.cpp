@@ -126,7 +126,7 @@ int32_t game_behavior_table::destroy() noexcept
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     this->_profiles.clear();
     (void)this->_profiles.destroy();
     disable_error = this->disable_thread_safety();

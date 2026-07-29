@@ -312,7 +312,7 @@ int32_t game_server::move(game_server &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-game_server::~game_server()
+game_server::~game_server() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         (void)this->destroy();

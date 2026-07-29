@@ -31,6 +31,8 @@
 #include "game_world_region.hpp"
 #include "game_world_registry.hpp"
 
+thread_local int32_t game_world_replay_session::_last_error = FT_ERR_SUCCESS;
+
 static void world_replay_clear_event_handles(
     ft_vector<ft_sharedptr<game_event> > &events) noexcept
 {
@@ -148,6 +150,7 @@ game_world_replay_session::game_world_replay_session() noexcept
     : _snapshot_payload(), _event_callbacks(),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
+    this->set_error(FT_ERR_SUCCESS);
     return ;
 }
 
@@ -167,24 +170,46 @@ int32_t game_world_replay_session::initialize() noexcept
     {
         errno_abort_lifecycle(this->_initialised_state, "game_world_replay_session::initialize",
             "called while object is already initialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     snapshot_error = this->_snapshot_payload.initialize();
     if (snapshot_error != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (snapshot_error);
+        return (this->set_error(snapshot_error));
     }
     callbacks_error = this->_event_callbacks.initialize();
     if (callbacks_error != FT_ERR_SUCCESS)
     {
         (void)this->_snapshot_payload.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (callbacks_error);
+        return (this->set_error(callbacks_error));
     }
     this->_event_callbacks.clear();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_world_replay_session::set_error(int32_t error_code) noexcept
+{
+    game_world_replay_session::_last_error = error_code;
+    return (error_code);
+}
+
+int32_t game_world_replay_session::get_error() const noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+            "game_world_replay_session::get_error");
+    return (game_world_replay_session::_last_error);
+}
+
+const char *game_world_replay_session::get_error_str() const noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+            "game_world_replay_session::get_error_str");
+    return (ft_strerror(game_world_replay_session::_last_error));
 }
 
 int32_t game_world_replay_session::move(game_world_replay_session &other) noexcept
@@ -192,25 +217,34 @@ int32_t game_world_replay_session::move(game_world_replay_session &other) noexce
     int32_t initialize_error;
 
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_world_replay_session::move",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         (void)this->destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(other.get_error()));
+    }
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        initialize_error = this->destroy();
+        if (initialize_error != FT_ERR_SUCCESS)
+            return (this->set_error(initialize_error));
     }
     initialize_error = this->initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
+        return (this->set_error(initialize_error));
     this->_snapshot_payload = other._snapshot_payload;
     if (this->_snapshot_payload.get_error() != FT_ERR_SUCCESS)
-        return (this->_snapshot_payload.get_error());
+    {
+        (void)this->destroy();
+        return (this->set_error(this->_snapshot_payload.get_error()));
+    }
     this->_event_callbacks.clear();
     ft_size_t callback_index;
     ft_size_t callback_count;
@@ -221,13 +255,16 @@ int32_t game_world_replay_session::move(game_world_replay_session &other) noexce
     {
         this->_event_callbacks.push_back(other._event_callbacks[callback_index]);
         if (this->_event_callbacks.get_error() != FT_ERR_SUCCESS)
-            return (this->_event_callbacks.get_error());
+        {
+            (void)this->destroy();
+            return (this->set_error(this->_event_callbacks.get_error()));
+        }
         callback_index++;
     }
     other._snapshot_payload.clear();
     other._event_callbacks.clear();
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_world_replay_session::destroy() noexcept
@@ -236,14 +273,14 @@ int32_t game_world_replay_session::destroy() noexcept
     int32_t snapshot_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     this->_event_callbacks.clear();
     callbacks_error = this->_event_callbacks.destroy();
     snapshot_error = this->_snapshot_payload.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (callbacks_error != FT_ERR_SUCCESS)
-        return (callbacks_error);
-    return (snapshot_error);
+        return (this->set_error(callbacks_error));
+    return (this->set_error(snapshot_error));
 }
 
 int32_t game_world_replay_session::capture_snapshot(game_world &world,
@@ -259,19 +296,19 @@ int32_t game_world_replay_session::capture_snapshot(game_world &world,
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::capture_snapshot");
     result = snapshot_buffer.initialize();
     if (result != FT_ERR_SUCCESS)
-        return (result);
+        return (this->set_error(result));
     callback_result = callback_snapshot.initialize();
     if (callback_result != FT_ERR_SUCCESS)
-        return (callback_result);
+        return (this->set_error(callback_result));
     result = world.save_to_buffer(snapshot_buffer, character, inventory);
     if (result != FT_ERR_SUCCESS)
-        return (result);
+        return (this->set_error(result));
     callback_result = world_replay_collect_callbacks(world, callback_snapshot);
     if (callback_result != FT_ERR_SUCCESS)
-        return (callback_result);
+        return (this->set_error(callback_result));
     this->_snapshot_payload = snapshot_buffer;
     if (this->_snapshot_payload.get_error() != FT_ERR_SUCCESS)
-        return (this->_snapshot_payload.get_error());
+        return (this->set_error(this->_snapshot_payload.get_error()));
     this->_event_callbacks.clear();
     callback_index = 0;
     callback_count = callback_snapshot.size();
@@ -279,10 +316,10 @@ int32_t game_world_replay_session::capture_snapshot(game_world &world,
     {
         this->_event_callbacks.push_back(callback_snapshot[callback_index]);
         if (this->_event_callbacks.get_error() != FT_ERR_SUCCESS)
-            return (this->_event_callbacks.get_error());
+            return (this->set_error(this->_event_callbacks.get_error()));
         callback_index++;
     }
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_world_replay_session::restore_snapshot(ft_sharedptr<game_world> &world_ptr,
@@ -293,21 +330,21 @@ int32_t game_world_replay_session::restore_snapshot(ft_sharedptr<game_world> &wo
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::restore_snapshot");
     if (!world_ptr)
-        return (FT_ERR_INVALID_ARGUMENT);
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (this->_snapshot_payload.empty())
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     load_result = world_ptr->load_from_buffer(this->_snapshot_payload.c_str(),
             character, inventory);
     if (load_result != FT_ERR_SUCCESS)
-        return (load_result);
+        return (this->set_error(load_result));
     if (this->_event_callbacks.size() > 0)
     {
         callback_result = world_replay_restore_callbacks(*world_ptr,
                 this->_event_callbacks);
         if (callback_result != FT_ERR_SUCCESS)
-            return (callback_result);
+            return (this->set_error(callback_result));
     }
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_world_replay_session::replay_ticks(ft_sharedptr<game_world> &world_ptr,
@@ -319,9 +356,9 @@ int32_t game_world_replay_session::replay_ticks(ft_sharedptr<game_world> &world_
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::replay_ticks");
     restore_result = this->restore_snapshot(world_ptr, character, inventory);
     if (restore_result != FT_ERR_SUCCESS)
-        return (restore_result);
+        return (this->set_error(restore_result));
     world_ptr->update_events(world_ptr, ticks, log_file_path, log_buffer);
-    return (world_ptr->get_error());
+    return (this->set_error(world_ptr->get_error()));
 }
 
 int32_t game_world_replay_session::plan_route(game_world &world, const game_map3d &grid,
@@ -330,8 +367,8 @@ int32_t game_world_replay_session::plan_route(game_world &world, const game_map3
     ft_vector<game_path_step> &path) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::plan_route");
-    return (world.plan_route(grid, start_x, start_y, start_z,
-            goal_x, goal_y, goal_z, path));
+    return (this->set_error(world.plan_route(grid, start_x, start_y, start_z,
+            goal_x, goal_y, goal_z, path)));
 }
 
 int32_t game_world_replay_session::import_snapshot(const ft_string &snapshot_payload)
@@ -340,9 +377,9 @@ int32_t game_world_replay_session::import_snapshot(const ft_string &snapshot_pay
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::import_snapshot");
     this->_snapshot_payload = snapshot_payload;
     if (this->_snapshot_payload.get_error() != FT_ERR_SUCCESS)
-        return (this->_snapshot_payload.get_error());
+        return (this->set_error(this->_snapshot_payload.get_error()));
     this->_event_callbacks.clear();
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_world_replay_session::export_snapshot(ft_string &out_snapshot) const
@@ -351,8 +388,8 @@ int32_t game_world_replay_session::export_snapshot(ft_string &out_snapshot) cons
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::export_snapshot");
     out_snapshot = this->_snapshot_payload;
     if (out_snapshot.get_error() != FT_ERR_SUCCESS)
-        return (out_snapshot.get_error());
-    return (FT_ERR_SUCCESS);
+        return (this->set_error(out_snapshot.get_error()));
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 void game_world_replay_session::clear_snapshot() noexcept
@@ -360,5 +397,6 @@ void game_world_replay_session::clear_snapshot() noexcept
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_replay_session::clear_snapshot");
     this->_snapshot_payload.clear();
     this->_event_callbacks.clear();
+    this->set_error(FT_ERR_SUCCESS);
     return ;
 }

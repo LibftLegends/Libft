@@ -21,7 +21,7 @@ game_map3d::game_map3d()
     return ;
 }
 
-game_map3d::~game_map3d()
+game_map3d::~game_map3d() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return ;
@@ -52,7 +52,7 @@ const char *game_map3d::get_error_str() const noexcept
     return (ft_strerror(game_map3d::_last_error));
 }
 
-int32_t game_map3d::initialize()
+int32_t game_map3d::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
@@ -63,8 +63,10 @@ int32_t game_map3d::initialize()
         this->_initial_value));
 }
 
-int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value)
+int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value) noexcept
 {
+    int32_t allocation_error;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         errno_abort_lifecycle(this->_initialised_state, "game_map3d::initialize", "called while object is already initialised");
@@ -75,13 +77,19 @@ int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t dept
     this->_depth = depth;
     this->_initial_value = value;
     this->_data = ft_nullptr;
-    this->allocate(width, height, depth, value);
+    allocation_error = this->allocate(width, height, depth, value);
+    if (allocation_error != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(allocation_error);
+        return (allocation_error);
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
 
-int32_t game_map3d::move(game_map3d &other)
+int32_t game_map3d::move(game_map3d &other) noexcept
 {
     int32_t initialize_error;
     int32_t destroy_error;
@@ -141,15 +149,12 @@ int32_t game_map3d::move(game_map3d &other)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t game_map3d::destroy()
+int32_t game_map3d::destroy() noexcept
 {
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
+        return (this->set_error(FT_ERR_SUCCESS));
     this->deallocate();
     disable_error = this->disable_thread_safety();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -259,6 +264,7 @@ void game_map3d::resize(ft_size_t width, ft_size_t height, ft_size_t depth, int3
 {
     ft_bool lock_acquired;
     int32_t lock_error;
+    int32_t allocation_error;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_map3d::resize");
     lock_acquired = FT_FALSE;
@@ -272,9 +278,9 @@ void game_map3d::resize(ft_size_t width, ft_size_t height, ft_size_t depth, int3
     this->_width = width;
     this->_height = height;
     this->_depth = depth;
-    this->allocate(width, height, depth, value);
+    allocation_error = this->allocate(width, height, depth, value);
     (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(allocation_error);
     return ;
 }
 
@@ -440,7 +446,7 @@ ft_size_t game_map3d::get_depth() const
     return (depth_value);
 }
 
-void game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value)
+int32_t game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value)
 {
     ft_size_t index_depth;
 
@@ -449,10 +455,10 @@ void game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, in
     this->_depth = depth;
     this->_data = ft_nullptr;
     if (width == 0 || height == 0 || depth == 0)
-        return ;
+        return (FT_ERR_SUCCESS);
     this->_data = static_cast<int32_t ***>(cma_malloc(sizeof(int32_t **) * depth));
     if (this->_data == ft_nullptr)
-        return ;
+        return (FT_ERR_NO_MEMORY);
     index_depth = 0;
     while (index_depth < depth)
     {
@@ -468,7 +474,7 @@ void game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, in
         if (this->_data[index_depth] == ft_nullptr)
         {
             this->deallocate();
-            return ;
+            return (FT_ERR_NO_MEMORY);
         }
         index_height = 0;
         while (index_height < height)
@@ -480,7 +486,7 @@ void game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, in
             if (this->_data[index_depth][index_height] == ft_nullptr)
             {
                 this->deallocate();
-                return ;
+                return (FT_ERR_NO_MEMORY);
             }
             index_width = 0;
             while (index_width < width)
@@ -492,7 +498,7 @@ void game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, in
         }
         index_depth += 1;
     }
-    return ;
+    return (FT_ERR_SUCCESS);
 }
 
 void game_map3d::deallocate()

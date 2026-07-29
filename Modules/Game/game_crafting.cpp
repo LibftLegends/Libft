@@ -122,7 +122,7 @@ int32_t game_crafting::initialize() noexcept
 int32_t game_crafting::destroy() noexcept
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     int32_t recipes_error = this->_recipes.destroy();
     int32_t disable_error = this->disable_thread_safety();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;

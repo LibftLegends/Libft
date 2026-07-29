@@ -22,7 +22,9 @@ class game_world_replay_session
         ft_string   _snapshot_payload;
         ft_vector<ft_function<void(game_world&, game_event&)> > _event_callbacks;
         uint8_t     _initialised_state;
+        static thread_local int32_t _last_error;
 
+        static int32_t set_error(int32_t error_code) noexcept;
 
     public:
         game_world_replay_session() noexcept;
@@ -46,6 +48,8 @@ class game_world_replay_session
         int32_t import_snapshot(const ft_string &snapshot_payload) noexcept;
         int32_t export_snapshot(ft_string &out_snapshot) const noexcept;
         void clear_snapshot() noexcept;
+        int32_t get_error() const noexcept;
+        const char *get_error_str() const noexcept;
 };
 
 #endif

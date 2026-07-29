@@ -21,6 +21,7 @@ FT_TEST(test_game_world_replay_session_initialize_succeeds)
     game_world_replay_session value;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     return (1);
 }
 
@@ -30,7 +31,9 @@ FT_TEST(test_game_world_replay_session_destroy_twice_is_safe)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     return (1);
 }
 
@@ -59,6 +62,8 @@ FT_TEST(test_game_world_replay_session_clear_snapshot_is_idempotent)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     value.clear_snapshot();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     value.clear_snapshot();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
     return (1);
 }

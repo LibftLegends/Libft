@@ -298,6 +298,53 @@ FT_TEST(test_udp_send_receive_ipv4)
     return (ft_strcmp(buffer, message) == 0);
 }
 
+FT_TEST(test_udp_send_to_validates_destination_mode_and_length)
+{
+    SocketConfig configuration;
+    udp_socket socket_instance;
+    struct sockaddr_in destination_address;
+    const char *message;
+    ssize_t send_result;
+
+    if (configuration.initialize() != FT_ERR_SUCCESS)
+        return (0);
+    configuration._type = SocketType::SERVER;
+    configuration._protocol = IPPROTO_UDP;
+    configuration._address_family = AF_INET;
+    configuration._port = 0;
+    if (socket_instance.initialize() != FT_ERR_SUCCESS)
+        return (0);
+    if (socket_instance.initialize(configuration) != FT_ERR_SUCCESS)
+        return (0);
+    message = "data";
+    send_result = socket_instance.send_to(message, ft_strlen(message), 0,
+        ft_nullptr, 0);
+    if (send_result >= 0)
+        return (0);
+    send_result = socket_instance.send_to(message, ft_strlen(message), 0,
+        ft_nullptr, 1);
+    if (send_result >= 0)
+        return (0);
+    ft_bzero(&destination_address, sizeof(destination_address));
+    destination_address.sin_family = AF_INET;
+    send_result = socket_instance.send_to(message, ft_strlen(message), 0,
+        reinterpret_cast<const struct sockaddr *>(&destination_address), 0);
+    if (send_result >= 0)
+        return (0);
+    send_result = socket_instance.send_to(message, ft_strlen(message), 0,
+        reinterpret_cast<const struct sockaddr *>(&destination_address),
+        sizeof(destination_address) - 1);
+    if (send_result >= 0)
+        return (0);
+    destination_address.sin_family = AF_UNSPEC;
+    send_result = socket_instance.send_to(message, ft_strlen(message), 0,
+        reinterpret_cast<const struct sockaddr *>(&destination_address),
+        sizeof(destination_address));
+    if (send_result >= 0)
+        return (0);
+    return (1);
+}
+
 FT_TEST(test_udp_socket_propagates_ft_errno_on_creation_failure)
 {
     SocketConfig config;

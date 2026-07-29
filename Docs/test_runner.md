@@ -40,9 +40,10 @@ FT_TEST_NAME_FILTER=serializer ./Test/libft_tests
 ```
 
 Set `FT_TEST_HIDE_SUCCESSFUL=1` to keep successful tests out of the final
-output. The runner still prints the currently executing test on one transient
-line; that line is cleared when the test passes and replaced with a persistent
-`FAIL` line only when the test fails.
+output. In an interactive terminal, the runner still shows the currently
+executing test on one transient line; redirected CI output omits that line
+because carriage-return clearing cannot replace prior log lines. The runner
+still prints a persistent `FAIL` line when a test fails.
 
 Abort diagnostics written to `stderr` are suppressed in test builds so
 `su_abort()` does not pollute the console. The runner output stays limited to

@@ -18,19 +18,36 @@ namespace
 
     static test_path test_find_libft_root(const test_path &executable_path)
     {
-        const test_path executable_parent = executable_path.parent_path();
+        std::error_code error_code;
+        test_path absolute_executable_path;
+        test_path canonical_executable_path;
+        test_path executable_parent;
+
+        if (executable_path.empty())
+            return (test_path());
+        absolute_executable_path = std::filesystem::absolute(executable_path,
+            error_code);
+        if (error_code)
+            return (test_path());
+        canonical_executable_path = std::filesystem::weakly_canonical(
+            absolute_executable_path, error_code);
+        if (error_code)
+            return (test_path());
+        executable_parent = canonical_executable_path.parent_path();
         if (!executable_parent.empty()
             && executable_parent.filename() == "Test")
         {
             return (executable_parent.parent_path());
         }
-        return (test_path("."));
+        return (test_path());
     }
 
     static void test_cleanup_runtime_artifacts(const test_path &root_path)
     {
         const char *preserve_failure_log; // CI_DIAGNOSTIC: Hold the optional failure-log preservation flag.
 
+        if (root_path.empty())
+            return ;
         preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG"); // CI_DIAGNOSTIC: Preserve failure details for CI diagnosis.
         if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
             test_remove_path(root_path / "test_failures.log"); // CI_DIAGNOSTIC: Remove the diagnostic log outside CI diagnosis.
@@ -46,7 +63,6 @@ namespace
 
 int main(int argc, char **argv)
 {
-    std::error_code error_code;
     test_path executable_path;
     test_path root_path;
     if (argc > 0 && argv != NULL && argv[0] != NULL)

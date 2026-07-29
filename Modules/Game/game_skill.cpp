@@ -168,7 +168,7 @@ int32_t game_skill::destroy() noexcept
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     disable_error = this->disable_thread_safety();
     this->_id = 0;
     this->_level = 0;

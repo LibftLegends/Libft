@@ -39,7 +39,7 @@ Lifecycle classes must explicitly delete copy and move constructors and must not
 Specialized constructors are forbidden by default; keep only the default constructor unless a module-specific exception is explicitly documented.
 When a specialized construction flow is required by exception, route fallible setup through `initialize(...)` instead of performing fallible work directly in that constructor body.
 All classes must delete copy and move assignment operators by default. Only add assignment operators when a class explicitly needs assignment semantics and document that requirement. Operator overloading alone does not justify adding assignment operators.
-Lifecycle classes must expose a dedicated explicit move helper named exactly `move` (for example `uint32_t move(ft_string& other) noexcept`) and keep this name consistent across classes.
+Lifecycle classes must expose a dedicated explicit move helper named exactly `move` (for example `int32_t move(ft_string& other) noexcept`) and keep this name consistent across classes.
 Functions must not return lifecycle class objects by value. When a function needs to create and return a lifecycle class instance, it must allocate the object on the heap, initialize it, and return an owning pointer or an explicitly documented ownership wrapper. If a raw pointer to a class is returned, any error path must destroy and free partial state and return a null pointer (`ft_nullptr` / `nullptr`).
 
 Assignment operator exceptions:
@@ -72,10 +72,10 @@ class ft_example
 #else
     private:
 #endif
-        static thread_local uint32_t _last_error;
+        static thread_local int32_t _last_error;
         uint8_t _initialised_state;
         pt_recursive_mutex *_mutex;
-        static uint32_t set_error(uint32_t error_code) noexcept;
+        static int32_t set_error(int32_t error_code) noexcept;
 
     public:
         ft_example() noexcept;
@@ -89,14 +89,14 @@ class ft_example
         int32_t initialize() noexcept;
         int32_t initialize(const ft_example &other) noexcept;
         int32_t initialize(ft_example &&other) noexcept;
-        uint32_t destroy() noexcept;
-        uint32_t move(ft_example &other) noexcept;
+        int32_t destroy() noexcept;
+        int32_t move(ft_example &other) noexcept;
 
-        uint32_t enable_thread_safety() noexcept;
-        uint32_t disable_thread_safety() noexcept;
+        int32_t enable_thread_safety() noexcept;
+        int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;
-        static uint32_t get_error() noexcept;
-        static const char *get_error_str() noexcept;
+        int32_t get_error() const noexcept;
+        const char *get_error_str() const noexcept;
 };
 ```
 
@@ -125,7 +125,8 @@ Lifecycle scope:
     - Proxy classes are allowed to remain lightweight failure-propagation carriers for operator chains; their purpose is to forward/report underlying errors without introducing additional meaningful failure modes.
     - Prefer minimal, low-dependency proxy implementations that avoid extra ownership layers and avoid adding synchronization/lifecycle machinery unless a proxy-specific contract explicitly requires it.
     - A class is considered a proxy class only when its class name explicitly contains `proxy`.
-  - `ft_nullptr`/`nullptr` stand-in utility classes are exempt from lifecycle enforcement and optional thread-safety helper requirements because they have no meaningful failure state and must complete their local task without failure.
+- `ft_nullptr`/`nullptr` stand-in utility classes are exempt from lifecycle enforcement and optional thread-safety helper requirements because they have no meaningful failure state and must complete their local task without failure.
+- Non-owning polymorphic behavior-node base classes that only carry thread-local diagnostic state may be explicitly documented as non-lifecycle classes; they are immediately usable after construction and their diagnostic accessors do not require lifecycle-state guards.
   - `ft_nullptr` must explicitly behave as a null-pointer literal stand-in: assigning it to any pointer type must set that pointer value to `0` (null), equivalent to `nullptr`.
 
 Lifecycle state:
@@ -146,7 +147,7 @@ Lifecycle state:
 
 Lifecycle error signaling:
 - Add a dedicated not-initialised error code in the Errno module (for example `FT_ERR_NOT_INITIALISED`) and use it consistently.
-- Classes that expose `_last_error` must follow the single authoritative `#_last_error Contract` section below (including required prototype `set_error(uint32_t error_code)`).
+- Classes that expose `_last_error` must follow the single authoritative `#_last_error Contract` section below (including required prototype `set_error(int32_t error_code)`).
 - An uninitialised object is not a valid access point for class error-state queries, even though `_last_error` exists independently as thread-local storage.
 - `get_error()` and `get_error_str()` must abort via `su_abort();` when `_initialised_state == FT_CLASS_STATE_UNINITIALISED`.
 - Calling `get_error()` and `get_error_str()` in destroyed state (`_initialised_state == FT_CLASS_STATE_DESTROYED`) is valid and must report based on `_last_error`.
@@ -321,7 +322,7 @@ encountered.
 
 Legacy helpers named `last_operation_error`, `last_operation_error_str`, and
 `set_last_operation_error` are deprecated and must be removed from code when touched.
-Use the `_last_error Contract` naming only: `set_error(uint32_t error_code)`, `get_error()`,
+Use the `_last_error Contract` naming only: `set_error(int32_t error_code)`, `get_error()`,
 and `get_error_str()`.
 
 ### Error Code Definition Contract
@@ -424,15 +425,16 @@ SCMA classes do not need a per-class local mutex when the module-level global mu
 
 When a class maintains a `_last_error` field, treat it as thread-local diagnostic state rather than a shared global-style error channel.
 - `_last_error` must be thread-local per thread of execution. Code must not rely on a single shared `_last_error` value across threads.
-- Declare `_last_error` as `static thread_local uint32_t _last_error` so each thread has its own copy while the class exposes a single helper suite.
+- Declare `_last_error` as `static thread_local int32_t _last_error` so each thread has its own copy while the class exposes a single helper suite.
 - `_last_error` must be initialised to `0` (`FT_ERR_SUCCESS`) once at thread/program startup for that thread-local instance, not per object instance.
-- Constructors and destructors must never modify `_last_error`.
-  - Exception for strict preservation in constructor/destructor internals: if constructor/destructor code must invoke helper paths that may update `_last_error`, it is allowed to preserve and restore the previously observed `_last_error` value so ctor/dtor execution does not produce a net externally visible `_last_error` modification.
-- Classes that expose `_last_error` behavior must provide `uint32_t set_error(uint32_t error_code)`, `get_error()`, and `get_error_str()` helpers. `set_error(uint32_t error_code)` is the only writer for `_last_error`.
-- `set_error(uint32_t error_code)` must be private in production builds; test builds may access it only through `LIBFT_TEST_BUILD` private-section exposure.
+- Constructors may set `_last_error` to `FT_ERR_SUCCESS` while establishing a new object in the uninitialised state. They must not overwrite an error state being propagated from an already-initialised source or otherwise replace an existing initialised object's error state.
+  - If constructor/destructor internals invoke helper paths that may update `_last_error`, preserve and restore the previously observed value whenever the object is already initialised or the value is being propagated.
+- Destructors must never modify `_last_error`.
+- Classes that expose `_last_error` behavior must provide `int32_t set_error(int32_t error_code)`, `get_error()`, and `get_error_str()` helpers. `set_error(int32_t error_code)` is the only writer for `_last_error`.
+- `set_error(int32_t error_code)` must be private in production builds; test builds may access it only through `LIBFT_TEST_BUILD` private-section exposure.
 - `get_error()` and `get_error_str()` are strictly read-only and must never modify `_last_error`.
 - Direct assignment to `_last_error` is forbidden outside `set_error(...)`; internal code must not write `_last_error` directly.
-- `set_error(uint32_t error_code)` must store exactly the error code passed by the caller and return that same code.
+- `set_error(int32_t error_code)` must store exactly the error code passed by the caller and return that same code.
 - `get_error()` / `get_error_str()` are the sanctioned public interfaces for reading class error state across classes when required. Other classes must not read `_last_error` directly.
 - `get_error()` / `get_error_str()` must abort via `su_abort();` when `_initialised_state == FT_CLASS_STATE_UNINITIALISED`.
 - `get_error()` / `get_error_str()` are valid when `_initialised_state == FT_CLASS_STATE_DESTROYED` and must then report `_last_error` normally.

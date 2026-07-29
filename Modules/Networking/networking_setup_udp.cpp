@@ -359,6 +359,32 @@ ssize_t udp_socket::send_to(const void *data, ft_size_t size, int32_t flags,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (-1);
     }
+    if (destination_address == ft_nullptr && address_length != 0)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (-1);
+    }
+    if (destination_address != ft_nullptr && address_length == 0)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (-1);
+    }
+    if (destination_address != ft_nullptr
+        && (destination_address->sa_family != AF_INET
+            && destination_address->sa_family != AF_INET6))
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (-1);
+    }
+    if (destination_address != ft_nullptr
+        && ((destination_address->sa_family == AF_INET
+                && address_length < sizeof(struct sockaddr_in))
+            || (destination_address->sa_family == AF_INET6
+                && address_length < sizeof(struct sockaddr_in6))))
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (-1);
+    }
     if (destination_address == ft_nullptr)
         send_result = nw_send(this->_socket_fd, data, size, flags);
     else

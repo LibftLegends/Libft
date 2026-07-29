@@ -621,14 +621,14 @@ int32_t game_economy_table::fetch_currency_rate(int32_t currency_id,
 
 int32_t game_economy_table::get_error() const noexcept
 {
-    errno_abort_if_uninitialised(this->_initialised_state,
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_economy_table::get_error");
     return (game_economy_table::_last_error);
 }
 
 const char *game_economy_table::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised(this->_initialised_state,
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_economy_table::get_error_str");
     return (ft_strerror(this->get_error()));
 }

@@ -104,7 +104,7 @@ class game_pathfinding
         game_pathfinding() noexcept;
         game_pathfinding(const game_pathfinding &other) = delete;
         game_pathfinding(game_pathfinding &&other) = delete;
-        ~game_pathfinding();
+        ~game_pathfinding() noexcept;
         game_pathfinding &operator=(const game_pathfinding &other) = delete;
         game_pathfinding &operator=(game_pathfinding &&other) = delete;
 

@@ -270,7 +270,7 @@ int32_t game_dialogue_script::destroy() noexcept
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     first_error = FT_ERR_SUCCESS;
     lines_error = this->_lines.destroy();
     if (first_error == FT_ERR_SUCCESS && lines_error != FT_ERR_SUCCESS)

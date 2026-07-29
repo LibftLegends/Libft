@@ -23,10 +23,14 @@
 #include <exception>
 #include <csignal>
 #include <fcntl.h>
+#include <mutex>
 #if !defined(_WIN32) && !defined(_WIN64)
 # include <sys/ioctl.h>
 #endif
 #include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+# include <io.h>
+#endif
 #include "../Basic/limits.hpp"
 #include "../PThread/pthread.hpp"
 #include "../Errno/errno.hpp"
@@ -43,6 +47,25 @@ void ft_log_destroy_remote_health_for_tests(void);
 
 static std::atomic<const char *> g_current_test_name;
 #endif
+
+static std::mutex g_test_failure_log_mutex;
+
+static void append_test_failure_log(const char *message)
+{
+    FILE *failure_log;
+
+    if (message == NULL)
+        return ;
+    g_test_failure_log_mutex.lock();
+    failure_log = std::fopen("test_failures.log", "a");
+    if (failure_log != NULL)
+    {
+        std::fprintf(failure_log, "%s\n", message);
+        std::fclose(failure_log);
+    }
+    g_test_failure_log_mutex.unlock();
+    return ;
+}
 
 #ifndef FT_TEST_RUNNER_INITIAL_CAPACITY
 # define FT_TEST_RUNNER_INITIAL_CAPACITY 4096
@@ -311,6 +334,15 @@ static int32_t get_stdout_terminal_width(void)
 #endif
 }
 
+static int32_t stdout_is_terminal(void)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    return (_isatty(_fileno(stdout)) != 0);
+#else
+    return (isatty(STDOUT_FILENO) != 0);
+#endif
+}
+
 static void print_running_test_line(int32_t test_number,
     const char *description, int32_t terminal_width)
 {
@@ -356,16 +388,15 @@ static void reset_mutex_failure_overrides(void)
 
 static void report_runner_failure(const char *message)
 {
-    FILE *failure_log;
-
     if (message == NULL)
         message = "unknown test runner failure";
     std::fprintf(stderr, "TEST RUNNER FAILURE: %s\n", message);
-    failure_log = std::fopen("test_failures.log", "a");
-    if (failure_log != NULL)
     {
-        std::fprintf(failure_log, "TEST RUNNER FAILURE: %s\n", message);
-        std::fclose(failure_log);
+        char failure_message[1200];
+
+        (void)std::snprintf(failure_message, sizeof(failure_message),
+            "TEST RUNNER FAILURE: %s", message);
+        append_test_failure_log(failure_message);
     }
     return ;
 }
@@ -478,28 +509,25 @@ static int32_t execute_test_function(const s_test_case *test,
     }
     catch (const std::exception &exception)
     {
-        FILE *log_file;
-
-        log_file = fopen("test_failures.log", "a");
-        if (log_file)
         {
-            fprintf(log_file, "Exception in %s/%s: %s\n", test->module,
-                test->name, exception.what());
-            fclose(log_file);
+            char failure_message[2048];
+
+            (void)std::snprintf(failure_message, sizeof(failure_message),
+                "Exception in %s/%s: %s", test->module, test->name,
+                exception.what());
+            append_test_failure_log(failure_message);
         }
         set_last_failure_message(exception.what());
         result = 0;
     }
     catch (...)
     {
-        FILE *log_file;
-
-        log_file = fopen("test_failures.log", "a");
-        if (log_file)
         {
-            fprintf(log_file, "Unknown exception in %s/%s\n", test->module,
-                test->name);
-            fclose(log_file);
+            char failure_message[1024];
+
+            (void)std::snprintf(failure_message, sizeof(failure_message),
+                "Unknown exception in %s/%s", test->module, test->name);
+            append_test_failure_log(failure_message);
         }
         set_last_failure_message("unknown exception");
         result = 0;
@@ -572,26 +600,19 @@ int32_t ft_register_test(t_test_func func, const char *description, const char *
 
 void ft_test_fail(const char *expression, const char *file, int32_t line)
 {
-    FILE *log_file;
     char failure_message[1024];
 
     (void)std::snprintf(failure_message, sizeof(failure_message),
         "%s:%d: %s", file, line, expression);
     set_last_failure_message(failure_message);
 
-    log_file = fopen("test_failures.log", "a");
-    if (log_file)
-    {
-        fprintf(log_file, "%s\n", failure_message);
-        fclose(log_file);
-    }
+    append_test_failure_log(failure_message);
     return ;
 }
 
 void ft_test_fail_values(const char *expression, const char *file, int32_t line,
     const char *expected_value, const char *actual_value)
 {
-    FILE *log_file;
     char failure_message[2048];
 
     (void)std::snprintf(failure_message, sizeof(failure_message),
@@ -599,12 +620,7 @@ void ft_test_fail_values(const char *expression, const char *file, int32_t line,
         file, line, expression, expected_value, actual_value);
     set_last_failure_message(failure_message);
 
-    log_file = fopen("test_failures.log", "a");
-    if (log_file)
-    {
-        fprintf(log_file, "%s\n", failure_message);
-        fclose(log_file);
-    }
+    append_test_failure_log(failure_message);
     return ;
 }
 
@@ -688,7 +704,7 @@ int32_t ft_run_registered_tests(void)
         selected_tests++;
         current_test = tests[index];
         show_running_line = 1;
-        if (hide_successful_tests != 0 && terminal_width <= 0)
+        if (hide_successful_tests != 0 && stdout_is_terminal() == 0)
             show_running_line = 0;
         if (show_running_line != 0)
         {

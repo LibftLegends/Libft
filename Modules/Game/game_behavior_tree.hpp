@@ -74,6 +74,7 @@ class game_behavior_tree_action : public game_behavior_node
         game_behavior_tree_action(game_behavior_tree_action &&other) noexcept;
         virtual ~game_behavior_tree_action() noexcept;
         game_behavior_tree_action &operator=(const game_behavior_tree_action &other) noexcept = delete;
+        game_behavior_tree_action &operator=(game_behavior_tree_action &&other) noexcept = delete;
 
         void set_callback(const ft_function<int32_t(game_behavior_context &)> &callback) noexcept;
         const ft_function<int32_t(game_behavior_context &)> &get_callback() const noexcept;

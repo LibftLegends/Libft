@@ -30,21 +30,21 @@ class game_map3d
         int32_t     lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t     unlock_internal(ft_bool lock_acquired) const noexcept;
 
-        void    allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value);
+        int32_t allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value);
         void    deallocate();
 
     public:
         game_map3d();
         game_map3d(const game_map3d &other) = delete;
         game_map3d(game_map3d &&other) = delete;
-        ~game_map3d();
+        ~game_map3d() noexcept;
         game_map3d &operator=(const game_map3d &other) = delete;
         game_map3d &operator=(game_map3d &&other) = delete;
 
-        int32_t     initialize();
-        int32_t     initialize(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value);
-        int32_t     move(game_map3d &other);
-        int32_t     destroy();
+        int32_t     initialize() noexcept;
+        int32_t     initialize(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value) noexcept;
+        int32_t     move(game_map3d &other) noexcept;
+        int32_t     destroy() noexcept;
         int32_t     enable_thread_safety() noexcept;
         int32_t     disable_thread_safety() noexcept;
         ft_bool    is_thread_safe() const noexcept;

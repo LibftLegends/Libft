@@ -83,6 +83,43 @@ static std::string runtime_project_root(void)
 #endif
 }
 
+static std::string runtime_shell_quote(const std::string &value)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    std::string quoted;
+    std::size_t index;
+
+    quoted = "\"";
+    index = 0;
+    while (index < value.size())
+    {
+        if (value[index] == '\"')
+            quoted += "\\\"";
+        else
+            quoted += value[index];
+        index++;
+    }
+    quoted += "\"";
+    return (quoted);
+#else
+    std::string quoted;
+    std::size_t index;
+
+    quoted = "'";
+    index = 0;
+    while (index < value.size())
+    {
+        if (value[index] == '\'')
+            quoted += "'\\''";
+        else
+            quoted += value[index];
+        index++;
+    }
+    quoted += "'";
+    return (quoted);
+#endif
+}
+
 static int32_t runtime_write_source_file(const char *source_path,
     const char *source_code)
 {
@@ -380,12 +417,6 @@ static int32_t runtime_compile_and_run_helper(void)
     project_root = runtime_project_root();
     if (project_root.empty())
         return (0);
-#if defined(_WIN32) || defined(_WIN64)
-    source_path = project_root + "\\Test\\secure_wipe_runtime_child.cpp";
-    executable_path = project_root + "\\Test\\secure_wipe_runtime_child.exe";
-    archive_path = project_root + "\\Test\\Full_Libft_test.a";
-    modules_path = project_root + "\\Modules";
-#else
     {
         std::filesystem::path project_root_path;
 
@@ -398,7 +429,6 @@ static int32_t runtime_compile_and_run_helper(void)
             / "Full_Libft_test.a").string();
         modules_path = (project_root_path / "Modules").string();
     }
-#endif
     formatted_length = pf_snprintf(file_guard.source_path,
         sizeof(file_guard.source_path), "%s",
         source_path.c_str());
@@ -426,28 +456,17 @@ static int32_t runtime_compile_and_run_helper(void)
 #else
         compiler = "g++";
 #endif
-#if defined(_WIN32) || defined(_WIN64)
-    compile_command = compiler;
-#else
-    compile_command = "\"";
-    compile_command += compiler;
-    compile_command += "\"";
-#endif
+    compile_command = runtime_shell_quote(compiler);
     compile_command += " -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
     compile_command += " -Wno-missing-declarations -DLIBFT_TEST_BUILD";
-    compile_command += " -DLIBFT_INTERNAL_HEADERS -I\"";
-    compile_command += project_root;
-    compile_command += "\"";
-    compile_command += " -I\"";
-    compile_command += modules_path;
-    compile_command += "\"";
-    compile_command += " \"";
-    compile_command += file_guard.source_path;
-    compile_command += "\"";
+    compile_command += " -DLIBFT_INTERNAL_HEADERS -I";
+    compile_command += runtime_shell_quote(project_root);
+    compile_command += " -I";
+    compile_command += runtime_shell_quote(modules_path);
+    compile_command += " ";
+    compile_command += runtime_shell_quote(file_guard.source_path);
     compile_command += " -x none ";
-    compile_command += "\"";
-    compile_command += archive_path;
-    compile_command += "\"";
+    compile_command += runtime_shell_quote(archive_path);
 #ifdef __APPLE__
     compile_command += " -pthread -lz";
 #elif defined(_WIN32) || defined(_WIN64)
@@ -458,16 +477,12 @@ static int32_t runtime_compile_and_run_helper(void)
     compile_command += " -lz -ldl -lssl -lcrypto";
 #endif
     compile_command += " -o ";
-    compile_command += "\"";
-    compile_command += file_guard.executable_path;
-    compile_command += "\"";
+    compile_command += runtime_shell_quote(file_guard.executable_path);
     if (runtime_run_command(compile_command) == 0)
         return (0);
     (void)unlink(file_guard.source_path);
     file_guard.source_path_active = FT_FALSE;
-    run_command = "\"";
-    run_command += file_guard.executable_path;
-    run_command += "\"";
+    run_command = runtime_shell_quote(file_guard.executable_path);
     if (runtime_run_command(run_command) == 0)
         return (0);
     file_guard.destroy();

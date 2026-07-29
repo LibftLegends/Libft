@@ -174,7 +174,7 @@ game_event_scheduler::game_event_scheduler() noexcept
     return ;
 }
 
-game_event_scheduler::~game_event_scheduler()
+game_event_scheduler::~game_event_scheduler() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         (void)this->destroy();

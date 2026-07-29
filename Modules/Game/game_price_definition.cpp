@@ -344,14 +344,14 @@ void game_price_definition::set_maximum_value(int32_t maximum_value) noexcept
 
 int32_t game_price_definition::get_error() const noexcept
 {
-    errno_abort_if_uninitialised(this->_initialised_state,
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_price_definition::get_error");
     return (game_price_definition::_last_error);
 }
 
 const char *game_price_definition::get_error_str() const noexcept
 {
-    errno_abort_if_uninitialised(this->_initialised_state,
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_price_definition::get_error_str");
     return (ft_strerror(game_price_definition::_last_error));
 }

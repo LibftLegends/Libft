@@ -2,6 +2,8 @@
 
 The `Game` module contains gameplay-domain lifecycle classes for characters, items, inventory, equipment, skills, upgrades, buffs/debuffs, economy, crafting, dialogue, events, behavior trees, worlds, regions, voxels, scripting, hooks, data catalogs, and telemetry. Most classes follow the shared lifecycle pattern: construct, `initialize`, use, then `destroy`; mutable classes usually expose optional thread-safety helpers and object-local error accessors.
 
+`game_world`, the behavior-tree composite/root classes, `game_voxel_region`, and the voxel chunk/section classes require caller-side synchronization when shared between threads. They intentionally do not provide internal mutexes.
+
 ## Public Contract
 
 The classes below are the main orchestration surfaces in the module. Their lower-level record types mostly follow the same lifecycle and error patterns, but these four are the ones that coordinate the larger subsystems.
@@ -76,7 +78,7 @@ General rules for these orchestration classes:
 - `game_world` - World container with regions, registry, events, serialization/save/load/replay integration, lifecycle, error accessors, and optional thread safety.
 - `game_world_region` - Region record inside a world.
 - `game_world_registry` - Registry for world records and component-style data.
-- `game_world_replay_session` - Replay capture/playback session.
+- `game_world_replay_session` - Lifecycle-managed replay capture/playback session with instance error accessors; callers must synchronize shared sessions.
 - `game_region_definition` - Region metadata and configuration.
 - `game_region_backend` - Backend abstraction for region storage.
 - When `LIBFT_TEST_BUILD` is defined, `game_region_backend` also exposes `game_world_region_backend` and `game_voxel_region_backend` aliases so tests can exercise both concrete region implementations in one build.

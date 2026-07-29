@@ -43,7 +43,7 @@ class game_server
         game_server() noexcept;
         game_server(const game_server &other) noexcept = delete;
         game_server(game_server &&other) noexcept = delete;
-        virtual ~game_server();
+        virtual ~game_server() noexcept;
         game_server &operator=(const game_server &other) noexcept = delete;
         game_server &operator=(game_server &&other) noexcept = delete;
 

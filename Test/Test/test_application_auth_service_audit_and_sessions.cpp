@@ -40,6 +40,27 @@ static int32_t create_application_database(const char *file_path)
     return (FT_ERR_SUCCESS);
 }
 
+static std::chrono::system_clock::time_point g_session_timeout_test_time;
+
+static std::chrono::system_clock::time_point session_timeout_test_clock_now(void)
+{
+    return (g_session_timeout_test_time);
+}
+
+static int32_t session_timeout_get_usernames_at(
+    application_auth_service &service, ft_vector<ft_string> &usernames,
+    int64_t timestamp)
+{
+    int32_t error_code;
+
+    g_session_timeout_test_time = std::chrono::system_clock::time_point(
+        std::chrono::seconds(timestamp));
+    time_set_clock_now_hook(session_timeout_test_clock_now);
+    error_code = service.get_logged_in_usernames(usernames);
+    time_reset_clock_now_hook();
+    return (error_code);
+}
+
 static ft_bool vector_contains_string(const ft_vector<ft_string> &strings, const char *expected_string)
 {
     ft_size_t index;
@@ -200,8 +221,19 @@ FT_TEST(test_application_auth_service_session_timeout_expires_and_list_updates)
     FT_ASSERT_EQ(2U, usernames.size());
     FT_ASSERT_EQ(FT_TRUE, vector_contains_string(usernames, "alice"));
     FT_ASSERT_EQ(FT_TRUE, vector_contains_string(usernames, "bob"));
-    time_sleep(7);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, service.get_logged_in_usernames(usernames));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        service.get_login_session_timestamp("alice", timestamp_output));
+    error_code = session_timeout_get_usernames_at(service, usernames,
+        timestamp_output - 1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
+    FT_ASSERT_EQ(2U, usernames.size());
+    error_code = session_timeout_get_usernames_at(service, usernames,
+        timestamp_output + 4);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
+    FT_ASSERT_EQ(2U, usernames.size());
+    error_code = session_timeout_get_usernames_at(service, usernames,
+        timestamp_output + 5);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
     FT_ASSERT_EQ(0U, usernames.size());
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, service.get_login_session_timestamp("alice", timestamp_output));
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, service.get_login_session_client_ip_address("bob", string_output));

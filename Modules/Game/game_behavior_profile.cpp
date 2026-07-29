@@ -197,7 +197,7 @@ int32_t game_behavior_profile::destroy() noexcept
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     disable_error = this->disable_thread_safety();
     this->_profile_id = 0;
     this->_aggression_weight = 0.0;
