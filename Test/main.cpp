@@ -139,12 +139,14 @@ namespace
     }
 #endif
 
+#if !defined(_WIN32) && !defined(_WIN64)
     static void test_remove_path(const test_path &path)
     {
         std::error_code error_code;
         std::filesystem::remove_all(path, error_code);
         return ;
     }
+#endif
 
     static test_path test_find_libft_root(const test_path &executable_path)
     {
