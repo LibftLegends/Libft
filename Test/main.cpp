@@ -18,22 +18,8 @@ namespace
 
     static test_path test_find_libft_root(const test_path &executable_path)
     {
-        std::error_code error_code;
-        test_path absolute_executable_path;
-        test_path canonical_executable_path;
-        test_path executable_parent;
+        const test_path executable_parent = executable_path.parent_path();
 
-        if (executable_path.empty())
-            return (test_path());
-        absolute_executable_path = std::filesystem::absolute(executable_path,
-            error_code);
-        if (error_code)
-            return (test_path());
-        canonical_executable_path = std::filesystem::weakly_canonical(
-            absolute_executable_path, error_code);
-        if (error_code)
-            return (test_path());
-        executable_parent = canonical_executable_path.parent_path();
         if (!executable_parent.empty()
             && executable_parent.filename() == "Test")
         {
