@@ -419,6 +419,14 @@ static int32_t runtime_compile_and_run_helper(void)
     project_root = runtime_project_root();
     if (project_root.empty())
         return (0);
+#if defined(_WIN32) || defined(_WIN64)
+    source_path = project_root
+        + "\\Test\\secure_wipe_runtime_child.cpp";
+    executable_path = project_root
+        + "\\Test\\secure_wipe_runtime_child.exe";
+    archive_path = project_root + "\\Test\\Full_Libft_test.a";
+    modules_path = project_root + "\\Modules";
+#else
     {
         std::filesystem::path project_root_path;
 
@@ -431,6 +439,7 @@ static int32_t runtime_compile_and_run_helper(void)
             / "Full_Libft_test.a").string();
         modules_path = (project_root_path / "Modules").string();
     }
+#endif
     formatted_length = pf_snprintf(file_guard.source_path,
         sizeof(file_guard.source_path), "%s",
         source_path.c_str());
