@@ -122,6 +122,26 @@ jobs:
           if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
           if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
           if (Test-Path windows_crash_stack_trace.log) { Get-Content windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
+          if ($test_status -ne 0) { # CI_DIAGNOSTIC: Capture a debugger backtrace for fail-fast heap corruption.
+            $gdb_command = Get-Command gdb.exe -ErrorAction SilentlyContinue
+            if ($null -ne $gdb_command) {
+              Write-Host "Windows test failed; rerunning under MinGW GDB."
+              & $gdb_command.Source --batch --nx --nh `
+                -ex "set pagination off" `
+                -ex "set confirm off" `
+                -ex "set print thread-events off" `
+                -ex "run" `
+                -ex "thread apply all bt full" `
+                -ex "quit" `
+                --args .\Test\libft_tests.exe *> Test\ci_windows_gdb.log
+              if (Test-Path Test\ci_windows_gdb.log) {
+                Get-Content Test\ci_windows_gdb.log
+              }
+            }
+            else {
+              Write-Host "MinGW GDB was not available on the Windows runner."
+            }
+          }
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.
 
       # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
@@ -173,5 +193,6 @@ jobs:
             Test/ci_windows_secure_wipe_runtime.log
             Test/ci_windows_secure_wipe_runtime.err
             Test/ci_windows_crash_stack_trace.log
+            Test/ci_windows_gdb.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
