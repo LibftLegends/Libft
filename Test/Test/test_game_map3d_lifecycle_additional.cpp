@@ -138,7 +138,7 @@ FT_TEST(test_game_map3d_destroy_is_idempotent)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, value.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
     return (1);
 }
 

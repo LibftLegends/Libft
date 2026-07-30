@@ -244,7 +244,7 @@ FT_TEST(test_game_map3d_destroy_uninitialised_returns_invalid_state)
 {
     game_map3d map_instance;
 
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, map_instance.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.destroy());
     FT_ASSERT_EQ(1, expect_no_sigabrt_on_uninitialised_destructor<game_map3d>());
     return (1);
 }

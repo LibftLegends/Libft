@@ -44,14 +44,14 @@ FT_TEST(test_game_equipment_destroyed_unequip_aborts)
 
 FT_TEST(test_game_equipment_destroyed_get_item_aborts)
 {
-    FT_ASSERT_EQ(0, expect_game_destroyed_sigabrt<game_equipment>(
+    FT_ASSERT_EQ(1, expect_game_destroyed_sigabrt<game_equipment>(
                         equipment_destroyed_get_item));
     return (1);
 }
 
 FT_TEST(test_game_equipment_destroyed_enable_thread_safety_aborts)
 {
-    FT_ASSERT_EQ(0, expect_game_destroyed_sigabrt<game_equipment>(
+    FT_ASSERT_EQ(1, expect_game_destroyed_sigabrt<game_equipment>(
                         equipment_destroyed_enable_thread_safety));
     return (1);
 }

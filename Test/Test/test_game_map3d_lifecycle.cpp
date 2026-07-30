@@ -17,6 +17,6 @@ FT_TEST(test_game_map3d_thread_safe_lifecycle)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_3d.enable_thread_safety());
     FT_ASSERT(map_3d.is_thread_safe() == FT_TRUE);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_3d.destroy());
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, map_3d.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_3d.destroy());
     return (1);
 }

@@ -93,7 +93,7 @@ FT_TEST(test_game_experience_table_destroyed_set_value_aborts)
 
 FT_TEST(test_game_experience_table_destroyed_set_levels_aborts)
 {
-    FT_ASSERT_EQ(0, expect_game_destroyed_sigabrt<game_experience_table>(
+    FT_ASSERT_EQ(1, expect_game_destroyed_sigabrt<game_experience_table>(
                         experience_destroyed_set_levels));
     return (1);
 }
@@ -107,7 +107,7 @@ FT_TEST(test_game_experience_table_destroyed_generate_total_aborts)
 
 FT_TEST(test_game_experience_table_destroyed_generate_scaled_aborts)
 {
-    FT_ASSERT_EQ(0, expect_game_destroyed_sigabrt<game_experience_table>(
+    FT_ASSERT_EQ(1, expect_game_destroyed_sigabrt<game_experience_table>(
                         experience_destroyed_generate_scaled));
     return (1);
 }

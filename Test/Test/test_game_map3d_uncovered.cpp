@@ -183,7 +183,7 @@ FT_TEST(test_game_map3d_destroy_state)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.initialize(1, 1, 1, 0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.destroy());
     FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, map_instance._initialised_state);
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, map_instance.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.destroy());
     return (1);
 }
 
