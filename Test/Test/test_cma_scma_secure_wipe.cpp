@@ -95,6 +95,8 @@ static std::string runtime_shell_quote(const std::string &value)
     {
         if (value[index] == '\"')
             quoted += "\\\"";
+        else if (value[index] == '\\')
+            quoted += '/';
         else
             quoted += value[index];
         index++;
@@ -456,7 +458,9 @@ static int32_t runtime_compile_and_run_helper(void)
 #else
         compiler = "g++";
 #endif
-    compile_command = runtime_shell_quote(compiler);
+    compile_command = compiler;
+    if (compile_command.find(' ') != std::string::npos)
+        compile_command = runtime_shell_quote(compile_command);
     compile_command += " -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
     compile_command += " -Wno-missing-declarations -DLIBFT_TEST_BUILD";
     compile_command += " -DLIBFT_INTERNAL_HEADERS -I";
