@@ -129,13 +129,23 @@ jobs:
               @(
                 'set pagination off'
                 'set confirm off'
+                'handle SIGTRAP stop print pass'
+                'handle SIGABRT stop print pass'
+                'break RtlReportFatalFailure'
+                'break RtlRaiseStatus'
+                'break RtlHeapReportCorruptionFailure'
                 'run'
                 'thread apply all bt full'
                 'quit'
               ) | Set-Content -Path Test\ci_windows_gdb_commands.txt
+              $saved_error_action = $ErrorActionPreference
+              $ErrorActionPreference = 'Continue'
               & $gdb_command.Source --batch --nx `
                 -x Test\ci_windows_gdb_commands.txt `
                 .\Test\libft_tests.exe *> Test\ci_windows_gdb.log
+              $gdb_status = $LASTEXITCODE
+              $ErrorActionPreference = $saved_error_action
+              Write-Host "GDB exit code: $gdb_status"
               if (Test-Path Test\ci_windows_gdb.log) {
                 Get-Content Test\ci_windows_gdb.log
               }
