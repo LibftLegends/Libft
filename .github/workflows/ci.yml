@@ -116,10 +116,12 @@ jobs:
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+          if (Test-Path windows_crash_stack_trace.log) { Copy-Item windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
           if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
           if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
           if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
+          if (Test-Path windows_crash_stack_trace.log) { Get-Content windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.
 
       # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
@@ -170,5 +172,6 @@ jobs:
             Test/ci_windows_failures.log
             Test/ci_windows_secure_wipe_runtime.log
             Test/ci_windows_secure_wipe_runtime.err
+            Test/ci_windows_crash_stack_trace.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
