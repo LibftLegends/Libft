@@ -23,6 +23,12 @@ endef
 TEST_PROGRESS_SESSION := $(shell date +%s%N)
 TEST_PROGRESS_INIT := Test/.libft_progress/initialized.$(TEST_PROGRESS_SESSION)
 
+ifeq ($(OS),Windows_NT)
+TEST_EXECUTABLE_MAKE_FLAGS := -j1
+else
+TEST_EXECUTABLE_MAKE_FLAGS :=
+endif
+
 ssh:
 	printf '\033[1;35m[LIBFT GIT] Switching GitHub remote to SSH\033[0m\n'
 	git remote set-url origin git@github.com:Adyem/Libft.git
@@ -61,7 +67,7 @@ tests: $(TEST_TARGET)
 			*"-j1"*) batch_output=0 ;; \
 			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
 		esac; \
-		$(MAKE) -C Test all $(SUBMAKE_OVERRIDES) LIBFT_TEST_BATCH_OUTPUT="$$batch_output"; \
+		$(MAKE) -C Test $(TEST_EXECUTABLE_MAKE_FLAGS) all $(SUBMAKE_OVERRIDES) LIBFT_TEST_BATCH_OUTPUT="$$batch_output"; \
 	fi
 
 print-build-mode:
