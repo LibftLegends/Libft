@@ -9,6 +9,42 @@
 #if defined(_WIN32) || defined(_WIN64)
 # include <windows.h>
 # include <dbghelp.h>
+
+    static void test_remove_windows_path(const std::string &path)
+    {
+        DWORD file_attributes;
+        WIN32_FIND_DATAA find_data;
+        HANDLE find_handle;
+        std::string search_path;
+        std::string child_path;
+
+        file_attributes = GetFileAttributesA(path.c_str());
+        if (file_attributes == INVALID_FILE_ATTRIBUTES)
+            return ;
+        if ((file_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U)
+        {
+            (void)DeleteFileA(path.c_str());
+            return ;
+        }
+        search_path = path + "\\*";
+        find_handle = FindFirstFileA(search_path.c_str(), &find_data);
+        if (find_handle != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                if (std::strcmp(find_data.cFileName, ".") != 0
+                    && std::strcmp(find_data.cFileName, "..") != 0)
+                {
+                    child_path = path + "\\" + find_data.cFileName;
+                    test_remove_windows_path(child_path);
+                }
+            }
+            while (FindNextFileA(find_handle, &find_data) != 0);
+            (void)FindClose(find_handle);
+        }
+        (void)RemoveDirectoryA(path.c_str());
+        return ;
+    }
 #endif
 
 namespace
@@ -122,6 +158,24 @@ namespace
         return (test_path());
     }
 
+#if defined(_WIN32) || defined(_WIN64)
+    static void test_cleanup_runtime_artifacts(const std::string &root_path)
+    {
+        const char *preserve_failure_log;
+
+        if (root_path.empty())
+            return ;
+        preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG");
+        if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1")
+            test_remove_windows_path(root_path + "\\test_failures.log");
+        test_remove_windows_path(root_path + "\\test_file_io.txt");
+        test_remove_windows_path(root_path + "\\test_cmp_system_io.txt");
+        test_remove_windows_path(root_path + "\\test_su_file_stream.txt");
+        test_remove_windows_path(root_path + "\\Test\\tmp_json_stream_reader.json");
+        test_remove_windows_path(root_path + "\\Test\\tmp");
+        return ;
+    }
+#else
     static void test_cleanup_runtime_artifacts(const test_path &root_path)
     {
         const char *preserve_failure_log; // CI_DIAGNOSTIC: Hold the optional failure-log preservation flag.
@@ -138,6 +192,7 @@ namespace
         test_remove_path(root_path / "Test" / "tmp");
         return ;
     }
+#endif
 
 }
 
@@ -145,6 +200,7 @@ int main(int argc, char **argv)
 {
     test_path executable_path;
     test_path root_path;
+    std::string root_path_string;
     if (argc > 0 && argv != NULL && argv[0] != NULL)
     {
         executable_path = test_path(argv[0]);
@@ -154,6 +210,11 @@ int main(int argc, char **argv)
 #endif
     const int test_status = ft_run_registered_tests();
     root_path = test_find_libft_root(executable_path);
+#if defined(_WIN32) || defined(_WIN64)
+    root_path_string = root_path.string();
+    test_cleanup_runtime_artifacts(root_path_string);
+#else
     test_cleanup_runtime_artifacts(root_path);
+#endif
     return (test_status);
 }
