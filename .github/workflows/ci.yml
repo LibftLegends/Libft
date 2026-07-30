@@ -126,14 +126,16 @@ jobs:
             $gdb_command = Get-Command gdb.exe -ErrorAction SilentlyContinue
             if ($null -ne $gdb_command) {
               Write-Host "Windows test failed; rerunning under MinGW GDB."
-              & $gdb_command.Source --batch --nx --nh `
-                -ex "set pagination off" `
-                -ex "set confirm off" `
-                -ex "set print thread-events off" `
-                -ex "run" `
-                -ex "thread apply all bt full" `
-                -ex "quit" `
-                --args .\Test\libft_tests.exe *> Test\ci_windows_gdb.log
+              @(
+                'set pagination off'
+                'set confirm off'
+                'run'
+                'thread apply all bt full'
+                'quit'
+              ) | Set-Content -Path Test\ci_windows_gdb_commands.txt
+              & $gdb_command.Source --batch --nx `
+                -x Test\ci_windows_gdb_commands.txt `
+                .\Test\libft_tests.exe *> Test\ci_windows_gdb.log
               if (Test-Path Test\ci_windows_gdb.log) {
                 Get-Content Test\ci_windows_gdb.log
               }
@@ -194,5 +196,6 @@ jobs:
             Test/ci_windows_secure_wipe_runtime.err
             Test/ci_windows_crash_stack_trace.log
             Test/ci_windows_gdb.log
+            Test/ci_windows_gdb_commands.txt
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
