@@ -14,8 +14,8 @@
 
 struct json_serializer_character
 {
-    const char *name;
-    const char *role;
+    char name[32];
+    char role[32];
 };
 
 static int32_t json_serializer_write_character(
@@ -48,16 +48,22 @@ static int32_t json_serializer_read_character(
     const json_document &document, void *user_data) noexcept
 {
     json_serializer_character *character;
+    const char *name_value;
+    const char *role_value;
 
     character = static_cast<json_serializer_character *>(user_data);
     if (character == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    character->name = document.get_value_by_pointer("/character/name");
-    if (character->name == ft_nullptr)
+    name_value = document.get_value_by_pointer("/character/name");
+    if (name_value == ft_nullptr)
         return (document.get_error());
-    character->role = document.get_value_by_pointer("/character/role");
-    if (character->role == ft_nullptr)
+    role_value = document.get_value_by_pointer("/character/role");
+    if (role_value == ft_nullptr)
         return (document.get_error());
+    std::strncpy(character->name, name_value, sizeof(character->name) - 1);
+    character->name[sizeof(character->name) - 1] = '\0';
+    std::strncpy(character->role, role_value, sizeof(character->role) - 1);
+    character->role[sizeof(character->role) - 1] = '\0';
     return (FT_ERR_SUCCESS);
 }
 
@@ -67,10 +73,9 @@ FT_TEST(test_json_serializer_to_string_and_from_string)
     json_serializer_character output_character;
     ft_string serialized_content;
 
-    input_character.name = "Ada";
-    input_character.role = "wizard";
-    output_character.name = ft_nullptr;
-    output_character.role = ft_nullptr;
+    std::strcpy(input_character.name, "Ada");
+    std::strcpy(input_character.role, "wizard");
+    std::memset(&output_character, 0, sizeof(output_character));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, serialized_content.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, json_serialize_to_string(
             json_serializer_write_character, &input_character,
@@ -80,8 +85,6 @@ FT_TEST(test_json_serializer_to_string_and_from_string)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, json_deserialize_from_string(
             serialized_content.c_str(), json_serializer_read_character,
             &output_character));
-    FT_ASSERT(output_character.name != ft_nullptr);
-    FT_ASSERT(output_character.role != ft_nullptr);
     FT_ASSERT_EQ(0, std::strcmp(output_character.name, "Ada"));
     FT_ASSERT_EQ(0, std::strcmp(output_character.role, "wizard"));
     return (1);
