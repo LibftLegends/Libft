@@ -37,6 +37,8 @@ Test/libft_efficiency_tests
 Test/libft_tests.exe
 Test/libft_tests_debug.exe
 Test/libft_efficiency_tests.exe
+Test/performance_benchmarks.json
+Test/performance_benchmarks_failed.json
 Test/*.rsp
 Demo/build/
 Demo/demo_dumb_game

@@ -180,6 +180,16 @@ jobs:
         run: |
           make -C Test run_Efficiency
 
+      - name: Upload performance benchmark JSON
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: performance-benchmarks-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            Test/performance_benchmarks.json
+            Test/performance_benchmarks_failed.json
+          if-no-files-found: warn
+
       # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
       - name: Diagnose Ubuntu test failures
         if: failure() && runner.os == 'Linux' # CI_DIAGNOSTIC: Run diagnostics only after the Ubuntu suite fails.

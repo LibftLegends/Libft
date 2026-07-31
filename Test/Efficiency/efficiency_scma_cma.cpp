@@ -17,6 +17,9 @@ static const ft_size_t EFFICIENCY_BLOCK_COUNT = 512;
 static const ft_size_t EFFICIENCY_BLOCK_SIZE = 128;
 static const ft_size_t EFFICIENCY_ROUNDS = 8;
 static const ft_size_t EFFICIENCY_MUTEX_OPERATIONS = 1000000;
+static const char *EFFICIENCY_JSON_PATH = "performance_benchmarks.json";
+static const char *EFFICIENCY_FAILED_JSON_PATH =
+    "performance_benchmarks_failed.json";
 
 struct s_allocator_result
 {
@@ -490,6 +493,95 @@ static void print_result(const char *name, s_allocator_result result,
         relative_percent, status);
 }
 
+static double efficiency_average_microseconds(uint64_t elapsed_microseconds,
+    ft_size_t instance_count)
+{
+    if (instance_count == 0)
+        return (0.0);
+    return (static_cast<double>(elapsed_microseconds)
+        / static_cast<double>(instance_count));
+}
+
+static void efficiency_write_allocator_json(FILE *output, const char *name,
+    s_allocator_result result, ft_size_t instances, ft_bool trailing_comma)
+{
+    std::fprintf(output, "    \"%s\": {\"instances\": %zu, "
+        "\"average_microseconds\": %.6f, "
+        "\"allocation_average_microseconds\": %.6f, "
+        "\"access_average_microseconds\": %.6f, "
+        "\"release_average_microseconds\": %.6f, \"passed\": %s}%s\n",
+        name, static_cast<std::size_t>(instances),
+        efficiency_average_microseconds(result.elapsed_microseconds, instances),
+        efficiency_average_microseconds(result.allocation_microseconds, instances),
+        efficiency_average_microseconds(result.access_microseconds, instances),
+        efficiency_average_microseconds(result.release_microseconds, instances),
+        result.passed == FT_TRUE ? "true" : "false",
+        trailing_comma == FT_TRUE ? "," : "");
+    return ;
+}
+
+static void efficiency_write_mutex_json(FILE *output, const char *name,
+    s_mutex_result result, ft_size_t instances, ft_bool trailing_comma)
+{
+    std::fprintf(output, "    \"%s\": {\"instances\": %zu, "
+        "\"average_microseconds\": %.6f, \"passed\": %s}%s\n",
+        name, static_cast<std::size_t>(instances),
+        efficiency_average_microseconds(result.elapsed_microseconds, instances),
+        result.passed == FT_TRUE ? "true" : "false",
+        trailing_comma == FT_TRUE ? "," : "");
+    return ;
+}
+
+static int32_t write_performance_json(
+    const char *path,
+    ft_bool all_benchmarks_passed,
+    s_allocator_result malloc_result,
+    s_allocator_result cma_result,
+    s_allocator_result scma_result,
+    s_mutex_result std_mutex_result,
+    s_mutex_result pt_mutex_result,
+    s_mutex_result std_recursive_mutex_result,
+    s_mutex_result pt_recursive_mutex_result)
+{
+    const ft_size_t allocator_instances = EFFICIENCY_BLOCK_COUNT
+        * EFFICIENCY_ROUNDS;
+    const ft_size_t mutex_instances = EFFICIENCY_MUTEX_OPERATIONS;
+    FILE *output;
+
+    (void)std::remove(EFFICIENCY_JSON_PATH);
+    (void)std::remove(EFFICIENCY_FAILED_JSON_PATH);
+    output = std::fopen(path, "w");
+    if (output == NULL)
+    {
+        std::fprintf(stderr, "Could not write %s\n", path);
+        return (1);
+    }
+    std::fprintf(output, "{\n  \"status\": \"%s\",\n"
+        "  \"unit\": \"microseconds\",\n  \"benchmarks\": {\n",
+        all_benchmarks_passed == FT_TRUE ? "passed" : "failed");
+    efficiency_write_allocator_json(output, "malloc", malloc_result,
+        allocator_instances, FT_TRUE);
+    efficiency_write_allocator_json(output, "cma", cma_result,
+        allocator_instances, FT_TRUE);
+    efficiency_write_allocator_json(output, "scma", scma_result,
+        allocator_instances, FT_TRUE);
+    efficiency_write_mutex_json(output, "std_mutex", std_mutex_result,
+        mutex_instances, FT_TRUE);
+    efficiency_write_mutex_json(output, "pt_mutex", pt_mutex_result,
+        mutex_instances, FT_TRUE);
+    efficiency_write_mutex_json(output, "std_recursive_mutex",
+        std_recursive_mutex_result, mutex_instances, FT_TRUE);
+    efficiency_write_mutex_json(output, "pt_recursive_mutex",
+        pt_recursive_mutex_result, mutex_instances, FT_FALSE);
+    std::fprintf(output, "  }\n}\n");
+    if (std::fclose(output) != 0)
+    {
+        std::fprintf(stderr, "Could not finish %s\n", path);
+        return (1);
+    }
+    return (0);
+}
+
 int main(void)
 {
     s_allocator_result malloc_result;
@@ -501,6 +593,7 @@ int main(void)
     s_mutex_result pt_recursive_mutex_result;
     int32_t scma_initialization_result;
     int32_t exit_code;
+    ft_bool all_benchmarks_passed;
 
     scma_initialization_result = scma_initialize(1024 * 1024);
     if (scma_initialization_result != FT_ERR_SUCCESS)
@@ -525,12 +618,22 @@ int main(void)
     print_mutex_result("pt_recursive_mutex", pt_recursive_mutex_result,
         std_recursive_mutex_result.elapsed_microseconds);
     exit_code = FT_ERR_SUCCESS;
+    all_benchmarks_passed = FT_TRUE;
     if (malloc_result.passed != FT_TRUE || cma_result.passed != FT_TRUE
         || scma_result.passed != FT_TRUE
         || std_mutex_result.passed != FT_TRUE
         || pt_mutex_result.passed != FT_TRUE
         || std_recursive_mutex_result.passed != FT_TRUE
         || pt_recursive_mutex_result.passed != FT_TRUE)
+    {
+        all_benchmarks_passed = FT_FALSE;
+        exit_code = 1;
+    }
+    if (write_performance_json(all_benchmarks_passed == FT_TRUE
+            ? EFFICIENCY_JSON_PATH : EFFICIENCY_FAILED_JSON_PATH,
+            all_benchmarks_passed, malloc_result, cma_result, scma_result,
+            std_mutex_result, pt_mutex_result, std_recursive_mutex_result,
+            pt_recursive_mutex_result) != 0)
         exit_code = 1;
     return (exit_code);
 }
