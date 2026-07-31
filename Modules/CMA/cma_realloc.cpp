@@ -29,14 +29,21 @@ static ft_bool reallocate_block(void *memory_pointer, ft_size_t aligned_size, ft
     if (block->next && cma_block_is_free(block->next) &&
         (block->size + block->next->size) >= aligned_size)
     {
-        cma_validate_block(block->next, "cma_realloc neighbor", nullptr);
-        block->size += block->next->size;
-        block->next = block->next->next;
+        Block *released_block;
+
+        released_block = block->next;
+        cma_validate_block(released_block, "cma_realloc neighbor", nullptr);
+        cma_free_list_remove(released_block);
+        block->size += released_block->size;
+        block->next = released_block->next;
         if (block->next)
         {
             cma_validate_block(block->next, "cma_realloc relink", nullptr);
             block->next->prev = block;
         }
+        released_block->next = nullptr;
+        released_block->prev = nullptr;
+        cma_metadata_release_block(released_block);
         split_block(block, aligned_size);
         cma_validate_block(block, "cma_realloc split after merge", memory_pointer);
         cma_debug_prepare_allocation(block, user_size);

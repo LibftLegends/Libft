@@ -152,6 +152,7 @@ int32_t cmp_gmtime(const std::time_t *time_value, std::tm *output);
 int32_t cmp_localtime(const std::time_t *time_value, std::tm *output);
 int32_t cmp_time_get_time_of_day(struct timeval *time_value);
 int32_t cmp_high_resolution_time(int64_t *nanoseconds_out);
+int32_t cmp_active_clock_now_microseconds(uint64_t *microseconds_out);
 const char *cmp_service_null_device_path(void);
 int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size, ft_size_t *length_out);
 typedef void (*t_cmp_service_signal_handler)(int32_t signal_number,

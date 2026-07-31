@@ -277,8 +277,14 @@ void    cma_metadata_release_block(Block *block)
         return ;
     if (cma_metadata_make_writable() != FT_ERR_SUCCESS)
         return ;
+    if (block->free_listed == FT_TRUE)
+        cma_free_list_remove(block);
     block->next = g_cma_metadata_free_list;
     block->prev = nullptr;
+    block->free_next = nullptr;
+    block->free_prev = nullptr;
+    block->free_bin_index = 0;
+    block->free_listed = FT_FALSE;
     block->size = 0;
     block->payload = nullptr;
 #ifdef LIBFT_TEST_BUILD
@@ -313,5 +319,6 @@ void    cma_metadata_reset(void)
     g_cma_metadata_free_list = nullptr;
     g_cma_metadata_stride = 0;
     g_cma_metadata_page_size = 0;
+    cma_free_list_reset();
     return ;
 }

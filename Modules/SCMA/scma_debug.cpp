@@ -15,7 +15,7 @@ int32_t    scma_get_stats(scma_stats *out_stats)
 {
     scma_stats stats;
     ft_size_t &block_count = scma_block_count_ref();
-    ft_size_t &used_size = scma_used_size_ref();
+    ft_size_t &used_size = scma_live_size_ref();
     ft_size_t &heap_capacity = scma_heap_capacity_ref();
 
     if (scma_mutex_lock() != FT_ERR_SUCCESS)

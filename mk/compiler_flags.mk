@@ -65,6 +65,9 @@ else
         -Wzero-as-null-pointer-constant -Wmaybe-uninitialized
 endif
 
+ifeq ($(OS),Windows_NT)
+FIXDEP = :
+else
 FIXDEP = dep_file="$(@:.o=.d)"; \
          if [ -f "$$dep_file" ]; then \
              dep_root="$(LIBFT_ROOT_DIR)"; \
@@ -78,6 +81,7 @@ FIXDEP = dep_file="$(@:.o=.d)"; \
              dep_root="$${dep_root%/}/"; \
              perl -0pi -e "s|\\Q$$dep_root\\E|./|g; s/\\r//g" "$$dep_file"; \
          fi
+endif
 
 export BUILD_OUTPUT_SUFFIX
 export COMPILE_FLAGS

@@ -13,7 +13,7 @@
 
 struct xml_serializer_character
 {
-    const char *name;
+    char name[32];
 };
 
 static int32_t xml_serializer_write_character(
@@ -22,7 +22,7 @@ static int32_t xml_serializer_write_character(
     xml_serializer_character *character;
 
     character = static_cast<xml_serializer_character *>(user_data);
-    if (character == ft_nullptr || character->name == ft_nullptr)
+    if (character == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     if (std::strcmp(character->name, "Ada") != 0)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -45,7 +45,9 @@ static int32_t xml_serializer_read_character(
     name_node = root_node->children[0];
     if (name_node == ft_nullptr || name_node->text == ft_nullptr)
         return (FT_ERR_NOT_FOUND);
-    character->name = name_node->text;
+    std::strncpy(character->name, name_node->text,
+        sizeof(character->name) - 1);
+    character->name[sizeof(character->name) - 1] = '\0';
     return (FT_ERR_SUCCESS);
 }
 
@@ -55,8 +57,8 @@ FT_TEST(test_xml_serializer_to_string_and_from_string)
     xml_serializer_character output_character;
     ft_string serialized_content;
 
-    input_character.name = "Ada";
-    output_character.name = ft_nullptr;
+    std::strcpy(input_character.name, "Ada");
+    std::memset(&output_character, 0, sizeof(output_character));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, serialized_content.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_serialize_to_string(
             xml_serializer_write_character, &input_character,
@@ -66,7 +68,6 @@ FT_TEST(test_xml_serializer_to_string_and_from_string)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_deserialize_from_string(
             serialized_content.c_str(), xml_serializer_read_character,
             &output_character));
-    FT_ASSERT(output_character.name != ft_nullptr);
     FT_ASSERT_EQ(0, std::strcmp(output_character.name, "Ada"));
     return (1);
 }

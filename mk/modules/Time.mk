@@ -1,7 +1,8 @@
 TARGET         := time.a
 DEBUG_TARGET   := time_debug.a
 
-SRCS := time_now.cpp \
+SRCS := time_active_clock.cpp \
+        time_now.cpp \
         time_now_ms.cpp \
         time_monotonic.cpp \
         time_monotonic_point.cpp \

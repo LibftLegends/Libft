@@ -371,6 +371,11 @@ When adding a new module, add that module to the root `README.md` and create the
 
 Code that relies on platform-specific features must place only the platform-dependent portions into helper functions in the Compatibility module. Platform-specific means the code cannot run on all of Linux, Windows, and macOS.
 
+Testing-only exception: platform-specific code used exclusively to implement or
+validate the test runner and its test-artifact cleanup may remain in the Test
+directory. This exception does not apply to production library code or public
+module APIs.
+
 ## Test file organization
 
 Prefer multiple focused test files over one large mixed-purpose test file.

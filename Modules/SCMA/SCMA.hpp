@@ -50,6 +50,27 @@ int32_t    scma_write(scma_handle handle, ft_size_t offset,
 int32_t    scma_read(scma_handle handle, ft_size_t offset,
             void *destination, ft_size_t size);
 
+struct scma_write_request
+{
+    scma_handle handle;
+    ft_size_t offset;
+    const void *source;
+    ft_size_t size;
+};
+
+struct scma_read_request
+{
+    scma_handle handle;
+    ft_size_t offset;
+    void *destination;
+    ft_size_t size;
+};
+
+int32_t    scma_write_batch(const scma_write_request *requests,
+            ft_size_t request_count);
+int32_t    scma_read_batch(const scma_read_request *requests,
+            ft_size_t request_count);
+
 struct scma_stats
 {
     ft_size_t    block_count;
