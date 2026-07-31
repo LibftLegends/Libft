@@ -7,7 +7,11 @@
 #include <cstdlib>
 #include <cstdio>
 #include <string>
+#if !defined(_WIN32) && !defined(_WIN64)
 #include <filesystem>
+#else
+# include <windows.h>
+#endif
 
 #ifndef LIBFT_TEST_BUILD
 #endif
@@ -48,6 +52,28 @@ struct s_runtime_file_guard
 
 static std::string runtime_project_root(void)
 {
+#if defined(_WIN32) || defined(_WIN64)
+    char module_path[32768];
+    DWORD path_length;
+    std::string executable_path;
+    std::string test_directory;
+    std::string::size_type separator_index;
+
+    path_length = GetModuleFileNameA(NULL, module_path,
+        static_cast<DWORD>(sizeof(module_path)));
+    if (path_length == 0U
+        || path_length + 1U >= sizeof(module_path))
+        return (std::string());
+    executable_path.assign(module_path, path_length);
+    separator_index = executable_path.find_last_of("\\/");
+    if (separator_index == std::string::npos)
+        return (std::string());
+    test_directory = executable_path.substr(0, separator_index);
+    separator_index = test_directory.find_last_of("\\/");
+    if (separator_index == std::string::npos)
+        return (std::string());
+    return (test_directory.substr(0, separator_index));
+#else
     std::filesystem::path candidate_directory;
 
     candidate_directory = std::filesystem::current_path();
@@ -68,6 +94,7 @@ static std::string runtime_project_root(void)
         candidate_directory = parent_directory;
     }
     return (std::string());
+#endif
 }
 
 static std::string runtime_shell_quote(const std::string &value)
