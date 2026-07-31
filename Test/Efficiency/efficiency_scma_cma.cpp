@@ -3,16 +3,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/PThread/mutex.hpp"
+#include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/SCMA/SCMA.hpp"
 #include "../../Modules/Time/time.hpp"
 
 static const ft_size_t EFFICIENCY_BLOCK_COUNT = 512;
 static const ft_size_t EFFICIENCY_BLOCK_SIZE = 128;
 static const ft_size_t EFFICIENCY_ROUNDS = 8;
+static const ft_size_t EFFICIENCY_MUTEX_OPERATIONS = 1000000;
 
 struct s_allocator_result
 {
@@ -22,6 +26,181 @@ struct s_allocator_result
     uint64_t release_microseconds;
     ft_bool passed;
 };
+
+struct s_mutex_result
+{
+    uint64_t elapsed_microseconds;
+    ft_size_t lock_operations;
+    ft_bool passed;
+};
+
+static s_mutex_result benchmark_std_mutex(void)
+{
+    std::mutex mutex;
+    volatile uint64_t protected_value;
+    t_active_clock clock;
+    s_mutex_result result;
+    ft_size_t operation_index;
+
+    protected_value = 0;
+    result.passed = FT_TRUE;
+    result.lock_operations = 0;
+    time_active_clock_init(&clock);
+    (void)time_active_clock_start(&clock);
+    operation_index = 0;
+    while (operation_index < EFFICIENCY_MUTEX_OPERATIONS)
+    {
+        mutex.lock();
+        protected_value += 1;
+        mutex.unlock();
+        result.lock_operations += 1;
+        operation_index += 1;
+    }
+    (void)time_active_clock_stop(&clock);
+    result.elapsed_microseconds = time_active_clock_report(&clock);
+    if (protected_value != EFFICIENCY_MUTEX_OPERATIONS)
+        result.passed = FT_FALSE;
+    return (result);
+}
+
+static s_mutex_result benchmark_pt_mutex(void)
+{
+    pt_mutex mutex;
+    volatile uint64_t protected_value;
+    t_active_clock clock;
+    s_mutex_result result;
+    ft_size_t operation_index;
+
+    protected_value = 0;
+    result.passed = FT_TRUE;
+    result.lock_operations = 0;
+    if (mutex.initialize() != 0)
+    {
+        result.passed = FT_FALSE;
+        result.elapsed_microseconds = 0;
+        return (result);
+    }
+    time_active_clock_init(&clock);
+    (void)time_active_clock_start(&clock);
+    operation_index = 0;
+    while (operation_index < EFFICIENCY_MUTEX_OPERATIONS)
+    {
+        if (mutex.lock() != 0)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        protected_value += 1;
+        if (mutex.unlock() != 0)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        result.lock_operations += 1;
+        operation_index += 1;
+    }
+    (void)time_active_clock_stop(&clock);
+    result.elapsed_microseconds = time_active_clock_report(&clock);
+    if (protected_value != result.lock_operations)
+        result.passed = FT_FALSE;
+    (void)mutex.destroy();
+    return (result);
+}
+
+static s_mutex_result benchmark_std_recursive_mutex(void)
+{
+    std::recursive_mutex mutex;
+    volatile uint64_t protected_value;
+    t_active_clock clock;
+    s_mutex_result result;
+    ft_size_t operation_index;
+
+    protected_value = 0;
+    result.passed = FT_TRUE;
+    result.lock_operations = 0;
+    time_active_clock_init(&clock);
+    (void)time_active_clock_start(&clock);
+    operation_index = 0;
+    while (operation_index < EFFICIENCY_MUTEX_OPERATIONS)
+    {
+        mutex.lock();
+        mutex.lock();
+        protected_value += 1;
+        mutex.unlock();
+        mutex.unlock();
+        result.lock_operations += 2;
+        operation_index += 1;
+    }
+    (void)time_active_clock_stop(&clock);
+    result.elapsed_microseconds = time_active_clock_report(&clock);
+    if (protected_value * 2 != result.lock_operations)
+        result.passed = FT_FALSE;
+    return (result);
+}
+
+static s_mutex_result benchmark_pt_recursive_mutex(void)
+{
+    pt_recursive_mutex mutex;
+    volatile uint64_t protected_value;
+    t_active_clock clock;
+    s_mutex_result result;
+    ft_size_t operation_index;
+
+    protected_value = 0;
+    result.passed = FT_TRUE;
+    result.lock_operations = 0;
+    if (mutex.initialize() != 0)
+    {
+        result.passed = FT_FALSE;
+        result.elapsed_microseconds = 0;
+        return (result);
+    }
+    time_active_clock_init(&clock);
+    (void)time_active_clock_start(&clock);
+    operation_index = 0;
+    while (operation_index < EFFICIENCY_MUTEX_OPERATIONS)
+    {
+        if (mutex.lock() != 0 || mutex.lock() != 0)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        protected_value += 1;
+        if (mutex.unlock() != 0 || mutex.unlock() != 0)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        result.lock_operations += 2;
+        operation_index += 1;
+    }
+    (void)time_active_clock_stop(&clock);
+    result.elapsed_microseconds = time_active_clock_report(&clock);
+    if (protected_value * 2 != result.lock_operations)
+        result.passed = FT_FALSE;
+    (void)mutex.destroy();
+    return (result);
+}
+
+static void print_mutex_result(const char *name, s_mutex_result result,
+    uint64_t baseline_microseconds)
+{
+    double relative_percent;
+    const char *status;
+
+    relative_percent = 0.0;
+    status = "FAIL";
+    if (result.passed == FT_TRUE)
+        status = "PASS";
+    if (result.elapsed_microseconds != 0)
+        relative_percent = static_cast<double>(baseline_microseconds)
+            / static_cast<double>(result.elapsed_microseconds) * 100.0;
+    std::printf("[PERFORMANCE] %s: %" PRIu64
+        " us (lock_ops=%zu; %.2f%% of std baseline) status=%s\n",
+        name, result.elapsed_microseconds,
+        static_cast<std::size_t>(result.lock_operations), relative_percent,
+        status);
+}
 
 static void efficiency_fill_payload(unsigned char *payload, ft_size_t size,
     unsigned char value)
@@ -316,6 +495,10 @@ int main(void)
     s_allocator_result malloc_result;
     s_allocator_result cma_result;
     s_allocator_result scma_result;
+    s_mutex_result std_mutex_result;
+    s_mutex_result pt_mutex_result;
+    s_mutex_result std_recursive_mutex_result;
+    s_mutex_result pt_recursive_mutex_result;
     int32_t scma_initialization_result;
     int32_t exit_code;
 
@@ -325,13 +508,29 @@ int main(void)
     malloc_result = benchmark_malloc();
     cma_result = benchmark_cma();
     scma_result = benchmark_scma();
+    std_mutex_result = benchmark_std_mutex();
+    pt_mutex_result = benchmark_pt_mutex();
+    std_recursive_mutex_result = benchmark_std_recursive_mutex();
+    pt_recursive_mutex_result = benchmark_pt_recursive_mutex();
     scma_shutdown();
     print_result("malloc", malloc_result, malloc_result.elapsed_microseconds);
     print_result("CMA", cma_result, malloc_result.elapsed_microseconds);
     print_result("SCMA", scma_result, malloc_result.elapsed_microseconds);
+    print_mutex_result("std::mutex", std_mutex_result,
+        std_mutex_result.elapsed_microseconds);
+    print_mutex_result("pt_mutex", pt_mutex_result,
+        std_mutex_result.elapsed_microseconds);
+    print_mutex_result("std::recursive_mutex", std_recursive_mutex_result,
+        std_recursive_mutex_result.elapsed_microseconds);
+    print_mutex_result("pt_recursive_mutex", pt_recursive_mutex_result,
+        std_recursive_mutex_result.elapsed_microseconds);
     exit_code = FT_ERR_SUCCESS;
     if (malloc_result.passed != FT_TRUE || cma_result.passed != FT_TRUE
-        || scma_result.passed != FT_TRUE)
+        || scma_result.passed != FT_TRUE
+        || std_mutex_result.passed != FT_TRUE
+        || pt_mutex_result.passed != FT_TRUE
+        || std_recursive_mutex_result.passed != FT_TRUE
+        || pt_recursive_mutex_result.passed != FT_TRUE)
         exit_code = 1;
     return (exit_code);
 }
