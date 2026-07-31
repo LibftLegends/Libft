@@ -52,19 +52,6 @@ static ft_size_t determine_page_size(ft_size_t size)
     return (size);
 }
 
-static void determine_page_use(Page *page)
-{
-    if (page->heap == FT_FALSE)
-        page->alloc_size_type = 0;
-    else if (page->size == SMALL_ALLOC)
-        page->alloc_size_type = 0;
-    else if (page->size == MEDIUM_ALLOC)
-        page->alloc_size_type = 1;
-    else
-        page->alloc_size_type = 2;
-    return ;
-}
-
 static int8_t determine_which_block_to_use(ft_size_t size)
 {
     if (size < SMALL_SIZE)
@@ -72,6 +59,98 @@ static int8_t determine_which_block_to_use(ft_size_t size)
     else if (size < MEDIUM_SIZE)
         return (1);
     return (2);
+}
+
+static void report_corrupted_block(Block *block, const char *context,
+        void *user_pointer);
+
+ft_size_t cma_free_bin_for_size(ft_size_t size)
+{
+    ft_size_t bin_index;
+    ft_size_t scaled_size;
+
+    bin_index = 0;
+    scaled_size = size / 16;
+    while (scaled_size > 1 && bin_index + 1 < CMA_FREE_BIN_COUNT)
+    {
+        scaled_size >>= 1;
+        bin_index++;
+    }
+    return (bin_index);
+}
+
+void cma_free_list_remove(Block *block)
+{
+    ft_size_t bin_index;
+
+    if (block == nullptr || block->free_listed == FT_FALSE)
+        return ;
+    bin_index = block->free_bin_index;
+    if (bin_index >= CMA_FREE_BIN_COUNT)
+        report_corrupted_block(block, "cma_free_list_remove invalid bin",
+            nullptr);
+    if (block->free_prev != nullptr)
+    {
+        if (block->free_prev->free_next != block)
+            report_corrupted_block(block,
+                "cma_free_list_remove invalid previous link", nullptr);
+        block->free_prev->free_next = block->free_next;
+    }
+    else
+    {
+        if (g_cma_free_bins[bin_index] != block)
+            report_corrupted_block(block,
+                "cma_free_list_remove invalid bin head", nullptr);
+        g_cma_free_bins[bin_index] = block->free_next;
+    }
+    if (block->free_next != nullptr)
+    {
+        if (block->free_next->free_prev != block)
+            report_corrupted_block(block,
+                "cma_free_list_remove invalid next link", nullptr);
+        block->free_next->free_prev = block->free_prev;
+    }
+    block->free_next = nullptr;
+    block->free_prev = nullptr;
+    block->free_bin_index = 0;
+    block->free_listed = FT_FALSE;
+    return ;
+}
+
+void cma_free_list_insert(Block *block)
+{
+    ft_size_t bin_index;
+
+    if (block == nullptr)
+        return ;
+    cma_validate_block(block, "cma_free_list_insert", nullptr);
+    if (cma_block_is_free(block) == FT_FALSE)
+        report_corrupted_block(block,
+            "cma_free_list_insert allocated block", nullptr);
+    if (block->free_listed == FT_TRUE)
+        return ;
+    bin_index = cma_free_bin_for_size(block->size);
+    block->free_prev = nullptr;
+    block->free_next = g_cma_free_bins[bin_index];
+    if (block->free_next != nullptr)
+        block->free_next->free_prev = block;
+    block->free_bin_index = bin_index;
+    block->free_listed = FT_TRUE;
+    g_cma_free_bins[bin_index] = block;
+    return ;
+}
+
+void cma_free_list_reset(void)
+{
+    ft_size_t bin_index;
+
+    bin_index = 0;
+    while (bin_index < CMA_FREE_BIN_COUNT)
+    {
+        g_cma_free_bins[bin_index] = nullptr;
+        bin_index++;
+    }
+    return ;
 }
 
 static void *create_stack_block(void)
@@ -187,10 +266,13 @@ Block* split_block(Block* block, ft_size_t size)
     ft_size_t    minimum_payload;
     Block       *result_block;
     ft_bool         metadata_guarded;
+    ft_bool         block_was_free;
 
     result_block = block;
     metadata_guarded = FT_FALSE;
     cma_validate_block(block, "split_block", nullptr);
+    block_was_free = cma_block_is_free(block);
+    cma_free_list_remove(block);
     metadata_guarded = cma_metadata_guard_increment();
     if (!metadata_guarded)
         goto split_block_cleanup;
@@ -226,6 +308,7 @@ Block* split_block(Block* block, ft_size_t size)
     }
     new_block->size = remaining_size;
     new_block->payload = block->payload + size;
+    new_block->alloc_size_type = block->alloc_size_type;
     cma_debug_initialize_block(new_block);
     cma_mark_block_free(new_block);
     new_block->next = block->next;
@@ -242,8 +325,13 @@ Block* split_block(Block* block, ft_size_t size)
     else
         cma_mark_block_allocated(block);
     cma_debug_initialize_block(block);
+    cma_free_list_insert(new_block);
+    if (block_was_free == FT_TRUE)
+        cma_free_list_insert(block);
     result_block = block;
 split_block_cleanup:
+    if (block_was_free == FT_TRUE && cma_block_is_free(block) == FT_TRUE)
+        cma_free_list_insert(block);
     if (metadata_guarded)
         cma_metadata_guard_decrement();
     return (result_block);
@@ -288,6 +376,7 @@ Page *create_page(ft_size_t size)
     page->heap = use_heap;
     page->start = memory_pointer;
     page->size = page_size;
+    page->alloc_size_type = determine_which_block_to_use(size);
     page->next = nullptr;
     page->prev = nullptr;
     page->blocks = cma_metadata_allocate_block();
@@ -300,12 +389,12 @@ Page *create_page(ft_size_t size)
     }
     page->blocks->size = page_size;
     page->blocks->payload = static_cast<unsigned char *>(memory_pointer);
+    page->blocks->alloc_size_type = page->alloc_size_type;
     cma_debug_initialize_block(page->blocks);
     cma_mark_block_free(page->blocks);
     page->blocks->next = nullptr;
     page->blocks->prev = nullptr;
     cma_validate_block(page->blocks, "create_page", nullptr);
-    determine_page_use(page);
     if (!page_list)
     {
         page_list = page;
@@ -316,31 +405,42 @@ Page *create_page(ft_size_t size)
         page_list->prev = page;
         page_list = page;
     }
+    cma_free_list_insert(page->blocks);
     return (page);
 }
 
 Block *find_free_block(ft_size_t size)
 {
-    Page* cur_page = page_list;
-    int8_t alloc_size_type = determine_which_block_to_use(size);
-    while (cur_page)
+    ft_size_t bin_index;
+    int8_t alloc_size_type;
+
+    alloc_size_type = determine_which_block_to_use(size);
+    bin_index = cma_free_bin_for_size(size);
+    while (bin_index < CMA_FREE_BIN_COUNT)
     {
-        if (cur_page->alloc_size_type != alloc_size_type)
+        Block *current_block;
+
+        current_block = g_cma_free_bins[bin_index];
+        while (current_block)
         {
-            cur_page = cur_page->next;
-            continue ;
+            Block *next_free_block;
+
+            cma_validate_block(current_block, "find_free_block", nullptr);
+            if (current_block->free_listed == FT_FALSE
+                || current_block->free_bin_index != bin_index)
+                report_corrupted_block(current_block,
+                    "find_free_block invalid free-list metadata", nullptr);
+            next_free_block = current_block->free_next;
+            if (next_free_block != nullptr
+                && next_free_block->free_prev != current_block)
+                report_corrupted_block(next_free_block,
+                    "find_free_block corrupted free-list link", nullptr);
+            if (current_block->alloc_size_type == alloc_size_type
+                && current_block->size >= size)
+                return (current_block);
+            current_block = next_free_block;
         }
-        Block* cur_block = cur_page->blocks;
-        while (cur_block)
-        {
-            cma_validate_block(cur_block, "find_free_block", nullptr);
-            if (cma_block_is_free(cur_block) && cur_block->size >= size)
-                return (cur_block);
-            verify_traversal_link(cur_block, cur_block->next,
-                "find_free_block corrupted traversal link");
-            cur_block = cur_block->next;
-        }
-        cur_page = cur_page->next;
+        bin_index++;
     }
     return (nullptr);
 }
@@ -355,12 +455,26 @@ Block    *cma_find_block_for_pointer(const void *memory_pointer)
     while (current_page)
     {
         Block    *current_block;
+        const unsigned char *page_start;
+        const unsigned char *page_end;
+        const unsigned char *target_pointer;
+
+        page_start = static_cast<const unsigned char *>(current_page->start);
+        page_end = page_start + current_page->size;
+        target_pointer = static_cast<const unsigned char *>(memory_pointer);
+        if (target_pointer < page_start || target_pointer >= page_end)
+        {
+            current_page = current_page->next;
+            continue ;
+        }
 
         current_block = current_page->blocks;
         while (current_block)
         {
             if (cma_block_user_pointer(current_block) == memory_pointer)
                 return (current_block);
+            if (cma_block_user_pointer(current_block) > target_pointer)
+                return (nullptr);
             verify_traversal_link(current_block, current_block->next,
                 "cma_find_block_for_pointer corrupted traversal link");
             current_block = current_block->next;
@@ -378,10 +492,12 @@ Block *merge_block(Block *block)
 
     cma_validate_block(block, "merge_block", nullptr);
     current = block;
+    cma_free_list_remove(current);
     previous_block = current->prev;
     while (previous_block && cma_block_is_free(previous_block))
     {
         cma_validate_block(previous_block, "merge_block prev", nullptr);
+        cma_free_list_remove(previous_block);
         verify_backward_link(current, previous_block);
 #ifdef DEBUG
 #endif
@@ -405,6 +521,7 @@ Block *merge_block(Block *block)
     while (next_block && cma_block_is_free(next_block))
     {
         cma_validate_block(next_block, "merge_block next", nullptr);
+        cma_free_list_remove(next_block);
         verify_forward_link(current, next_block);
 #ifdef DEBUG
 #endif
@@ -424,6 +541,7 @@ Block *merge_block(Block *block)
         next_block = current->next;
     }
     cma_mark_block_free(current);
+    cma_free_list_insert(current);
 #ifdef DEBUG
 #endif
     return (current);
@@ -456,6 +574,7 @@ void free_page_if_empty(Page *page)
         page->blocks->next == nullptr &&
         page->blocks->prev == nullptr)
     {
+        cma_free_list_remove(page->blocks);
         if (page->prev)
             page->prev->next = page->next;
         if (page->next)

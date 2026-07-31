@@ -15,6 +15,11 @@ static scma_block *g_scma_blocks_data = ft_nullptr;
 static ft_size_t g_scma_block_capacity = 0;
 static ft_size_t g_scma_block_count = 0;
 static ft_size_t g_scma_used_size = 0;
+static ft_size_t g_scma_live_size = 0;
+static ft_size_t g_scma_live_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+static ft_size_t g_scma_live_tail = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+static ft_size_t g_scma_free_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+static ft_bool g_scma_compaction_needed = FT_FALSE;
 static int32_t g_scma_initialised = 0;
 
 int32_t    &scma_initialised_ref(void)
@@ -61,6 +66,31 @@ ft_size_t    &scma_used_size_ref(void)
     return (g_scma_used_size);
 }
 
+ft_size_t    &scma_live_size_ref(void)
+{
+    return (g_scma_live_size);
+}
+
+ft_size_t    &scma_live_head_ref(void)
+{
+    return (g_scma_live_head);
+}
+
+ft_size_t    &scma_live_tail_ref(void)
+{
+    return (g_scma_live_tail);
+}
+
+ft_size_t    &scma_free_head_ref(void)
+{
+    return (g_scma_free_head);
+}
+
+ft_bool    &scma_compaction_needed_ref(void)
+{
+    return (g_scma_compaction_needed);
+}
+
 scma_block_span    scma_get_block_span(void)
 {
     scma_block_span span;
@@ -104,9 +134,8 @@ void    scma_compact(void)
     scma_block_span span;
     unsigned char *heap_data;
     ft_size_t new_offset;
-    ft_size_t processed_count;
-    ft_size_t last_source_offset;
-    int32_t has_last_source_offset;
+    ft_size_t previous_used_size;
+    ft_size_t current_index;
 
     if (!scma_initialised_ref())
     {
@@ -119,42 +148,15 @@ void    scma_compact(void)
         return ;
     }
     heap_data = scma_get_heap_data();
+    previous_used_size = scma_used_size_ref();
     new_offset = 0;
-    processed_count = 0;
-    last_source_offset = 0;
-    has_last_source_offset = 0;
-    while (processed_count < span.count)
+    current_index = scma_live_head_ref();
+    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         scma_block *block;
-        ft_size_t index;
-        int32_t found_block;
-
-        block = ft_nullptr;
-        index = 0;
-        found_block = 0;
-        while (index < span.count)
-        {
-            scma_block *candidate;
-
-            candidate = &span.data[index];
-            if (candidate->in_use)
-            {
-                if (has_last_source_offset == 0
-                    || candidate->offset > last_source_offset)
-                {
-                    if (found_block == 0 || candidate->offset < block->offset)
-                    {
-                        block = candidate;
-                        found_block = 1;
-                    }
-                }
-            }
-            index++;
-        }
-        if (found_block == 0)
+        if (current_index >= span.count)
             break ;
-        last_source_offset = block->offset;
-        has_last_source_offset = 1;
+        block = &span.data[current_index];
         if (block->offset != new_offset)
         {
             std::memmove(heap_data + new_offset,
@@ -163,10 +165,93 @@ void    scma_compact(void)
             block->offset = new_offset;
         }
         new_offset += block->size;
-        processed_count += 1;
+        current_index = block->next_index;
     }
     scma_used_size_ref() = new_offset;
+    if (previous_used_size > new_offset)
+        scma_secure_bzero(heap_data + new_offset,
+            previous_used_size - new_offset);
+    scma_compaction_needed_ref() = FT_FALSE;
     return ;
+}
+
+void    scma_link_block_at_tail(ft_size_t index)
+{
+    scma_block *blocks_data;
+    ft_size_t &head = scma_live_head_ref();
+    ft_size_t &tail = scma_live_tail_ref();
+    ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+
+    blocks_data = scma_blocks_data_ref();
+    blocks_data[index].prev_index = tail;
+    blocks_data[index].next_index = invalid_index;
+    if (tail == invalid_index)
+        head = index;
+    else
+        blocks_data[tail].next_index = index;
+    tail = index;
+}
+
+void    scma_unlink_block(ft_size_t index)
+{
+    scma_block *blocks_data;
+    scma_block *block;
+    ft_size_t &head = scma_live_head_ref();
+    ft_size_t &tail = scma_live_tail_ref();
+    ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+
+    blocks_data = scma_blocks_data_ref();
+    block = &blocks_data[index];
+    if (block->prev_index == invalid_index)
+        head = block->next_index;
+    else
+        blocks_data[block->prev_index].next_index = block->next_index;
+    if (block->next_index == invalid_index)
+        tail = block->prev_index;
+    else
+        blocks_data[block->next_index].prev_index = block->prev_index;
+    block->prev_index = invalid_index;
+    block->next_index = invalid_index;
+}
+
+void    scma_push_free_block(ft_size_t index)
+{
+    scma_block *blocks_data;
+
+    if (index >= scma_block_count_ref())
+        return ;
+    blocks_data = scma_blocks_data_ref();
+    blocks_data[index].next_free_index = scma_free_head_ref();
+    scma_free_head_ref() = index;
+    return ;
+}
+
+ft_size_t    scma_pop_free_block(void)
+{
+    ft_size_t index;
+    scma_block *blocks_data;
+
+    index = scma_free_head_ref();
+    if (index == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+        return (index);
+    if (index >= scma_block_count_ref())
+    {
+        scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        return (static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX));
+    }
+    blocks_data = scma_blocks_data_ref();
+    if (blocks_data[index].in_use)
+    {
+        scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        return (static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX));
+    }
+    scma_free_head_ref() = blocks_data[index].next_free_index;
+    if (scma_free_head_ref() != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+        && scma_free_head_ref() >= scma_block_count_ref())
+        scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    blocks_data[index].next_free_index = static_cast<ft_size_t>(
+            FT_SYSTEM_SIZE_MAX);
+    return (index);
 }
 
 int32_t    scma_validate_handle(scma_handle handle, scma_block **out_block)

@@ -20,6 +20,9 @@ The `SCMA` module is a safe compact memory allocator that returns handles instea
 - `scma_handle_is_valid(scma_handle handle)` - Reports whether a handle currently refers to a live block.
 - `scma_write(scma_handle handle, ft_size_t offset, const void *source, ft_size_t size)` - Writes bytes into a handle.
 - `scma_read(scma_handle handle, ft_size_t offset, void *destination, ft_size_t size)` - Reads bytes from a handle.
+- `scma_write_batch(...)` / `scma_read_batch(...)` - Process multiple validated I/O requests under one allocator lock. Write batches are fully validated before any bytes are changed.
+
+SCMA compacts lazily when fragmented space is needed. Freed and truncated bytes are securely wiped immediately, while stale handles remain protected by generation validation.
 
 ## Stats, Debug, and Thread Safety
 

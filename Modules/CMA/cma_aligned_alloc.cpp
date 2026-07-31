@@ -81,13 +81,13 @@ static ft_bool block_supports_aligned_request(Block *block, ft_size_t aligned_si
 static Block   *find_aligned_free_block(ft_size_t aligned_size, ft_size_t alignment,
             ft_size_t *padding)
 {
-    Page    *current_page;
+    ft_size_t bin_index;
     Block   *current_block;
 
-    current_page = page_list;
-    while (current_page)
+    bin_index = cma_free_bin_for_size(aligned_size);
+    while (bin_index < CMA_FREE_BIN_COUNT)
     {
-        current_block = current_page->blocks;
+        current_block = g_cma_free_bins[bin_index];
         while (current_block)
         {
             cma_validate_block(current_block, "cma_aligned_alloc search", nullptr);
@@ -102,9 +102,9 @@ static Block   *find_aligned_free_block(ft_size_t aligned_size, ft_size_t alignm
                     return (current_block);
                 }
             }
-            current_block = current_block->next;
+            current_block = current_block->free_next;
         }
-        current_page = current_page->next;
+        bin_index++;
     }
     return (nullptr);
 }

@@ -5,6 +5,10 @@ export SHELL
 export LIBFT_POSIX_SHELL := 1
 endif
 
+ifneq ($(filter Efficiency run_Efficiency,$(MAKECMDGOALS)),)
+OPT_LEVEL := 3
+endif
+
 include ../mk/compiler_flags.mk
 include ../mk/test/config.mk
 
@@ -62,17 +66,19 @@ Basic:
 	@echo "Building basic test executable ($(TARGET))"
 	@$(MAKE) FILES="$(BASIC_TEST_FILES)" all LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
 
+Time:
+	@echo "Building Time test executable ($(TARGET))"
+	@$(MAKE) FILES="$(TIME_TEST_FILES)" all LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
+
 CMA:
 	@echo "Building CMA test executable ($(TARGET))"
 	@$(MAKE) FILES="$(CMA_TEST_FILES)" all LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
 
-Efficiency:
+Efficiency: $(EFFICIENCY_TARGET)
 	@echo "Building efficiency test executable ($(EFFICIENCY_TARGET)) with OPT_LEVEL=$(EFFICIENCY_OPT_LEVEL)"
-	@$(MAKE) $(EFFICIENCY_TARGET) OPT_LEVEL=$(EFFICIENCY_OPT_LEVEL) LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
 	@echo "Efficiency executable ready; run ./$(EFFICIENCY_TARGET) manually if desired."
 
-run_Efficiency:
-	@$(MAKE) $(EFFICIENCY_TARGET) OPT_LEVEL=$(EFFICIENCY_OPT_LEVEL) LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
+run_Efficiency: $(EFFICIENCY_TARGET)
 	@./$(EFFICIENCY_TARGET)
 
 single_test:
@@ -374,16 +380,14 @@ $(DEBUG_OBJDIR)/%.o: %.cpp
 		printf '%b        [Test Debug] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 	fi
 
-$(EFFICIENCY_TARGET): $(EFFICIENCY_OBJS)
+$(EFFICIENCY_TARGET): $(EFFICIENCY_OBJS) $(EFFICIENCY_ARCHIVE_STAMP)
 	@printf "Compiled efficiency files (%d files)\n" $(EFF_TOTAL_SRCS)
 	@echo "Linking final executable ($(EFFICIENCY_TARGET))"
-	@$(MAKE) -C $(LIBFT_ROOT_DIR) $(EFFICIENCY_LIBFT_ARCHIVE) COMPILE_FLAGS="$(EFFICIENCY_COMPILE_FLAGS)" \
-		OPT_LEVEL=$(OPT_LEVEL)
 	@$(RM) $@
 ifeq ($(UNAME_S),Darwin)
-	@$(CXX) $(EFFICIENCY_CFLAGS) -o $@ $(EFFICIENCY_OBJS) $(EFFICIENCY_LIBFT_ARCHIVE) $(LDFLAGS)
+	@$(CXX) $(EFFICIENCY_CFLAGS) -o $@ $(EFFICIENCY_OBJS) $(EFFICIENCY_LIBFT_ARCHIVES) $(LDFLAGS)
 else
-	@$(file >$@.rsp,$(EFFICIENCY_OBJS) -Wl,--start-group $(EFFICIENCY_LIBFT_ARCHIVE) -Wl,--end-group)
+	@$(file >$@.rsp,$(EFFICIENCY_OBJS) -Wl,--start-group $(EFFICIENCY_LIBFT_ARCHIVES) -Wl,--end-group)
 	@$(CXX) $(EFFICIENCY_CFLAGS) -o $@ @$@.rsp $(LDFLAGS)
 	@$(RM) $@.rsp
 endif
@@ -440,24 +444,11 @@ $(EFFICIENCY_OBJDIR)/%.o: %.cpp
 		printf '%b        [Test Efficiency] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 	fi
 
-$(EFFICIENCY_LIBFT_ARCHIVE): FORCE
-	@need_build=0; \
-	if $(MAKE) -C $(LIBFT_ROOT_DIR) -q $(EFFICIENCY_LIBFT_ARCHIVE) COMPILE_FLAGS="$(EFFICIENCY_COMPILE_FLAGS)" \
-			OPT_LEVEL=$(OPT_LEVEL); then \
-		:; \
-	else \
-		status=$$?; \
-		if [ $$status -eq 1 ]; then \
-			need_build=1; \
-		else \
-			exit $$status; \
-		fi; \
-	fi; \
-	if [ $$need_build -eq 1 ] || [ ! -f $@ ]; then \
-		        echo "Building $(EFFICIENCY_LIBFT_ARCHIVE)"; \
-		        $(MAKE) -C $(LIBFT_ROOT_DIR) $(EFFICIENCY_LIBFT_ARCHIVE) COMPILE_FLAGS="$(EFFICIENCY_COMPILE_FLAGS)" \
-				OPT_LEVEL=$(OPT_LEVEL); \
-	fi
+$(EFFICIENCY_ARCHIVE_STAMP): $(EFFICIENCY_ARCHIVE_SOURCE_FILES) | $(EFFICIENCY_OBJDIR)
+	@$(MAKE) -C $(LIBFT_ROOT_DIR) $(EFFICIENCY_LIBFT_RELATIVE_ARCHIVES) \
+		COMPILE_FLAGS="$(EFFICIENCY_COMPILE_FLAGS)" OPT_LEVEL=$(OPT_LEVEL) \
+		LIBFT_ARCHIVE_SUFFIX="$(EFFICIENCY_ARCHIVE_SUFFIX)"
+	@touch $@
 
 $(LIBFT_ARCHIVE):
 	@need_build=0; \

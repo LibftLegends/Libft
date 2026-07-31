@@ -35,7 +35,7 @@ The `CMA` module is the project allocator layer. It wraps allocation, reallocati
 
 - `cma_set_alloc_limit(ft_size_t limit)` - Sets a process-wide allocation limit for allocation-failure testing and accounting.
 - `cma_set_alloc_logging(ft_bool enable)` / `cma_get_alloc_logging()` - Toggles and queries allocator event mirroring into `Sink`.
-- `cma_set_thread_safety(ft_bool enable)` - Enables or disables allocator synchronization.
+- `cma_set_thread_safety(ft_bool enable)` - Enables allocator synchronization, or enters an explicitly caller-synchronized single-thread mode when disabled. Metadata validation and protection remain enabled in both modes.
 - `cma_enable_thread_safety()` - Enables allocator synchronization.
 - `cma_disable_thread_safety()` - Disables allocator synchronization.
 - `cma_is_thread_safe_enabled()` - Reports whether allocator synchronization is enabled.

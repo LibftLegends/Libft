@@ -28,6 +28,13 @@ typedef struct s_high_resolution_time_point
     int64_t nanoseconds;
 }   t_high_resolution_time_point;
 
+typedef struct s_active_clock
+{
+    uint64_t accumulated_microseconds;
+    uint64_t started_microseconds;
+    ft_bool running;
+}   t_active_clock;
+
 typedef struct s_time_info
 {
     pt_mutex    *mutex;
@@ -140,6 +147,12 @@ ft_bool     time_parse_interval(const char *string_input, t_time *start_time, t_
 ft_bool     time_high_resolution_now(t_high_resolution_time_point *time_point);
 int64_t     time_high_resolution_diff_ns(t_high_resolution_time_point start_point, t_high_resolution_time_point end_point);
 double      time_high_resolution_diff_seconds(t_high_resolution_time_point start_point, t_high_resolution_time_point end_point);
+void        time_active_clock_init(t_active_clock *clock);
+ft_bool     time_active_clock_start(t_active_clock *clock);
+ft_bool     time_active_clock_stop(t_active_clock *clock);
+ft_bool     time_active_clock_resume(t_active_clock *clock);
+ft_bool     time_active_clock_restart(t_active_clock *clock);
+uint64_t    time_active_clock_report(const t_active_clock *clock);
 ft_bool    time_get_local_offset(t_time time_value, int32_t *offset_minutes, ft_bool *is_daylight_saving);
 ft_bool    time_convert_timezone(t_time time_value, int32_t source_offset_minutes, int32_t target_offset_minutes, t_time *converted_time);
 ft_bool    time_get_monotonic_wall_anchor(t_monotonic_time_point &anchor_monotonic,

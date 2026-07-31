@@ -1,5 +1,19 @@
 # Time
 
+## Active clocks
+
+`t_active_clock` measures elapsed active time in microseconds using the
+platform monotonic clock. It is independent state, so callers can maintain
+multiple clocks and restart one without affecting any other clock.
+
+- `time_active_clock_init` initializes a paused clock at zero.
+- `time_active_clock_start` starts a clock or continues a paused clock.
+- `time_active_clock_stop` pauses the clock while preserving accumulated time.
+- `time_active_clock_resume` continues a paused clock.
+- `time_active_clock_restart` resets the clock to zero and starts it.
+- `time_active_clock_report` returns accumulated active microseconds without
+  changing the clock state.
+
 The `Time` module provides wall-clock time, monotonic time, duration structs, timezone conversion, parsing/formatting, relative fixed-span and calendar-aware helpers, async sleep state, benchmarking, trace events, FPS pacing, and countdown timers.
 
 ## Core Types

@@ -23,11 +23,7 @@ endef
 TEST_PROGRESS_SESSION := $(shell date +%s%N)
 TEST_PROGRESS_INIT := Test/.libft_progress/initialized.$(TEST_PROGRESS_SESSION)
 
-ifeq ($(OS),Windows_NT)
-TEST_EXECUTABLE_MAKE_FLAGS := -j1
-else
 TEST_EXECUTABLE_MAKE_FLAGS :=
-endif
 
 ssh:
 	printf '\033[1;35m[LIBFT GIT] Switching GitHub remote to SSH\033[0m\n'

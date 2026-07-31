@@ -7,6 +7,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include "../../Modules/SCMA/scma_internal.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
 
@@ -24,6 +25,83 @@ FT_TEST(test_scma_allocation_roundtrip)
     read_value = 0;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(handle, 0, &read_value, sizeof(int)));
     FT_ASSERT_EQ(write_value, read_value);
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_batch_write_prevalidation_is_atomic)
+{
+    scma_handle handles[2];
+    scma_write_request write_requests[2];
+    scma_read_request read_requests[2];
+    int32_t initial_values[2];
+    int32_t replacement_values[2];
+    int32_t read_values[2];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(128));
+    handles[0] = scma_allocate(sizeof(int32_t));
+    handles[1] = scma_allocate(sizeof(int32_t));
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(handles[0]));
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(handles[1]));
+    initial_values[0] = 11;
+    initial_values[1] = 22;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(handles[0], 0,
+            &initial_values[0], sizeof(int32_t)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(handles[1], 0,
+            &initial_values[1], sizeof(int32_t)));
+    replacement_values[0] = 33;
+    replacement_values[1] = 44;
+    write_requests[0] = {handles[0], 0, &replacement_values[0],
+        sizeof(int32_t)};
+    write_requests[1] = {handles[1], sizeof(int32_t),
+        &replacement_values[1], sizeof(int32_t)};
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, scma_write_batch(write_requests, 2));
+    read_values[0] = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(handles[0], 0, &read_values[0],
+            sizeof(int32_t)));
+    FT_ASSERT_EQ(initial_values[0], read_values[0]);
+    write_requests[1].offset = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write_batch(write_requests, 2));
+    read_requests[0] = {handles[0], 0, &read_values[0], sizeof(int32_t)};
+    read_requests[1] = {handles[1], 0, &read_values[1], sizeof(int32_t)};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read_batch(read_requests, 2));
+    FT_ASSERT_EQ(replacement_values[0], read_values[0]);
+    FT_ASSERT_EQ(replacement_values[1], read_values[1]);
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_lazy_compaction_wipes_freed_bytes)
+{
+    scma_handle handles[3];
+    scma_handle reused_handle;
+    ft_size_t freed_offset;
+    ft_size_t third_offset;
+    ft_size_t byte_index;
+    unsigned char payload[8];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64));
+    std::memset(payload, 0xA5, sizeof(payload));
+    handles[0] = scma_allocate(sizeof(payload));
+    handles[1] = scma_allocate(sizeof(payload));
+    handles[2] = scma_allocate(sizeof(payload));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(handles[1], 0, payload,
+            sizeof(payload)));
+    freed_offset = scma_blocks_data_ref()[handles[1].index].offset;
+    third_offset = scma_blocks_data_ref()[handles[2].index].offset;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(handles[1]));
+    FT_ASSERT_EQ(FT_TRUE, scma_compaction_needed_ref());
+    FT_ASSERT_EQ(third_offset,
+        scma_blocks_data_ref()[handles[2].index].offset);
+    byte_index = 0;
+    while (byte_index < sizeof(payload))
+    {
+        FT_ASSERT_EQ(0, scma_heap_data_ref()[freed_offset + byte_index]);
+        byte_index++;
+    }
+    reused_handle = scma_allocate(sizeof(payload));
+    FT_ASSERT_EQ(handles[1].index, reused_handle.index);
+    FT_ASSERT(reused_handle.generation != handles[1].generation);
     scma_shutdown();
     return (1);
 }

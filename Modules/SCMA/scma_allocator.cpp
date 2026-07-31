@@ -18,6 +18,7 @@ int32_t    scma_initialize(ft_size_t initial_capacity)
     ft_size_t &block_capacity = scma_block_capacity_ref();
     ft_size_t &block_count = scma_block_count_ref();
     ft_size_t &used_size = scma_used_size_ref();
+    ft_size_t &live_size = scma_live_size_ref();
     int32_t &initialised = scma_initialised_ref();
 
     thread_safety_result = scma_enable_thread_safety();
@@ -60,6 +61,11 @@ int32_t    scma_initialize(ft_size_t initial_capacity)
     block_capacity = 0;
     block_count = 0;
     used_size = 0;
+    live_size = 0;
+    scma_live_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_live_tail_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_compaction_needed_ref() = FT_FALSE;
     initialised = 1;
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
@@ -72,6 +78,7 @@ void    scma_shutdown(void)
     ft_size_t &block_capacity = scma_block_capacity_ref();
     ft_size_t &block_count = scma_block_count_ref();
     ft_size_t &used_size = scma_used_size_ref();
+    ft_size_t &live_size = scma_live_size_ref();
     int32_t &initialised = scma_initialised_ref();
 
     if (scma_mutex_lock() != FT_ERR_SUCCESS)
@@ -99,6 +106,11 @@ void    scma_shutdown(void)
     block_capacity = 0;
     block_count = 0;
     used_size = 0;
+    live_size = 0;
+    scma_live_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_live_tail_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    scma_compaction_needed_ref() = FT_FALSE;
     initialised = 0;
     scma_unlock_and_return_void();
     return ;
@@ -136,11 +148,10 @@ scma_handle    scma_allocate(ft_size_t size)
 {
     scma_handle result_handle;
     ft_size_t required_size;
-    scma_block_span span;
     ft_size_t index;
-    int32_t found_slot;
     scma_block *block;
     ft_size_t &used_size = scma_used_size_ref();
+    ft_size_t &live_size = scma_live_size_ref();
     ft_size_t &block_count = scma_block_count_ref();
 
     result_handle = scma_invalid_handle();
@@ -156,7 +167,6 @@ scma_handle    scma_allocate(ft_size_t size)
     {
         return (scma_unlock_and_return_handle(result_handle));
     }
-    scma_compact();
     if (size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         return (scma_unlock_and_return_handle(result_handle));
@@ -170,26 +180,20 @@ scma_handle    scma_allocate(ft_size_t size)
     {
         return (scma_unlock_and_return_handle(result_handle));
     }
+    if (required_size > scma_heap_capacity_ref()
+        && scma_compaction_needed_ref() == FT_TRUE)
+    {
+        scma_compact();
+        if (size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - used_size)
+            return (scma_unlock_and_return_handle(result_handle));
+        required_size = used_size + size;
+    }
     if (!scma_ensure_capacity(required_size))
     {
         return (scma_unlock_and_return_handle(result_handle));
     }
-    span = scma_get_block_span();
-    index = 0;
-    found_slot = 0;
-    while (index < span.count)
-    {
-        scma_block *candidate;
-
-        candidate = &span.data[index];
-        if (!candidate->in_use)
-        {
-            found_slot = 1;
-            break ;
-        }
-        index++;
-    }
-    if (!found_slot)
+    index = scma_pop_free_block();
+    if (index == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         scma_block *&blocks_data = scma_blocks_data_ref();
         ft_size_t new_index;
@@ -204,34 +208,47 @@ scma_handle    scma_allocate(ft_size_t size)
         block->size = size;
         block->in_use = 1;
         block->generation = 1;
+        block->prev_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        block->next_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        block->next_free_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 #ifdef LIBFT_TEST_BUILD
         block->leak_ignored = FT_FALSE;
         scma_capture_leak_stack(block, 2);
 #endif
         block_count = block_count + 1;
+        scma_link_block_at_tail(new_index);
         used_size += size;
+        live_size += size;
         result_handle.index = new_index;
         result_handle.generation = block->generation;
         return (scma_unlock_and_return_handle(result_handle));
     }
-    block = &span.data[index];
+    block = &scma_blocks_data_ref()[index];
     block->offset = used_size;
     block->size = size;
     block->in_use = 1;
     block->generation = scma_next_generation(block->generation);
+    block->prev_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    block->next_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    block->next_free_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 #ifdef LIBFT_TEST_BUILD
     block->leak_ignored = FT_FALSE;
     scma_capture_leak_stack(block, 2);
 #endif
     result_handle.index = index;
     result_handle.generation = block->generation;
+    scma_link_block_at_tail(index);
     used_size += size;
+    live_size += size;
     return (scma_unlock_and_return_handle(result_handle));
 }
 
 int32_t    scma_free(scma_handle handle)
 {
     scma_block *block;
+    ft_size_t block_offset;
+    ft_size_t block_size;
+    ft_bool was_tail;
 
     if (scma_mutex_lock() != FT_ERR_SUCCESS)
     {
@@ -242,6 +259,14 @@ int32_t    scma_free(scma_handle handle)
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_INVALID_HANDLE)));
     }
+    block_offset = block->offset;
+    block_size = block->size;
+    was_tail = FT_FALSE;
+    if (block_offset <= scma_used_size_ref()
+        && block_size == scma_used_size_ref() - block_offset)
+        was_tail = FT_TRUE;
+    scma_secure_bzero(scma_get_heap_data() + block_offset, block_size);
+    scma_unlink_block(handle.index);
     block->in_use = 0;
     block->size = 0;
     block->generation = scma_next_generation(block->generation);
@@ -250,7 +275,15 @@ int32_t    scma_free(scma_handle handle)
     block->leak_stack_frame_count = 0;
     block->leak_test_name = nullptr;
 #endif
-    scma_compact();
+    scma_push_free_block(handle.index);
+    if (scma_live_size_ref() >= block_size)
+        scma_live_size_ref() -= block_size;
+    else
+        scma_live_size_ref() = 0;
+    if (was_tail == FT_TRUE)
+        scma_used_size_ref() = block_offset;
+    else
+        scma_compaction_needed_ref() = FT_TRUE;
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
 
@@ -258,12 +291,12 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
 {
     scma_block *block;
     ft_size_t old_size;
-    unsigned char *temp_buffer;
-    ft_size_t base_size;
     ft_size_t required_size;
+    ft_size_t old_offset;
+    unsigned char *heap_data;
     ft_size_t &used_size = scma_used_size_ref();
+    ft_size_t &live_size = scma_live_size_ref();
 
-    temp_buffer = ft_nullptr;
     if (scma_mutex_lock() != FT_ERR_SUCCESS)
     {
         return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
@@ -279,87 +312,90 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                     FT_ERR_INVALID_HANDLE)));
     }
     old_size = block->size;
-    if (old_size > 0)
-        temp_buffer = static_cast<unsigned char *>(std::malloc(old_size));
-    if (old_size != 0 && !temp_buffer)
+    old_offset = block->offset;
+    if (new_size == old_size)
+        return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                    FT_ERR_SUCCESS)));
+    heap_data = scma_get_heap_data();
+    if (new_size < old_size)
+    {
+        scma_secure_bzero(heap_data + old_offset + new_size,
+            old_size - new_size);
+        block->size = new_size;
+        if (live_size >= old_size - new_size)
+            live_size -= old_size - new_size;
+        else
+            live_size = 0;
+        if (old_offset <= used_size && old_size == used_size - old_offset)
+            used_size = old_offset + new_size;
+        else
+            scma_compaction_needed_ref() = FT_TRUE;
+        return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                    FT_ERR_SUCCESS)));
+    }
+    if (old_offset <= used_size && old_size == used_size - old_offset)
+    {
+        if (new_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - old_offset)
+            return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                        FT_ERR_OUT_OF_RANGE)));
+        required_size = old_offset + new_size;
+        if (!scma_ensure_capacity(required_size))
+            return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                        FT_ERR_NO_MEMORY)));
+        block->size = new_size;
+        used_size = required_size;
+        live_size += new_size - old_size;
+        return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                    FT_ERR_SUCCESS)));
+    }
+    if (new_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - used_size)
     {
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
-                    FT_ERR_NO_MEMORY)));
+                    FT_ERR_OUT_OF_RANGE)));
     }
-    if (old_size != 0)
+    required_size = used_size + new_size;
+    if (required_size > scma_heap_capacity_ref()
+        && scma_compaction_needed_ref() == FT_TRUE)
     {
-        unsigned char *heap_data;
-
+        scma_compact();
+        old_offset = block->offset;
         heap_data = scma_get_heap_data();
-        std::memcpy(temp_buffer,
-            heap_data + block->offset,
-            old_size);
-    }
-    if (new_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
-    {
-        if (temp_buffer)
+        if (old_offset <= used_size && old_size == used_size - old_offset)
         {
-            std::free(temp_buffer);
-            temp_buffer = ft_nullptr;
+            if (new_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                - old_offset)
+                return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                            FT_ERR_OUT_OF_RANGE)));
+            required_size = old_offset + new_size;
+            if (!scma_ensure_capacity(required_size))
+                return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                            FT_ERR_NO_MEMORY)));
+            block->size = new_size;
+            used_size = required_size;
+            live_size += new_size - old_size;
+            return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                        FT_ERR_SUCCESS)));
         }
-        return (static_cast<uint32_t>(scma_unlock_and_return_int(
-                    FT_ERR_OUT_OF_RANGE)));
+        if (new_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - used_size)
+            return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                        FT_ERR_OUT_OF_RANGE)));
+        required_size = used_size + new_size;
     }
-    if (used_size < old_size)
-    {
-        if (temp_buffer)
-        {
-            std::free(temp_buffer);
-            temp_buffer = ft_nullptr;
-        }
-        return (static_cast<uint32_t>(scma_unlock_and_return_int(
-                    FT_ERR_INVALID_STATE)));
-    }
-    base_size = used_size - old_size;
-    if (base_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - new_size)
-    {
-        if (temp_buffer)
-        {
-            std::free(temp_buffer);
-            temp_buffer = ft_nullptr;
-        }
-        return (static_cast<uint32_t>(scma_unlock_and_return_int(
-                    FT_ERR_OUT_OF_RANGE)));
-    }
-    required_size = base_size + new_size;
     if (!scma_ensure_capacity(required_size))
     {
-        if (temp_buffer)
-        {
-            std::free(temp_buffer);
-            temp_buffer = ft_nullptr;
-        }
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_NO_MEMORY)));
     }
-    block->in_use = 0;
-    scma_compact();
+    heap_data = scma_get_heap_data();
+    std::memmove(heap_data + used_size, heap_data + old_offset, old_size);
+    scma_secure_bzero(heap_data + old_offset, old_size);
+    scma_unlink_block(handle.index);
     block->offset = used_size;
     block->size = new_size;
-    block->in_use = 1;
-    used_size += new_size;
-    if (temp_buffer)
-    {
-        ft_size_t copy_size;
-        unsigned char *heap_data;
-
-        copy_size = old_size;
-        if (copy_size > new_size)
-            copy_size = new_size;
-        if (copy_size > 0)
-        {
-            heap_data = scma_get_heap_data();
-            std::memcpy(heap_data + block->offset,
-                temp_buffer, copy_size);
-        }
-        std::free(temp_buffer);
-        temp_buffer = ft_nullptr;
-    }
+    scma_link_block_at_tail(handle.index);
+    used_size = required_size;
+    live_size += new_size - old_size;
+    scma_compaction_needed_ref() = FT_TRUE;
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
 

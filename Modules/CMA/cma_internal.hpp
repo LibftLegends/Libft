@@ -22,6 +22,7 @@
 #define SMALL_SIZE (CMA_SIZE)
 #define MEDIUM_SIZE (CMA_SIZE * 10)
 #define CMA_SMALL_ARENA_MAX_ALLOCATION 256
+#define CMA_FREE_BIN_COUNT 64
 
 #define BASE_SIZE 1024
 #define SMALL_ALLOC (BASE_SIZE * 1)
@@ -62,6 +63,11 @@ struct Block
 #endif
     Block               *next;
     Block               *prev;
+    Block               *free_next;
+    Block               *free_prev;
+    ft_size_t           free_bin_index;
+    ft_bool             free_listed;
+    int8_t              alloc_size_type;
     unsigned char       *payload;
 #if DEBUG
     unsigned char       *debug_base_pointer;
@@ -90,6 +96,7 @@ struct cma_arena
 };
 
 extern Page *page_list;
+extern Block *g_cma_free_bins[CMA_FREE_BIN_COUNT];
 
 Block    *split_block(Block *block, ft_size_t size);
 Page    *create_page(ft_size_t size);
@@ -99,6 +106,10 @@ Page    *find_page_of_block(Block *block);
 void    free_page_if_empty(Page *page);
 void    cma_validate_block(Block *block, const char *context, void *user_pointer);
 Block    *cma_find_block_for_pointer(const void *memory_pointer);
+void    cma_free_list_insert(Block *block);
+void    cma_free_list_remove(Block *block);
+void    cma_free_list_reset(void);
+ft_size_t cma_free_bin_for_size(ft_size_t size);
 int32_t cma_lock_allocator(ft_bool *lock_acquired);
 int32_t cma_unlock_allocator(ft_bool lock_acquired);
 int32_t cma_enable_thread_safety(void);
@@ -256,6 +267,8 @@ inline __attribute__((always_inline, hot)) void cma_mark_block_allocated(Block *
 {
     if (!block)
         return ;
+    if (block->free_listed == FT_TRUE)
+        cma_free_list_remove(block);
     block->free = FT_FALSE;
     block->magic = MAGIC_NUMBER_ALLOCATED;
     return ;

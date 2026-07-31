@@ -250,3 +250,17 @@ int32_t cmp_high_resolution_time(int64_t *nanoseconds_out)
     return (cmp_timespec_to_nanoseconds(&time_value, nanoseconds_out));
 #endif
 }
+
+int32_t cmp_active_clock_now_microseconds(uint64_t *microseconds_out)
+{
+    int64_t nanoseconds = 0;
+
+    if (microseconds_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (cmp_high_resolution_time(&nanoseconds) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_OPERATION);
+    if (nanoseconds < 0)
+        return (FT_ERR_OUT_OF_RANGE);
+    *microseconds_out = static_cast<uint64_t>(nanoseconds) / 1000ULL;
+    return (FT_ERR_SUCCESS);
+}

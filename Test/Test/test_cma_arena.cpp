@@ -38,6 +38,57 @@ FT_TEST(test_cma_arena_small_allocations_reset_after_all_freed)
     return (1);
 }
 
+FT_TEST(test_cma_arena_reuses_freed_size_class_while_live)
+{
+    void *first_pointer;
+    void *second_pointer;
+    void *reused_pointer;
+
+    first_pointer = cma_malloc(64);
+    second_pointer = cma_malloc(64);
+    FT_ASSERT(first_pointer != ft_nullptr);
+    FT_ASSERT(second_pointer != ft_nullptr);
+    cma_free(first_pointer);
+    reused_pointer = cma_malloc(64);
+    FT_ASSERT_EQ(first_pointer, reused_pointer);
+    cma_free(reused_pointer);
+    cma_free(second_pointer);
+    return (1);
+}
+
+FT_TEST(test_cma_free_bins_reuse_large_block)
+{
+    void *first_pointer;
+    void *second_pointer;
+    void *reused_pointer;
+
+    first_pointer = cma_malloc(512);
+    second_pointer = cma_malloc(512);
+    FT_ASSERT(first_pointer != ft_nullptr);
+    FT_ASSERT(second_pointer != ft_nullptr);
+    cma_free(first_pointer);
+    reused_pointer = cma_malloc(480);
+    FT_ASSERT_EQ(first_pointer, reused_pointer);
+    cma_free(reused_pointer);
+    cma_free(second_pointer);
+    return (1);
+}
+
+FT_TEST(test_cma_single_thread_mode_keeps_allocator_checks)
+{
+    void *memory_pointer;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_thread_safety(FT_FALSE));
+    FT_ASSERT_EQ(FT_FALSE, cma_is_thread_safe_enabled());
+    memory_pointer = cma_malloc(512);
+    FT_ASSERT(memory_pointer != ft_nullptr);
+    FT_ASSERT_EQ(512, cma_alloc_size(memory_pointer));
+    cma_free(memory_pointer);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_thread_safety(FT_TRUE));
+    FT_ASSERT_EQ(FT_TRUE, cma_is_thread_safe_enabled());
+    return (1);
+}
+
 FT_TEST(test_cma_arena_small_realloc_copies_data)
 {
     char *memory_pointer;
