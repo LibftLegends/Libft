@@ -228,6 +228,18 @@ static const char *get_name_filter(void)
     return (filter);
 }
 
+static const char *get_name_skip_filter(void)
+{
+    const char *filter;
+
+    filter = getenv("FT_TEST_SKIP_NAME_FILTER");
+    if (!filter)
+        return (NULL);
+    if (!filter[0])
+        return (NULL);
+    return (filter);
+}
+
 static int32_t filter_token_is_substring(const char *token,
     ft_size_t token_length, const char *name)
 {
@@ -268,9 +280,12 @@ static int32_t name_matches_filter(const char *filter, const char *name)
     return (0);
 }
 
-static int32_t test_is_selected(const char *name_filter, const s_test_case *test)
+static int32_t test_is_selected(const char *name_filter,
+    const char *name_skip_filter, const s_test_case *test)
 {
     if (name_filter && !name_matches_filter(name_filter, test->name))
+        return (0);
+    if (name_skip_filter && name_matches_filter(name_skip_filter, test->name))
         return (0);
     return (1);
 }
@@ -628,6 +643,7 @@ int32_t ft_run_registered_tests(void)
 {
     FILE *log_file;
     const char *name_filter;
+    const char *name_skip_filter;
     int32_t null_descriptor;
     int32_t baseline_stdin_descriptor;
     int32_t baseline_stdout_descriptor;
@@ -649,6 +665,7 @@ int32_t ft_run_registered_tests(void)
     tests = get_tests();
     test_count = get_test_count();
     name_filter = get_name_filter();
+    name_skip_filter = get_name_skip_filter();
     baseline_stdin_descriptor = dup(STDIN_FILENO);
     baseline_stdout_descriptor = dup(STDOUT_FILENO);
     baseline_stderr_descriptor = dup(STDERR_FILENO);
@@ -696,7 +713,7 @@ int32_t ft_run_registered_tests(void)
     while (index < total_tests)
     {
         tests = get_tests();
-        if (!test_is_selected(name_filter, &tests[index]))
+        if (!test_is_selected(name_filter, name_skip_filter, &tests[index]))
         {
             index++;
             continue ;

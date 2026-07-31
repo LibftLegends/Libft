@@ -93,6 +93,8 @@ jobs:
           FT_TEST_HIDE_SUCCESSFUL: '1' # CI_DIAGNOSTIC: Silence successful Windows tests while preserving failures.
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Windows runs.
         run: |
+          Remove-Item Env:FT_TEST_NAME_FILTER -ErrorAction SilentlyContinue
+          $env:FT_TEST_SKIP_NAME_FILTER = 'test_cma_scma_secure_wipe_runtime_compilation_and_cleanup'
           $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
           try {
             & .\Test\libft_tests.exe *> Test\ci_windows_full_output.log # CI_DIAGNOSTIC: Capture stdout and stderr without a native-command pipeline.
@@ -112,12 +114,28 @@ jobs:
               $_ | Out-File -FilePath Test\ci_windows_full_output.log -Append # CI_DIAGNOSTIC: Preserve retry launch exceptions.
             }
           }
+          Remove-Item Env:FT_TEST_SKIP_NAME_FILTER -ErrorAction SilentlyContinue
+          $env:FT_TEST_NAME_FILTER = 'test_cma_scma_secure_wipe_runtime_compilation_and_cleanup'
+          $env:FT_TEST_HIDE_SUCCESSFUL = '0'
+          try {
+            & .\Test\libft_tests.exe *> Test\ci_windows_secure_wipe_output.log # CI_DIAGNOSTIC: Run the process-spawning test in a fresh test process.
+            $secure_wipe_status = $LASTEXITCODE
+          }
+          catch {
+            $_ | Out-File -FilePath Test\ci_windows_secure_wipe_output.log -Append # CI_DIAGNOSTIC: Preserve isolated test launch exceptions.
+            $secure_wipe_status = 1
+          }
+          if ($secure_wipe_status -ne 0) {
+            $test_status = $secure_wipe_status
+          }
+          Remove-Item Env:FT_TEST_NAME_FILTER -ErrorAction SilentlyContinue
           Write-Host "Windows test exit code: $test_status" # CI_DIAGNOSTIC: Make native process failures explicit.
           if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
           if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
           if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
           if (Test-Path windows_crash_stack_trace.log) { Copy-Item windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
+          if (Test-Path Test\ci_windows_secure_wipe_output.log) { Get-Content Test\ci_windows_secure_wipe_output.log } # CI_DIAGNOSTIC: Make isolated runtime test output visible in the Actions log.
           if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
           if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
           if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
@@ -207,6 +225,7 @@ jobs:
           name: windows-test-diagnostics-${{ github.run_id }} # CI_DIAGNOSTIC: Give each diagnostic bundle a unique name.
           path: | # CI_DIAGNOSTIC: Include Windows test output and runtime failure details.
             Test/ci_windows_full_output.log
+            Test/ci_windows_secure_wipe_output.log
             Test/ci_windows_failures.log
             Test/ci_windows_secure_wipe_runtime.log
             Test/ci_windows_secure_wipe_runtime.err
