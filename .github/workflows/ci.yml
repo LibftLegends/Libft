@@ -156,6 +156,12 @@ jobs:
           }
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.
 
+      - name: Run CMA and SCMA performance benchmark
+        if: always()
+        shell: bash
+        run: |
+          make -C Test run_Efficiency
+
       # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
       - name: Diagnose Ubuntu test failures
         if: failure() && runner.os == 'Linux' # CI_DIAGNOSTIC: Run diagnostics only after the Ubuntu suite fails.

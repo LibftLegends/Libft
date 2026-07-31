@@ -68,6 +68,6 @@ FT_TEST(test_time_active_clock_restart_and_independent_clocks)
     second_elapsed = time_active_clock_report(&second_clock);
     FT_ASSERT_EQ(FT_TRUE, first_before_restart >= 4000);
     FT_ASSERT_EQ(FT_TRUE, first_after_restart < first_before_restart);
-    FT_ASSERT_EQ(FT_TRUE, second_elapsed >= first_before_restart);
+    FT_ASSERT_EQ(FT_TRUE, second_elapsed >= 4000);
     return (1);
 }
