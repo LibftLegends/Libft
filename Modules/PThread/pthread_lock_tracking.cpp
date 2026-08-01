@@ -41,7 +41,7 @@ struct s_pt_owned_mutex_buffer_cache
     }
 };
 
-static s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
+static thread_local s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
 
 int pt_lock_tracking::lock_registry_mutex(void)
 {
@@ -651,9 +651,7 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
 {
     int lock_error;
     s_pt_thread_lock_info *info;
-    pt_buffer<s_pt_thread_lock_info> *thread_infos;
     ft_size_t index;
-    ft_size_t thread_index;
     bool lock_acquired = false;
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
@@ -692,30 +690,6 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
     {
         info->waiting_mutex = ft_nullptr;
         info->wait_started_ms = 0;
-    }
-    if (info->owned_mutexes.size == 0 && info->waiting_mutex == ft_nullptr)
-    {
-        thread_infos = pt_lock_tracking::get_thread_infos(&error_code);
-        if (thread_infos != ft_nullptr)
-        {
-            thread_index = 0;
-            while (thread_index < thread_infos->size)
-            {
-                if (thread_infos->data[thread_index].thread_identifier
-                        == thread_identifier)
-                {
-                    pt_buffer_destroy(g_owned_mutex_buffer_cache.buffer);
-                    g_owned_mutex_buffer_cache.buffer =
-                        thread_infos->data[thread_index].owned_mutexes;
-                    pt_buffer_clear(g_owned_mutex_buffer_cache.buffer);
-                    pt_buffer_init(
-                        thread_infos->data[thread_index].owned_mutexes);
-                    pt_buffer_erase(*thread_infos, thread_index);
-                    break ;
-                }
-                thread_index += 1;
-            }
-        }
     }
 cleanup_released:
     if (lock_acquired)

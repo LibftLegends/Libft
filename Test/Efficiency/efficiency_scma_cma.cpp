@@ -9,9 +9,12 @@
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/PThread/mutex.hpp"
+#include "../../Modules/PThread/pthread_lock_tracking.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/SCMA/SCMA.hpp"
 #include "../../Modules/Time/time.hpp"
+
+void efficiency_run_windows_mutex_probe(void);
 
 static const ft_size_t EFFICIENCY_BLOCK_COUNT = 512;
 static const ft_size_t EFFICIENCY_BLOCK_SIZE = 128;
@@ -107,6 +110,43 @@ static s_mutex_result benchmark_pt_mutex(void)
     if (protected_value != result.lock_operations)
         result.passed = FT_FALSE;
     (void)mutex.destroy();
+    return (result);
+}
+
+static s_mutex_result benchmark_pt_lock_tracking(void)
+{
+    t_active_clock clock;
+    s_mutex_result result;
+    ft_size_t operation_index;
+    pt_thread_id_type thread_identifier;
+    const void *mutex_pointer;
+
+    result.passed = FT_TRUE;
+    result.lock_operations = 0;
+    thread_identifier = pt_thread_self();
+    mutex_pointer = static_cast<const void *>(&result);
+    time_active_clock_init(&clock);
+    (void)time_active_clock_start(&clock);
+    operation_index = 0;
+    while (operation_index < EFFICIENCY_MUTEX_OPERATIONS)
+    {
+        if (pt_lock_tracking::notify_acquired(thread_identifier,
+                mutex_pointer) != FT_ERR_SUCCESS)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        if (pt_lock_tracking::notify_released(thread_identifier,
+                mutex_pointer) != FT_ERR_SUCCESS)
+        {
+            result.passed = FT_FALSE;
+            break ;
+        }
+        result.lock_operations += 1;
+        operation_index += 1;
+    }
+    (void)time_active_clock_stop(&clock);
+    result.elapsed_microseconds = time_active_clock_report(&clock);
     return (result);
 }
 
@@ -540,6 +580,7 @@ static int32_t write_performance_json(
     s_allocator_result scma_result,
     s_mutex_result std_mutex_result,
     s_mutex_result pt_mutex_result,
+    s_mutex_result pt_lock_tracking_result,
     s_mutex_result std_recursive_mutex_result,
     s_mutex_result pt_recursive_mutex_result)
 {
@@ -569,6 +610,8 @@ static int32_t write_performance_json(
         mutex_instances, FT_TRUE);
     efficiency_write_mutex_json(output, "pt_mutex", pt_mutex_result,
         mutex_instances, FT_TRUE);
+    efficiency_write_mutex_json(output, "pt_lock_tracking",
+        pt_lock_tracking_result, mutex_instances, FT_TRUE);
     efficiency_write_mutex_json(output, "std_recursive_mutex",
         std_recursive_mutex_result, mutex_instances, FT_TRUE);
     efficiency_write_mutex_json(output, "pt_recursive_mutex",
@@ -589,6 +632,7 @@ int main(void)
     s_allocator_result scma_result;
     s_mutex_result std_mutex_result;
     s_mutex_result pt_mutex_result;
+    s_mutex_result pt_lock_tracking_result;
     s_mutex_result std_recursive_mutex_result;
     s_mutex_result pt_recursive_mutex_result;
     int32_t scma_initialization_result;
@@ -603,8 +647,10 @@ int main(void)
     scma_result = benchmark_scma();
     std_mutex_result = benchmark_std_mutex();
     pt_mutex_result = benchmark_pt_mutex();
+    pt_lock_tracking_result = benchmark_pt_lock_tracking();
     std_recursive_mutex_result = benchmark_std_recursive_mutex();
     pt_recursive_mutex_result = benchmark_pt_recursive_mutex();
+    efficiency_run_windows_mutex_probe();
     scma_shutdown();
     print_result("malloc", malloc_result, malloc_result.elapsed_microseconds);
     print_result("CMA", cma_result, malloc_result.elapsed_microseconds);
@@ -612,6 +658,8 @@ int main(void)
     print_mutex_result("std::mutex", std_mutex_result,
         std_mutex_result.elapsed_microseconds);
     print_mutex_result("pt_mutex", pt_mutex_result,
+        std_mutex_result.elapsed_microseconds);
+    print_mutex_result("pt_lock_tracking", pt_lock_tracking_result,
         std_mutex_result.elapsed_microseconds);
     print_mutex_result("std::recursive_mutex", std_recursive_mutex_result,
         std_recursive_mutex_result.elapsed_microseconds);
@@ -623,6 +671,7 @@ int main(void)
         || scma_result.passed != FT_TRUE
         || std_mutex_result.passed != FT_TRUE
         || pt_mutex_result.passed != FT_TRUE
+        || pt_lock_tracking_result.passed != FT_TRUE
         || std_recursive_mutex_result.passed != FT_TRUE
         || pt_recursive_mutex_result.passed != FT_TRUE)
     {
@@ -632,8 +681,8 @@ int main(void)
     if (write_performance_json(all_benchmarks_passed == FT_TRUE
             ? EFFICIENCY_JSON_PATH : EFFICIENCY_FAILED_JSON_PATH,
             all_benchmarks_passed, malloc_result, cma_result, scma_result,
-            std_mutex_result, pt_mutex_result, std_recursive_mutex_result,
-            pt_recursive_mutex_result) != 0)
+            std_mutex_result, pt_mutex_result, pt_lock_tracking_result,
+            std_recursive_mutex_result, pt_recursive_mutex_result) != 0)
         exit_code = 1;
     return (exit_code);
 }
