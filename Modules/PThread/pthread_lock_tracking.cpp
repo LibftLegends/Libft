@@ -41,7 +41,7 @@ struct s_pt_owned_mutex_buffer_cache
     }
 };
 
-static thread_local s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
+static s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
 
 int pt_lock_tracking::lock_registry_mutex(void)
 {
