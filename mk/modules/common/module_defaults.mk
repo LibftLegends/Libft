@@ -45,6 +45,7 @@ CXX ?= g++
 AR ?= ar
 ARFLAGS := rcs
 
+# The parent build may append a compiler/flags fingerprint to this suffix.
 BUILD_OBJ_SUFFIX ?= $(BUILD_OUTPUT_SUFFIX)
 ifneq ($(findstring -DLIBFT_TEST_BUILD,$(COMPILE_FLAGS)),)
     BUILD_OBJ_SUFFIX := _test$(BUILD_OUTPUT_SUFFIX)

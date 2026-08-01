@@ -5,7 +5,8 @@ total_modules="$1"
 progress_index="$2"
 module_path="$3"
 log_file="$4"
-shift 4
+progress_key="$5"
+shift 5
 if [ "${1:-}" = "--" ]; then
     shift
 fi
@@ -14,16 +15,32 @@ batch_output="${LIBFT_BATCH_OUTPUT:-0}"
 light_blue=""
 purple=""
 reset=""
+bar_width=24
 if [ -t 1 ]; then
     light_blue=$'\033[1;94m'
     purple=$'\033[1;35m'
     reset=$'\033[0m'
 fi
 
+make_bar() {
+    current="$1"
+    total="$2"
+    if [ "$total" -le 0 ]; then
+        total=1
+    fi
+    filled=$((current * bar_width / total))
+    if [ "$filled" -gt "$bar_width" ]; then
+        filled="$bar_width"
+    fi
+    empty=$((bar_width - filled))
+    printf '%*s' "$filled" '' | tr ' ' '#'
+    printf '%*s' "$empty" '' | tr ' ' '-'
+}
+
 status_file="Test/.libft_build_status_$$_${progress_index}"
-progress_state_dir="Test/.libft_progress"
+progress_state_dir="Test/.libft_progress/$progress_key"
 completion_count_file="$progress_state_dir/completion_count"
-progress_lock_dir="Test/.libft_progress.lock"
+progress_lock_dir="Test/.libft_progress.$progress_key.lock"
 raw_log_file="${log_file}.raw.$$"
 child_pid=""
 
@@ -108,8 +125,10 @@ if [ "$status" -eq 0 ]; then
     completion_index=$((completion_index + 1))
     printf '%s\n' "$completion_index" > "$completion_count_file"
     rmdir "$progress_lock_dir" 2>/dev/null || true
-    printf '%s[LIBFT BUILD]%s (%d/%d) Built %s%s\n' \
-        "$purple" "$reset" "$completion_index" "$total_modules" "$(basename "$module_path")" "$reset"
+    progress_bar=$(make_bar "$completion_index" "$total_modules")
+    percent=$((completion_index * 100 / total_modules))
+    printf '%s[LIBFT BUILD]%s [%s] %3d%% (%d/%d) Built %s%s\n' \
+        "$purple" "$reset" "$progress_bar" "$percent" "$completion_index" "$total_modules" "$(basename "$module_path")" "$reset"
     rm -f "$log_file"
 else
     printf '%s[LIBFT BUILD]%s (%d/%d) Failed %s%s\n' \

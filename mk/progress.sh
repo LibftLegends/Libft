@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -u
 
-state_dir="Test/.libft_progress"
-lock_dir="Test/.libft_progress.lock"
+state_dir="Test/.libft_progress/build"
+lock_dir="Test/.libft_progress.build.lock"
 completion_count_file="$state_dir/completion_count"
 bar_width=24
 if [ -t 1 ]; then
@@ -51,18 +51,23 @@ short_name() {
 
 init_progress() {
     local total="$1"
+    local key="${2:-build}"
+
+    state_dir="Test/.libft_progress/$key"
+    lock_dir="Test/.libft_progress.$key.lock"
+    completion_count_file="$state_dir/completion_count"
 
     rm -f Test/.libft_build_status_* Test/.libft_build_*.raw.*
     rmdir "$lock_dir" 2>/dev/null || true
     mkdir -p "$state_dir"
     lock_progress
-    if [ ! -f "$state_dir/initialized" ]; then
-        printf '%s[LIBFT BUILD]%s Parallel module progress (%s modules)\n' "$color_on" "$color_off" "$total"
-        : > "$state_dir/initialized"
+    if [ "$total" -eq 0 ]; then
+        printf '%s[LIBFT BUILD]%s All modules are up to date\n' "$color_on" "$color_off"
+    else
+        printf '%s[LIBFT BUILD]%s Work required in %s module(s)\n' "$color_on" "$color_off" "$total"
     fi
-    if [ ! -f "$completion_count_file" ]; then
-        printf '%s\n' "0" > "$completion_count_file"
-    fi
+    : > "$state_dir/initialized"
+    printf '%s\n' "0" > "$completion_count_file"
     unlock_progress
 }
 
@@ -97,6 +102,10 @@ render_line() {
 }
 
 finish_progress() {
+    local key="${1:-build}"
+
+    state_dir="Test/.libft_progress/$key"
+    lock_dir="Test/.libft_progress.$key.lock"
     if [ -d "$state_dir" ]; then
         lock_progress
         rm -rf "$state_dir"
