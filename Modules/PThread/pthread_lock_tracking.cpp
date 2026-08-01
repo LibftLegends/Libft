@@ -24,6 +24,25 @@ struct s_pt_mutex_owner_info
 
 typedef pt_buffer<s_pt_mutex_owner_info> pt_mutex_owner_vector;
 
+struct s_pt_owned_mutex_buffer_cache
+{
+    pt_mutex_vector buffer;
+
+    s_pt_owned_mutex_buffer_cache()
+    {
+        pt_buffer_init(this->buffer);
+        return ;
+    }
+
+    ~s_pt_owned_mutex_buffer_cache()
+    {
+        pt_buffer_destroy(this->buffer);
+        return ;
+    }
+};
+
+static thread_local s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
+
 int pt_lock_tracking::lock_registry_mutex(void)
 {
     std::mutex *registry_mutex;
@@ -327,12 +346,15 @@ s_pt_thread_lock_info *pt_lock_tracking::find_thread_info
         index += 1;
     }
     new_info.thread_identifier = thread_identifier;
-    pt_buffer_init(new_info.owned_mutexes);
+    new_info.owned_mutexes = g_owned_mutex_buffer_cache.buffer;
+    pt_buffer_clear(new_info.owned_mutexes);
+    pt_buffer_init(g_owned_mutex_buffer_cache.buffer);
     new_info.waiting_mutex = ft_nullptr;
     new_info.wait_started_ms = 0;
     int push_error = pt_buffer_push(*thread_infos, new_info);
     if (push_error != FT_ERR_SUCCESS)
     {
+        g_owned_mutex_buffer_cache.buffer = new_info.owned_mutexes;
         if (error_code)
             *error_code = push_error;
         return (ft_nullptr);
@@ -629,9 +651,7 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
 {
     int lock_error;
     s_pt_thread_lock_info *info;
-    pt_buffer<s_pt_thread_lock_info> *thread_infos;
     ft_size_t index;
-    ft_size_t thread_index;
     bool lock_acquired = false;
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
@@ -670,25 +690,6 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
     {
         info->waiting_mutex = ft_nullptr;
         info->wait_started_ms = 0;
-    }
-    if (info->owned_mutexes.size == 0 && info->waiting_mutex == ft_nullptr)
-    {
-        thread_infos = pt_lock_tracking::get_thread_infos(&error_code);
-        if (thread_infos != ft_nullptr)
-        {
-            thread_index = 0;
-            while (thread_index < thread_infos->size)
-            {
-                if (thread_infos->data[thread_index].thread_identifier
-                        == thread_identifier)
-                {
-                    pt_buffer_destroy(thread_infos->data[thread_index].owned_mutexes);
-                    pt_buffer_erase(*thread_infos, thread_index);
-                    break ;
-                }
-                thread_index += 1;
-            }
-        }
     }
 cleanup_released:
     if (lock_acquired)

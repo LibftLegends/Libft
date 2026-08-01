@@ -183,7 +183,8 @@ scma_handle    scma_allocate(ft_size_t size)
     if (required_size > scma_heap_capacity_ref()
         && scma_compaction_needed_ref() == FT_TRUE)
     {
-        scma_compact();
+        if (scma_compact() != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_handle(result_handle));
         if (size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) - used_size)
             return (scma_unlock_and_return_handle(result_handle));
         required_size = used_size + size;
@@ -357,7 +358,9 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     if (required_size > scma_heap_capacity_ref()
         && scma_compaction_needed_ref() == FT_TRUE)
     {
-        scma_compact();
+        if (scma_compact() != FT_ERR_SUCCESS)
+            return (static_cast<uint32_t>(scma_unlock_and_return_int(
+                        FT_ERR_INVALID_STATE)));
         old_offset = block->offset;
         heap_data = scma_get_heap_data();
         if (old_offset <= used_size && old_size == used_size - old_offset)

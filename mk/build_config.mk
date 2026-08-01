@@ -33,7 +33,12 @@ endif
 SUBMAKE_OVERRIDES ?=
 LIBFT_ARCHIVE_SUFFIX ?=
 
-TEMP_DIRS := temp_objs temp_objs_test $(LIBFT_ROOT_DIR)/Test/.libft_output_lock $(LIBFT_ROOT_DIR)/Test/.libft_progress $(LIBFT_ROOT_DIR)/Test/.libft_progress.lock
+TEMP_DIRS := temp_objs temp_objs_test \
+             $(LIBFT_ROOT_DIR)/Test/.libft_output_lock \
+             $(LIBFT_ROOT_DIR)/Test/.libft_progress \
+             $(LIBFT_ROOT_DIR)/Test/.libft_progress.build.lock \
+             $(LIBFT_ROOT_DIR)/Test/.libft_progress.debug.lock \
+             $(LIBFT_ROOT_DIR)/Test/.libft_progress.test.lock
 OUTPUT_LOGS := $(LIBFT_ROOT_DIR)/Test/.libft_build_*.log $(LIBFT_ROOT_DIR)/Test/.libft_build_status_*
 
 ifeq ($(OS),Windows_NT)

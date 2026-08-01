@@ -129,7 +129,61 @@ int32_t    scma_handle_is_invalid(scma_handle handle)
     return (0);
 }
 
-void    scma_compact(void)
+static int32_t scma_validate_live_list(scma_block_span span)
+{
+    const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    ft_size_t current_index = scma_live_head_ref();
+    ft_size_t previous_index = invalid_index;
+    ft_size_t visited_count = 0;
+    ft_size_t linked_size = 0;
+    ft_size_t in_use_count = 0;
+    ft_size_t in_use_size = 0;
+    ft_size_t index = 0;
+
+    if ((current_index == invalid_index)
+        != (scma_live_tail_ref() == invalid_index))
+        return (FT_ERR_INVALID_STATE);
+    while (current_index != invalid_index)
+    {
+        scma_block *block;
+
+        if (current_index >= span.count || visited_count >= span.count)
+            return (FT_ERR_INVALID_STATE);
+        block = &span.data[current_index];
+        if (!block->in_use || block->prev_index != previous_index)
+            return (FT_ERR_INVALID_STATE);
+        if (block->offset > scma_used_size_ref()
+            || block->size > scma_used_size_ref() - block->offset)
+            return (FT_ERR_INVALID_STATE);
+        if (linked_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+            - block->size)
+            return (FT_ERR_INVALID_STATE);
+        linked_size += block->size;
+        previous_index = current_index;
+        current_index = block->next_index;
+        visited_count++;
+    }
+    if (previous_index != scma_live_tail_ref())
+        return (FT_ERR_INVALID_STATE);
+    while (index < span.count)
+    {
+        if (span.data[index].in_use)
+        {
+            if (in_use_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                - span.data[index].size)
+                return (FT_ERR_INVALID_STATE);
+            in_use_size += span.data[index].size;
+            in_use_count++;
+        }
+        index++;
+    }
+    if (visited_count != in_use_count || linked_size != in_use_size
+        || linked_size != scma_live_size_ref())
+        return (FT_ERR_INVALID_STATE);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t scma_compact(void)
 {
     scma_block_span span;
     unsigned char *heap_data;
@@ -139,14 +193,21 @@ void    scma_compact(void)
 
     if (!scma_initialised_ref())
     {
-        return ;
+        return (FT_ERR_INVALID_STATE);
     }
     span = scma_get_block_span();
     if (span.count == 0)
     {
+        if (scma_live_head_ref() != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+            || scma_live_tail_ref()
+                != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+            || scma_live_size_ref() != 0)
+            return (FT_ERR_INVALID_STATE);
         scma_used_size_ref() = 0;
-        return ;
+        return (FT_ERR_SUCCESS);
     }
+    if (scma_validate_live_list(span) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     heap_data = scma_get_heap_data();
     previous_used_size = scma_used_size_ref();
     new_offset = 0;
@@ -154,8 +215,6 @@ void    scma_compact(void)
     while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         scma_block *block;
-        if (current_index >= span.count)
-            break ;
         block = &span.data[current_index];
         if (block->offset != new_offset)
         {
@@ -172,7 +231,7 @@ void    scma_compact(void)
         scma_secure_bzero(heap_data + new_offset,
             previous_used_size - new_offset);
     scma_compaction_needed_ref() = FT_FALSE;
-    return ;
+    return (FT_ERR_SUCCESS);
 }
 
 void    scma_link_block_at_tail(ft_size_t index)
@@ -182,7 +241,15 @@ void    scma_link_block_at_tail(ft_size_t index)
     ft_size_t &tail = scma_live_tail_ref();
     ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 
+    if (index >= scma_block_count_ref())
+        return ;
     blocks_data = scma_blocks_data_ref();
+    if (!blocks_data[index].in_use)
+        return ;
+    if (tail != invalid_index
+        && (tail >= scma_block_count_ref() || !blocks_data[tail].in_use
+            || blocks_data[tail].next_index != invalid_index))
+        return ;
     blocks_data[index].prev_index = tail;
     blocks_data[index].next_index = invalid_index;
     if (tail == invalid_index)
@@ -200,8 +267,20 @@ void    scma_unlink_block(ft_size_t index)
     ft_size_t &tail = scma_live_tail_ref();
     ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 
+    if (index >= scma_block_count_ref())
+        return ;
     blocks_data = scma_blocks_data_ref();
     block = &blocks_data[index];
+    if (!block->in_use)
+        return ;
+    if (block->prev_index != invalid_index
+        && (block->prev_index >= scma_block_count_ref()
+            || blocks_data[block->prev_index].next_index != index))
+        return ;
+    if (block->next_index != invalid_index
+        && (block->next_index >= scma_block_count_ref()
+            || blocks_data[block->next_index].prev_index != index))
+        return ;
     if (block->prev_index == invalid_index)
         head = block->next_index;
     else

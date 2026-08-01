@@ -88,4 +88,9 @@ export COMPILE_FLAGS
 export SANITIZER_FLAGS
 export SANITIZERS
 export FIXDEP
+
+# Makefile edits can change source lists and recipes without touching a source
+# file. Treat every parsed build file as an extra prerequisite; GNU make omits
+# these from automatic variables such as $^, so archive member lists stay clean.
+.EXTRA_PREREQS = $(filter-out %.d,$(MAKEFILE_LIST))
 endif

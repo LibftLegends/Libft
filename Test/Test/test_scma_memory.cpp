@@ -169,6 +169,46 @@ FT_TEST(test_scma_compaction_preserves_live_blocks)
     return (1);
 }
 
+FT_TEST(test_scma_compaction_rejects_corrupt_cycle_without_wiping_payloads)
+{
+    scma_handle first_handle;
+    scma_handle second_handle;
+    scma_handle third_handle;
+    scma_block_span span;
+    ft_size_t saved_next;
+    int second_value;
+    int third_value;
+    int read_value;
+
+    FT_ASSERT_EQ(0, scma_test_initialize(256));
+    first_handle = scma_allocate(sizeof(int));
+    second_handle = scma_allocate(sizeof(int));
+    third_handle = scma_allocate(sizeof(int));
+    second_value = 222;
+    third_value = 333;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(second_handle, 0,
+            &second_value, sizeof(second_value)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(third_handle, 0,
+            &third_value, sizeof(third_value)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(first_handle));
+    span = scma_get_block_span();
+    saved_next = span.data[second_handle.index].next_index;
+    span.data[second_handle.index].next_index = second_handle.index;
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, scma_compact());
+    read_value = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(second_handle, 0,
+            &read_value, sizeof(read_value)));
+    FT_ASSERT_EQ(second_value, read_value);
+    read_value = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(third_handle, 0,
+            &read_value, sizeof(read_value)));
+    FT_ASSERT_EQ(third_value, read_value);
+    span.data[second_handle.index].next_index = saved_next;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact());
+    scma_shutdown();
+    return (1);
+}
+
 FT_TEST(test_scma_allocation_double_precision_roundtrip)
 {
     scma_handle handle;

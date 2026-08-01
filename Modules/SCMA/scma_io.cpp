@@ -83,8 +83,20 @@ int32_t    scma_write_batch(const scma_write_request *requests,
     request_index = 0;
     while (request_index < request_count)
     {
-        (void)scma_validate_handle(requests[request_index].handle, &block);
-        std::memcpy(heap_data + block->offset + requests[request_index].offset,
+        validation_result = scma_validate_write_request(
+                &requests[request_index], &block);
+        if (validation_result != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_int(validation_result));
+        request_index++;
+    }
+    request_index = 0;
+    while (request_index < request_count)
+    {
+        validation_result = scma_validate_write_request(
+                &requests[request_index], &block);
+        if (validation_result != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_int(validation_result));
+        std::memmove(heap_data + block->offset + requests[request_index].offset,
             requests[request_index].source, requests[request_index].size);
         request_index++;
     }
@@ -116,8 +128,20 @@ int32_t    scma_read_batch(const scma_read_request *requests,
     request_index = 0;
     while (request_index < request_count)
     {
-        (void)scma_validate_handle(requests[request_index].handle, &block);
-        std::memcpy(requests[request_index].destination,
+        validation_result = scma_validate_read_request(
+                &requests[request_index], &block);
+        if (validation_result != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_int(validation_result));
+        request_index++;
+    }
+    request_index = 0;
+    while (request_index < request_count)
+    {
+        validation_result = scma_validate_read_request(
+                &requests[request_index], &block);
+        if (validation_result != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_int(validation_result));
+        std::memmove(requests[request_index].destination,
             heap_data + block->offset + requests[request_index].offset,
             requests[request_index].size);
         request_index++;

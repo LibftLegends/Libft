@@ -8,6 +8,12 @@ endif
 include mk/compiler_flags.mk
 include mk/build_config.mk
 
+# Compiler-generated .d files cover source and header changes. Include a stable
+# configuration fingerprint in child object paths so compiler/flag changes can
+# never reuse incompatible objects.
+MODULE_CONFIG_FINGERPRINT := $(shell printf '%s\n' '$(CXX)|$(COMPILE_FLAGS)|$(BUILD_OUTPUT_SUFFIX)' | cksum | awk '{print $$1}')
+MODULE_BUILD_OUTPUT_SUFFIX := $(BUILD_OUTPUT_SUFFIX)_cfg$(MODULE_CONFIG_FINGERPRINT)
+
 define PRINT_ORDERED_LOGS
 	if [ "$(LIBFT_BATCH_OUTPUT)" = "1" ]; then \
 		for lib in $(1); do \
@@ -22,6 +28,21 @@ endef
 
 TEST_PROGRESS_SESSION := $(shell date +%s%N)
 TEST_PROGRESS_INIT := Test/.libft_progress/initialized.$(TEST_PROGRESS_SESSION)
+BUILD_PROGRESS_INIT := Test/.libft_progress/build/initialized.$(TEST_PROGRESS_SESSION)
+DEBUG_PROGRESS_INIT := Test/.libft_progress/debug/initialized.$(TEST_PROGRESS_SESSION)
+BUILD_SCAN_INIT := Test/.libft_progress/build/scanning.$(TEST_PROGRESS_SESSION)
+DEBUG_SCAN_INIT := Test/.libft_progress/debug/scanning.$(TEST_PROGRESS_SESSION)
+BUILD_STALE_FILE := Test/.libft_progress/build/stale_modules
+DEBUG_STALE_FILE := Test/.libft_progress/debug/stale_modules
+sanitize_path = $(subst .,_,$(subst /,_,$(1)))
+REQUESTED_BUILD_LIBS := $(filter $(LIBS),$(MAKECMDGOALS))
+REQUESTED_DEBUG_LIBS := $(filter $(DEBUG_LIBS),$(MAKECMDGOALS))
+REQUESTED_TEST_LIBS := $(filter $(TEST_LIBS),$(MAKECMDGOALS))
+ACTIVE_BUILD_LIBS := $(if $(REQUESTED_BUILD_LIBS),$(REQUESTED_BUILD_LIBS),$(LIBS))
+ACTIVE_DEBUG_LIBS := $(if $(REQUESTED_DEBUG_LIBS),$(REQUESTED_DEBUG_LIBS),$(DEBUG_LIBS))
+ACTIVE_TEST_LIBS := $(if $(REQUESTED_TEST_LIBS),$(REQUESTED_TEST_LIBS),$(TEST_LIBS))
+BUILD_CHECK_STAMPS := $(foreach lib,$(ACTIVE_BUILD_LIBS),Test/.libft_progress/build/checks/$(call sanitize_path,$(lib)).check)
+DEBUG_CHECK_STAMPS := $(foreach lib,$(ACTIVE_DEBUG_LIBS),Test/.libft_progress/debug/checks/$(call sanitize_path,$(lib)).check)
 
 TEST_EXECUTABLE_MAKE_FLAGS :=
 
@@ -115,7 +136,7 @@ re-tests:
 	$(MAKE) tests
 
 $(TARGET): FORCE $(LIBS)
-	@mk/progress.sh finish
+	@mk/progress.sh finish build
 	@$(RM) $@
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		libtool -static -o "$@" $(LIBS); \
@@ -126,7 +147,7 @@ $(TARGET): FORCE $(LIBS)
 	fi
 
 $(DEBUG_TARGET): FORCE $(DEBUG_LIBS)
-	@mk/progress.sh finish
+	@mk/progress.sh finish debug
 	@$(RM) $@
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		libtool -static -o "$@" $(DEBUG_LIBS); \
@@ -137,7 +158,7 @@ $(DEBUG_TARGET): FORCE $(DEBUG_LIBS)
 	fi
 
 $(TEST_TARGET): FORCE $(TEST_LIBS)
-	@mk/progress.sh finish
+	@mk/progress.sh finish test
 	@$(RM) $@
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		libtool -static -o "$@" $(TEST_LIBS); \
@@ -150,7 +171,7 @@ $(TEST_TARGET): FORCE $(TEST_LIBS)
 $(LIBFT_ROOT_DIR)/Test/Full_Libft_test.a: $(TEST_TARGET)
 
 $(TEST_DEBUG_TARGET): FORCE $(DEBUG_LIBS)
-	@mk/progress.sh finish
+	@mk/progress.sh finish debug
 	@$(RM) $@
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
 		libtool -static -o "$@" $(DEBUG_LIBS); \
@@ -167,74 +188,113 @@ Modules/%_test.a: | $(TEST_PROGRESS_INIT)
 	@module_dir="$(patsubst %/,%,$(dir $@))"; \
 	module_target="$(notdir $@)"; \
 	module_path="$$module_dir/$$module_target"; \
-	progress_index=$$(printf '%s\n' "$(TEST_LIBS)" | tr ' ' '\n' | nl -ba | awk -v target="$$module_path" '$$2==target {print $$1}'); \
+	progress_index=$$(printf '%s\n' "$(ACTIVE_TEST_LIBS)" | tr ' ' '\n' | nl -ba | awk -v target="$$module_path" '$$2==target {print $$1}'); \
 	log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
 	batch_output=0; \
 	case "$$MAKEFLAGS" in \
 		*"-j1"*) batch_output=0 ;; \
 		*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
 	esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$(TOTAL_TEST_LIBS)" "$$progress_index" "$$module_path" "$$log_file" -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD"; \
+		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$(words $(ACTIVE_TEST_LIBS))" "$$progress_index" "$$module_path" "$$log_file" test -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD"; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi
 
 $(TEST_PROGRESS_INIT):
-	@mk/progress.sh init "$(TOTAL_TEST_LIBS)"; \
+	@mk/progress.sh init "$(words $(ACTIVE_TEST_LIBS))" test; \
 	$(MKDIR) $(dir $@); \
 	: > "$@"
 
-Modules/%.a: FORCE
+define BUILD_CHECK_RULE
+Test/.libft_progress/build/checks/$(call sanitize_path,$(1)).check: FORCE | $(BUILD_SCAN_INIT)
+	+@$(MKDIR) $$(dir $$@); \
+	module_path="$(1)"; module_dir="$$$${module_path%/*}"; module_target="$$$${module_path##*/}"; \
+	if $$(MAKE) -C "$$$$module_dir" -q "$$$$module_target" $$(SUBMAKE_OVERRIDES) TARGET="$$$$module_target" BUILD_OUTPUT_SUFFIX="$$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$$(COMPILE_FLAGS)"; then \
+		: > "$$@"; \
+	else \
+		status=$$$$?; \
+		if [ $$$$status -eq 1 ]; then printf '%s\n' "$$$$module_path" > "$$@"; else exit $$$$status; fi; \
+	fi
+endef
+
+define DEBUG_CHECK_RULE
+Test/.libft_progress/debug/checks/$(call sanitize_path,$(1)).check: FORCE | $(DEBUG_SCAN_INIT)
+	+@$(MKDIR) $$(dir $$@); \
+	module_path="$(1)"; module_dir="$$$${module_path%/*}"; module_target="$$$${module_path##*/}"; \
+	if $$(MAKE) -C "$$$$module_dir" -q "$$$$module_target" $$(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$$$module_target" BUILD_OUTPUT_SUFFIX="$$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$$(COMPILE_FLAGS)"; then \
+		: > "$$@"; \
+	else \
+		status=$$$$?; \
+		if [ $$$$status -eq 1 ]; then printf '%s\n' "$$$$module_path" > "$$@"; else exit $$$$status; fi; \
+	fi
+endef
+
+$(foreach lib,$(LIBS),$(eval $(call BUILD_CHECK_RULE,$(lib))))
+$(foreach lib,$(DEBUG_LIBS),$(eval $(call DEBUG_CHECK_RULE,$(lib))))
+
+$(BUILD_SCAN_INIT):
+	@$(MKDIR) $(dir $@)
+	@printf '\033[1;35m[LIBFT CHECK]\033[0m Scanning %d modules for stale work...\n' "$(words $(ACTIVE_BUILD_LIBS))"
+	@: > "$@"
+
+$(DEBUG_SCAN_INIT):
+	@$(MKDIR) $(dir $@)
+	@printf '\033[1;35m[LIBFT CHECK]\033[0m Scanning %d debug modules for stale work...\n' "$(words $(ACTIVE_DEBUG_LIBS))"
+	@: > "$@"
+
+$(BUILD_PROGRESS_INIT): $(BUILD_CHECK_STAMPS)
+	@$(MKDIR) $(dir $@); \
+	: > "$(BUILD_STALE_FILE)"; \
+	for check_file in $(BUILD_CHECK_STAMPS); do \
+		if [ -s "$$check_file" ]; then cat "$$check_file" >> "$(BUILD_STALE_FILE)"; fi; \
+	done; \
+	total=$$(wc -l < "$(BUILD_STALE_FILE)" | tr -d ' '); \
+	mk/progress.sh init "$$total" build; \
+	printf '%s\n' "$$total" > "$(dir $(BUILD_STALE_FILE))total"; \
+	: > "$@"
+
+$(DEBUG_PROGRESS_INIT): $(DEBUG_CHECK_STAMPS)
+	@$(MKDIR) $(dir $@); \
+	: > "$(DEBUG_STALE_FILE)"; \
+	for check_file in $(DEBUG_CHECK_STAMPS); do \
+		if [ -s "$$check_file" ]; then cat "$$check_file" >> "$(DEBUG_STALE_FILE)"; fi; \
+	done; \
+	total=$$(wc -l < "$(DEBUG_STALE_FILE)" | tr -d ' '); \
+	mk/progress.sh init "$$total" debug; \
+	printf '%s\n' "$$total" > "$(dir $(DEBUG_STALE_FILE))total"; \
+	: > "$@"
+
+Modules/%.a: FORCE | $(BUILD_PROGRESS_INIT)
 	@module_dir="$(patsubst %/,%,$(dir $@))"; \
 	module_target="$(notdir $@)"; \
-	need_build=0; \
-	if $(MAKE) -C $$module_dir -q $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; then \
-	        :; \
-	else \
-		status=$$?; \
-		if [ $$status -eq 1 ]; then \
-	                need_build=1; \
-	        else \
-	                exit $$status; \
-	        fi; \
-	fi; \
-	if [ $$need_build -eq 1 ] || [ ! -f $@ ]; then \
+	if grep -Fqx "$@" "$(BUILD_STALE_FILE)"; then \
 		module_path="$$module_dir/$$module_target"; \
-		progress_index=$$(printf '%s\n' "$(LIBS)" | tr ' ' '\n' | nl -ba | awk -v target="$$module_path" '$$2==target {print $$1}'); \
+		progress_index=$$(nl -ba "$(BUILD_STALE_FILE)" | awk -v target="$$module_path" '$$2==target {print $$1}'); \
+		progress_total=$$(cat "$(dir $(BUILD_STALE_FILE))total"); \
 		log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
 		batch_output=0; \
 		case "$$MAKEFLAGS" in \
 			*"-j1"*) batch_output=0 ;; \
 			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
 		esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$(TOTAL_LIBS)" "$$progress_index" "$$module_path" "$$log_file" -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
+		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$$progress_total" "$$progress_index" "$$module_path" "$$log_file" build -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
 	fi
 
-Modules/%_debug.a: FORCE
+Modules/%_debug.a: FORCE | $(DEBUG_PROGRESS_INIT)
 	@module_dir="$(patsubst %/,%,$(dir $@))"; \
 	module_target="$(notdir $@)"; \
-	need_build=0; \
-	if $(MAKE) -C $$module_dir -q $$module_target $(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; then \
-	        :; \
-	else \
-		status=$$?; \
-		if [ $$status -eq 1 ]; then \
-	                need_build=1; \
-	        else \
-	                exit $$status; \
-	        fi; \
-	fi; \
-	if [ $$need_build -eq 1 ] || [ ! -f $@ ]; then \
+	if grep -Fqx "$@" "$(DEBUG_STALE_FILE)"; then \
 		module_path="$$module_dir/$$module_target"; \
-		progress_index=$$(printf '%s\n' "$(DEBUG_LIBS)" | tr ' ' '\n' | nl -ba | awk -v target="$$module_path" '$$2==target {print $$1}'); \
+		progress_index=$$(nl -ba "$(DEBUG_STALE_FILE)" | awk -v target="$$module_path" '$$2==target {print $$1}'); \
+		progress_total=$$(cat "$(dir $(DEBUG_STALE_FILE))total"); \
 		log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
 		batch_output=0; \
 		case "$$MAKEFLAGS" in \
 			*"-j1"*) batch_output=0 ;; \
 			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
 		esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$(TOTAL_DEBUG_LIBS)" "$$progress_index" "$$module_path" "$$log_file" -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
+		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$$progress_total" "$$progress_index" "$$module_path" "$$log_file" debug -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
 	fi

@@ -50,7 +50,7 @@ unsigned char    *scma_get_heap_data(void);
 
 scma_handle    scma_invalid_handle(void);
 int32_t     scma_handle_is_invalid(scma_handle handle);
-void    scma_compact(void);
+int32_t scma_compact(void);
 int32_t     scma_validate_handle(scma_handle handle, scma_block **out_block);
 int32_t     scma_ensure_block_capacity(ft_size_t required_count);
 int32_t     scma_ensure_capacity(ft_size_t required_size);

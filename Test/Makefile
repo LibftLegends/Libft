@@ -5,7 +5,7 @@ export SHELL
 export LIBFT_POSIX_SHELL := 1
 endif
 
-ifneq ($(filter Efficiency run_Efficiency,$(MAKECMDGOALS)),)
+ifneq ($(filter Efficiency run_Efficiency performance_benchmarks run_performance_benchmarks,$(MAKECMDGOALS)),)
 OPT_LEVEL := 3
 endif
 
@@ -74,12 +74,20 @@ CMA:
 	@echo "Building CMA test executable ($(TARGET))"
 	@$(MAKE) FILES="$(CMA_TEST_FILES)" all LIBFT_TEST_BATCH_OUTPUT="$(LIBFT_TEST_BATCH_OUTPUT)"
 
-Efficiency: $(EFFICIENCY_TARGET)
-	@echo "Building efficiency test executable ($(EFFICIENCY_TARGET)) with OPT_LEVEL=$(EFFICIENCY_OPT_LEVEL)"
-	@echo "Efficiency executable ready; run ./$(EFFICIENCY_TARGET) manually if desired."
+performance_benchmarks: $(EFFICIENCY_TARGET)
+	@echo "Performance benchmark executable ready ($(EFFICIENCY_TARGET), OPT_LEVEL=$(EFFICIENCY_OPT_LEVEL))."
+
+run_performance_benchmarks:
+	@if [ ! -x "./$(EFFICIENCY_TARGET)" ]; then \
+		printf 'Performance benchmark executable is missing; run make performance_benchmarks first.\n' >&2; \
+		exit 1; \
+	fi
+	@./$(EFFICIENCY_TARGET)
+
+Efficiency: performance_benchmarks
 
 run_Efficiency: $(EFFICIENCY_TARGET)
-	@./$(EFFICIENCY_TARGET)
+	@$(MAKE) run_performance_benchmarks
 
 single_test:
 	@if [ -z "$(TEST)" ]; then \
@@ -541,7 +549,9 @@ both: all debug
 
 -include $(DEPS) $(DEBUG_DEPS) $(EFFICIENCY_DEPS)
 
-.PHONY: all clean fclean re debug both build_tests Basic re_Basic CMA re_CMA Efficiency run_Efficiency get_next_line re_get_next_line GPGR re_GPGR FORCE
+.PHONY: all clean fclean re debug both build_tests Basic re_Basic CMA re_CMA \
+	Efficiency run_Efficiency performance_benchmarks run_performance_benchmarks \
+	get_next_line re_get_next_line GPGR re_GPGR FORCE
 
 print_test_compile_flags:
 	@printf '%s\n' "$(COMPILE_FLAGS)"
