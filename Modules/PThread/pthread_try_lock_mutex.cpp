@@ -54,7 +54,7 @@ int pt_mutex::try_lock() const
     this->_owner.store(thread_id, std::memory_order_relaxed);
     this->_lock.store(true, std::memory_order_release);
 
-    notify_error = pt_lock_tracking::notify_acquired_fast(thread_id,
+    notify_error = pt_lock_tracking::notify_acquired(thread_id,
             static_cast<const void *>(this));
     if (notify_error != FT_ERR_SUCCESS)
     {
@@ -68,7 +68,7 @@ int pt_mutex::try_lock() const
         {
             su_abort();
         }
-        pt_lock_tracking::notify_released_fast(thread_id,
+        pt_lock_tracking::notify_released(thread_id,
                 static_cast<const void *>(this));
         return (notify_error);
     }

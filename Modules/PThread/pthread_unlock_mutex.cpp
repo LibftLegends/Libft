@@ -39,7 +39,7 @@ int pt_mutex::unlock() const
         this->_lock.store(true, std::memory_order_release);
         return (unlock_error);
     }
-    (void)pt_lock_tracking::notify_released_fast(thread_id,
+    (void)pt_lock_tracking::notify_released(thread_id,
             static_cast<const void *>(this));
     return (FT_ERR_SUCCESS);
 }

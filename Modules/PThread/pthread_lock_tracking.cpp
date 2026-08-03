@@ -9,11 +9,6 @@
 #include <new>
 
 static thread_local bool g_registry_mutex_owned = false;
-static thread_local ft_bool g_thread_info_cache_valid = FT_FALSE;
-static thread_local ft_size_t g_thread_info_cache_index = 0;
-static thread_local ft_bool g_mutex_owner_cache_valid = FT_FALSE;
-static thread_local ft_size_t g_mutex_owner_cache_index = 0;
-static thread_local const void *g_mutex_owner_cache_pointer = ft_nullptr;
 
 #ifdef LIBFT_TEST_BUILD
 std::atomic<int> pt_lock_tracking_notify_acquired_override_error_code(
@@ -29,33 +24,6 @@ struct s_pt_mutex_owner_info
 };
 
 typedef pt_buffer<s_pt_mutex_owner_info> pt_mutex_owner_vector;
-
-static const ft_size_t PT_LOCK_TRACKING_FAST_MUTEX_CAPACITY = 128;
-
-struct s_pt_fast_thread_state
-{
-    std::atomic<uint32_t> sequence;
-    pt_thread_id_type thread_identifier;
-    ft_size_t owned_count;
-    const void *owned_mutexes[PT_LOCK_TRACKING_FAST_MUTEX_CAPACITY];
-    const void *waiting_mutex;
-    int64_t wait_started_ms;
-    ft_bool initialized;
-    ft_bool published;
-
-    s_pt_fast_thread_state()
-        : sequence(0), thread_identifier(pt_thread_id_type()), owned_count(0),
-        waiting_mutex(ft_nullptr), wait_started_ms(0), initialized(FT_FALSE),
-        published(FT_FALSE)
-    {
-        return ;
-    }
-};
-
-typedef pt_buffer<s_pt_fast_thread_state *> pt_fast_thread_state_vector;
-
-static int pt_lock_tracking_set_mutex_owner(const void *mutex_pointer,
-    pt_thread_id_type owner_thread);
 
 struct s_pt_owned_mutex_buffer_cache
 {
@@ -75,19 +43,6 @@ struct s_pt_owned_mutex_buffer_cache
 };
 
 static thread_local s_pt_owned_mutex_buffer_cache g_owned_mutex_buffer_cache;
-static thread_local s_pt_fast_thread_state g_fast_thread_state;
-
-static void pt_lock_tracking_fast_update_begin(void)
-{
-    g_fast_thread_state.sequence.fetch_add(1U, std::memory_order_acq_rel);
-    return ;
-}
-
-static void pt_lock_tracking_fast_update_end(void)
-{
-    g_fast_thread_state.sequence.fetch_add(1U, std::memory_order_release);
-    return ;
-}
 
 int pt_lock_tracking::lock_registry_mutex(void)
 {
@@ -195,327 +150,6 @@ static pt_mutex_owner_vector *pt_lock_tracking_get_mutex_owners(int *error_code)
     return (mutex_owners_pointer);
 }
 
-static pt_fast_thread_state_vector *pt_lock_tracking_get_fast_states(
-        int *error_code)
-{
-    static pt_fast_thread_state_vector *fast_states_pointer = ft_nullptr;
-    void *memory_pointer;
-
-    if (fast_states_pointer != ft_nullptr)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SUCCESS;
-        return (fast_states_pointer);
-    }
-    memory_pointer = std::malloc(sizeof(pt_fast_thread_state_vector));
-    if (memory_pointer == ft_nullptr)
-    {
-        if (error_code)
-            *error_code = FT_ERR_NO_MEMORY;
-        return (ft_nullptr);
-    }
-    fast_states_pointer = static_cast<pt_fast_thread_state_vector *>(
-        memory_pointer);
-    new (fast_states_pointer) pt_fast_thread_state_vector();
-    pt_buffer_init(*fast_states_pointer);
-    if (error_code)
-        *error_code = FT_ERR_SUCCESS;
-    return (fast_states_pointer);
-}
-
-static int pt_lock_tracking_register_fast_state(
-        s_pt_fast_thread_state *state)
-{
-    pt_fast_thread_state_vector *fast_states;
-    int error_code;
-    int push_error;
-
-    error_code = FT_ERR_SUCCESS;
-    fast_states = pt_lock_tracking_get_fast_states(&error_code);
-    if (fast_states == ft_nullptr)
-        return (error_code);
-    push_error = pt_buffer_push(*fast_states, state);
-    if (push_error != FT_ERR_SUCCESS)
-        return (push_error);
-    return (FT_ERR_SUCCESS);
-}
-
-static s_pt_fast_thread_state *pt_lock_tracking_find_fast_state(
-        pt_thread_id_type thread_identifier, int *error_code)
-{
-    pt_fast_thread_state_vector *fast_states;
-    ft_size_t index;
-
-    fast_states = pt_lock_tracking_get_fast_states(error_code);
-    if (fast_states == ft_nullptr)
-        return (ft_nullptr);
-    index = 0;
-    while (index < fast_states->size)
-    {
-        if (fast_states->data[index] != ft_nullptr
-            && fast_states->data[index]->initialized == FT_TRUE
-            && fast_states->data[index]->thread_identifier
-                == thread_identifier)
-            return (fast_states->data[index]);
-        index++;
-    }
-    if (error_code)
-        *error_code = FT_ERR_SUCCESS;
-    return (ft_nullptr);
-}
-
-static int pt_lock_tracking_copy_fast_state(
-        const s_pt_fast_thread_state *state, pt_mutex_vector *owned_mutexes,
-        const void **waiting_mutex, int64_t *wait_started_ms)
-{
-    uint32_t sequence_before;
-    uint32_t sequence_after;
-    ft_size_t index;
-    ft_size_t attempt_count;
-
-    attempt_count = 0;
-    while (attempt_count < 8)
-    {
-        sequence_before = state->sequence.load(std::memory_order_acquire);
-        if ((sequence_before & 1U) != 0)
-        {
-            attempt_count++;
-            continue ;
-        }
-        pt_buffer_clear(*owned_mutexes);
-        index = 0;
-        while (index < state->owned_count)
-        {
-            if (pt_buffer_push(*owned_mutexes, state->owned_mutexes[index])
-                    != FT_ERR_SUCCESS)
-                return (FT_ERR_NO_MEMORY);
-            index++;
-        }
-        if (waiting_mutex)
-            *waiting_mutex = state->waiting_mutex;
-        if (wait_started_ms)
-            *wait_started_ms = state->wait_started_ms;
-        sequence_after = state->sequence.load(std::memory_order_acquire);
-        if (sequence_before == sequence_after)
-            return (FT_ERR_SUCCESS);
-        attempt_count++;
-    }
-    return (FT_ERR_THREAD_BUSY);
-}
-
-int pt_lock_tracking::begin_fast_state(pt_thread_id_type thread_identifier)
-{
-    int register_error;
-
-    if (g_fast_thread_state.initialized == FT_TRUE)
-    {
-        if (g_fast_thread_state.thread_identifier == thread_identifier)
-            return (FT_ERR_SUCCESS);
-        return (FT_ERR_INVALID_STATE);
-    }
-    g_fast_thread_state.thread_identifier = thread_identifier;
-    g_fast_thread_state.owned_count = 0;
-    g_fast_thread_state.waiting_mutex = ft_nullptr;
-    g_fast_thread_state.wait_started_ms = 0;
-    g_fast_thread_state.published = FT_FALSE;
-    register_error = pt_lock_tracking::lock_registry_mutex();
-    if (register_error != FT_ERR_SUCCESS)
-        return (register_error);
-    register_error = pt_lock_tracking_register_fast_state(
-        &g_fast_thread_state);
-    (void)pt_lock_tracking::unlock_registry_mutex();
-    if (register_error != FT_ERR_SUCCESS)
-        return (register_error);
-    g_fast_thread_state.initialized = FT_TRUE;
-    return (FT_ERR_SUCCESS);
-}
-
-int pt_lock_tracking::publish_fast_state(void)
-{
-    s_pt_thread_lock_info *info;
-    int error_code;
-    int lock_error;
-    ft_size_t index;
-
-    if (g_fast_thread_state.initialized != FT_TRUE)
-        return (FT_ERR_SUCCESS);
-    lock_error = pt_lock_tracking::lock_registry_mutex();
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    error_code = FT_ERR_SUCCESS;
-    info = pt_lock_tracking::find_thread_info(
-        g_fast_thread_state.thread_identifier, &error_code);
-    if (info == ft_nullptr)
-    {
-        (void)pt_lock_tracking::unlock_registry_mutex();
-        return (error_code);
-    }
-    pt_buffer_clear(info->owned_mutexes);
-    index = 0;
-    while (index < g_fast_thread_state.owned_count)
-    {
-        error_code = pt_buffer_push(info->owned_mutexes,
-            g_fast_thread_state.owned_mutexes[index]);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)pt_lock_tracking::unlock_registry_mutex();
-            return (error_code);
-        }
-        error_code = pt_lock_tracking_set_mutex_owner(
-            g_fast_thread_state.owned_mutexes[index],
-            g_fast_thread_state.thread_identifier);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)pt_lock_tracking::unlock_registry_mutex();
-            return (error_code);
-        }
-        index++;
-    }
-    info->waiting_mutex = g_fast_thread_state.waiting_mutex;
-    info->wait_started_ms = g_fast_thread_state.wait_started_ms;
-    pt_lock_tracking_fast_update_begin();
-    g_fast_thread_state.published = FT_TRUE;
-    pt_lock_tracking_fast_update_end();
-    (void)pt_lock_tracking::unlock_registry_mutex();
-    return (FT_ERR_SUCCESS);
-}
-
-void pt_lock_tracking::remove_fast_state(pt_thread_id_type thread_identifier)
-{
-    pt_fast_thread_state_vector *fast_states;
-    int error_code;
-    ft_size_t index;
-
-    error_code = FT_ERR_SUCCESS;
-    fast_states = pt_lock_tracking_get_fast_states(&error_code);
-    if (fast_states == ft_nullptr)
-        return ;
-    index = 0;
-    while (index < fast_states->size)
-    {
-        if (fast_states->data[index] != ft_nullptr
-            && fast_states->data[index]->thread_identifier
-                == thread_identifier)
-        {
-            fast_states->data[index]->initialized = FT_FALSE;
-            pt_buffer_erase(*fast_states, index);
-            break ;
-        }
-        index++;
-    }
-    if (g_fast_thread_state.thread_identifier == thread_identifier)
-    {
-        g_fast_thread_state.initialized = FT_FALSE;
-        g_fast_thread_state.published = FT_FALSE;
-        g_fast_thread_state.owned_count = 0;
-        g_fast_thread_state.waiting_mutex = ft_nullptr;
-    }
-    return ;
-}
-
-int pt_lock_tracking::notify_acquired_fast(
-        pt_thread_id_type thread_identifier, const void *mutex_pointer)
-{
-    ft_size_t index;
-    int error_code;
-
-    if (thread_identifier != pt_thread_self())
-        return (pt_lock_tracking::notify_acquired(thread_identifier,
-            mutex_pointer));
-#ifdef LIBFT_TEST_BUILD
-    if (pt_lock_tracking_notify_acquired_override_error_code.load()
-        != FT_ERR_SUCCESS)
-        return (pt_lock_tracking::notify_acquired(thread_identifier,
-            mutex_pointer));
-#endif
-    error_code = pt_lock_tracking::begin_fast_state(thread_identifier);
-    if (error_code != FT_ERR_SUCCESS)
-        return (pt_lock_tracking::notify_acquired(thread_identifier,
-            mutex_pointer));
-    if (g_fast_thread_state.published == FT_TRUE)
-    {
-        error_code = pt_lock_tracking::notify_acquired(thread_identifier,
-            mutex_pointer);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-    }
-    index = 0;
-    while (index < g_fast_thread_state.owned_count)
-    {
-        if (g_fast_thread_state.owned_mutexes[index] == mutex_pointer)
-            break ;
-        index++;
-    }
-    if (index == g_fast_thread_state.owned_count)
-    {
-        if (g_fast_thread_state.owned_count
-            >= PT_LOCK_TRACKING_FAST_MUTEX_CAPACITY)
-        {
-            error_code = pt_lock_tracking::publish_fast_state();
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
-            return (pt_lock_tracking::notify_acquired(thread_identifier,
-                mutex_pointer));
-        }
-        pt_lock_tracking_fast_update_begin();
-        g_fast_thread_state.owned_mutexes[g_fast_thread_state.owned_count]
-            = mutex_pointer;
-        g_fast_thread_state.owned_count++;
-        pt_lock_tracking_fast_update_end();
-    }
-    pt_lock_tracking_fast_update_begin();
-    g_fast_thread_state.waiting_mutex = ft_nullptr;
-    g_fast_thread_state.wait_started_ms = 0;
-    pt_lock_tracking_fast_update_end();
-    return (FT_ERR_SUCCESS);
-}
-
-int pt_lock_tracking::notify_released_fast(
-        pt_thread_id_type thread_identifier, const void *mutex_pointer)
-{
-    ft_size_t index;
-    int result_code;
-
-    if (thread_identifier != pt_thread_self()
-        || g_fast_thread_state.initialized != FT_TRUE)
-        return (pt_lock_tracking::notify_released(thread_identifier,
-            mutex_pointer));
-    result_code = FT_ERR_SUCCESS;
-    if (g_fast_thread_state.published == FT_TRUE)
-    {
-        result_code = pt_lock_tracking::notify_released(thread_identifier,
-            mutex_pointer);
-        if (result_code != FT_ERR_SUCCESS)
-            return (result_code);
-    }
-    index = 0;
-    while (index < g_fast_thread_state.owned_count)
-    {
-        if (g_fast_thread_state.owned_mutexes[index] == mutex_pointer)
-        {
-            pt_lock_tracking_fast_update_begin();
-            while (index + 1 < g_fast_thread_state.owned_count)
-            {
-                g_fast_thread_state.owned_mutexes[index]
-                    = g_fast_thread_state.owned_mutexes[index + 1];
-                index++;
-            }
-            g_fast_thread_state.owned_count--;
-            pt_lock_tracking_fast_update_end();
-            break ;
-        }
-        index++;
-    }
-    if (g_fast_thread_state.owned_count == 0)
-    {
-        pt_lock_tracking_fast_update_begin();
-        g_fast_thread_state.waiting_mutex = ft_nullptr;
-        g_fast_thread_state.wait_started_ms = 0;
-        pt_lock_tracking_fast_update_end();
-    }
-    return (result_code);
-}
-
 static s_pt_mutex_owner_info *pt_lock_tracking_lookup_mutex_owner(
     const void *mutex_pointer, int *error_code)
 {
@@ -525,24 +159,11 @@ static s_pt_mutex_owner_info *pt_lock_tracking_lookup_mutex_owner(
     mutex_owners = pt_lock_tracking_get_mutex_owners(error_code);
     if (mutex_owners == ft_nullptr)
         return (ft_nullptr);
-    if (g_mutex_owner_cache_valid == FT_TRUE
-        && g_mutex_owner_cache_pointer == mutex_pointer
-        && g_mutex_owner_cache_index < mutex_owners->size
-        && mutex_owners->data[g_mutex_owner_cache_index].mutex_pointer
-            == mutex_pointer)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SUCCESS;
-        return (&mutex_owners->data[g_mutex_owner_cache_index]);
-    }
     index = 0;
     while (index < mutex_owners->size)
     {
         if (mutex_owners->data[index].mutex_pointer == mutex_pointer)
         {
-            g_mutex_owner_cache_valid = FT_TRUE;
-            g_mutex_owner_cache_index = index;
-            g_mutex_owner_cache_pointer = mutex_pointer;
             if (error_code)
                 *error_code = FT_ERR_SUCCESS;
             return (&mutex_owners->data[index]);
@@ -580,9 +201,6 @@ static int pt_lock_tracking_set_mutex_owner(const void *mutex_pointer,
     push_error = pt_buffer_push(*mutex_owners, new_owner_info);
     if (push_error != FT_ERR_SUCCESS)
         return (push_error);
-    g_mutex_owner_cache_valid = FT_TRUE;
-    g_mutex_owner_cache_index = mutex_owners->size - 1;
-    g_mutex_owner_cache_pointer = mutex_pointer;
     return (FT_ERR_SUCCESS);
 }
 
@@ -602,8 +220,6 @@ static void pt_lock_tracking_clear_mutex_owner(const void *mutex_pointer)
         if (mutex_owners->data[index].mutex_pointer == mutex_pointer)
         {
             pt_buffer_erase(*mutex_owners, index);
-            g_mutex_owner_cache_valid = FT_FALSE;
-            g_mutex_owner_cache_pointer = ft_nullptr;
             return ;
         }
         index += 1;
@@ -655,17 +271,6 @@ pt_mutex_vector pt_lock_tracking::get_owned_mutexes
     int error_code;
 
     pt_buffer_init(owned_mutexes);
-    if (thread_identifier == pt_thread_self()
-        && g_fast_thread_state.initialized == FT_TRUE)
-    {
-        error_code = pt_lock_tracking_copy_fast_state(
-            &g_fast_thread_state, &owned_mutexes, ft_nullptr, ft_nullptr);
-        if (error_code_out)
-            *error_code_out = error_code;
-        if (error_code != FT_ERR_SUCCESS)
-            pt_buffer_destroy(owned_mutexes);
-        return (owned_mutexes);
-    }
     error_code = FT_ERR_SUCCESS;
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
     {
@@ -744,25 +349,12 @@ s_pt_thread_lock_info *pt_lock_tracking::find_thread_info
     thread_infos = pt_lock_tracking::get_thread_infos(error_code);
     if (thread_infos == ft_nullptr)
         return (ft_nullptr);
-    if (g_thread_info_cache_valid == FT_TRUE
-        && g_thread_info_cache_index < thread_infos->size
-        && thread_infos->data[g_thread_info_cache_index].thread_identifier
-            == thread_identifier)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SUCCESS;
-        return (&thread_infos->data[g_thread_info_cache_index]);
-    }
     index = 0;
     while (index < thread_infos->size)
     {
         info = &thread_infos->data[index];
         if (info->thread_identifier == thread_identifier)
-        {
-            g_thread_info_cache_valid = FT_TRUE;
-            g_thread_info_cache_index = index;
             return (info);
-        }
         index += 1;
     }
     new_info.thread_identifier = thread_identifier;
@@ -779,8 +371,6 @@ s_pt_thread_lock_info *pt_lock_tracking::find_thread_info
             *error_code = push_error;
         return (ft_nullptr);
     }
-    g_thread_info_cache_valid = FT_TRUE;
-    g_thread_info_cache_index = thread_infos->size - 1;
     if (error_code)
         *error_code = FT_ERR_SUCCESS;
     return (&thread_infos->data[thread_infos->size - 1]);
@@ -796,25 +386,12 @@ s_pt_thread_lock_info *pt_lock_tracking::lookup_thread_info(pt_thread_id_type
     thread_infos = pt_lock_tracking::get_thread_infos(error_code);
     if (thread_infos == ft_nullptr)
         return (ft_nullptr);
-    if (g_thread_info_cache_valid == FT_TRUE
-        && g_thread_info_cache_index < thread_infos->size
-        && thread_infos->data[g_thread_info_cache_index].thread_identifier
-            == thread_identifier)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SUCCESS;
-        return (&thread_infos->data[g_thread_info_cache_index]);
-    }
     index = 0;
     while (index < thread_infos->size)
     {
         info = &thread_infos->data[index];
         if (info->thread_identifier == thread_identifier)
-        {
-            g_thread_info_cache_valid = FT_TRUE;
-            g_thread_info_cache_index = index;
             return (info);
-        }
         index += 1;
     }
     if (error_code)
@@ -922,21 +499,6 @@ int pt_lock_tracking::notify_wait(pt_thread_id_type thread_identifier,
     bool lock_acquired = false;
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
-
-    if (thread_identifier == pt_thread_self()
-        && g_fast_thread_state.initialized == FT_TRUE)
-    {
-        pt_lock_tracking_fast_update_begin();
-        if (g_fast_thread_state.waiting_mutex != requested_mutex)
-            g_fast_thread_state.wait_started_ms = time_now_ms();
-        if (g_fast_thread_state.wait_started_ms == 0)
-            g_fast_thread_state.wait_started_ms = time_now_ms();
-        g_fast_thread_state.waiting_mutex = requested_mutex;
-        pt_lock_tracking_fast_update_end();
-        error_code = pt_lock_tracking::publish_fast_state();
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-    }
 
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
@@ -1066,7 +628,6 @@ int pt_lock_tracking::notify_thread_exit(pt_thread_id_type thread_identifier)
         lock_acquired = true;
     }
     pt_lock_tracking_clear_mutex_owners_for_thread(thread_identifier);
-    pt_lock_tracking::remove_fast_state(thread_identifier);
     thread_infos = pt_lock_tracking::get_thread_infos(&error_code);
     if (thread_infos == ft_nullptr)
     {
@@ -1085,12 +646,6 @@ int pt_lock_tracking::notify_thread_exit(pt_thread_id_type thread_identifier)
         {
             pt_buffer_destroy(thread_infos->data[thread_index].owned_mutexes);
             pt_buffer_erase(*thread_infos, thread_index);
-            if (g_thread_info_cache_valid == FT_TRUE
-                && g_thread_info_cache_index == thread_index)
-                g_thread_info_cache_valid = FT_FALSE;
-            else if (g_thread_info_cache_valid == FT_TRUE
-                && g_thread_info_cache_index > thread_index)
-                g_thread_info_cache_index--;
             break ;
         }
         thread_index += 1;
@@ -1233,7 +788,6 @@ int pt_lock_tracking::get_thread_state(pt_thread_id_type thread_identifier,
 {
     int lock_error;
     s_pt_thread_lock_info *info;
-    s_pt_fast_thread_state *fast_state;
     int copy_error;
     bool lock_acquired = false;
     int error_code = FT_ERR_SUCCESS;
@@ -1245,16 +799,6 @@ int pt_lock_tracking::get_thread_state(pt_thread_id_type thread_identifier,
     state.thread_identifier = thread_identifier;
     state.waiting_mutex = ft_nullptr;
     state.wait_started_ms = 0;
-    if (thread_identifier == pt_thread_self()
-        && g_fast_thread_state.initialized == FT_TRUE)
-    {
-        result_code = pt_lock_tracking_copy_fast_state(
-            &g_fast_thread_state, &state.owned_mutexes,
-            &state.waiting_mutex, &state.wait_started_ms);
-        if (result_code == FT_ERR_SUCCESS)
-            state.thread_identifier = thread_identifier;
-        return (result_code);
-    }
     if (!g_registry_mutex_owned)
     {
         lock_error = pt_lock_tracking::lock_registry_mutex();
@@ -1262,20 +806,6 @@ int pt_lock_tracking::get_thread_state(pt_thread_id_type thread_identifier,
             return (lock_error);
         g_registry_mutex_owned = true;
         lock_acquired = true;
-    }
-    fast_state = pt_lock_tracking_find_fast_state(thread_identifier,
-        &error_code);
-    if (fast_state != ft_nullptr)
-    {
-        result_code = pt_lock_tracking_copy_fast_state(fast_state,
-            &state.owned_mutexes, &state.waiting_mutex,
-            &state.wait_started_ms);
-        if (lock_acquired)
-        {
-            pt_lock_tracking::unlock_registry_mutex();
-            g_registry_mutex_owned = false;
-        }
-        return (result_code);
     }
     info = pt_lock_tracking::lookup_thread_info(thread_identifier, &error_code);
     if (info == ft_nullptr)
