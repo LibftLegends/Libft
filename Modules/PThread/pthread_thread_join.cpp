@@ -68,7 +68,7 @@ int pt_thread_timed_join(pthread_t thread, void **retval, long timeout_ms)
     if (tracking_error != FT_ERR_SUCCESS)
         return (tracking_error);
     return (return_value);
-#else
+#elif defined(_WIN32)
     long elapsed_timeout_ms;
 
     elapsed_timeout_ms = 0;
@@ -92,5 +92,15 @@ int pt_thread_timed_join(pthread_t thread, void **retval, long timeout_ms)
         elapsed_timeout_ms += 1;
     }
     return (ETIMEDOUT);
+#else
+    (void)timeout_ms;
+    return_value = pthread_join(thread, retval);
+    if (return_value != 0)
+        return (return_value);
+    thread_identifier = FT_THREAD_ID_FROM_PTHREAD(thread);
+    tracking_error = pt_lock_tracking::notify_thread_exit(thread_identifier);
+    if (tracking_error != FT_ERR_SUCCESS)
+        return (tracking_error);
+    return (return_value);
 #endif
 }
