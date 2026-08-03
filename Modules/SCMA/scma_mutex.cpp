@@ -185,7 +185,6 @@ pt_recursive_mutex *scma_runtime_mutex(void)
 int32_t scma_mutex_lock(void)
 {
     pt_recursive_mutex *mutex_pointer;
-    ft_bool thread_safety_enabled;
     uint64_t state;
     uint64_t next_state;
     int32_t mutex_error;
@@ -214,11 +213,9 @@ int32_t scma_mutex_lock(void)
                 std::memory_order_acquire, std::memory_order_relaxed))
             break ;
     }
-    thread_safety_enabled = FT_FALSE;
     mutex_pointer = nullptr;
     if ((next_state & SCMA_OPERATION_STATE_ENABLED) != 0)
     {
-        thread_safety_enabled = FT_TRUE;
         prepare_result = scma_prepare_mutex();
         if (prepare_result != FT_ERR_SUCCESS)
         {
@@ -227,14 +224,11 @@ int32_t scma_mutex_lock(void)
         }
         mutex_pointer = g_scma_mutex.load(std::memory_order_acquire);
     }
-    if (thread_safety_enabled == FT_TRUE)
+    mutex_error = pt_recursive_mutex_lock_if_not_null(mutex_pointer);
+    if (mutex_error != FT_ERR_SUCCESS)
     {
-        mutex_error = pt_recursive_mutex_lock_if_not_null(mutex_pointer);
-        if (mutex_error != FT_ERR_SUCCESS)
-        {
-            scma_finish_operation();
-            return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
-        }
+        scma_finish_operation();
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
     }
     g_scma_lock_depth = 1;
     return (FT_ERR_SUCCESS);
@@ -243,9 +237,6 @@ int32_t scma_mutex_lock(void)
 int32_t scma_mutex_unlock(void)
 {
     pt_recursive_mutex *mutex_pointer;
-    ft_bool thread_safety_enabled;
-    uint64_t state;
-    int32_t mutex_error;
 
     if (g_scma_lock_depth == 0)
         return (FT_ERR_SYS_MUTEX_UNLOCK_FAILED);
@@ -254,18 +245,10 @@ int32_t scma_mutex_unlock(void)
         g_scma_lock_depth--;
         return (FT_ERR_SUCCESS);
     }
-    state = g_scma_operation_state.load(std::memory_order_acquire);
-    thread_safety_enabled = FT_FALSE;
-    if ((state & SCMA_OPERATION_STATE_ENABLED) != 0)
-        thread_safety_enabled = FT_TRUE;
     mutex_pointer = g_scma_mutex.load(std::memory_order_acquire);
-    mutex_error = FT_ERR_SUCCESS;
-    if (thread_safety_enabled == FT_TRUE)
-        mutex_error = pt_recursive_mutex_unlock_if_not_null(mutex_pointer);
+    (void)pt_recursive_mutex_unlock_if_not_null(mutex_pointer);
     g_scma_lock_depth = 0;
     scma_finish_operation();
-    if (mutex_error != FT_ERR_SUCCESS)
-        return (FT_ERR_SYS_MUTEX_UNLOCK_FAILED);
     return (FT_ERR_SUCCESS);
 }
 

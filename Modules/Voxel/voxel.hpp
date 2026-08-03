@@ -390,6 +390,8 @@ class terrain_generation_config
         int32_t set_feature_count(uint32_t value) noexcept;
         int32_t set_ore_rule_count(uint32_t value) noexcept;
         int32_t set_biome_transitions_enabled(ft_bool enabled) noexcept;
+        int32_t set_biome_transition_settings(int32_t noise_scale,
+            uint32_t noise_strength) noexcept;
         int32_t set_mountain_ridges_enabled(ft_bool enabled) noexcept;
         int32_t set_erosion_enabled(ft_bool enabled) noexcept;
         int32_t set_mountain_ridge_settings(int32_t scale,
@@ -418,6 +420,8 @@ class terrain_generation_config
         terrain_fluid_config fluids;
         terrain_layer_config layers;
         ft_bool enable_biome_transitions;
+        int32_t biome_transition_noise_scale;
+        uint32_t biome_transition_noise_strength;
         ft_bool enable_mountain_ridges;
         ft_bool enable_erosion;
         int32_t mountain_ridge_scale;

@@ -16,6 +16,9 @@ static const uint64_t TERRAIN_FEATURE_SHRUB_SALT = UINT64_C(0x2D9C1F4E8B3A6071);
 static const int32_t TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET = 1;
 static const uint64_t TERRAIN_FEATURE_TREE_SALT = UINT64_C(0x4F1E2D3C5B6A7980);
 static const uint64_t TERRAIN_FEATURE_WATER_SALT = UINT64_C(0x9182736455463728);
+static const uint64_t TERRAIN_BIOME_TRANSITION_SALT = UINT64_C(0x6A09E667F3BCC909);
+static const uint64_t TERRAIN_BIOME_SURFACE_TRANSITION_SALT = UINT64_C(0xBB67AE8584CAA73B);
+static const uint64_t TERRAIN_BIOME_SUBSURFACE_TRANSITION_SALT = UINT64_C(0x3C6EF372FE94F82B);
 static const uint64_t TERRAIN_CAVE_PRIMARY_SALT = UINT64_C(0x7C3A91E2D4B8560F);
 static const uint64_t TERRAIN_CAVE_DETAIL_SALT = UINT64_C(0x1D6F80B3C9274A55);
 static const int32_t TERRAIN_CAVE_PRIMARY_SCALE = 24;
@@ -264,6 +267,100 @@ static double terrain_zone_blend_factor(int32_t local_coordinate) noexcept
     if (blend_factor > 1.0)
         blend_factor = 1.0;
     return (terrain_smooth_factor(blend_factor));
+}
+
+static ft_bool terrain_get_biome_transition_neighbor(
+    const terrain_generation_config &config, uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z, uint32_t current_biome,
+    uint32_t *neighbor_biome, int32_t *transition_distance) noexcept
+{
+    int32_t biome_zone_x;
+    int32_t biome_zone_z;
+    int32_t zone_local_x;
+    int32_t zone_local_z;
+
+    if (config.enable_biome_transitions == FT_FALSE
+        || config.biome_transition_noise_strength == 0U)
+        return (FT_FALSE);
+    biome_zone_x = terrain_floor_div(world_block_x, TERRAIN_BIOME_ZONE_WIDTH);
+    biome_zone_z = terrain_floor_div(world_block_z, TERRAIN_BIOME_ZONE_WIDTH);
+    zone_local_x = world_block_x
+        - (biome_zone_x * TERRAIN_BIOME_ZONE_WIDTH);
+    zone_local_z = world_block_z
+        - (biome_zone_z * TERRAIN_BIOME_ZONE_WIDTH);
+    if (zone_local_x < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+    {
+        *neighbor_biome = terrain_select_biome(config, seed_value,
+            world_block_x - TERRAIN_BIOME_ZONE_WIDTH, world_block_z);
+        *transition_distance = zone_local_x;
+    }
+    else if (zone_local_x >= TERRAIN_BIOME_ZONE_WIDTH
+        - TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+    {
+        *neighbor_biome = terrain_select_biome(config, seed_value,
+            world_block_x + TERRAIN_BIOME_ZONE_WIDTH, world_block_z);
+        *transition_distance = (TERRAIN_BIOME_ZONE_WIDTH - 1)
+            - zone_local_x;
+    }
+    else if (zone_local_z < TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+    {
+        *neighbor_biome = terrain_select_biome(config, seed_value,
+            world_block_x, world_block_z - TERRAIN_BIOME_ZONE_WIDTH);
+        *transition_distance = zone_local_z;
+    }
+    else if (zone_local_z >= TERRAIN_BIOME_ZONE_WIDTH
+        - TERRAIN_BIOME_ZONE_BLEND_WIDTH)
+    {
+        *neighbor_biome = terrain_select_biome(config, seed_value,
+            world_block_x, world_block_z + TERRAIN_BIOME_ZONE_WIDTH);
+        *transition_distance = (TERRAIN_BIOME_ZONE_WIDTH - 1)
+            - zone_local_z;
+    }
+    else
+        return (FT_FALSE);
+    if (*neighbor_biome == current_biome)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static ft_bool terrain_should_use_transition_block(
+    uint64_t seed_value, int32_t world_block_x, int32_t world_block_y,
+    int32_t world_block_z, int32_t transition_distance,
+    uint64_t material_salt, const terrain_generation_config &config) noexcept
+{
+    uint64_t noise_seed;
+    uint64_t sample_seed;
+    int32_t transition_percent;
+    int32_t noise_offset;
+
+    transition_percent = (transition_distance * 100)
+        / TERRAIN_BIOME_ZONE_BLEND_WIDTH;
+    noise_seed = seed_value ^ TERRAIN_BIOME_TRANSITION_SALT
+        ^ (static_cast<uint64_t>(terrain_floor_div(world_block_x,
+            config.biome_transition_noise_scale))
+            * UINT64_C(0x9E3779B97F4A7C15))
+        ^ (static_cast<uint64_t>(terrain_floor_div(world_block_z,
+            config.biome_transition_noise_scale))
+            * UINT64_C(0xD1B54A32D192ED03));
+    noise_offset = static_cast<int32_t>(terrain_mix_u64(noise_seed) % 101U)
+        - 50;
+    transition_percent += (noise_offset
+        * static_cast<int32_t>(config.biome_transition_noise_strength)) / 100;
+    if (transition_percent < 0)
+        transition_percent = 0;
+    if (transition_percent > 100)
+        transition_percent = 100;
+    sample_seed = seed_value ^ material_salt
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_x))
+            * UINT64_C(0xA24BAED4963EE407))
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_y))
+            * UINT64_C(0x9FB21C651E98DF25))
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_z))
+            * UINT64_C(0xC13FA9A902A6328F));
+    if (terrain_mix_u64(sample_seed) % 100U
+        < static_cast<uint32_t>(transition_percent))
+        return (FT_TRUE);
+    return (FT_FALSE);
 }
 
 static int32_t terrain_blend_height(int32_t left_height, int32_t right_height,
@@ -825,6 +922,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     int32_t world_block_x;
     int32_t world_block_z;
     uint32_t biome;
+    uint32_t neighbor_biome;
     terrain_biome_profile biome_profile;
     uint32_t surface_block_id;
     uint32_t subsurface_block_id;
@@ -842,6 +940,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     terrain_column_cache column_cache[TERRAIN_COLUMN_CACHE_COUNT];
     int32_t column_index;
     int32_t feature_margin;
+    int32_t transition_distance;
+    ft_bool has_biome_transition;
 
     if (chunk.is_generation_protected() == FT_TRUE)
         return (FT_ERR_SUCCESS);
@@ -889,6 +989,9 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             subsurface_block_id = column_cache[column_index].subsurface_block_id;
             deep_block_id = column_cache[column_index].deep_block_id;
             place_shrub = column_cache[column_index].can_place_shrubs;
+            has_biome_transition = terrain_get_biome_transition_neighbor(
+                config, seed_value, world_block_x, world_block_z, biome,
+                &neighbor_biome, &transition_distance);
             column_height = terrain_smooth_heightfield(seed_value,
                 world_block_x, world_block_z, config);
             column_cache[column_index].column_height = column_height;
@@ -915,6 +1018,23 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     block_id = subsurface_block_id;
                 else
                     block_id = deep_block_id;
+                if (has_biome_transition == FT_TRUE
+                    && local_y == column_height
+                    && terrain_should_use_transition_block(seed_value,
+                        world_block_x, local_y, world_block_z,
+                        transition_distance,
+                        TERRAIN_BIOME_SURFACE_TRANSITION_SALT, config)
+                        == FT_TRUE)
+                    block_id = config.biomes[neighbor_biome].surface_block_id;
+                else if (has_biome_transition == FT_TRUE
+                    && local_y < column_height
+                    && local_y >= column_height - biome_profile.topsoil_depth
+                    && terrain_should_use_transition_block(seed_value,
+                        world_block_x, local_y, world_block_z,
+                        transition_distance,
+                        TERRAIN_BIOME_SUBSURFACE_TRANSITION_SALT, config)
+                        == FT_TRUE)
+                    block_id = config.biomes[neighbor_biome].subsurface_block_id;
                 error_code = chunk.write_generated_block(local_x, local_y, local_z,
                     block_id);
                 if (error_code != FT_ERR_SUCCESS)

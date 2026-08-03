@@ -151,6 +151,7 @@ arguments use `FT_TRUE` / `FT_FALSE`.
 | `set_biome_count(value)` | Number of active biome slots. | `5`; `1`-`TERRAIN_MAX_CUSTOM_BIOMES` (`16`). |
 | `set_biome_selector(selector, user_data)` | Optional callback that chooses the biome for a world position. | Built-in selector when callback is null. |
 | `set_biome_transitions_enabled(value)` | Smooths height changes between biome zones. | Enabled. |
+| `set_biome_transition_settings(scale, strength)` | Controls deterministic noisy surface/subsurface blending at biome edges. | `8`, `35%`; scale must be positive and strength `0`-`100`. |
 | `set_mountain_ridges_enabled(value)` | Enables the global mountain-ridge pass. | Enabled. |
 | `set_mountain_ridge_settings(scale, strength)` | Ridge frequency and height influence. | `48`, `8`; scale must be positive. |
 | `set_erosion_enabled(value)` | Enables erosion noise in terrain height. | Enabled. |

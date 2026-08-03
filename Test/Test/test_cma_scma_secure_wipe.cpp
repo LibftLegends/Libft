@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <string>
+#include "../../Modules/PThread/pthread.hpp"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <filesystem>
 #else
@@ -35,6 +36,9 @@ struct s_runtime_file_guard
     ~s_runtime_file_guard(void)
     {
         this->destroy();
+        (void)unlink("secure_wipe_runtime.err");
+        (void)unlink("secure_wipe_runtime.log");
+        (void)unlink("secure_wipe_runtime.cmd");
         return ;
     }
 
@@ -49,6 +53,14 @@ struct s_runtime_file_guard
         return ;
     }
 };
+
+static void runtime_cleanup_stale_child_process(void)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    (void)std::system("taskkill /F /T /IM secure_wipe_runtime_child.exe >NUL 2>&1");
+#endif
+    return ;
+}
 
 static std::string runtime_project_root(void)
 {
@@ -175,15 +187,47 @@ static int32_t runtime_write_source_file(const char *source_path,
 #endif
 }
 
-static int32_t runtime_run_command(const std::string &command)
+struct s_runtime_command_state
 {
-    int system_status;
-    FILE *log_file;
+    const char *command;
+    int32_t system_status;
+};
+
+static void *runtime_command_thread(void *argument)
+{
+    s_runtime_command_state *state;
     std::string logged_command;
 
-    logged_command = command;
+    state = static_cast<s_runtime_command_state *>(argument);
+    logged_command = state->command;
     logged_command += " > secure_wipe_runtime.err 2>&1";
-    system_status = system(logged_command.c_str());
+    state->system_status = system(logged_command.c_str());
+    return (ft_nullptr);
+}
+
+static int32_t runtime_run_command(const std::string &command)
+{
+    s_runtime_command_state command_state;
+    pthread_t command_thread;
+    int thread_result;
+    int system_status;
+    FILE *log_file;
+
+    command_state.command = command.c_str();
+    command_state.system_status = -1;
+    thread_result = pt_thread_create(&command_thread, ft_nullptr,
+        runtime_command_thread, &command_state);
+    if (thread_result != 0)
+        return (0);
+    thread_result = pt_thread_timed_join(command_thread, ft_nullptr, 30000);
+    if (thread_result != 0)
+    {
+        (void)pt_thread_cancel(command_thread);
+        (void)pt_thread_detach(command_thread);
+        runtime_cleanup_stale_child_process();
+        return (0);
+    }
+    system_status = command_state.system_status;
     if (system_status == 0)
         return (1);
     if (system_status != 0)
@@ -454,6 +498,12 @@ static int32_t runtime_compile_and_run_helper(void)
         modules_path = (project_root_path / "Modules").string();
     }
 #endif
+    runtime_cleanup_stale_child_process();
+    (void)unlink(source_path.c_str());
+    (void)unlink(executable_path.c_str());
+    (void)unlink("secure_wipe_runtime.err");
+    (void)unlink("secure_wipe_runtime.log");
+    (void)unlink("secure_wipe_runtime.cmd");
     formatted_length = pf_snprintf(file_guard.source_path,
         sizeof(file_guard.source_path), "%s",
         source_path.c_str());

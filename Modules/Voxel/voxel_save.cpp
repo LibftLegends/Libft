@@ -7,7 +7,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 5U;
+static const uint32_t TERRAIN_SAVE_VERSION = 6U;
 
 static int32_t terrain_save_append_i32(ft_byte_buffer &buffer,
     int32_t value) noexcept
@@ -534,6 +534,13 @@ int32_t terrain_generation_config_serialize(
     error_code = buffer.append_u8(config.enable_biome_transitions);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = terrain_save_append_i32(buffer,
+        config.biome_transition_noise_scale);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.biome_transition_noise_strength);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u8(config.enable_mountain_ridges);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -563,6 +570,8 @@ int32_t terrain_generation_config_deserialize(
     uint32_t version;
     uint32_t index;
     uint8_t enable_biome_transitions;
+    int32_t biome_transition_noise_scale;
+    uint32_t biome_transition_noise_strength;
     uint8_t enable_mountain_ridges;
     uint8_t enable_erosion;
     uint8_t enable_ravines;
@@ -936,6 +945,12 @@ int32_t terrain_generation_config_deserialize(
     error_code = buffer.read_u8(&enable_biome_transitions);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = terrain_save_read_i32(buffer, &biome_transition_noise_scale);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&biome_transition_noise_strength);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.read_u8(&enable_mountain_ridges);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -944,6 +959,10 @@ int32_t terrain_generation_config_deserialize(
         return (error_code);
     error_code = loaded_config.set_biome_transitions_enabled(
         static_cast<ft_bool>(enable_biome_transitions));
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = loaded_config.set_biome_transition_settings(
+        biome_transition_noise_scale, biome_transition_noise_strength);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.set_mountain_ridges_enabled(

@@ -19,10 +19,6 @@ typedef uint8_t ft_bool;
 
 #endif
 
-#include <unistd.h>
-#include <fcntl.h>
-#include <stdint.h>
-#include <stdarg.h>
 #include "limits.hpp"
 #include "class_nullptr.hpp"
 
@@ -131,6 +127,11 @@ int32_t         ft_locale_compare(const char *left, const char *right,
                     const char *locale_name);
 void            *ft_memset(void *destination, int32_t value, ft_size_t number_of_bytes);
 int32_t         ft_isspace(int32_t character);
+int32_t         ft_isxdigit(int32_t character);
+int32_t         ft_ispunct(int32_t character);
+int32_t         ft_isgraph(int32_t character);
+int32_t         ft_iscntrl(int32_t character);
+int32_t         ft_isblank(int32_t character);
 void            ft_striteri(char *string, void (*function)(uint32_t, char *));
 ft_size_t          ft_wstrlen(const wchar_t *string);
 int32_t         ft_utf8_is_leading_byte(int32_t byte_value);
@@ -142,5 +143,20 @@ char16_t        *ft_utf8_to_utf16(const char *input, ft_size_t input_length,
                     ft_size_t *output_length_pointer);
 char32_t        *ft_utf8_to_utf32(const char *input, ft_size_t input_length,
                     ft_size_t *output_length_pointer);
+int32_t         ft_size_add_checked(ft_size_t left, ft_size_t right,
+                    ft_size_t *result_pointer);
+int32_t         ft_size_multiply_checked(ft_size_t left, ft_size_t right,
+                    ft_size_t *result_pointer);
+ft_bool         ft_is_power_of_two(ft_size_t value);
+int32_t         ft_align_up_checked(ft_size_t value, ft_size_t alignment,
+                    ft_size_t *result_pointer);
+void            *ft_memswap(void *left, void *right, ft_size_t size);
+void            *ft_memmem(const void *haystack, ft_size_t haystack_size,
+                    const void *needle, ft_size_t needle_size);
+int32_t         ft_parse_uint32(const char *string, char **end_pointer,
+                    uint32_t *value_pointer);
+int32_t         ft_parse_int64(const char *string, char **end_pointer,
+                    int64_t *value_pointer);
+int32_t         ft_utf8_validate(const char *string, ft_size_t length);
 
 #endif
