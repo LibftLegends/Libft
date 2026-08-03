@@ -1,5 +1,6 @@
 #include <mutex>
 #include <condition_variable>
+#include <cstdlib>
 #include <new>
 #include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
@@ -29,24 +30,28 @@ static int32_t scma_destroy_mutex_locked(void)
     if (result != FT_ERR_SUCCESS)
         return (result);
     g_scma_mutex = ft_nullptr;
-    delete mutex_pointer;
+    mutex_pointer->~pt_recursive_mutex();
+    std::free(static_cast<void *>(mutex_pointer));
     return (FT_ERR_SUCCESS);
 }
 
 static int32_t scma_prepare_mutex_locked(void)
 {
+    void *memory;
     pt_recursive_mutex *created_mutex;
     int32_t initialize_result;
 
     if (g_scma_mutex != ft_nullptr)
         return (FT_ERR_SUCCESS);
-    created_mutex = new (std::nothrow) pt_recursive_mutex();
-    if (created_mutex == ft_nullptr)
+    memory = std::malloc(sizeof(pt_recursive_mutex));
+    if (memory == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
+    created_mutex = new (memory) pt_recursive_mutex();
     initialize_result = created_mutex->initialize();
     if (initialize_result != FT_ERR_SUCCESS)
     {
-        delete created_mutex;
+        created_mutex->~pt_recursive_mutex();
+        std::free(memory);
         return (initialize_result);
     }
     g_scma_mutex = created_mutex;
