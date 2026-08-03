@@ -13,6 +13,48 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+static thread_local Page *g_cma_cached_lookup_page = nullptr;
+static thread_local ft_size_t g_cma_cached_lookup_generation = 0;
+
+static void verify_traversal_link(Block *current_block, Block *next_block,
+        const char *context);
+
+static ft_bool cma_page_contains_pointer(const Page *page,
+        const unsigned char *target_pointer)
+{
+    const unsigned char *page_start;
+    const unsigned char *page_end;
+
+    if (page == nullptr || target_pointer == nullptr)
+        return (FT_FALSE);
+    page_start = static_cast<const unsigned char *>(page->start);
+    page_end = page_start + page->size;
+    if (target_pointer < page_start || target_pointer >= page_end)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static Block *cma_find_block_in_page(Page *page,
+        const unsigned char *target_pointer)
+{
+    Block *current_block;
+
+    if (cma_page_contains_pointer(page, target_pointer) == FT_FALSE)
+        return (nullptr);
+    current_block = page->blocks;
+    while (current_block)
+    {
+        if (cma_block_user_pointer(current_block) == target_pointer)
+            return (current_block);
+        if (cma_block_user_pointer(current_block) > target_pointer)
+            return (nullptr);
+        verify_traversal_link(current_block, current_block->next,
+            "cma_find_block_for_pointer corrupted traversal link");
+        current_block = current_block->next;
+    }
+    return (nullptr);
+}
+
 void cma_set_alloc_logging(ft_bool enable)
 {
     g_cma_alloc_logging = enable;
@@ -405,6 +447,7 @@ Page *create_page(ft_size_t size)
         page_list->prev = page;
         page_list = page;
     }
+    g_cma_page_generation++;
     cma_free_list_insert(page->blocks);
     return (page);
 }
@@ -448,38 +491,29 @@ Block *find_free_block(ft_size_t size)
 Block    *cma_find_block_for_pointer(const void *memory_pointer)
 {
     Page    *current_page;
+    const unsigned char *target_pointer;
 
     if (memory_pointer == nullptr)
         return (nullptr);
+    target_pointer = static_cast<const unsigned char *>(memory_pointer);
+    if (g_cma_cached_lookup_page != nullptr
+        && g_cma_cached_lookup_generation == g_cma_page_generation
+        && cma_page_contains_pointer(g_cma_cached_lookup_page, target_pointer)
+            == FT_TRUE)
+        return (cma_find_block_in_page(g_cma_cached_lookup_page,
+                    target_pointer));
     current_page = page_list;
     while (current_page)
     {
-        Block    *current_block;
-        const unsigned char *page_start;
-        const unsigned char *page_end;
-        const unsigned char *target_pointer;
-
-        page_start = static_cast<const unsigned char *>(current_page->start);
-        page_end = page_start + current_page->size;
-        target_pointer = static_cast<const unsigned char *>(memory_pointer);
-        if (target_pointer < page_start || target_pointer >= page_end)
+        if (cma_page_contains_pointer(current_page, target_pointer)
+                == FT_FALSE)
         {
             current_page = current_page->next;
             continue ;
         }
-
-        current_block = current_page->blocks;
-        while (current_block)
-        {
-            if (cma_block_user_pointer(current_block) == memory_pointer)
-                return (current_block);
-            if (cma_block_user_pointer(current_block) > target_pointer)
-                return (nullptr);
-            verify_traversal_link(current_block, current_block->next,
-                "cma_find_block_for_pointer corrupted traversal link");
-            current_block = current_block->next;
-        }
-        current_page = current_page->next;
+        g_cma_cached_lookup_page = current_page;
+        g_cma_cached_lookup_generation = g_cma_page_generation;
+        return (cma_find_block_in_page(current_page, target_pointer));
     }
     return (nullptr);
 }
@@ -550,17 +584,24 @@ Block *merge_block(Block *block)
 Page *find_page_of_block(Block *block)
 {
     Page *page = page_list;
+    const unsigned char *payload;
+
+    if (block == nullptr)
+        return (nullptr);
+    payload = block->payload;
+    if (g_cma_cached_lookup_page != nullptr
+        && g_cma_cached_lookup_generation == g_cma_page_generation
+        && cma_page_contains_pointer(g_cma_cached_lookup_page, payload)
+            == FT_TRUE)
+        return (g_cma_cached_lookup_page);
     while (page)
     {
-        unsigned char    *start;
-        unsigned char    *end;
-        unsigned char    *payload;
-
-        start = static_cast<unsigned char *>(page->start);
-        end = start + page->size;
-        payload = block->payload;
-        if (payload >= start && payload < end)
+        if (cma_page_contains_pointer(page, payload) == FT_TRUE)
+        {
+            g_cma_cached_lookup_page = page;
+            g_cma_cached_lookup_generation = g_cma_page_generation;
             return (page);
+        }
         page = page->next;
     }
     return (nullptr);
@@ -581,6 +622,9 @@ void free_page_if_empty(Page *page)
             page->next->prev = page->prev;
         if (page_list == page)
             page_list = page->next;
+        g_cma_page_generation++;
+        if (g_cma_cached_lookup_page == page)
+            g_cma_cached_lookup_page = nullptr;
         std::free(page->start);
         cma_metadata_release_block(page->blocks);
         std::free(page);

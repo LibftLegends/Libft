@@ -29,7 +29,7 @@ SCMA compacts lazily when fragmented space is needed. Freed and truncated bytes 
 - `scma_stats` - Block count, used size, and heap capacity snapshot.
 - `scma_get_stats(scma_stats *out_stats)` - Writes allocator stats.
 - `scma_debug_dump()` - Prints allocator debug information.
-- `scma_enable_thread_safety()` / `scma_disable_thread_safety()` / `scma_is_thread_safe_enabled()` - Manage global allocator synchronization.
+- `scma_enable_thread_safety()` / `scma_disable_thread_safety()` / `scma_is_thread_safe_enabled()` - Manage global allocator synchronization. Enable/disable transitions wait for active operations to drain, destroy the runtime mutex when disabling, and recreate it when enabling. A transition requested by the calling thread while it owns the runtime lock returns `FT_ERR_THREAD_BUSY`.
 - `scma_mutex_lock()` / `scma_mutex_unlock()` / `scma_mutex_close()` - Operate on the allocator mutex.
 - `scma_mutex_lock_count()` - Returns the lock counter used for validation.
 

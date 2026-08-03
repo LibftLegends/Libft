@@ -5,6 +5,7 @@
 #include "recursive_mutex.hpp"
 #include "pthread.hpp"
 #include <pthread.h>
+#include <cstdlib>
 #include <new>
 
 static thread_local bool g_registry_mutex_owned = false;
@@ -65,9 +66,20 @@ int pt_lock_tracking::unlock_registry_mutex(void)
     return (FT_ERR_SUCCESS);
 }
 
+static std::mutex *pt_lock_tracking_create_registry_mutex(void)
+{
+    void *memory_pointer;
+
+    memory_pointer = std::malloc(sizeof(std::mutex));
+    if (memory_pointer == ft_nullptr)
+        return (ft_nullptr);
+    return (new (memory_pointer) std::mutex());
+}
+
 std::mutex *pt_lock_tracking::get_registry_mutex(void)
 {
-    static std::mutex *registry_mutex = new (std::nothrow) std::mutex();
+    static std::mutex *registry_mutex =
+        pt_lock_tracking_create_registry_mutex();
 
     return (registry_mutex);
 }

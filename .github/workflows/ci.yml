@@ -153,11 +153,18 @@ jobs:
         run: |
           make -C Test -j2 performance_benchmarks
 
-      - name: Run performance benchmarks
-        if: always()
+      - name: Run performance benchmarks on Unix
+        if: always() && runner.os != 'Windows'
         shell: bash
         run: |
           make -C Test run_performance_benchmarks
+
+      - name: Run performance benchmarks on Windows
+        if: always() && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & .\Test\libft_efficiency_tests.exe
+          exit $LASTEXITCODE
 
       - name: Upload performance benchmark results
         if: always()

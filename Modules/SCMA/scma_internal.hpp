@@ -43,6 +43,7 @@ ft_size_t        &scma_live_head_ref(void);
 ft_size_t        &scma_live_tail_ref(void);
 ft_size_t        &scma_free_head_ref(void);
 ft_bool          &scma_compaction_needed_ref(void);
+void    scma_reset_compaction(void);
 int32_t              &scma_initialised_ref(void);
 
 scma_block_span    scma_get_block_span(void);
@@ -51,6 +52,7 @@ unsigned char    *scma_get_heap_data(void);
 scma_handle    scma_invalid_handle(void);
 int32_t     scma_handle_is_invalid(scma_handle handle);
 int32_t scma_compact(void);
+int32_t scma_compact_incremental(ft_size_t byte_budget);
 int32_t     scma_validate_handle(scma_handle handle, scma_block **out_block);
 int32_t     scma_ensure_block_capacity(ft_size_t required_count);
 int32_t     scma_ensure_capacity(ft_size_t required_size);

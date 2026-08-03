@@ -49,6 +49,16 @@ test_*.txt
 test_failures.log
 Test/.libft_build_*.log.raw.*
 
+# Build configuration-specific object directories
+**/objs_*/
+
+# Local test and benchmark diagnostics
+**/*.log
+**/*.err
+**/tmp/
+performance_benchmarks.json
+performance_benchmarks_failed.json
+
 # Core dumps
 core
 core.*

@@ -24,8 +24,6 @@
 # include <unistd.h>
 #endif
 
-static const uint16_t g_api_pool_test_port = 54540;
-
 static ft_bool api_pool_local_sockets_available(void)
 {
     int32_t socket_fd;
@@ -45,6 +43,7 @@ static ft_bool api_pool_local_sockets_available(void)
 struct api_pool_test_server_context
 {
     std::atomic<bool> ready;
+    std::atomic<uint16_t> port;
     std::atomic<int> accept_count;
     std::atomic<int> handled_requests;
     std::atomic<int> result;
@@ -68,6 +67,8 @@ static void api_pool_test_server(api_pool_test_server_context *context)
     int client_fd;
     int response_count;
     int32_t configuration_error;
+    sockaddr_storage local_address;
+    socklen_t local_address_length;
 
     if (!context)
         return ;
@@ -85,7 +86,7 @@ static void api_pool_test_server(api_pool_test_server_context *context)
     server_configuration._reuse_address = FT_TRUE;
     ft_strlcpy(server_configuration._ip, "127.0.0.1",
             sizeof(server_configuration._ip));
-    server_configuration._port = g_api_pool_test_port;
+    server_configuration._port = 0;
     ft_socket server_socket;
     int32_t server_socket_error;
 
@@ -102,6 +103,18 @@ static void api_pool_test_server(api_pool_test_server_context *context)
         context->ready.store(true);
         return ;
     }
+    local_address_length = sizeof(local_address);
+    if (getsockname(server_socket.get_file_descriptor(),
+            reinterpret_cast<struct sockaddr *>(&local_address),
+            &local_address_length) != 0
+        || local_address.ss_family != AF_INET)
+    {
+        context->result.store(FT_ERR_SOCKET_BIND_FAILED);
+        context->ready.store(true);
+        return ;
+    }
+    context->port.store(ntohs(reinterpret_cast<const struct sockaddr_in *>(
+                &local_address)->sin_port));
     context->ready.store(true);
     address_length = sizeof(address_storage);
     client_fd = nw_accept(server_socket.get_file_descriptor(),
@@ -219,6 +232,7 @@ FT_TEST(test_api_connection_pool_reuses_connections)
     if (api_pool_local_sockets_available() == FT_FALSE)
         return (1);
     context.ready.store(false);
+    context.port.store(0);
     context.accept_count.store(0);
     context.handled_requests.store(0);
     context.result.store(0);
@@ -239,6 +253,10 @@ FT_TEST(test_api_connection_pool_reuses_connections)
         wait_attempts++;
     }
     FT_ASSERT_EQ(0, context.result.load());
+    FT_ASSERT_NEQ(static_cast<uint16_t>(0), context.port.load());
+    uint16_t test_port;
+
+    test_port = context.port.load();
     api_connection_pool_set_enabled(FT_TRUE);
     api_debug_reset_connection_pool_counters();
     api_connection_pool_flush();
@@ -246,7 +264,7 @@ FT_TEST(test_api_connection_pool_reuses_connections)
     char *first_body;
 
     first_status = 0;
-    first_body = api_request_string("127.0.0.1", g_api_pool_test_port,
+    first_body = api_request_string("127.0.0.1", test_port,
             "GET", "/pool", ft_nullptr, ft_nullptr, &first_status, 2000);
     if (!first_body)
     {
@@ -261,7 +279,7 @@ FT_TEST(test_api_connection_pool_reuses_connections)
     char *second_body;
 
     second_status = 0;
-    second_body = api_request_string("127.0.0.1", g_api_pool_test_port,
+    second_body = api_request_string("127.0.0.1", test_port,
             "GET", "/pool", ft_nullptr, ft_nullptr, &second_status, 2000);
     if (!second_body)
         server_thread.join();

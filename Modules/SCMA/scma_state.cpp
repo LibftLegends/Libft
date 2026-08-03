@@ -20,6 +20,9 @@ static ft_size_t g_scma_live_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 static ft_size_t g_scma_live_tail = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 static ft_size_t g_scma_free_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 static ft_bool g_scma_compaction_needed = FT_FALSE;
+static ft_size_t g_scma_compaction_cursor =
+    static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+static ft_size_t g_scma_compaction_target_offset = 0;
 static int32_t g_scma_initialised = 0;
 
 int32_t    &scma_initialised_ref(void)
@@ -89,6 +92,13 @@ ft_size_t    &scma_free_head_ref(void)
 ft_bool    &scma_compaction_needed_ref(void)
 {
     return (g_scma_compaction_needed);
+}
+
+void    scma_reset_compaction(void)
+{
+    g_scma_compaction_cursor = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    g_scma_compaction_target_offset = 0;
+    return ;
 }
 
 scma_block_span    scma_get_block_span(void)
@@ -183,18 +193,15 @@ static int32_t scma_validate_live_list(scma_block_span span)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t scma_compact(void)
+int32_t scma_compact_incremental(ft_size_t byte_budget)
 {
     scma_block_span span;
     unsigned char *heap_data;
-    ft_size_t new_offset;
+    ft_size_t moved_bytes;
     ft_size_t previous_used_size;
-    ft_size_t current_index;
 
     if (!scma_initialised_ref())
-    {
         return (FT_ERR_INVALID_STATE);
-    }
     span = scma_get_block_span();
     if (span.count == 0)
     {
@@ -204,33 +211,69 @@ int32_t scma_compact(void)
             || scma_live_size_ref() != 0)
             return (FT_ERR_INVALID_STATE);
         scma_used_size_ref() = 0;
+        scma_compaction_needed_ref() = FT_FALSE;
+        scma_reset_compaction();
         return (FT_ERR_SUCCESS);
     }
-    if (scma_validate_live_list(span) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
     heap_data = scma_get_heap_data();
+    if (g_scma_compaction_cursor
+            == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        g_scma_compaction_cursor = scma_live_head_ref();
+        g_scma_compaction_target_offset = 0;
+    }
+    moved_bytes = 0;
     previous_used_size = scma_used_size_ref();
-    new_offset = 0;
-    current_index = scma_live_head_ref();
-    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    while (g_scma_compaction_cursor
+            != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+        && (moved_bytes < byte_budget || moved_bytes == 0))
     {
         scma_block *block;
+        ft_size_t current_index;
+
+        current_index = g_scma_compaction_cursor;
+        if (current_index >= span.count)
+            return (FT_ERR_INVALID_STATE);
         block = &span.data[current_index];
-        if (block->offset != new_offset)
+        if (block->offset != g_scma_compaction_target_offset)
         {
-            std::memmove(heap_data + new_offset,
+            std::memmove(heap_data + g_scma_compaction_target_offset,
                 heap_data + block->offset,
                 block->size);
-            block->offset = new_offset;
+            block->offset = g_scma_compaction_target_offset;
         }
-        new_offset += block->size;
-        current_index = block->next_index;
+        g_scma_compaction_target_offset += block->size;
+        moved_bytes += block->size;
+        g_scma_compaction_cursor = block->next_index;
     }
-    scma_used_size_ref() = new_offset;
-    if (previous_used_size > new_offset)
-        scma_secure_bzero(heap_data + new_offset,
-            previous_used_size - new_offset);
-    scma_compaction_needed_ref() = FT_FALSE;
+    if (g_scma_compaction_cursor == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        scma_used_size_ref() = g_scma_compaction_target_offset;
+        if (previous_used_size > g_scma_compaction_target_offset)
+            scma_secure_bzero(heap_data + g_scma_compaction_target_offset,
+                previous_used_size - g_scma_compaction_target_offset);
+        scma_compaction_needed_ref() = FT_FALSE;
+        scma_reset_compaction();
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t scma_compact(void)
+{
+    scma_block_span span;
+
+    span = scma_get_block_span();
+    if (span.count != 0 && scma_validate_live_list(span) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    if (span.count == 0 && scma_live_size_ref() != 0)
+        return (FT_ERR_INVALID_STATE);
+    scma_compaction_needed_ref() = FT_TRUE;
+    while (scma_compaction_needed_ref() == FT_TRUE)
+    {
+        if (scma_compact_incremental(static_cast<ft_size_t>(65536))
+                != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+    }
     return (FT_ERR_SUCCESS);
 }
 
