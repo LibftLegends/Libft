@@ -12,8 +12,10 @@ FT_TEST(test_scma_thread_safety_toggle_cycle)
 {
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_disable_thread_safety());
     FT_ASSERT_EQ(false, scma_is_thread_safe_enabled());
+    FT_ASSERT_EQ(ft_nullptr, scma_runtime_mutex());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_enable_thread_safety());
     FT_ASSERT_EQ(true, scma_is_thread_safe_enabled());
+    FT_ASSERT_NEQ(ft_nullptr, scma_runtime_mutex());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_enable_thread_safety());
     FT_ASSERT_EQ(true, scma_is_thread_safe_enabled());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_disable_thread_safety());

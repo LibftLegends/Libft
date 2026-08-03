@@ -45,6 +45,7 @@ FT_TEST(test_scma_mutex_lock_failure_direct)
 FT_TEST(test_scma_initialize_mutex_lock_failure)
 {
     scma_mutex_failure_prepare();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_enable_thread_safety());
     pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
         std::memory_order_release);
     FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, scma_initialize(64));
