@@ -56,7 +56,7 @@ int pt_recursive_mutex::try_lock(pt_thread_id_type thread_id) const
     this->_lock.store(true, std::memory_order_release);
     this->_lock_depth.store(1, std::memory_order_relaxed);
 
-    int notify_error = pt_lock_tracking::notify_acquired(thread_id,
+    int notify_error = pt_lock_tracking::notify_acquired_fast(thread_id,
             mutex_handle);
     if (notify_error != FT_ERR_SUCCESS)
     {
@@ -71,7 +71,7 @@ int pt_recursive_mutex::try_lock(pt_thread_id_type thread_id) const
         {
             su_abort();
         }
-        pt_lock_tracking::notify_released(thread_id, mutex_handle);
+        pt_lock_tracking::notify_released_fast(thread_id, mutex_handle);
         return (notify_error);
     }
 

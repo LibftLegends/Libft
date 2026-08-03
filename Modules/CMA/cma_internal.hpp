@@ -96,6 +96,7 @@ struct cma_arena
 };
 
 extern Page *page_list;
+extern ft_size_t g_cma_page_generation;
 extern Block *g_cma_free_bins[CMA_FREE_BIN_COUNT];
 
 Block    *split_block(Block *block, ft_size_t size);

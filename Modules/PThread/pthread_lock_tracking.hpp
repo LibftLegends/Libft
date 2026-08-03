@@ -62,6 +62,9 @@ class pt_lock_tracking
                 pt_thread_vector *visited_threads, bool *cycle_detected);
         static int lock_registry_mutex(void);
         static int unlock_registry_mutex(void);
+        static int begin_fast_state(pt_thread_id_type thread_identifier);
+        static int publish_fast_state(void);
+        static void remove_fast_state(pt_thread_id_type thread_identifier);
 
     public:
         pt_lock_tracking();
@@ -71,6 +74,10 @@ class pt_lock_tracking
             (pt_thread_id_type thread_identifier, int *error_code);
         static int notify_wait(pt_thread_id_type thread_identifier,
                 const void *requested_mutex);
+        static int notify_acquired_fast(pt_thread_id_type thread_identifier,
+                const void *mutex_pointer);
+        static int notify_released_fast(pt_thread_id_type thread_identifier,
+                const void *mutex_pointer);
         static int notify_acquired(pt_thread_id_type thread_identifier,
                 const void *mutex_pointer);
         static int notify_released(pt_thread_id_type thread_identifier,

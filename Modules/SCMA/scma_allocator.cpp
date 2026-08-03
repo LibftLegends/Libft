@@ -66,6 +66,7 @@ int32_t    scma_initialize(ft_size_t initial_capacity)
     scma_live_tail_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     scma_compaction_needed_ref() = FT_FALSE;
+    scma_reset_compaction();
     initialised = 1;
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
@@ -111,6 +112,7 @@ void    scma_shutdown(void)
     scma_live_tail_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     scma_free_head_ref() = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     scma_compaction_needed_ref() = FT_FALSE;
+    scma_reset_compaction();
     initialised = 0;
     scma_unlock_and_return_void();
     return ;
@@ -179,6 +181,15 @@ scma_handle    scma_allocate(ft_size_t size)
     if (required_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         return (scma_unlock_and_return_handle(result_handle));
+    }
+    if (scma_compaction_needed_ref() == FT_TRUE)
+    {
+        if (scma_compact_incremental(static_cast<ft_size_t>(65536))
+                != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_handle(result_handle));
+        required_size = used_size + size;
+        if (required_size < used_size)
+            return (scma_unlock_and_return_handle(result_handle));
     }
     if (required_size > scma_heap_capacity_ref()
         && scma_compaction_needed_ref() == FT_TRUE)
@@ -284,7 +295,10 @@ int32_t    scma_free(scma_handle handle)
     if (was_tail == FT_TRUE)
         scma_used_size_ref() = block_offset;
     else
+    {
+        scma_reset_compaction();
         scma_compaction_needed_ref() = FT_TRUE;
+    }
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
 
@@ -330,7 +344,10 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
         if (old_offset <= used_size && old_size == used_size - old_offset)
             used_size = old_offset + new_size;
         else
+        {
+            scma_reset_compaction();
             scma_compaction_needed_ref() = FT_TRUE;
+        }
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
     }
@@ -399,6 +416,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     used_size = required_size;
     live_size += new_size - old_size;
     scma_compaction_needed_ref() = FT_TRUE;
+    scma_reset_compaction();
     return (static_cast<uint32_t>(scma_unlock_and_return_int(FT_ERR_SUCCESS)));
 }
 

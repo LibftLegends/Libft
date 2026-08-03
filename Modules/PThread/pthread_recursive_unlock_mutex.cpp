@@ -46,7 +46,7 @@ int pt_recursive_mutex::unlock() const
         this->_lock_depth.store(1, std::memory_order_relaxed);
         return (mutex_error);
     }
-    (void)pt_lock_tracking::notify_released(thread_id,
+    (void)pt_lock_tracking::notify_released_fast(thread_id,
             static_cast<const void *>(this));
     return (FT_ERR_SUCCESS);
 }
