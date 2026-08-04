@@ -26,20 +26,26 @@ static std::atomic<uint64_t> g_scma_operation_state(0);
 static thread_local ft_size_t g_scma_lock_depth = 0;
 static pthread_key_t g_scma_operation_exit_key;
 static std::atomic<ft_bool> g_scma_operation_exit_key_initialised(FT_FALSE);
+static pthread_once_t g_scma_operation_exit_mutex_once = PTHREAD_ONCE_INIT;
+static std::mutex *g_scma_operation_exit_mutex = nullptr;
+
+static void scma_initialize_operation_exit_mutex(void)
+{
+    void *memory_pointer;
+
+    memory_pointer = std::malloc(sizeof(std::mutex));
+    if (memory_pointer == nullptr)
+        return ;
+    g_scma_operation_exit_mutex = new (memory_pointer) std::mutex();
+    return ;
+}
 
 static std::mutex *scma_get_operation_exit_key_mutex(void)
 {
-    static std::mutex *exit_key_mutex = []() -> std::mutex *
-    {
-        void *memory_pointer;
-
-        memory_pointer = std::malloc(sizeof(std::mutex));
-        if (memory_pointer == nullptr)
-            return (nullptr);
-        return (new (memory_pointer) std::mutex());
-    }();
-
-    return (exit_key_mutex);
+    if (pthread_once(&g_scma_operation_exit_mutex_once,
+            scma_initialize_operation_exit_mutex) != 0)
+        return (nullptr);
+    return (g_scma_operation_exit_mutex);
 }
 
 static void scma_operation_exit_key_cleanup(void *argument)

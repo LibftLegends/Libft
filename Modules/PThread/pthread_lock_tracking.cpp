@@ -14,20 +14,26 @@ static std::atomic<uint64_t> g_pt_lock_tracking_next_generation(1);
 static thread_local uint64_t g_pt_lock_tracking_generation = 0;
 static pthread_key_t g_pt_lock_tracking_exit_key;
 static std::atomic<ft_bool> g_pt_lock_tracking_exit_key_initialised(FT_FALSE);
+static pthread_once_t g_pt_lock_tracking_exit_mutex_once = PTHREAD_ONCE_INIT;
+static std::mutex *g_pt_lock_tracking_exit_mutex = nullptr;
+
+static void pt_lock_tracking_initialize_exit_mutex(void)
+{
+    void *memory_pointer;
+
+    memory_pointer = std::malloc(sizeof(std::mutex));
+    if (memory_pointer == ft_nullptr)
+        return ;
+    g_pt_lock_tracking_exit_mutex = new (memory_pointer) std::mutex();
+    return ;
+}
 
 static std::mutex *pt_lock_tracking_get_exit_key_mutex(void)
 {
-    static std::mutex *exit_key_mutex = []() -> std::mutex *
-    {
-        void *memory_pointer;
-
-        memory_pointer = std::malloc(sizeof(std::mutex));
-        if (memory_pointer == ft_nullptr)
-            return (ft_nullptr);
-        return (new (memory_pointer) std::mutex());
-    }();
-
-    return (exit_key_mutex);
+    if (pthread_once(&g_pt_lock_tracking_exit_mutex_once,
+            pt_lock_tracking_initialize_exit_mutex) != 0)
+        return (ft_nullptr);
+    return (g_pt_lock_tracking_exit_mutex);
 }
 
 static void pt_lock_tracking_thread_exit_key_cleanup(void *argument)
