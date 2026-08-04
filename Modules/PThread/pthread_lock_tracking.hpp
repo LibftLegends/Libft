@@ -25,6 +25,7 @@ typedef pt_buffer<s_pt_lock_wait_snapshot> pt_lock_wait_snapshot_vector;
 struct s_pt_thread_lock_info
 {
     pt_thread_id_type thread_identifier;
+    uint64_t generation;
     pt_mutex_vector owned_mutexes;
     const void *waiting_mutex;
     int64_t wait_started_ms;

@@ -5,10 +5,94 @@
 #include "recursive_mutex.hpp"
 #include "pthread.hpp"
 #include <pthread.h>
+#include <atomic>
 #include <cstdlib>
 #include <new>
 
 static thread_local bool g_registry_mutex_owned = false;
+static std::atomic<uint64_t> g_pt_lock_tracking_next_generation(1);
+static thread_local uint64_t g_pt_lock_tracking_generation = 0;
+static pthread_key_t g_pt_lock_tracking_exit_key;
+static std::atomic<ft_bool> g_pt_lock_tracking_exit_key_initialised(FT_FALSE);
+
+static std::mutex *pt_lock_tracking_get_exit_key_mutex(void)
+{
+    static std::mutex *exit_key_mutex = []() -> std::mutex *
+    {
+        void *memory_pointer;
+
+        memory_pointer = std::malloc(sizeof(std::mutex));
+        if (memory_pointer == ft_nullptr)
+            return (ft_nullptr);
+        return (new (memory_pointer) std::mutex());
+    }();
+
+    return (exit_key_mutex);
+}
+
+static void pt_lock_tracking_thread_exit_key_cleanup(void *argument)
+{
+    if (argument == ft_nullptr)
+        return ;
+    (void)pthread_setspecific(g_pt_lock_tracking_exit_key, ft_nullptr);
+    (void)pt_lock_tracking::notify_thread_exit(THREAD_ID);
+    return ;
+}
+
+static void pt_lock_tracking_initialise_exit_key(void)
+{
+    std::mutex *exit_key_mutex;
+
+    if (g_pt_lock_tracking_exit_key_initialised.load(std::memory_order_acquire)
+        == FT_TRUE)
+        return ;
+    exit_key_mutex = pt_lock_tracking_get_exit_key_mutex();
+    if (exit_key_mutex == ft_nullptr)
+        return ;
+    exit_key_mutex->lock();
+    if (g_pt_lock_tracking_exit_key_initialised.load(std::memory_order_relaxed)
+        == FT_FALSE
+        && pthread_key_create(&g_pt_lock_tracking_exit_key,
+            pt_lock_tracking_thread_exit_key_cleanup) == 0)
+        g_pt_lock_tracking_exit_key_initialised.store(FT_TRUE,
+            std::memory_order_release);
+    exit_key_mutex->unlock();
+    return ;
+}
+
+struct s_pt_lock_tracking_thread_exit_guard
+{
+    pt_thread_id_type thread_identifier;
+
+    s_pt_lock_tracking_thread_exit_guard()
+        : thread_identifier(THREAD_ID)
+    {
+        g_pt_lock_tracking_generation =
+            g_pt_lock_tracking_next_generation.fetch_add(1,
+                std::memory_order_relaxed);
+        return ;
+    }
+
+    ~s_pt_lock_tracking_thread_exit_guard()
+    {
+        (void)pt_lock_tracking::notify_thread_exit(this->thread_identifier);
+        return ;
+    }
+};
+
+static thread_local s_pt_lock_tracking_thread_exit_guard
+    g_pt_lock_tracking_thread_exit_guard;
+
+static void pt_lock_tracking_arm_thread_exit_cleanup(void)
+{
+    pt_lock_tracking_initialise_exit_key();
+    if (g_pt_lock_tracking_exit_key_initialised.load(std::memory_order_acquire)
+        == FT_TRUE)
+        (void)pthread_setspecific(g_pt_lock_tracking_exit_key,
+            reinterpret_cast<void *>(static_cast<uintptr_t>(1U)));
+    (void)g_pt_lock_tracking_thread_exit_guard;
+    return ;
+}
 
 #ifdef LIBFT_TEST_BUILD
 std::atomic<int> pt_lock_tracking_notify_acquired_override_error_code(
@@ -361,7 +445,15 @@ s_pt_thread_lock_info *pt_lock_tracking::find_thread_info
     {
         info = &thread_infos->data[index];
         if (info->thread_identifier == thread_identifier)
-            return (info);
+        {
+            if (info->generation == g_pt_lock_tracking_generation)
+                return (info);
+            pt_lock_tracking_clear_mutex_owners_for_thread(
+                info->thread_identifier);
+            pt_buffer_destroy(info->owned_mutexes);
+            pt_buffer_erase(*thread_infos, index);
+            continue ;
+        }
         index += 1;
     }
     owned_mutex_buffer_cache =
@@ -373,6 +465,7 @@ s_pt_thread_lock_info *pt_lock_tracking::find_thread_info
         return (ft_nullptr);
     }
     new_info.thread_identifier = thread_identifier;
+    new_info.generation = g_pt_lock_tracking_generation;
     new_info.owned_mutexes = owned_mutex_buffer_cache->buffer;
     pt_buffer_clear(new_info.owned_mutexes);
     pt_buffer_init(owned_mutex_buffer_cache->buffer);
@@ -515,6 +608,7 @@ int pt_lock_tracking::notify_wait(pt_thread_id_type thread_identifier,
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
+    pt_lock_tracking_arm_thread_exit_cleanup();
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
     if (!g_registry_mutex_owned)
@@ -575,6 +669,7 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
+    pt_lock_tracking_arm_thread_exit_cleanup();
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
 #ifdef LIBFT_TEST_BUILD
@@ -683,6 +778,7 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
+    pt_lock_tracking_arm_thread_exit_cleanup();
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
     if (!g_registry_mutex_owned)

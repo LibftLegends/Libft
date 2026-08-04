@@ -14,7 +14,7 @@
 #include "../PThread/recursive_mutex.hpp"
 
 static thread_local Page *g_cma_cached_lookup_page = nullptr;
-static thread_local ft_size_t g_cma_cached_lookup_generation = 0;
+static thread_local uint64_t g_cma_cached_lookup_generation = 0;
 
 static void verify_traversal_link(Block *current_block, Block *next_block,
         const char *context);
@@ -630,6 +630,13 @@ void free_page_if_empty(Page *page)
         std::free(page);
         return ;
     }
+    return ;
+}
+
+void cma_invalidate_page_lookup_cache(void)
+{
+    g_cma_cached_lookup_page = nullptr;
+    g_cma_cached_lookup_generation = g_cma_page_generation;
     return ;
 }
 

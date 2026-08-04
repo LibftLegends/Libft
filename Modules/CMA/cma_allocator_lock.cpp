@@ -4,6 +4,8 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "cma_internal.hpp"
 #include <atomic>
+#include <mutex>
+#include <pthread.h>
 #include <cstdlib>
 #include <new>
 
@@ -15,14 +17,115 @@ static const uint64_t CMA_OPERATION_STATE_ENABLED =
     static_cast<uint64_t>(2U);
 static const uint64_t CMA_OPERATION_STATE_ACTIVE_INCREMENT =
     static_cast<uint64_t>(4U);
+static const uint64_t CMA_DEFAULT_TRANSITION_TIMEOUT_MS =
+    static_cast<uint64_t>(1000U);
 
 static std::atomic<pt_recursive_mutex *> g_cma_allocator_mutex(nullptr);
 static std::atomic<uint64_t> g_cma_operation_state(CMA_OPERATION_STATE_ENABLED);
 static thread_local ft_size_t g_cma_operation_depth = 0;
+static pthread_key_t g_cma_operation_exit_key;
+static std::atomic<ft_bool> g_cma_operation_exit_key_initialised(FT_FALSE);
+
+static std::mutex *cma_get_operation_exit_key_mutex(void)
+{
+    static std::mutex *exit_key_mutex = []() -> std::mutex *
+    {
+        void *memory_pointer;
+
+        memory_pointer = std::malloc(sizeof(std::mutex));
+        if (memory_pointer == nullptr)
+            return (nullptr);
+        return (new (memory_pointer) std::mutex());
+    }();
+
+    return (exit_key_mutex);
+}
+
+static void cma_operation_exit_key_cleanup(void *argument)
+{
+    if (argument == nullptr)
+        return ;
+    (void)pthread_setspecific(g_cma_operation_exit_key, nullptr);
+    while (g_cma_operation_depth != 0)
+        (void)cma_unlock_allocator(FT_TRUE);
+    return ;
+}
+
+static void cma_initialise_operation_exit_key(void)
+{
+    std::mutex *exit_key_mutex;
+
+    if (g_cma_operation_exit_key_initialised.load(std::memory_order_acquire)
+        == FT_TRUE)
+        return ;
+    exit_key_mutex = cma_get_operation_exit_key_mutex();
+    if (exit_key_mutex == nullptr)
+        return ;
+    exit_key_mutex->lock();
+    if (g_cma_operation_exit_key_initialised.load(std::memory_order_relaxed)
+        == FT_FALSE
+        && pthread_key_create(&g_cma_operation_exit_key,
+            cma_operation_exit_key_cleanup) == 0)
+        g_cma_operation_exit_key_initialised.store(FT_TRUE,
+            std::memory_order_release);
+    exit_key_mutex->unlock();
+    return ;
+}
+
+struct s_cma_operation_exit_guard
+{
+    ~s_cma_operation_exit_guard()
+    {
+        while (g_cma_operation_depth != 0)
+            (void)cma_unlock_allocator(FT_TRUE);
+        return ;
+    }
+};
+
+static thread_local s_cma_operation_exit_guard g_cma_operation_exit_cleanup;
+
+static void cma_arm_operation_exit_cleanup(void)
+{
+    cma_initialise_operation_exit_key();
+    if (g_cma_operation_exit_key_initialised.load(std::memory_order_acquire)
+        == FT_TRUE)
+        (void)pthread_setspecific(g_cma_operation_exit_key,
+            reinterpret_cast<void *>(static_cast<uintptr_t>(1U)));
+    (void)g_cma_operation_exit_cleanup;
+    return ;
+}
 
 static uint64_t cma_active_operation_count(uint64_t state)
 {
     return (state / CMA_OPERATION_STATE_ACTIVE_INCREMENT);
+}
+
+static ft_bool cma_transition_is_set(uint64_t state)
+{
+    if ((state & CMA_OPERATION_STATE_TRANSITION) != 0)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+static ft_bool cma_thread_safety_is_enabled(uint64_t state)
+{
+    if ((state & CMA_OPERATION_STATE_ENABLED) != 0)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+static uint64_t cma_state_without_transition(uint64_t state)
+{
+    if (cma_thread_safety_is_enabled(state) == FT_TRUE)
+        return (CMA_OPERATION_STATE_ENABLED);
+    return (static_cast<uint64_t>(0U));
+}
+
+static void cma_cancel_transition(void)
+{
+    (void)g_cma_operation_state.fetch_and(
+        ~CMA_OPERATION_STATE_TRANSITION, std::memory_order_release);
+    return ;
 }
 
 static int32_t cma_create_allocator_mutex(pt_recursive_mutex **mutex_out)
@@ -97,16 +200,17 @@ static void cma_finish_operation(void)
     return ;
 }
 
-static int32_t cma_begin_transition(ft_bool enable)
+static int32_t cma_begin_transition(ft_bool enable, uint64_t timeout_ms)
 {
     uint64_t state;
     uint64_t transitioned_state;
     int32_t result;
+    uint64_t elapsed_ms;
 
     state = g_cma_operation_state.load(std::memory_order_acquire);
     while (true)
     {
-        if ((state & CMA_OPERATION_STATE_TRANSITION) != 0)
+        if (cma_transition_is_set(state) == FT_TRUE)
             return (FT_ERR_THREAD_BUSY);
         transitioned_state = state | CMA_OPERATION_STATE_TRANSITION;
         if (g_cma_operation_state.compare_exchange_weak(state,
@@ -114,11 +218,23 @@ static int32_t cma_begin_transition(ft_bool enable)
                 std::memory_order_acquire))
             break ;
     }
+    elapsed_ms = 0;
     while (cma_active_operation_count(transitioned_state) != 0)
     {
-        pt_thread_yield();
+        if (elapsed_ms >= timeout_ms)
+        {
+            cma_cancel_transition();
+            return (FT_ERR_TIMEOUT);
+        }
+        (void)pt_thread_sleep(1);
+        elapsed_ms++;
         transitioned_state = g_cma_operation_state.load(
                 std::memory_order_acquire);
+    }
+    if (cma_active_operation_count(transitioned_state) != 0)
+    {
+        cma_cancel_transition();
+        return (FT_ERR_INVALID_STATE);
     }
     if (enable == FT_TRUE)
     {
@@ -128,7 +244,7 @@ static int32_t cma_begin_transition(ft_bool enable)
                 std::memory_order_release);
         else
             g_cma_operation_state.store(
-                transitioned_state & CMA_OPERATION_STATE_ENABLED,
+                cma_state_without_transition(transitioned_state),
                 std::memory_order_release);
         return (result);
     }
@@ -137,29 +253,48 @@ static int32_t cma_begin_transition(ft_bool enable)
         g_cma_operation_state.store(0, std::memory_order_release);
     else
         g_cma_operation_state.store(
-            transitioned_state & CMA_OPERATION_STATE_ENABLED,
+            cma_state_without_transition(transitioned_state),
             std::memory_order_release);
     return (result);
 }
 
 int32_t cma_enable_thread_safety(void)
 {
+    return (cma_enable_thread_safety_timed(
+        CMA_DEFAULT_TRANSITION_TIMEOUT_MS));
+}
+
+int32_t cma_enable_thread_safety_timed(uint64_t timeout_ms)
+{
     uint64_t state;
 
     if (g_cma_operation_depth != 0)
         return (FT_ERR_THREAD_BUSY);
     state = g_cma_operation_state.load(std::memory_order_acquire);
-    if ((state & CMA_OPERATION_STATE_ENABLED) != 0
-        && (state & CMA_OPERATION_STATE_TRANSITION) == 0)
+    if (cma_thread_safety_is_enabled(state) == FT_TRUE
+        && cma_transition_is_set(state) == FT_FALSE)
         return (cma_prepare_allocator_mutex());
-    return (cma_begin_transition(FT_TRUE));
+    return (cma_begin_transition(FT_TRUE, timeout_ms));
 }
 
 int32_t cma_disable_thread_safety(void)
 {
+    return (cma_disable_thread_safety_timed(
+        CMA_DEFAULT_TRANSITION_TIMEOUT_MS));
+}
+
+int32_t cma_disable_thread_safety_timed(uint64_t timeout_ms)
+{
     if (g_cma_operation_depth != 0)
         return (FT_ERR_THREAD_BUSY);
-    return (cma_begin_transition(FT_FALSE));
+    return (cma_begin_transition(FT_FALSE, timeout_ms));
+}
+
+int32_t cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms)
+{
+    if (enable == FT_TRUE)
+        return (cma_enable_thread_safety_timed(timeout_ms));
+    return (cma_disable_thread_safety_timed(timeout_ms));
 }
 
 ft_bool cma_is_thread_safe_enabled(void)
@@ -183,6 +318,7 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
 
     if (lock_acquired == nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
+    cma_arm_operation_exit_cleanup();
     *lock_acquired = FT_FALSE;
     if (g_cma_operation_depth != 0)
     {

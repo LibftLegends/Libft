@@ -53,9 +53,15 @@ Test/.libft_build_*.log.raw.*
 **/objs_*/
 
 # Local test and benchmark diagnostics
-**/*.log
-**/*.err
-**/tmp/
+Test/*.log
+Test/*.err
+/latest_windows_perf.log
+/ubuntu_ci.log
+/windows_ci.log
+/windows_crash_stack_trace.log
+/windows_full_ci.log
+/tmp_*.log
+/tmp/
 performance_benchmarks.json
 performance_benchmarks_failed.json
 

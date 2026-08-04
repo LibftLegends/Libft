@@ -51,6 +51,10 @@ ft_bool     cma_get_alloc_logging(void);
 int32_t     cma_set_thread_safety(ft_bool enable);
 int32_t     cma_enable_thread_safety(void);
 int32_t     cma_disable_thread_safety(void);
+int32_t     cma_enable_thread_safety_timed(uint64_t timeout_ms);
+int32_t     cma_disable_thread_safety_timed(uint64_t timeout_ms);
+int32_t     cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms);
+int32_t     cma_try_set_thread_safety(ft_bool enable);
 ft_bool cma_is_thread_safe_enabled(void);
 int32_t     cma_get_stats(ft_size_t *allocation_count, ft_size_t *free_count);
 int32_t     cma_get_extended_stats(ft_size_t *allocation_count,
