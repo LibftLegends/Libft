@@ -5,6 +5,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/system_utils.hpp"
+#include <fcntl.h>
 #include <cstdio>
 
 #include "../../Modules/Basic/class_nullptr.hpp"

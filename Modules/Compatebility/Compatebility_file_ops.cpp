@@ -5,6 +5,9 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if !defined(_WIN32) && !defined(_WIN64)
+# include <fcntl.h>
+#endif
 
 static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 {

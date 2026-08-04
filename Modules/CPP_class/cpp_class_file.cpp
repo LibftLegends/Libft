@@ -10,6 +10,7 @@
 #include "../Basic/class_nullptr.hpp"
 #include <cerrno>
 #include <cstdarg>
+#include <fcntl.h>
 #include <new>
 #include <unistd.h>
 #include "../Basic/limits.hpp"

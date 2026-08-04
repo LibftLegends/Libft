@@ -8,6 +8,7 @@
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include <fcntl.h>
 #ifndef LIBFT_TEST_BUILD
 #endif
 
