@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <new>
 
+struct s_pt_owned_mutex_buffer_cache;
+
 static thread_local bool g_registry_mutex_owned = false;
 static std::atomic<uint64_t> g_pt_lock_tracking_next_generation(1);
 static thread_local uint64_t g_pt_lock_tracking_generation = 0;
@@ -16,6 +18,8 @@ static pthread_key_t g_pt_lock_tracking_exit_key;
 static std::atomic<ft_bool> g_pt_lock_tracking_exit_key_initialised(FT_FALSE);
 static pthread_once_t g_pt_lock_tracking_exit_mutex_once = PTHREAD_ONCE_INIT;
 static std::mutex *g_pt_lock_tracking_exit_mutex = nullptr;
+static pthread_once_t g_pt_owned_mutex_buffer_cache_once = PTHREAD_ONCE_INIT;
+static s_pt_owned_mutex_buffer_cache *g_pt_owned_mutex_buffer_cache = nullptr;
 
 static void pt_lock_tracking_initialize_exit_mutex(void)
 {
@@ -132,12 +136,24 @@ struct s_pt_owned_mutex_buffer_cache
     }
 };
 
+static void pt_lock_tracking_initialize_owned_mutex_buffer_cache(void)
+{
+    void *memory_pointer;
+
+    memory_pointer = std::malloc(sizeof(s_pt_owned_mutex_buffer_cache));
+    if (memory_pointer == ft_nullptr)
+        return ;
+    g_pt_owned_mutex_buffer_cache =
+        new (memory_pointer) s_pt_owned_mutex_buffer_cache();
+    return ;
+}
+
 static s_pt_owned_mutex_buffer_cache *pt_lock_tracking_get_owned_mutex_buffer_cache(void)
 {
-    static s_pt_owned_mutex_buffer_cache *owned_mutex_buffer_cache =
-        new (std::nothrow) s_pt_owned_mutex_buffer_cache();
-
-    return (owned_mutex_buffer_cache);
+    if (pthread_once(&g_pt_owned_mutex_buffer_cache_once,
+            pt_lock_tracking_initialize_owned_mutex_buffer_cache) != 0)
+        return (ft_nullptr);
+    return (g_pt_owned_mutex_buffer_cache);
 }
 
 int pt_lock_tracking::lock_registry_mutex(void)
