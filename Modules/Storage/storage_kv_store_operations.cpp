@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cerrno>
 #include <climits>
+#include <fcntl.h>
 
 #include "../Compatebility/sqlite_support.hpp"
 #include "../Basic/limits.hpp"
