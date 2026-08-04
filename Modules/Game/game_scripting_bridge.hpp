@@ -11,6 +11,7 @@
 #include "../Basic/basic.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/mutex.hpp"
+#include <cstddef>
 
 struct lua_State;
 struct lua_Debug;
@@ -97,8 +98,11 @@ class game_script_bridge
         int32_t initialize_lua_runtime() noexcept;
         void destroy_lua_runtime() noexcept;
         int32_t register_lua_callbacks() noexcept;
+        void remove_lua_callback(const ft_string &name) noexcept;
         static void *lua_allocate(void *user_data, void *pointer,
             ft_size_t old_size, ft_size_t new_size) noexcept;
+        static void *lua_allocate_native(void *user_data, void *pointer,
+            std::size_t old_size, std::size_t new_size) noexcept;
         static void lua_instruction_hook(lua_State *lua_state,
             lua_Debug *debug_record) noexcept;
         static int32_t lua_callback_dispatch(lua_State *lua_state) noexcept;
@@ -134,6 +138,12 @@ class game_script_bridge
         int32_t execute_lua(const ft_string &script, game_state &state) noexcept;
         int32_t execute_lua_with_user_data(const ft_string &script,
             game_state *state, void *user_data) noexcept;
+        int32_t get_lua_global_string(const ft_string &name,
+            ft_string &value) noexcept;
+        int32_t get_lua_global_integer(const ft_string &name,
+            int64_t &value) noexcept;
+        int32_t get_lua_global_boolean(const ft_string &name,
+            ft_bool &value) noexcept;
 
         void set_lua_instruction_limit(int32_t limit) noexcept;
         int32_t get_lua_instruction_limit() const noexcept;

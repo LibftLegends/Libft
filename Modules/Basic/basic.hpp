@@ -41,6 +41,13 @@ typedef uint8_t ft_bool;
 # define FT_SOCKET_DESCRIPTOR_CAST(value) (value)
 #endif
 
+#ifdef __APPLE__
+# define FT_NATIVE_SIZE_TO_FT_SIZE_CAST(value) \
+    static_cast<ft_size_t>(value)
+#else
+# define FT_NATIVE_SIZE_TO_FT_SIZE_CAST(value) (value)
+#endif
+
 class ft_string;
 static constexpr ft_size_t ft_strlen_raw(const char *string)
 {

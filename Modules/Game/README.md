@@ -109,7 +109,9 @@ General rules for these orchestration classes:
   adding that module as a dependency of `Game`. `execute_lua(...)` and
   `execute_lua_with_user_data(...)` run real Lua 5.4 source through the
   statically embedded runtime. Registered callbacks are exposed as Lua global
-  functions.
+  functions. `get_lua_global_string(...)`,
+  `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` allow a
+  host to read explicitly exported primitive values from the Lua state.
 - `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound Lua
   execution. The default limits are 100,000 VM instructions and 16 MiB.
   Filesystem, operating-system, package-loading, debug, and dynamic-code

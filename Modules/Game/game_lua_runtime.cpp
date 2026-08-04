@@ -60,6 +60,14 @@ void *game_script_bridge::lua_allocate(void *user_data, void *pointer,
     return (new_pointer);
 }
 
+void *game_script_bridge::lua_allocate_native(void *user_data, void *pointer,
+    std::size_t old_size, std::size_t new_size) noexcept
+{
+    return (game_script_bridge::lua_allocate(user_data, pointer,
+        FT_NATIVE_SIZE_TO_FT_SIZE_CAST(old_size),
+        FT_NATIVE_SIZE_TO_FT_SIZE_CAST(new_size)));
+}
+
 void game_script_bridge::lua_instruction_hook(lua_State *lua_state,
     lua_Debug *debug_record) noexcept
 {
@@ -161,7 +169,8 @@ int32_t game_script_bridge::initialize_lua_runtime() noexcept
     this->_lua_instruction_count = 0;
     this->_lua_callback_error = FT_ERR_SUCCESS;
     this->_lua_context = ft_nullptr;
-    this->_lua_state = lua_newstate(&game_script_bridge::lua_allocate, this);
+    this->_lua_state = lua_newstate(
+        &game_script_bridge::lua_allocate_native, this);
     if (this->_lua_state == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
     game_lua_open_library(this->_lua_state, LUA_GNAME, luaopen_base);
@@ -215,6 +224,15 @@ int32_t game_script_bridge::register_lua_callbacks() noexcept
         entry += 1;
     }
     return (FT_ERR_SUCCESS);
+}
+
+void game_script_bridge::remove_lua_callback(const ft_string &name) noexcept
+{
+    if (this->_lua_state == ft_nullptr)
+        return ;
+    lua_pushnil(this->_lua_state);
+    lua_setglobal(this->_lua_state, name.c_str());
+    return ;
 }
 
 int32_t game_script_bridge::execute_lua(const ft_string &script,
@@ -278,6 +296,114 @@ int32_t game_script_bridge::execute_lua_with_user_data(const ft_string &script,
     else
         error_code = FT_ERR_SUCCESS;
     lua_settop(this->_lua_state, 0);
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
+}
+
+int32_t game_script_bridge::get_lua_global_string(const ft_string &name,
+    ft_string &value) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t error_code;
+    const char *string_value;
+
+    lock_acquired = FT_FALSE;
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_lua_state == ft_nullptr)
+        error_code = FT_ERR_NOT_INITIALISED;
+    else if (name.empty())
+        error_code = FT_ERR_INVALID_ARGUMENT;
+    else
+    {
+        lua_getglobal(this->_lua_state, name.c_str());
+        if (lua_type(this->_lua_state, -1) == LUA_TNIL)
+            error_code = FT_ERR_NOT_FOUND;
+        else if (lua_type(this->_lua_state, -1) != LUA_TSTRING)
+            error_code = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            string_value = lua_tostring(this->_lua_state, -1);
+            error_code = value.clear();
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = value.append(string_value);
+        }
+        lua_pop(this->_lua_state, 1);
+    }
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
+}
+
+int32_t game_script_bridge::get_lua_global_integer(const ft_string &name,
+    int64_t &value) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t error_code;
+    int32_t is_integer;
+
+    lock_acquired = FT_FALSE;
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_lua_state == ft_nullptr)
+        error_code = FT_ERR_NOT_INITIALISED;
+    else if (name.empty())
+        error_code = FT_ERR_INVALID_ARGUMENT;
+    else
+    {
+        lua_getglobal(this->_lua_state, name.c_str());
+        is_integer = 0;
+        if (lua_type(this->_lua_state, -1) == LUA_TNIL)
+            error_code = FT_ERR_NOT_FOUND;
+        else if (lua_type(this->_lua_state, -1) != LUA_TNUMBER)
+            error_code = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            value = lua_tointegerx(this->_lua_state, -1, &is_integer);
+            if (is_integer == 0)
+                error_code = FT_ERR_INVALID_ARGUMENT;
+            else
+                error_code = FT_ERR_SUCCESS;
+        }
+        lua_pop(this->_lua_state, 1);
+    }
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
+}
+
+int32_t game_script_bridge::get_lua_global_boolean(const ft_string &name,
+    ft_bool &value) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t error_code;
+
+    lock_acquired = FT_FALSE;
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_lua_state == ft_nullptr)
+        error_code = FT_ERR_NOT_INITIALISED;
+    else if (name.empty())
+        error_code = FT_ERR_INVALID_ARGUMENT;
+    else
+    {
+        lua_getglobal(this->_lua_state, name.c_str());
+        if (lua_type(this->_lua_state, -1) == LUA_TNIL)
+            error_code = FT_ERR_NOT_FOUND;
+        else if (lua_type(this->_lua_state, -1) != LUA_TBOOLEAN)
+            error_code = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            value = static_cast<ft_bool>(lua_toboolean(this->_lua_state,
+                -1));
+            error_code = FT_ERR_SUCCESS;
+        }
+        lua_pop(this->_lua_state, 1);
+    }
     this->unlock_internal(lock_acquired);
     return (this->set_error(error_code));
 }

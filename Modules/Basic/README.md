@@ -11,6 +11,9 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `FT_PRId64` / `FT_PRIu64` - Portable 64-bit integer format specifiers from `<cinttypes>`.
 - `FT_INT64_FORMAT` / `FT_UINT64_FORMAT` - Basic-owned 64-bit integer length modifiers selected by platform for decimal formatting.
 - `FT_INT64_DECIMAL_FORMAT` / `FT_UINT64_DECIMAL_FORMAT` - Ready-to-use decimal `printf`/`snprintf` format strings for 64-bit signed and unsigned integers.
+- `FT_NATIVE_SIZE_TO_FT_SIZE_CAST` - Converts a platform-native `size_t` to
+  `ft_size_t` where their underlying types differ, such as macOS ABI
+  callbacks; it is an identity expression on platforms where they match.
 
 ## String Length
 

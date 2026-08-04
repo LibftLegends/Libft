@@ -766,6 +766,7 @@ int32_t game_script_bridge::remove_function(const ft_string &name) noexcept
     }
 
     this->_callbacks.remove(name);
+    this->remove_lua_callback(name);
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);
