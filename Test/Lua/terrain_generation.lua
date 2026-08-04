@@ -1,0 +1,7 @@
+terrain_set_sea_level(40)
+terrain_set_noise_scales(40, 10, 65)
+terrain_set_biome_height(0, 40, 0, 3)
+terrain_set_biome_blocks(0, 10, 2, 3)
+terrain_set_biome_transitions(true, 23, 55)
+terrain_generate_chunk()
+terrain_write_generated_block(0, 255, 0, 13)

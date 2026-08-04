@@ -1,0 +1,5 @@
+assert(os == nil)
+assert(io == nil)
+assert(debug == nil)
+assert(loadfile == nil)
+capture_value(7)

@@ -246,6 +246,33 @@ terrain_generate_chunk(chunk, 0, 0, "world-seed", config);
 config.destroy();
 ```
 
+### Terrain scripting bridge
+
+`terrain_scripting_bridge.hpp` exposes terrain generation through the Game
+script callback bridge without creating a reverse `Game` dependency on
+`Voxel`.
+
+- `terrain_script_register_api(bridge)` registers the terrain callback set and
+  is safe to call again when refreshing or hot-reloading bindings.
+- `terrain_script_execute(...)` executes real Lua source with a chunk,
+  generation config, world-block origin, and seed attached to its script
+  context.
+
+The registered callback names are `terrain_set_sea_level`,
+`terrain_set_noise_scales`, `terrain_set_biome_height`,
+`terrain_set_biome_blocks`, `terrain_set_biome_transitions`,
+`terrain_generate_chunk`, and `terrain_write_generated_block`. Generated block
+writes use `write_generated_block(...)`, so scripted generation does not mark a
+chunk as protected by a player edit.
+
+```lua
+terrain_set_sea_level(64)
+terrain_set_biome_height(0, 68, 12, 3)
+terrain_set_biome_transitions(true, 24, 60)
+terrain_generate_chunk()
+terrain_write_generated_block(8, 80, 8, 13)
+```
+
 ## Voxel Behavior
 
 - Biomes are selected in world-space zones so adjacent chunks line up cleanly across region boundaries.

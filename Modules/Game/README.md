@@ -102,8 +102,18 @@ General rules for these orchestration classes:
 - `ft_game_hook_metadata` - Hook metadata record.
 - `ft_game_hook_listener_entry` - Registered listener entry.
 - `game_hooks` - Hook registry/dispatcher with add/remove/emit behavior.
-- `game_script_context` - Script execution context and user data.
+- `game_script_context` - Script execution context with game state, world,
+  variables, and an opaque extension pointer for module-specific bindings.
 - `game_script_bridge` - Bridge for registering and invoking script callbacks.
+  `execute_with_user_data(...)` lets another module expose a typed API without
+  adding that module as a dependency of `Game`. `execute_lua(...)` and
+  `execute_lua_with_user_data(...)` run real Lua 5.4 source through the
+  statically embedded runtime. Registered callbacks are exposed as Lua global
+  functions.
+- `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound Lua
+  execution. The default limits are 100,000 VM instructions and 16 MiB.
+  Filesystem, operating-system, package-loading, debug, and dynamic-code
+  libraries are not exposed to scripts.
 - `game_data_catalog` - Registry for item definitions, recipes, loadouts, and other static catalog records.
 
 ## Serialization and Persistence

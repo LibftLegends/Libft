@@ -110,7 +110,9 @@ STORAGE_TEST_FILES := \
 VOXEL_TEST_FILES := \
 	Test/test_voxel_block_metadata.cpp \
 	Test/test_voxel_generator.cpp \
-	Test/test_voxel_mesh.cpp
+	Test/test_voxel_mesh.cpp \
+	Test/test_terrain_script_register_api.cpp \
+	Test/test_terrain_script_execute.cpp
 
 CLI_TEST_FILES := \
 	Test/test_cli.cpp \

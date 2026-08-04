@@ -29,7 +29,7 @@ FORCE:
 $(OBJDIR) $(DEBUG_OBJDIR) $(EFFICIENCY_OBJDIR):
 	@$(MKDIR) $@
 
-$(TARGET): $(OBJS) $(LIBFT_ARCHIVE)
+$(TARGET): $(OBJS) $(LIBFT_ARCHIVE) $(LUA_TEST_FILES)
 	@$(RM) $@
 ifeq ($(UNAME_S),Darwin)
 	@$(CXX) $(CFLAGS) -o $@ $(OBJS) $(LIBFT_ARCHIVE) $(LDFLAGS)
@@ -184,21 +184,21 @@ $(OBJDIR)/%.o: %.cpp
 		} > "$$log_file" 2>&1; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then \
-			while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+			bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 			cat "$$log_file"; \
 			rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
 		progress_lock="$(TEST_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(TEST_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(TEST_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
 		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(TEST_BUILD_PROGRESS_FILE)"; \
 		printf '%b        [Test] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 		rmdir "$$progress_lock"; \
-		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
 	else \
@@ -210,7 +210,7 @@ $(OBJDIR)/%.o: %.cpp
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
 		progress_lock="$(TEST_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(TEST_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(TEST_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
@@ -272,10 +272,12 @@ $(OBJDIR)/Test/test_cli_help.o $(OBJDIR)/Test/test_cli_tree.o: CFLAGS := $(COMPI
 $(OBJDIR)/Test/test_storage_kv_store.o $(OBJDIR)/Test/test_storage_kv_store_entry.o \
 $(OBJDIR)/Test/test_storage_kv_store_block_cipher_metadata.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Storage\"
 $(OBJDIR)/Test/test_voxel_block_metadata.o $(OBJDIR)/Test/test_voxel_generator.o \
-$(OBJDIR)/Test/test_voxel_mesh.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Voxel\" \
+$(OBJDIR)/Test/test_voxel_mesh.o $(OBJDIR)/Test/test_terrain_script_register_api.o \
+$(OBJDIR)/Test/test_terrain_script_execute.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Voxel\" \
 	-DGAME_USE_VOXEL_REGION_BACKEND=1
 $(OBJDIR)/Test/test_voxel_block_metadata.o $(OBJDIR)/Test/test_voxel_generator.o \
-$(OBJDIR)/Test/test_voxel_mesh.o: Makefile
+$(OBJDIR)/Test/test_voxel_mesh.o $(OBJDIR)/Test/test_terrain_script_register_api.o \
+$(OBJDIR)/Test/test_terrain_script_execute.o: Makefile
 $(OBJDIR)/Test/test_application_auth_service.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Application\"
 $(OBJDIR)/Test/test_yaml.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"YAML\"
 $(OBJDIR)/Test/test_rng.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"RNG\"
@@ -353,21 +355,21 @@ $(DEBUG_OBJDIR)/%.o: %.cpp
 		} > "$$log_file" 2>&1; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then \
-			while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+			bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 			cat "$$log_file"; \
 			rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
 		progress_lock="$(DEBUG_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
 		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(DEBUG_BUILD_PROGRESS_FILE)"; \
 		printf '%b        [Test Debug] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 		rmdir "$$progress_lock"; \
-		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
 	else \
@@ -379,7 +381,7 @@ $(DEBUG_OBJDIR)/%.o: %.cpp
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
 		progress_lock="$(DEBUG_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(DEBUG_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
@@ -417,21 +419,21 @@ $(EFFICIENCY_OBJDIR)/%.o: %.cpp
 		} > "$$log_file" 2>&1; \
 		status=$$?; \
 		if [ $$status -ne 0 ]; then \
-			while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+			bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 			cat "$$log_file"; \
 			rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 			$(RM) "$$log_file"; \
 			exit $$status; \
 		fi; \
 		progress_lock="$(EFFICIENCY_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
 		printf '%s\n%s\n' "$$current_count" "$$total_count" > "$(EFFICIENCY_BUILD_PROGRESS_FILE)"; \
 		printf '%b        [Test Efficiency] Building file %s (%d/%d)%b\n' "$(LIBFT_TEST_LIGHT_BLUE)" "$<" $$current_count $$total_count "$(LIBFT_TEST_COLOR_OFF)"; \
 		rmdir "$$progress_lock"; \
-		while ! mkdir $(LIBFT_TEST_OUTPUT_LOCK) 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh $(LIBFT_TEST_OUTPUT_LOCK); \
 		rmdir $(LIBFT_TEST_OUTPUT_LOCK); \
 		$(RM) "$$log_file"; \
 	else \
@@ -443,7 +445,7 @@ $(EFFICIENCY_OBJDIR)/%.o: %.cpp
 		status=$$?; \
 		if [ $$status -ne 0 ]; then exit $$status; fi; \
 		progress_lock="$(EFFICIENCY_BUILD_PROGRESS_FILE).lock"; \
-		while ! mkdir "$$progress_lock" 2>/dev/null; do sleep 0.02; done; \
+		bash ../mk/acquire_directory_lock.sh "$$progress_lock"; \
 		current_count=$$(sed -n '1p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
 		total_count=$$(sed -n '2p' "$(EFFICIENCY_BUILD_PROGRESS_FILE)"); \
 		current_count=$$((current_count + 1)); \
