@@ -74,6 +74,24 @@ struct terrain_block_metadata
     ft_bool breakable;
 };
 
+enum terrain_block_asset_face
+{
+    TERRAIN_BLOCK_ASSET_FACE_TOP = 0,
+    TERRAIN_BLOCK_ASSET_FACE_BOTTOM = 1,
+    TERRAIN_BLOCK_ASSET_FACE_NORTH = 2,
+    TERRAIN_BLOCK_ASSET_FACE_SOUTH = 3,
+    TERRAIN_BLOCK_ASSET_FACE_EAST = 4,
+    TERRAIN_BLOCK_ASSET_FACE_WEST = 5,
+    TERRAIN_BLOCK_ASSET_FACE_COUNT = 6
+};
+
+struct terrain_block_registration
+{
+    const char *name;
+    terrain_block_metadata metadata;
+    const char *asset_paths[TERRAIN_BLOCK_ASSET_FACE_COUNT];
+};
+
 struct terrain_tree_template_block
 {
     int32_t offset_x;
@@ -547,6 +565,13 @@ ft_bool terrain_block_emits_light(uint32_t block_id) noexcept;
 ft_bool terrain_block_occludes_faces(uint32_t block_id) noexcept;
 uint32_t terrain_block_hardness(uint32_t block_id) noexcept;
 ft_bool terrain_block_is_breakable(uint32_t block_id) noexcept;
+int32_t terrain_register_block(const terrain_block_registration &registration,
+    uint32_t *block_id_out) noexcept;
+const char *terrain_get_block_name(uint32_t block_id) noexcept;
+const char *terrain_get_block_asset_path(uint32_t block_id,
+    terrain_block_asset_face face) noexcept;
+const uint8_t *terrain_get_block_asset_data(uint32_t block_id,
+    terrain_block_asset_face face, ft_size_t *size_out) noexcept;
 uint32_t terrain_surface_block_for_biome(terrain_biome biome) noexcept;
 uint32_t terrain_subsurface_block_for_biome(terrain_biome biome) noexcept;
 uint32_t terrain_deep_block_for_biome(terrain_biome biome) noexcept;

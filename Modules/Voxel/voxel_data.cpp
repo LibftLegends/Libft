@@ -9,6 +9,7 @@
 #include "../RNG/rng.hpp"
 #include "../Game/game_voxel_chunk.hpp"
 #include "voxel_internal.hpp"
+#include "voxel_block_registry.hpp"
 
 static int32_t terrain_apply_default_generation_config(
     terrain_generation_config &config) noexcept;
@@ -1542,6 +1543,11 @@ static uint32_t terrain_normalise_tree_variant(uint32_t variant_index,
 const terrain_block_metadata &terrain_get_block_metadata(uint32_t block_id)
     noexcept
 {
+    const terrain_block_metadata *runtime_metadata;
+
+    runtime_metadata = terrain_runtime_find_block_metadata(block_id);
+    if (runtime_metadata != ft_nullptr)
+        return (*runtime_metadata);
     if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
             / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
     {
@@ -1554,6 +1560,8 @@ const terrain_block_metadata &terrain_get_block_metadata(uint32_t block_id)
 
 ft_bool terrain_block_is_known(uint32_t block_id) noexcept
 {
+    if (terrain_runtime_block_is_known(block_id) == FT_TRUE)
+        return (FT_TRUE);
     if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
             / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
         return (FT_FALSE);

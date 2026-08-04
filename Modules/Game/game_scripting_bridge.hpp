@@ -27,6 +27,8 @@ class game_script_context
         void                               *_user_data;
         ft_sharedptr<game_world>                _world;
         ft_map<ft_string, ft_string>          _variables;
+        int64_t                              _result_integer;
+        ft_bool                              _result_integer_set;
         uint8_t                               _initialised_state;
         static thread_local int32_t _last_error;
 
@@ -59,6 +61,10 @@ class game_script_context
         const ft_string *get_variable(const ft_string &key) const noexcept;
         void remove_variable(const ft_string &key) noexcept;
         void clear_variables() noexcept;
+        void clear_result() noexcept;
+        void set_result_integer(int64_t value) noexcept;
+        ft_bool has_result_integer() const noexcept;
+        int64_t get_result_integer() const noexcept;
 
         int32_t get_error() const noexcept;
         const char *get_error_str() const noexcept;

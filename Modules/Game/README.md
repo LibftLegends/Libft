@@ -112,6 +112,9 @@ General rules for these orchestration classes:
   functions. `get_lua_global_string(...)`,
   `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` allow a
   host to read explicitly exported primitive values from the Lua state.
+- Registered Lua callbacks may return one integer through
+  `game_script_context::set_result_integer(...)`; the Lua wrapper returns that
+  integer to the script. This is used by the Voxel bridge for runtime block ids.
 - `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound Lua
   execution. The default limits are 100,000 VM instructions and 16 MiB.
   Filesystem, operating-system, package-loading, debug, and dynamic-code

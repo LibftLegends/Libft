@@ -157,9 +157,19 @@ int32_t game_script_bridge::lua_callback_dispatch(lua_State *lua_state) noexcept
         }
         argument_index += 1;
     }
+    bridge->_lua_context->clear_result();
     error_code = entry->value(*bridge->_lua_context, arguments);
     if (error_code != FT_ERR_SUCCESS)
+    {
         bridge->_lua_callback_error = error_code;
+        return (0);
+    }
+    if (bridge->_lua_context->has_result_integer() == FT_TRUE)
+    {
+        lua_pushinteger(lua_state,
+            bridge->_lua_context->get_result_integer());
+        return (1);
+    }
     return (0);
 }
 

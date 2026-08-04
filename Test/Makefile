@@ -273,11 +273,11 @@ $(OBJDIR)/Test/test_storage_kv_store.o $(OBJDIR)/Test/test_storage_kv_store_entr
 $(OBJDIR)/Test/test_storage_kv_store_block_cipher_metadata.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Storage\"
 $(OBJDIR)/Test/test_voxel_block_metadata.o $(OBJDIR)/Test/test_voxel_generator.o \
 $(OBJDIR)/Test/test_voxel_mesh.o $(OBJDIR)/Test/test_terrain_script_register_api.o \
-$(OBJDIR)/Test/test_terrain_script_execute.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Voxel\" \
+$(OBJDIR)/Test/test_terrain_script_execute.o $(OBJDIR)/Test/test_terrain_runtime_blocks.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Voxel\" \
 	-DGAME_USE_VOXEL_REGION_BACKEND=1
 $(OBJDIR)/Test/test_voxel_block_metadata.o $(OBJDIR)/Test/test_voxel_generator.o \
 $(OBJDIR)/Test/test_voxel_mesh.o $(OBJDIR)/Test/test_terrain_script_register_api.o \
-$(OBJDIR)/Test/test_terrain_script_execute.o: Makefile
+$(OBJDIR)/Test/test_terrain_script_execute.o $(OBJDIR)/Test/test_terrain_runtime_blocks.o: Makefile
 $(OBJDIR)/Test/test_application_auth_service.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"Application\"
 $(OBJDIR)/Test/test_yaml.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"YAML\"
 $(OBJDIR)/Test/test_rng.o: CFLAGS := $(COMPILE_FLAGS) -DTEST_MODULE=\"RNG\"

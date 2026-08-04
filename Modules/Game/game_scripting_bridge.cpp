@@ -86,6 +86,7 @@ int32_t game_script_context::set_error(int32_t error_code) noexcept
 
 game_script_context::game_script_context() noexcept
     : _state(ft_nullptr), _user_data(ft_nullptr), _world(), _variables(),
+      _result_integer(0), _result_integer_set(FT_FALSE),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -129,6 +130,7 @@ int32_t game_script_context::initialize() noexcept
     }
     this->_state = ft_nullptr;
     this->_user_data = ft_nullptr;
+    this->clear_result();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -163,6 +165,7 @@ int32_t game_script_context::initialize(game_state *state,
     }
     this->_state = state;
     this->_user_data = ft_nullptr;
+    this->clear_result();
     this->_world = world;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
@@ -232,6 +235,8 @@ int32_t game_script_context::initialize(const game_script_context &other) noexce
     }
     this->_state = other._state;
     this->_user_data = other._user_data;
+    this->_result_integer = other._result_integer;
+    this->_result_integer_set = other._result_integer_set;
     this->_world = other._world;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(other.get_error());
@@ -271,6 +276,7 @@ int32_t game_script_context::destroy() noexcept
     }
     this->_state = ft_nullptr;
     this->_user_data = ft_nullptr;
+    this->clear_result();
     world_destroy_error = this->_world.destroy();
     destroy_error = this->_variables.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -397,6 +403,30 @@ void game_script_context::clear_variables() noexcept
     this->_variables.clear();
     this->set_error(FT_ERR_SUCCESS);
     return ;
+}
+
+void game_script_context::clear_result() noexcept
+{
+    this->_result_integer = 0;
+    this->_result_integer_set = FT_FALSE;
+    return ;
+}
+
+void game_script_context::set_result_integer(int64_t value) noexcept
+{
+    this->_result_integer = value;
+    this->_result_integer_set = FT_TRUE;
+    return ;
+}
+
+ft_bool game_script_context::has_result_integer() const noexcept
+{
+    return (this->_result_integer_set);
+}
+
+int64_t game_script_context::get_result_integer() const noexcept
+{
+    return (this->_result_integer);
 }
 
 int32_t game_script_context::get_error() const noexcept

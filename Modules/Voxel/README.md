@@ -29,6 +29,7 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `terrain_biome` - Biome selector enum for plains, hills, desert, snow, and mountains.
 - `terrain_biome_profile` - Surface height, variation, and topsoil depth profile for a biome.
 - `terrain_block_metadata` - Registry entry that describes whether a block is solid, transparent, liquid, replaceable, light-emitting, whether it occludes mesh faces, and how hard it is.
+- `terrain_block_registration` - Runtime block definition containing metadata and one asset path per block face.
 - `terrain_tree_template_block` - Relative block entry used by tree templates.
 - `terrain_tree_template` - Block list wrapper for reusable tree presets.
 - `terrain_generation_config` - Lifecycle-managed runtime generation policy
@@ -61,6 +62,10 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   generation cache validation.
 - `terrain_get_block_metadata(block_id)` - Looks up the metadata entry for a known block id.
 - `terrain_block_is_known(block_id)` - Returns whether a block id exists in the registry and should be accepted by chunk storage.
+- `terrain_register_block(registration, block_id_out)` - Loads six face assets from the supplied paths and registers a process-lifetime runtime block. Runtime ids are allocated after the built-in ids; duplicate names are rejected.
+- `terrain_get_block_name(block_id)` - Returns the registered runtime block name.
+- `terrain_get_block_asset_path(block_id, face)` - Returns the source path for one runtime block face.
+- `terrain_get_block_asset_data(block_id, face, size_out)` - Returns the loaded bytes for one runtime block face. The Voxel module stores the bytes; a renderer or asset pipeline can decode them as appropriate.
 - `terrain_block_is_solid(block_id)` - Returns whether a block is treated as a solid collision block.
 - `terrain_block_is_transparent(block_id)` - Returns whether a block should be treated as visually transparent.
 - `terrain_block_is_liquid(block_id)` - Returns whether a block behaves like a liquid.
