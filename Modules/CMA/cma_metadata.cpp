@@ -304,6 +304,8 @@ void    cma_metadata_reset(void)
 {
     cma_metadata_chunk    *chunk;
 
+    g_cma_page_generation++;
+    cma_invalidate_page_lookup_cache();
     chunk = g_cma_metadata_chunks;
     while (chunk)
     {

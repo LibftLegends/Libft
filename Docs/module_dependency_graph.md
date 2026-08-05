@@ -34,7 +34,8 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Errno` | `Basic`, `Compatebility`, `PThread` |
 | `File` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Encryption`, `Errno`, `Observability`, `PThread`, `RNG`, `Template`, `Threading` |
 | `Filesystem` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `File`, `PThread`, `Time` |
-| `Game` | `Basic`, `Buffer`, `CMA`, `CPP_class`, `Errno`, `File`, `Geometry`, `JSon`, `Networking`, `Observability`, `PThread`, `Printf`, `Storage`, `System_utils`, `Template`, `Time` |
+| `Game` | `Basic`, `Buffer`, `CMA`, `CPP_class`, `Errno`, `File`, `Geometry`, `JSon`, `Lua`, `Networking`, `Observability`, `PThread`, `Printf`, `Storage`, `System_utils`, `Template`, `Time` |
+| `Lua` | None (vendored third-party C runtime) |
 | `GPGR` | `Basic`, `Compatebility`, `Printf` |
 | `Geometry` | `Errno`, `Math`, `PThread` |
 | `GetNextLine` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread`, `Template` |
@@ -58,7 +59,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Threading` | `Basic`, `CMA`, `Errno`, `PThread`, `System_utils`, `Template`, `Time` |
 | `Time` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
 | `URI` | `Basic`, `CMA`, `Errno` |
-| `Voxel` | `Basic`, `Errno`, `Game`, `Geometry`, `Math`, `RNG`, `Template` |
+| `Voxel` | `Basic`, `Buffer`, `Errno`, `Game`, `Geometry`, `Math`, `PThread`, `RNG`, `System_utils`, `Template` |
 | `XML` | `Basic`, `CMA`, `Errno`, `PThread`, `Parser`, `Template` |
 | `YAML` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `Parser`, `System_utils`, `Template` |
 
@@ -216,6 +217,7 @@ graph TD
     Game --> File
     Game --> Geometry
     Game --> JSon
+    Game --> Lua
     Game --> Networking
     Game --> Observability
     Game --> PThread
@@ -402,11 +404,14 @@ graph TD
     URI --> CMA
     URI --> Errno
     Voxel --> Basic
+    Voxel --> Buffer
     Voxel --> Errno
     Voxel --> Game
     Voxel --> Geometry
     Voxel --> Math
+    Voxel --> PThread
     Voxel --> RNG
+    Voxel --> System_utils
     Voxel --> Template
     XML --> Basic
     XML --> CMA

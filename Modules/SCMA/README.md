@@ -29,7 +29,9 @@ SCMA compacts lazily when fragmented space is needed. Freed and truncated bytes 
 - `scma_stats` - Block count, used size, and heap capacity snapshot.
 - `scma_get_stats(scma_stats *out_stats)` - Writes allocator stats.
 - `scma_debug_dump()` - Prints allocator debug information.
-- `scma_enable_thread_safety()` / `scma_disable_thread_safety()` / `scma_is_thread_safe_enabled()` - Manage global allocator synchronization. Enable/disable transitions wait for active operations to drain, destroy the runtime mutex when disabling, and recreate it when enabling. A transition requested by the calling thread while it owns the runtime lock returns `FT_ERR_THREAD_BUSY`.
+- `scma_enable_thread_safety()` / `scma_disable_thread_safety()` / `scma_is_thread_safe_enabled()` - Manage global allocator synchronization. Enable/disable transitions wait for active operations to drain, but return `FT_ERR_TIMEOUT` after the default transition deadline. They destroy the runtime mutex when disabling and recreate it when enabling. A transition requested by the calling thread while it owns the runtime lock returns `FT_ERR_THREAD_BUSY`.
+- `scma_enable_thread_safety_timed(uint64_t timeout_ms)` / `scma_disable_thread_safety_timed(uint64_t timeout_ms)` - Wait for active operations to drain for at most the supplied duration.
+- `scma_try_set_thread_safety(ft_bool enable)` - Non-blocking transition attempt; returns `FT_ERR_TIMEOUT` if active operations have not drained.
 - `scma_mutex_lock()` / `scma_mutex_unlock()` / `scma_mutex_close()` - Operate on the allocator mutex.
 - `scma_mutex_lock_count()` - Returns the lock counter used for validation.
 

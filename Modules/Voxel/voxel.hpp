@@ -74,6 +74,24 @@ struct terrain_block_metadata
     ft_bool breakable;
 };
 
+enum terrain_block_asset_face
+{
+    TERRAIN_BLOCK_ASSET_FACE_TOP = 0,
+    TERRAIN_BLOCK_ASSET_FACE_BOTTOM = 1,
+    TERRAIN_BLOCK_ASSET_FACE_NORTH = 2,
+    TERRAIN_BLOCK_ASSET_FACE_SOUTH = 3,
+    TERRAIN_BLOCK_ASSET_FACE_EAST = 4,
+    TERRAIN_BLOCK_ASSET_FACE_WEST = 5,
+    TERRAIN_BLOCK_ASSET_FACE_COUNT = 6
+};
+
+struct terrain_block_registration
+{
+    const char *name;
+    terrain_block_metadata metadata;
+    const char *asset_paths[TERRAIN_BLOCK_ASSET_FACE_COUNT];
+};
+
 struct terrain_tree_template_block
 {
     int32_t offset_x;
@@ -390,6 +408,8 @@ class terrain_generation_config
         int32_t set_feature_count(uint32_t value) noexcept;
         int32_t set_ore_rule_count(uint32_t value) noexcept;
         int32_t set_biome_transitions_enabled(ft_bool enabled) noexcept;
+        int32_t set_biome_transition_settings(int32_t noise_scale,
+            uint32_t noise_strength) noexcept;
         int32_t set_mountain_ridges_enabled(ft_bool enabled) noexcept;
         int32_t set_erosion_enabled(ft_bool enabled) noexcept;
         int32_t set_mountain_ridge_settings(int32_t scale,
@@ -418,6 +438,8 @@ class terrain_generation_config
         terrain_fluid_config fluids;
         terrain_layer_config layers;
         ft_bool enable_biome_transitions;
+        int32_t biome_transition_noise_scale;
+        uint32_t biome_transition_noise_strength;
         ft_bool enable_mountain_ridges;
         ft_bool enable_erosion;
         int32_t mountain_ridge_scale;
@@ -543,6 +565,13 @@ ft_bool terrain_block_emits_light(uint32_t block_id) noexcept;
 ft_bool terrain_block_occludes_faces(uint32_t block_id) noexcept;
 uint32_t terrain_block_hardness(uint32_t block_id) noexcept;
 ft_bool terrain_block_is_breakable(uint32_t block_id) noexcept;
+int32_t terrain_register_block(const terrain_block_registration &registration,
+    uint32_t *block_id_out) noexcept;
+const char *terrain_get_block_name(uint32_t block_id) noexcept;
+const char *terrain_get_block_asset_path(uint32_t block_id,
+    terrain_block_asset_face face) noexcept;
+const uint8_t *terrain_get_block_asset_data(uint32_t block_id,
+    terrain_block_asset_face face, ft_size_t *size_out) noexcept;
 uint32_t terrain_surface_block_for_biome(terrain_biome biome) noexcept;
 uint32_t terrain_subsurface_block_for_biome(terrain_biome biome) noexcept;
 uint32_t terrain_deep_block_for_biome(terrain_biome biome) noexcept;

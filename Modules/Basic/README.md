@@ -11,6 +11,12 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `FT_PRId64` / `FT_PRIu64` - Portable 64-bit integer format specifiers from `<cinttypes>`.
 - `FT_INT64_FORMAT` / `FT_UINT64_FORMAT` - Basic-owned 64-bit integer length modifiers selected by platform for decimal formatting.
 - `FT_INT64_DECIMAL_FORMAT` / `FT_UINT64_DECIMAL_FORMAT` - Ready-to-use decimal `printf`/`snprintf` format strings for 64-bit signed and unsigned integers.
+- `FT_NATIVE_SIZE_TO_FT_SIZE_CAST` - Converts a platform-native `size_t` to
+  `ft_size_t` where their underlying types differ, such as macOS ABI
+  callbacks; it is an identity expression on platforms where they match.
+- `FT_FILE_OFFSET_TO_INT64_CAST` - Converts the platform-specific result of
+  `ftell` to `int64_t` where required, while remaining an identity expression
+  on platforms where the types already match.
 
 ## String Length
 
@@ -61,6 +67,23 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `ft_memrchr(const void *pointer, int32_t character, ft_size_t size)` - Searches memory for the last matching byte value.
 - `ft_memcmp(const void *pointer1, const void *pointer2, ft_size_t size)` - Compares two memory ranges.
 - `ft_constant_time_equal(const void *pointer1, const void *pointer2, ft_size_t size)` - Compares two memory ranges without early exit for timing-sensitive checks.
+- `ft_memswap(void *left, void *right, ft_size_t size)` - Swaps two caller-owned memory ranges.
+- `ft_memmem(const void *haystack, ft_size_t haystack_size, const void *needle, ft_size_t needle_size)` - Searches a bounded memory range for another bounded range.
+
+## ASCII Classification
+
+- `ft_isxdigit(int32_t character)` - Tests for an ASCII hexadecimal digit.
+- `ft_ispunct(int32_t character)` - Tests for an ASCII punctuation character.
+- `ft_isgraph(int32_t character)` - Tests for a visible ASCII character excluding space.
+- `ft_iscntrl(int32_t character)` - Tests for an ASCII control character.
+- `ft_isblank(int32_t character)` - Tests for ASCII space or horizontal tab.
+
+## Checked Size and Alignment Helpers
+
+- `ft_size_add_checked(ft_size_t left, ft_size_t right, ft_size_t *result_pointer)` - Adds sizes and reports overflow.
+- `ft_size_multiply_checked(ft_size_t left, ft_size_t right, ft_size_t *result_pointer)` - Multiplies sizes and reports overflow.
+- `ft_is_power_of_two(ft_size_t value)` - Tests whether a size is a non-zero power of two.
+- `ft_align_up_checked(ft_size_t value, ft_size_t alignment, ft_size_t *result_pointer)` - Aligns a size upward using a power-of-two alignment and reports invalid input or overflow.
 
 ## Character Checks
 
@@ -85,6 +108,8 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `ft_atol(const char *string)` - Parses a decimal string into `int64_t`.
 - `ft_strtol(const char *input_string, char **end_pointer, int32_t numeric_base)` - Parses a signed integer with caller-selected base and end pointer reporting.
 - `ft_strtoul(const char *input_string, char **end_pointer, int32_t numeric_base)` - Parses an unsigned integer with caller-selected base and end pointer reporting.
+- `ft_parse_uint32(const char *string, char **end_pointer, uint32_t *value_pointer)` - Parses a decimal `uint32_t` with explicit overflow reporting.
+- `ft_parse_int64(const char *string, char **end_pointer, int64_t *value_pointer)` - Parses a decimal `int64_t` with explicit overflow reporting.
 
 ## UTF Helpers
 
@@ -93,6 +118,7 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `ft_utf8_next(const char *string, ft_size_t string_length, ft_size_t *index_pointer, uint32_t *code_point_pointer, ft_size_t *sequence_length_pointer)` - Decodes the next code point and advances the index.
 - `ft_utf8_count(const char *string, ft_size_t *code_point_count_pointer)` - Counts UTF-8 code points in a null-terminated string.
 - `ft_utf8_encode(uint32_t code_point, char *buffer, ft_size_t buffer_size, ft_size_t *encoded_length_pointer)` - Encodes one Unicode code point into UTF-8.
+- `ft_utf8_validate(const char *string, ft_size_t length)` - Validates every UTF-8 sequence in a bounded buffer without allocation.
 
 ## String Trimming
 

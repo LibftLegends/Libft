@@ -14,6 +14,9 @@
 #include "../Printf/printf.hpp"
 #include "../Threading/thread.hpp"
 #include <errno.h>
+#ifndef _WIN32
+# include <fcntl.h>
+#endif
 #include "../Template/move.hpp"
 
 #include "../Basic/limits.hpp"

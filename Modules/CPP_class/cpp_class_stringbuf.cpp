@@ -138,7 +138,7 @@ int32_t ft_stringbuf::move(ft_stringbuf &other) noexcept
     return (set_error(FT_ERR_SUCCESS));
 }
 
-ssize_t ft_stringbuf::read(char *buffer, ft_size_t count) noexcept
+int64_t ft_stringbuf::read(char *buffer, ft_size_t count) noexcept
 {
     ft_size_t index;
 
@@ -170,7 +170,7 @@ ssize_t ft_stringbuf::read(char *buffer, ft_size_t count) noexcept
     }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     (void)set_error(FT_ERR_SUCCESS);
-    return (static_cast<ssize_t>(index));
+    return (static_cast<int64_t>(index));
 }
 
 ft_bool ft_stringbuf::is_valid() const noexcept

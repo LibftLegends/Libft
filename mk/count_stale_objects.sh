@@ -6,6 +6,8 @@ count_object_path()
 {
     object_path="$1"
     dependency_path="${object_path%.o}.d"
+    object_directory=$(dirname "$object_path")
+    module_directory=$(dirname "$object_directory")
     object_is_stale=0
     if [ ! -f "$object_path" ] || [ ! -f "$dependency_path" ]; then
         object_is_stale=1
@@ -14,7 +16,12 @@ count_object_path()
         dependency_list=${dependency_list#*:}
         for dependency in $dependency_list; do
             dependency=${dependency%:}
-            if [ ! -f "$dependency" ] || [ "$dependency" -nt "$object_path" ]; then
+            dependency_path_resolved="$dependency"
+            if [ ! -f "$dependency_path_resolved" ]; then
+                dependency_path_resolved="$module_directory/$dependency"
+            fi
+            if [ ! -f "$dependency_path_resolved" ] \
+                || [ "$dependency_path_resolved" -nt "$object_path" ]; then
                 object_is_stale=1
                 break
             fi

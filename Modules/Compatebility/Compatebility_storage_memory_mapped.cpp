@@ -12,6 +12,7 @@
 # include <windows.h>
 #else
 # include <cerrno>
+# include <fcntl.h>
 # include <sys/mman.h>
 # include <unistd.h>
 #endif

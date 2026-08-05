@@ -96,7 +96,7 @@ struct cma_arena
 };
 
 extern Page *page_list;
-extern ft_size_t g_cma_page_generation;
+extern uint64_t g_cma_page_generation;
 extern Block *g_cma_free_bins[CMA_FREE_BIN_COUNT];
 
 Block    *split_block(Block *block, ft_size_t size);
@@ -105,6 +105,7 @@ Block    *find_free_block(ft_size_t size);
 Block    *merge_block(Block *block);
 Page    *find_page_of_block(Block *block);
 void    free_page_if_empty(Page *page);
+void    cma_invalidate_page_lookup_cache(void);
 void    cma_validate_block(Block *block, const char *context, void *user_pointer);
 Block    *cma_find_block_for_pointer(const void *memory_pointer);
 void    cma_free_list_insert(Block *block);
@@ -115,6 +116,10 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired);
 int32_t cma_unlock_allocator(ft_bool lock_acquired);
 int32_t cma_enable_thread_safety(void);
 int32_t cma_disable_thread_safety(void);
+int32_t cma_enable_thread_safety_timed(uint64_t timeout_ms);
+int32_t cma_disable_thread_safety_timed(uint64_t timeout_ms);
+int32_t cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms);
+int32_t cma_try_set_thread_safety(ft_bool enable);
 ft_bool cma_is_thread_safe_enabled(void);
 void cma_set_alloc_logging(ft_bool enable);
 ft_bool cma_get_alloc_logging(void);

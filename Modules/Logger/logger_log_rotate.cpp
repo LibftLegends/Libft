@@ -4,6 +4,7 @@
 #include "../Compatebility/compatebility_internal.hpp"
 #include <cerrno>
 #include <cstdio>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <inttypes.h>
 #include "../Basic/limits.hpp"

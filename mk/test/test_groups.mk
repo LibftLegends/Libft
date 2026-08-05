@@ -39,7 +39,21 @@ BASIC_TEST_FILES := \
 	Test/test_basic_toupper.cpp \
 	Test/test_basic_utf8.cpp \
 	Test/test_basic_validate_int.cpp \
-	Test/test_basic_wstrlen.cpp
+	Test/test_basic_wstrlen.cpp \
+	Test/test_basic_size_add_checked.cpp \
+	Test/test_basic_size_multiply_checked.cpp \
+	Test/test_basic_is_power_of_two.cpp \
+	Test/test_basic_align_up_checked.cpp \
+	Test/test_basic_isxdigit.cpp \
+	Test/test_basic_ispunct.cpp \
+	Test/test_basic_isgraph.cpp \
+	Test/test_basic_iscntrl.cpp \
+	Test/test_basic_isblank.cpp \
+	Test/test_basic_memswap.cpp \
+	Test/test_basic_memmem.cpp \
+	Test/test_basic_parse_uint32.cpp \
+	Test/test_basic_parse_int64.cpp \
+	Test/test_basic_utf8_validate.cpp
 
 TIME_TEST_FILES := \
 	Test/test_time_active_clock.cpp
@@ -96,7 +110,10 @@ STORAGE_TEST_FILES := \
 VOXEL_TEST_FILES := \
 	Test/test_voxel_block_metadata.cpp \
 	Test/test_voxel_generator.cpp \
-	Test/test_voxel_mesh.cpp
+	Test/test_voxel_mesh.cpp \
+	Test/test_terrain_script_register_api.cpp \
+	Test/test_terrain_script_execute.cpp \
+	Test/test_terrain_runtime_blocks.cpp
 
 CLI_TEST_FILES := \
 	Test/test_cli.cpp \

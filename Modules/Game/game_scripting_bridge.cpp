@@ -85,7 +85,8 @@ int32_t game_script_context::set_error(int32_t error_code) noexcept
 }
 
 game_script_context::game_script_context() noexcept
-    : _state(ft_nullptr), _world(), _variables(),
+    : _state(ft_nullptr), _user_data(ft_nullptr), _world(), _variables(),
+      _result_integer(0), _result_integer_set(FT_FALSE),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -128,6 +129,8 @@ int32_t game_script_context::initialize() noexcept
         return (world_error);
     }
     this->_state = ft_nullptr;
+    this->_user_data = ft_nullptr;
+    this->clear_result();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -161,6 +164,8 @@ int32_t game_script_context::initialize(game_state *state,
         return (world_error);
     }
     this->_state = state;
+    this->_user_data = ft_nullptr;
+    this->clear_result();
     this->_world = world;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
@@ -229,6 +234,9 @@ int32_t game_script_context::initialize(const game_script_context &other) noexce
         return (copy_error);
     }
     this->_state = other._state;
+    this->_user_data = other._user_data;
+    this->_result_integer = other._result_integer;
+    this->_result_integer_set = other._result_integer_set;
     this->_world = other._world;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(other.get_error());
@@ -267,6 +275,8 @@ int32_t game_script_context::destroy() noexcept
         return (FT_ERR_SUCCESS);
     }
     this->_state = ft_nullptr;
+    this->_user_data = ft_nullptr;
+    this->clear_result();
     world_destroy_error = this->_world.destroy();
     destroy_error = this->_variables.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -284,6 +294,13 @@ game_state *game_script_context::get_state() const noexcept
     return (this->_state);
 }
 
+void *game_script_context::get_user_data() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_script_context::get_user_data");
+    return (this->_user_data);
+}
+
 const ft_sharedptr<game_world> &game_script_context::get_world() const noexcept
 {
     return (this->_world);
@@ -293,6 +310,15 @@ void game_script_context::set_state(game_state *state) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_script_context::set_state");
     this->_state = state;
+    this->set_error(FT_ERR_SUCCESS);
+    return ;
+}
+
+void game_script_context::set_user_data(void *user_data) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_script_context::set_user_data");
+    this->_user_data = user_data;
     this->set_error(FT_ERR_SUCCESS);
     return ;
 }
@@ -379,6 +405,30 @@ void game_script_context::clear_variables() noexcept
     return ;
 }
 
+void game_script_context::clear_result() noexcept
+{
+    this->_result_integer = 0;
+    this->_result_integer_set = FT_FALSE;
+    return ;
+}
+
+void game_script_context::set_result_integer(int64_t value) noexcept
+{
+    this->_result_integer = value;
+    this->_result_integer_set = FT_TRUE;
+    return ;
+}
+
+ft_bool game_script_context::has_result_integer() const noexcept
+{
+    return (this->_result_integer_set);
+}
+
+int64_t game_script_context::get_result_integer() const noexcept
+{
+    return (this->_result_integer);
+}
+
 int32_t game_script_context::get_error() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
@@ -419,6 +469,10 @@ ft_bool game_script_bridge::is_supported_language(const ft_string &language) noe
 
 game_script_bridge::game_script_bridge() noexcept
     : _world(), _callbacks(), _language(), _max_operations(32),
+      _lua_instruction_limit(100000), _lua_instruction_count(0),
+      _lua_callback_error(FT_ERR_SUCCESS),
+      _lua_memory_limit(16U * 1024U * 1024U), _lua_memory_used(0U),
+      _lua_state(ft_nullptr), _lua_context(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       _mutex(ft_nullptr)
 {
@@ -455,6 +509,14 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         this->set_error(FT_ERR_INVALID_STATE);
         return (FT_ERR_INVALID_STATE);
     }
+    this->_max_operations = 32;
+    this->_lua_instruction_limit = 100000;
+    this->_lua_instruction_count = 0;
+    this->_lua_callback_error = FT_ERR_SUCCESS;
+    this->_lua_memory_limit = 16U * 1024U * 1024U;
+    this->_lua_memory_used = 0U;
+    this->_lua_state = ft_nullptr;
+    this->_lua_context = ft_nullptr;
     map_error = this->_callbacks.initialize();
     if (map_error != FT_ERR_SUCCESS)
     {
@@ -483,6 +545,15 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return (FT_ERR_INVALID_ARGUMENT);
     }
+    map_error = this->initialize_lua_runtime();
+    if (map_error != FT_ERR_SUCCESS)
+    {
+        (void)this->_world.destroy();
+        (void)this->_callbacks.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(map_error);
+        return (map_error);
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -508,6 +579,7 @@ int32_t game_script_bridge::destroy() noexcept
     current_error = this->disable_thread_safety();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
+    this->destroy_lua_runtime();
     current_error = this->_callbacks.destroy();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
@@ -516,6 +588,10 @@ int32_t game_script_bridge::destroy() noexcept
         first_error = current_error;
     this->_language.clear();
     this->_max_operations = 32;
+    this->_lua_instruction_limit = 100000;
+    this->_lua_instruction_count = 0;
+    this->_lua_callback_error = FT_ERR_SUCCESS;
+    this->_lua_memory_limit = 16U * 1024U * 1024U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     this->set_error(first_error);
     return (first_error);
@@ -697,6 +773,7 @@ int32_t game_script_bridge::register_function(const ft_string &name, const ft_fu
     {
         entry->value = callback;
         this->set_error(FT_ERR_SUCCESS);
+        this->unlock_internal(lock_acquired);
         return (FT_ERR_SUCCESS);
     }
     this->_callbacks.insert(name, callback);
@@ -719,6 +796,7 @@ int32_t game_script_bridge::remove_function(const ft_string &name) noexcept
     }
 
     this->_callbacks.remove(name);
+    this->remove_lua_callback(name);
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);
@@ -891,6 +969,12 @@ int32_t game_script_bridge::execute_line(game_script_context &context, const ft_
 
 int32_t game_script_bridge::execute(const ft_string &script, game_state &state) noexcept
 {
+    return (this->execute_with_user_data(script, &state, ft_nullptr));
+}
+
+int32_t game_script_bridge::execute_with_user_data(const ft_string &script,
+    game_state *state, void *user_data) noexcept
+{
     ft_bool lock_acquired;
     int32_t lock_error;
     game_script_context context;
@@ -907,13 +991,14 @@ int32_t game_script_bridge::execute(const ft_string &script, game_state &state) 
         this->set_error(lock_error);
         return (lock_error);
     }
-    context_init_error = context.initialize(&state, this->_world);
+    context_init_error = context.initialize(state, this->_world);
     if (context_init_error != FT_ERR_SUCCESS)
     {
         this->set_error(context_init_error);
         this->unlock_internal(lock_acquired);
         return (context_init_error);
     }
+    context.set_user_data(user_data);
     if (game_script_bridge::is_supported_language(this->_language) == FT_FALSE)
     {
         this->set_error(FT_ERR_CONFIGURATION);

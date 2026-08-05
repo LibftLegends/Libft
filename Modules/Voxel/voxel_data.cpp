@@ -9,6 +9,7 @@
 #include "../RNG/rng.hpp"
 #include "../Game/game_voxel_chunk.hpp"
 #include "voxel_internal.hpp"
+#include "voxel_block_registry.hpp"
 
 static int32_t terrain_apply_default_generation_config(
     terrain_generation_config &config) noexcept;
@@ -1542,6 +1543,11 @@ static uint32_t terrain_normalise_tree_variant(uint32_t variant_index,
 const terrain_block_metadata &terrain_get_block_metadata(uint32_t block_id)
     noexcept
 {
+    const terrain_block_metadata *runtime_metadata;
+
+    runtime_metadata = terrain_runtime_find_block_metadata(block_id);
+    if (runtime_metadata != ft_nullptr)
+        return (*runtime_metadata);
     if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
             / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
     {
@@ -1554,6 +1560,8 @@ const terrain_block_metadata &terrain_get_block_metadata(uint32_t block_id)
 
 ft_bool terrain_block_is_known(uint32_t block_id) noexcept
 {
+    if (terrain_runtime_block_is_known(block_id) == FT_TRUE)
+        return (FT_TRUE);
     if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
             / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
         return (FT_FALSE);
@@ -1757,7 +1765,8 @@ terrain_generation_config::terrain_generation_config() noexcept
       biome_selector(ft_nullptr),
       biome_selector_user_data(ft_nullptr), feature_count(0U), features(),
       ore_rule_count(0U), ores(), underground_structures(), fluids(), layers(),
-      enable_biome_transitions(FT_FALSE), enable_mountain_ridges(FT_FALSE),
+      enable_biome_transitions(FT_FALSE), biome_transition_noise_scale(0),
+      biome_transition_noise_strength(0U), enable_mountain_ridges(FT_FALSE),
       enable_erosion(FT_FALSE), mountain_ridge_scale(0),
       mountain_ridge_strength(0U), erosion_noise_scale(0), erosion_strength(0U),
       allow_cross_chunk_features(FT_FALSE), cross_chunk_block_writer(ft_nullptr),
@@ -1833,6 +1842,9 @@ int32_t terrain_generation_config::initialize(
     this->fluids.initialize(other.fluids);
     this->layers.initialize(other.layers);
     this->enable_biome_transitions = other.enable_biome_transitions;
+    this->biome_transition_noise_scale = other.biome_transition_noise_scale;
+    this->biome_transition_noise_strength =
+        other.biome_transition_noise_strength;
     this->enable_mountain_ridges = other.enable_mountain_ridges;
     this->enable_erosion = other.enable_erosion;
     this->mountain_ridge_scale = other.mountain_ridge_scale;
@@ -1939,6 +1951,8 @@ uint32_t terrain_generation_config::destroy() noexcept
     this->fluids.destroy();
     this->layers.destroy();
     this->enable_biome_transitions = FT_FALSE;
+    this->biome_transition_noise_scale = 0;
+    this->biome_transition_noise_strength = 0U;
     this->enable_mountain_ridges = FT_FALSE;
     this->enable_erosion = FT_FALSE;
     this->mountain_ridge_scale = 0;
@@ -2040,6 +2054,8 @@ static int32_t terrain_apply_default_generation_config(
     config.layers.set_block_palette(TERRAIN_GENERATOR_SAND_BLOCK,
         TERRAIN_GENERATOR_SAND_BLOCK, TERRAIN_GENERATOR_SNOW_BLOCK);
     config.enable_biome_transitions = FT_TRUE;
+    config.biome_transition_noise_scale = 8;
+    config.biome_transition_noise_strength = 35U;
     config.enable_mountain_ridges = FT_TRUE;
     config.enable_erosion = FT_TRUE;
     config.mountain_ridge_scale = 48;
@@ -2513,6 +2529,18 @@ int32_t terrain_generation_config::set_biome_transitions_enabled(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t terrain_generation_config::set_biome_transition_settings(
+    int32_t noise_scale, uint32_t noise_strength) noexcept
+{
+    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    if (noise_scale <= 0 || noise_strength > 100U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->biome_transition_noise_scale = noise_scale;
+    this->biome_transition_noise_strength = noise_strength;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t terrain_generation_config::set_mountain_ridges_enabled(
     ft_bool enabled) noexcept
 {
@@ -2662,6 +2690,10 @@ uint32_t terrain_generation_config_signature(
         index += 1U;
     }
     signature ^= static_cast<uint64_t>(config.enable_biome_transitions);
+    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+        config.biome_transition_noise_scale)) << 12;
+    signature ^= static_cast<uint64_t>(config.biome_transition_noise_strength)
+        << 20;
     signature ^= static_cast<uint64_t>(config.enable_mountain_ridges) << 1;
     signature ^= static_cast<uint64_t>(config.enable_erosion) << 2;
     signature ^= static_cast<uint64_t>(config.fluids.enable_rivers) << 3;
@@ -3055,6 +3087,8 @@ ft_bool terrain_generation_config_is_valid(
         || config.large_noise_scale <= 0 || config.detail_noise_scale <= 0
         || config.detail_noise_percent < 0 || config.detail_noise_percent > 100
         || config.water_chance_percent > 100
+        || config.biome_transition_noise_scale <= 0
+        || config.biome_transition_noise_strength > 100U
         || config.fluids.river_noise_scale <= 0
         || config.fluids.lake_noise_scale <= 0
         || config.fluids.river_width < 0

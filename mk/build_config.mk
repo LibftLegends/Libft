@@ -109,6 +109,7 @@ SUBDIRS := Modules/Basic \
            Modules/Sink \
            Modules/Logger \
            Modules/Parser \
+           Modules/Lua \
            Modules/Game \
            Modules/Voxel \
            Modules/GPGR
@@ -158,6 +159,7 @@ LIB_BASES := \
   Modules/Sink/Sink \
   Modules/Logger/Logger \
   Modules/Parser/parser \
+  Modules/Lua/Lua \
   Modules/Game/Game \
   Modules/Voxel/Voxel \
   Modules/GPGR/GPGR

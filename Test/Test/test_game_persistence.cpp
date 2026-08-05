@@ -12,6 +12,7 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/basic.hpp"
+#include <fcntl.h>
 #include <new>
 
 #include "../../Modules/Basic/class_nullptr.hpp"

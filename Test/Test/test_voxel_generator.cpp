@@ -582,6 +582,63 @@ static uint32_t test_custom_biome_selector(uint64_t, int32_t, int32_t,
     return (biome_count - 1U);
 }
 
+static uint32_t test_edge_biome_selector(uint64_t, int32_t world_block_x,
+    int32_t, uint32_t biome_count, void *) noexcept
+{
+    if (biome_count < 2U || world_block_x < TERRAIN_BIOME_ZONE_WIDTH)
+        return (0U);
+    return (1U);
+}
+
+FT_TEST(test_terrain_generation_blends_biome_edge_materials)
+{
+    game_voxel_chunk chunk;
+    terrain_generation_config config;
+    uint32_t block_id;
+    int32_t local_x;
+    int32_t first_biome_surface_count;
+    int32_t second_biome_surface_count;
+
+    terrain_default_generation_config(config);
+    config.set_biome_count(2U);
+    config.set_biome_selector(&test_edge_biome_selector, ft_nullptr);
+    config.set_noise_scales(1, 1, 0);
+    config.set_sea_level(0);
+    config.set_water_chance_percent(0U);
+    config.set_mountain_ridges_enabled(FT_FALSE);
+    config.set_erosion_enabled(FT_FALSE);
+    config.layers.set_enabled(FT_FALSE, FT_FALSE);
+    config.set_biome_height_profile(0U, 40, 0, 2);
+    config.set_biome_height_profile(1U, 40, 0, 2);
+    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_GRASS_BLOCK,
+        TERRAIN_GENERATOR_DIRT_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(1U, TERRAIN_GENERATOR_SAND_BLOCK,
+        TERRAIN_GENERATOR_CANYON_ROCK_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 0U, 0U);
+    config.set_biome_decoration_policy(1U, FT_FALSE, FT_FALSE, 0U, 0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_transition_settings(8, 35U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 112, 0,
+        "biome-edge-materials", config));
+    first_biome_surface_count = 0;
+    second_biome_surface_count = 0;
+    local_x = 0;
+    while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(local_x, 40, 0,
+            &block_id));
+        if (block_id == TERRAIN_GENERATOR_GRASS_BLOCK)
+            first_biome_surface_count += 1;
+        if (block_id == TERRAIN_GENERATOR_SAND_BLOCK)
+            second_biome_surface_count += 1;
+        local_x += 1;
+    }
+    FT_ASSERT_NEQ(0, first_biome_surface_count);
+    FT_ASSERT_NEQ(0, second_biome_surface_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
 FT_TEST(test_terrain_generation_config_controls_custom_flat_biome_and_water)
 {
     game_voxel_chunk chunk;

@@ -49,6 +49,13 @@ SRCS := basic_atoi.cpp \
     basic_utf8_decode.cpp \
     basic_utf8_encode.cpp \
     basic_utf8_length.cpp \
-    basic_constant_time_compare.cpp
+    basic_constant_time_compare.cpp \
+    basic_checked_arithmetic.cpp \
+    basic_alignment.cpp \
+    basic_ascii_classification.cpp \
+    basic_memswap.cpp \
+    basic_memmem.cpp \
+    basic_parse_fixed.cpp \
+    basic_utf8_validate.cpp
 
 include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

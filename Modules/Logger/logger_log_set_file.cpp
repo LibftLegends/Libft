@@ -1,5 +1,6 @@
 #include "logger_internal.hpp"
 #include <cerrno>
+#include <fcntl.h>
 #include <new>
 #include "../Compatebility/compatebility_internal.hpp"
 #include "../Basic/basic.hpp"

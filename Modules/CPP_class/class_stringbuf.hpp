@@ -34,7 +34,7 @@ class ft_stringbuf
         int32_t initialize(const ft_string &string) noexcept;
         int32_t destroy() noexcept;
         int32_t move(ft_stringbuf &other) noexcept;
-        ssize_t read(char *buffer, ft_size_t count) noexcept;
+        int64_t read(char *buffer, ft_size_t count) noexcept;
         ft_bool is_valid() const noexcept;
         int32_t get_string(ft_string &value) const noexcept;
         int32_t enable_thread_safety(void) noexcept;

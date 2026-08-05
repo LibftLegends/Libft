@@ -1,1 +1,2 @@
 *.sh text eol=lf
+Modules/Lua/vendor/** text eol=lf whitespace=-blank-at-eof

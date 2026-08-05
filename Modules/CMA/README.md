@@ -35,9 +35,12 @@ The `CMA` module is the project allocator layer. It wraps allocation, reallocati
 
 - `cma_set_alloc_limit(ft_size_t limit)` - Sets a process-wide allocation limit for allocation-failure testing and accounting.
 - `cma_set_alloc_logging(ft_bool enable)` / `cma_get_alloc_logging()` - Toggles and queries allocator event mirroring into `Sink`.
-- `cma_set_thread_safety(ft_bool enable)` - Enables allocator synchronization, or enters an explicitly caller-synchronized single-thread mode when disabled. Mode transitions block until active allocator operations drain; transitions requested while the calling thread owns an allocator operation return `FT_ERR_THREAD_BUSY`. Disabling destroys the synchronization mutex, and enabling creates it again as needed. Metadata validation and protection remain enabled in both modes.
+- `cma_set_thread_safety(ft_bool enable)` - Enables allocator synchronization, or enters an explicitly caller-synchronized single-thread mode when disabled. Mode transitions wait for active allocator operations to drain, but return `FT_ERR_TIMEOUT` after the default transition deadline. Transitions requested while the calling thread owns an allocator operation return `FT_ERR_THREAD_BUSY`. Disabling destroys the synchronization mutex, and enabling creates it again as needed. Metadata validation and protection remain enabled in both modes.
 - `cma_enable_thread_safety()` - Enables allocator synchronization.
 - `cma_disable_thread_safety()` - Disables allocator synchronization.
+- `cma_enable_thread_safety_timed(uint64_t timeout_ms)` / `cma_disable_thread_safety_timed(uint64_t timeout_ms)` - Wait for allocator operations to drain for at most the supplied duration.
+- `cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms)` - Timed enable/disable wrapper.
+- `cma_try_set_thread_safety(ft_bool enable)` - Non-blocking transition attempt; returns `FT_ERR_TIMEOUT` if active operations have not drained.
 - `cma_is_thread_safe_enabled()` - Reports whether allocator synchronization is enabled.
 - `cma_get_stats(ft_size_t *allocation_count, ft_size_t *free_count)` - Returns allocation and free counters.
 - `cma_get_extended_stats(ft_size_t *allocation_count, ft_size_t *free_count, ft_size_t *current_bytes, ft_size_t *peak_bytes)` - Returns counters plus current and peak tracked bytes.

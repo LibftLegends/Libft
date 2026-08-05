@@ -29,6 +29,7 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `terrain_biome` - Biome selector enum for plains, hills, desert, snow, and mountains.
 - `terrain_biome_profile` - Surface height, variation, and topsoil depth profile for a biome.
 - `terrain_block_metadata` - Registry entry that describes whether a block is solid, transparent, liquid, replaceable, light-emitting, whether it occludes mesh faces, and how hard it is.
+- `terrain_block_registration` - Runtime block definition containing metadata and one asset path per block face.
 - `terrain_tree_template_block` - Relative block entry used by tree templates.
 - `terrain_tree_template` - Block list wrapper for reusable tree presets.
 - `terrain_generation_config` - Lifecycle-managed runtime generation policy
@@ -61,6 +62,10 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   generation cache validation.
 - `terrain_get_block_metadata(block_id)` - Looks up the metadata entry for a known block id.
 - `terrain_block_is_known(block_id)` - Returns whether a block id exists in the registry and should be accepted by chunk storage.
+- `terrain_register_block(registration, block_id_out)` - Loads six face assets from the supplied paths and registers a process-lifetime runtime block. Runtime ids are allocated after the built-in ids; duplicate names are rejected.
+- `terrain_get_block_name(block_id)` - Returns the registered runtime block name.
+- `terrain_get_block_asset_path(block_id, face)` - Returns the source path for one runtime block face.
+- `terrain_get_block_asset_data(block_id, face, size_out)` - Returns the loaded bytes for one runtime block face. The Voxel module stores the bytes; a renderer or asset pipeline can decode them as appropriate.
 - `terrain_block_is_solid(block_id)` - Returns whether a block is treated as a solid collision block.
 - `terrain_block_is_transparent(block_id)` - Returns whether a block should be treated as visually transparent.
 - `terrain_block_is_liquid(block_id)` - Returns whether a block behaves like a liquid.
@@ -151,6 +156,7 @@ arguments use `FT_TRUE` / `FT_FALSE`.
 | `set_biome_count(value)` | Number of active biome slots. | `5`; `1`-`TERRAIN_MAX_CUSTOM_BIOMES` (`16`). |
 | `set_biome_selector(selector, user_data)` | Optional callback that chooses the biome for a world position. | Built-in selector when callback is null. |
 | `set_biome_transitions_enabled(value)` | Smooths height changes between biome zones. | Enabled. |
+| `set_biome_transition_settings(scale, strength)` | Controls deterministic noisy surface/subsurface blending at biome edges. | `8`, `35%`; scale must be positive and strength `0`-`100`. |
 | `set_mountain_ridges_enabled(value)` | Enables the global mountain-ridge pass. | Enabled. |
 | `set_mountain_ridge_settings(scale, strength)` | Ridge frequency and height influence. | `48`, `8`; scale must be positive. |
 | `set_erosion_enabled(value)` | Enables erosion noise in terrain height. | Enabled. |
@@ -243,6 +249,33 @@ config.underground_structures.set_cavern_rooms(FT_TRUE, 6U, 8U);
 config.fluids.set_enabled(FT_FALSE, FT_TRUE);
 terrain_generate_chunk(chunk, 0, 0, "world-seed", config);
 config.destroy();
+```
+
+### Terrain scripting bridge
+
+`terrain_scripting_bridge.hpp` exposes terrain generation through the Game
+script callback bridge without creating a reverse `Game` dependency on
+`Voxel`.
+
+- `terrain_script_register_api(bridge)` registers the terrain callback set and
+  is safe to call again when refreshing or hot-reloading bindings.
+- `terrain_script_execute(...)` executes real Lua source with a chunk,
+  generation config, world-block origin, and seed attached to its script
+  context.
+
+The registered callback names are `terrain_set_sea_level`,
+`terrain_set_noise_scales`, `terrain_set_biome_height`,
+`terrain_set_biome_blocks`, `terrain_set_biome_transitions`,
+`terrain_generate_chunk`, and `terrain_write_generated_block`. Generated block
+writes use `write_generated_block(...)`, so scripted generation does not mark a
+chunk as protected by a player edit.
+
+```lua
+terrain_set_sea_level(64)
+terrain_set_biome_height(0, 68, 12, 3)
+terrain_set_biome_transitions(true, 24, 60)
+terrain_generate_chunk()
+terrain_write_generated_block(8, 80, 8, 13)
 ```
 
 ## Voxel Behavior

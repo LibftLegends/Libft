@@ -51,6 +51,7 @@ SRCS := game_map3d.cpp \
         game_hooks.cpp \
         game_state.cpp \
         game_behavior_tree.cpp \
+        game_lua_runtime.cpp \
         game_scripting_bridge.cpp
 
 HEADERS := game_map3d.hpp \
