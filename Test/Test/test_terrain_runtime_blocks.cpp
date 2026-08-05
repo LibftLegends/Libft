@@ -33,7 +33,7 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(
-        "Lua/terrain_register_block.lua", script));
+        "Test/Lua/terrain_register_block.lua", script));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script,
         chunk, 0, 0, "test", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, global_name.initialize(
@@ -50,7 +50,7 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(0, std::strcmp(terrain_get_block_name(block_id),
         "script_block"));
     FT_ASSERT_EQ(0, std::strcmp(terrain_get_block_asset_path(block_id,
-        TERRAIN_BLOCK_ASSET_FACE_TOP), "Lua/export_values.lua"));
+        TERRAIN_BLOCK_ASSET_FACE_TOP), "Test/Lua/export_values.lua"));
     asset_data = terrain_get_block_asset_data(block_id,
         TERRAIN_BLOCK_ASSET_FACE_TOP, &asset_size);
     FT_ASSERT(asset_data != ft_nullptr);
@@ -75,17 +75,17 @@ FT_TEST(test_terrain_runtime_block_registration_rejects_missing_asset)
     registration.metadata.hardness = 1U;
     registration.metadata.breakable = FT_TRUE;
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_TOP] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_BOTTOM] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_NORTH] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_SOUTH] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_EAST] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_WEST] =
-        "Lua/does_not_exist.asset";
+        "Test/Lua/does_not_exist.asset";
     block_id = 0U;
     error_code = terrain_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, error_code);
