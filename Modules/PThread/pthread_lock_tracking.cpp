@@ -694,11 +694,6 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
     pt_lock_tracking_arm_thread_exit_cleanup();
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
-#ifdef LIBFT_TEST_BUILD
-    result_code = pt_lock_tracking_notify_acquired_override_error_code.load();
-    if (result_code != FT_ERR_SUCCESS)
-        return (result_code);
-#endif
     if (!g_registry_mutex_owned)
     {
         lock_error = pt_lock_tracking::lock_registry_mutex();
@@ -716,6 +711,11 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
             result_code = error_code;
         goto cleanup_acquired;
     }
+#ifdef LIBFT_TEST_BUILD
+    result_code = pt_lock_tracking_notify_acquired_override_error_code.load();
+    if (result_code != FT_ERR_SUCCESS)
+        goto cleanup_acquired;
+#endif
     if (!pt_lock_tracking::vector_contains_mutex(info->owned_mutexes, mutex_pointer))
     {
         int push_error = pt_buffer_push(info->owned_mutexes, mutex_pointer);

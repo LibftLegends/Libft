@@ -1355,6 +1355,7 @@ FT_TEST(test_pt_recursive_mutex_lock_notify_acquired_failure_clears_wait_state)
     s_pt_lock_tracking_thread_state thread_state;
     int holder_thread_created;
     int contender_thread_created;
+    int contender_thread_joined;
     int mutex_initialized;
     int test_failed;
     const char *failure_expression;
@@ -1374,6 +1375,7 @@ FT_TEST(test_pt_recursive_mutex_lock_notify_acquired_failure_clears_wait_state)
     pt_buffer_init(thread_state.owned_mutexes);
     holder_thread_created = 0;
     contender_thread_created = 0;
+    contender_thread_joined = 0;
     mutex_initialized = 0;
     test_failed = 0;
     failure_expression = ft_nullptr;
@@ -1398,6 +1400,8 @@ FT_TEST(test_pt_recursive_mutex_lock_notify_acquired_failure_clears_wait_state)
     RECORD_ASSERT(wait_for_stage(&holder_state.stage, 4));
     RECORD_ASSERT(holder_state.unlock_result.load() == FT_ERR_SUCCESS);
     RECORD_ASSERT(wait_for_stage(&contender_state.stage, 2));
+    RECORD_ASSERT(pt_thread_join(contender_thread, ft_nullptr) == 0);
+    contender_thread_joined = 1;
     pt_lock_tracking_notify_acquired_override_error_code.store(FT_ERR_SUCCESS);
     RECORD_ASSERT(contender_state.lock_result.load() == FT_ERR_NO_MEMORY);
     RECORD_ASSERT(pt_lock_tracking::get_thread_state(
@@ -1411,7 +1415,7 @@ cleanup:
     pt_lock_tracking_notify_acquired_override_error_code.store(FT_ERR_SUCCESS);
     if (holder_thread_created == 1 && holder_state.stage.load() < 3)
         holder_state.stage.store(3);
-    if (contender_thread_created == 1)
+    if (contender_thread_created == 1 && contender_thread_joined == 0)
         (void)pt_thread_join(contender_thread, ft_nullptr);
     if (holder_thread_created == 1)
         (void)pt_thread_join(holder_thread, ft_nullptr);
