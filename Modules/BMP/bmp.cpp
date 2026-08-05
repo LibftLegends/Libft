@@ -2,6 +2,7 @@
 
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno_internal.hpp"
+#include "../PThread/pthread_internal.hpp"
 #include "../System_utils/system_utils.hpp"
 #include <cstdio>
 #include <new>
@@ -154,7 +155,7 @@ void ft_bmp_image::reset_fields(void) noexcept
 
 ft_bmp_image::ft_bmp_image() noexcept
     : _pixels(ft_nullptr), _width(0U), _height(0U), _pixel_size(0U),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+      _initialised_state(FT_CLASS_STATE_UNINITIALISED), _mutex(ft_nullptr)
 {
     this->set_error(FT_ERR_SUCCESS);
     return ;
@@ -168,11 +169,17 @@ ft_bmp_image::~ft_bmp_image() noexcept
 
 int32_t ft_bmp_image::initialize() noexcept
 {
+    int32_t lock_error;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state,
             "ft_bmp_image::initialize", "already initialised");
+    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
     this->reset_fields();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
@@ -242,10 +249,14 @@ int32_t ft_bmp_image::initialize(const uint8_t *file_data,
     ft_size_t height;
     ft_size_t pixel_size;
     int32_t error_code;
+    int32_t lock_error;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state,
             "ft_bmp_image::initialize(data)", "already initialised");
+    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
     pixels = ft_nullptr;
     error_code = bmp_decode(file_data, file_size, &pixels, &width, &height,
         &pixel_size, maximum_file_size);
@@ -253,6 +264,7 @@ int32_t ft_bmp_image::initialize(const uint8_t *file_data,
     if (error_code != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (this->set_error(error_code));
     }
     this->_pixels = pixels;
@@ -260,19 +272,72 @@ int32_t ft_bmp_image::initialize(const uint8_t *file_data,
     this->_height = height;
     this->_pixel_size = pixel_size;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t ft_bmp_image::destroy() noexcept
 {
+    int32_t disable_error;
+
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
+    disable_error = this->disable_thread_safety();
     if (this->_pixels != ft_nullptr)
         delete[] this->_pixels;
     this->reset_fields();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (disable_error != FT_ERR_SUCCESS)
+        return (this->set_error(disable_error));
     return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t ft_bmp_image::enable_thread_safety() noexcept
+{
+    pt_recursive_mutex *mutex_pointer;
+    int32_t initialization_error;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_bmp_image::enable_thread_safety");
+    if (this->_mutex != ft_nullptr)
+        return (this->set_error(FT_ERR_SUCCESS));
+    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    initialization_error = mutex_pointer->initialize();
+    if (initialization_error != FT_ERR_SUCCESS)
+    {
+        delete mutex_pointer;
+        return (this->set_error(initialization_error));
+    }
+    this->_mutex = mutex_pointer;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t ft_bmp_image::disable_thread_safety() noexcept
+{
+    int32_t destroy_error;
+    pt_recursive_mutex *mutex_pointer;
+
+    mutex_pointer = this->_mutex;
+    this->_mutex = ft_nullptr;
+    if (mutex_pointer == ft_nullptr)
+        return (this->set_error(FT_ERR_SUCCESS));
+    destroy_error = mutex_pointer->destroy();
+    delete mutex_pointer;
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (this->set_error(destroy_error));
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+ft_bool ft_bmp_image::is_thread_safe() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_bmp_image::is_thread_safe");
+    if (this->_mutex != ft_nullptr)
+        return (FT_TRUE);
+    return (FT_FALSE);
 }
 
 int32_t ft_bmp_image::move(ft_bmp_image &other) noexcept
@@ -297,29 +362,41 @@ int32_t ft_bmp_image::move(ft_bmp_image &other) noexcept
 
 const uint8_t *ft_bmp_image::data() const noexcept
 {
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (ft_nullptr);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_bmp_image::data");
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->_pixels);
 }
 
 ft_size_t ft_bmp_image::width() const noexcept
 {
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_bmp_image::width");
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->_width);
 }
 
 ft_size_t ft_bmp_image::height() const noexcept
 {
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_bmp_image::height");
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->_height);
 }
 
 ft_size_t ft_bmp_image::pixel_size() const noexcept
 {
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_bmp_image::pixel_size");
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (this->_pixel_size);
 }
 

@@ -18,3 +18,5 @@ when running lifecycle operations concurrently with accessors.
 - `width()` / `height()` - Access decoded dimensions.
 - `destroy()` - Release decoded pixels.
 - `move(other)` - Explicitly transfer decoded pixels from another initialized image.
+- `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` -
+  Manage optional recursive-mutex protection for shared lifecycle/accessor use.

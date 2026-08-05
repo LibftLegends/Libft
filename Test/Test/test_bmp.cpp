@@ -89,3 +89,17 @@ FT_TEST(test_bmp_rejects_dimension_overflow)
         image.initialize(encoded_data, 62U));
     return (1);
 }
+
+FT_TEST(test_bmp_thread_safety_controls)
+{
+    ft_bmp_image image;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize());
+    FT_ASSERT_EQ(FT_FALSE, image.is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.enable_thread_safety());
+    FT_ASSERT_EQ(FT_TRUE, image.is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.disable_thread_safety());
+    FT_ASSERT_EQ(FT_FALSE, image.is_thread_safe());
+    return (1);
+}

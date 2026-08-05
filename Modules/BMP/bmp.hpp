@@ -2,6 +2,7 @@
 # define BMP_HPP
 
 #include "../Errno/errno.hpp"
+#include "../PThread/recursive_mutex.hpp"
 
 #define FT_BMP_HARD_MAX_FILE_SIZE (10U * 1024U * 1024U)
 #define FT_BMP_DEFAULT_MAX_FILE_SIZE FT_BMP_HARD_MAX_FILE_SIZE
@@ -18,6 +19,7 @@ class ft_bmp_image
         ft_size_t _height;
         ft_size_t _pixel_size;
         uint8_t _initialised_state;
+        pt_recursive_mutex *_mutex;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
@@ -40,6 +42,9 @@ class ft_bmp_image
             ft_size_t maximum_file_size = FT_BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
         int32_t destroy() noexcept;
         int32_t move(ft_bmp_image &other) noexcept;
+        int32_t enable_thread_safety() noexcept;
+        int32_t disable_thread_safety() noexcept;
+        ft_bool is_thread_safe() const noexcept;
 
         const uint8_t *data() const noexcept;
         ft_size_t width() const noexcept;
