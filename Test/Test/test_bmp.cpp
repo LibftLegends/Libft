@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/BMP/bmp.hpp"
 #include "../../Modules/Errno/errno.hpp"
+#include "../../Modules/File/file_utils.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 static void bmp_write_u16(uint8_t *data, uint16_t value)
@@ -38,6 +39,64 @@ static void bmp_make_2x1(uint8_t data[62])
     data[57] = 60U;
     data[58] = 50U;
     data[59] = 40U;
+    return ;
+}
+
+static void bmp_make_1x2_32_bit_top_down(uint8_t data[62])
+{
+    ft_memset(data, 0, 62U);
+    data[0] = 'B';
+    data[1] = 'M';
+    bmp_write_u32(data + 2U, 62U);
+    bmp_write_u32(data + 10U, 54U);
+    bmp_write_u32(data + 14U, 40U);
+    bmp_write_u32(data + 18U, 1U);
+    bmp_write_u32(data + 22U, 0xFFFFFFFEU);
+    bmp_write_u16(data + 26U, 1U);
+    bmp_write_u16(data + 28U, 32U);
+    bmp_write_u32(data + 34U, 8U);
+    data[54] = 30U;
+    data[55] = 20U;
+    data[56] = 10U;
+    data[57] = 40U;
+    data[58] = 70U;
+    data[59] = 60U;
+    data[60] = 50U;
+    data[61] = 80U;
+    return ;
+}
+
+static void bmp_make_3x2_24_bit(uint8_t data[78])
+{
+    ft_memset(data, 0, 78U);
+    data[0] = 'B';
+    data[1] = 'M';
+    bmp_write_u32(data + 2U, 78U);
+    bmp_write_u32(data + 10U, 54U);
+    bmp_write_u32(data + 14U, 40U);
+    bmp_write_u32(data + 18U, 3U);
+    bmp_write_u32(data + 22U, 2U);
+    bmp_write_u16(data + 26U, 1U);
+    bmp_write_u16(data + 28U, 24U);
+    bmp_write_u32(data + 34U, 24U);
+    data[54] = 3U;
+    data[55] = 2U;
+    data[56] = 1U;
+    data[57] = 6U;
+    data[58] = 5U;
+    data[59] = 4U;
+    data[60] = 9U;
+    data[61] = 8U;
+    data[62] = 7U;
+    data[66] = 30U;
+    data[67] = 20U;
+    data[68] = 10U;
+    data[69] = 60U;
+    data[70] = 50U;
+    data[71] = 40U;
+    data[72] = 90U;
+    data[73] = 80U;
+    data[74] = 70U;
     return ;
 }
 
@@ -87,6 +146,104 @@ FT_TEST(test_bmp_rejects_dimension_overflow)
     bmp_write_u32(encoded_data + 18U, 0x7FFFFFFFU);
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
         image.initialize(encoded_data, 62U));
+    return (1);
+}
+
+FT_TEST(test_bmp_loads_32_bit_top_down_pixels_and_alpha)
+{
+    uint8_t encoded_data[62];
+    bmp_image image;
+
+    bmp_make_1x2_32_bit_top_down(encoded_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize(encoded_data, 62U));
+    FT_ASSERT_EQ(1U, image.width());
+    FT_ASSERT_EQ(2U, image.height());
+    FT_ASSERT_EQ(8U, image.pixel_size());
+    FT_ASSERT_EQ(10U, image.data()[0]);
+    FT_ASSERT_EQ(20U, image.data()[1]);
+    FT_ASSERT_EQ(30U, image.data()[2]);
+    FT_ASSERT_EQ(40U, image.data()[3]);
+    FT_ASSERT_EQ(50U, image.data()[4]);
+    FT_ASSERT_EQ(60U, image.data()[5]);
+    FT_ASSERT_EQ(70U, image.data()[6]);
+    FT_ASSERT_EQ(80U, image.data()[7]);
+    return (1);
+}
+
+FT_TEST(test_bmp_rejects_unsupported_format_fields)
+{
+    uint8_t encoded_data[62];
+    bmp_image image;
+
+    bmp_make_2x1(encoded_data);
+    bmp_write_u16(encoded_data + 28U, 8U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize(encoded_data, 62U));
+    bmp_make_2x1(encoded_data);
+    bmp_write_u32(encoded_data + 30U, 1U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize(encoded_data, 62U));
+    bmp_make_2x1(encoded_data);
+    bmp_write_u32(encoded_data + 10U, 61U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize(encoded_data, 62U));
+    return (1);
+}
+
+FT_TEST(test_bmp_loads_larger_padded_rows)
+{
+    uint8_t encoded_data[78];
+    bmp_image image;
+
+    bmp_make_3x2_24_bit(encoded_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize(encoded_data, 78U));
+    FT_ASSERT_EQ(3U, image.width());
+    FT_ASSERT_EQ(2U, image.height());
+    FT_ASSERT_EQ(10U, image.data()[0]);
+    FT_ASSERT_EQ(20U, image.data()[1]);
+    FT_ASSERT_EQ(30U, image.data()[2]);
+    FT_ASSERT_EQ(40U, image.data()[4]);
+    FT_ASSERT_EQ(70U, image.data()[8]);
+    FT_ASSERT_EQ(1U, image.data()[12]);
+    FT_ASSERT_EQ(4U, image.data()[16]);
+    FT_ASSERT_EQ(7U, image.data()[20]);
+    return (1);
+}
+
+FT_TEST(test_bmp_loads_sample_through_file_api)
+{
+    uint8_t encoded_data[62];
+    const char *file_path;
+    bmp_image image;
+
+    file_path = "Test/tmp_bmp_sample.bmp";
+    bmp_make_2x1(encoded_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        file_write_all(file_path, reinterpret_cast<const char *>(encoded_data),
+            62U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize(file_path, 62U));
+    FT_ASSERT_EQ(2U, image.width());
+    FT_ASSERT_EQ(1U, image.height());
+    FT_ASSERT_EQ(10U, image.data()[0]);
+    FT_ASSERT_EQ(60U, image.data()[6]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    return (1);
+}
+
+FT_TEST(test_bmp_move_transfers_decoded_pixels)
+{
+    uint8_t encoded_data[62];
+    bmp_image source_image;
+    bmp_image destination_image;
+
+    bmp_make_2x1(encoded_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_image.initialize(encoded_data, 62U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_image.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_image.move(source_image));
+    FT_ASSERT_EQ(FT_FALSE, source_image.is_initialised());
+    FT_ASSERT_EQ(2U, destination_image.width());
+    FT_ASSERT_EQ(8U, destination_image.pixel_size());
+    FT_ASSERT_EQ(10U, destination_image.data()[0]);
     return (1);
 }
 

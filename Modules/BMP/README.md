@@ -20,3 +20,6 @@ when running lifecycle operations concurrently with accessors.
 - `move(other)` - Explicitly transfer decoded pixels from another initialized image.
 - `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` -
   Manage optional recursive-mutex protection for shared lifecycle/accessor use.
+
+The test suite includes embedded 2x1 24-bit bottom-up and 1x2 32-bit top-down
+sample BMP images for decoder and orientation coverage.
