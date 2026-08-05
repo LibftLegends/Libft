@@ -8,14 +8,22 @@ row, dimension, and allocation bounds. Each load accepts a caller-selected
 maximum file size. The hard maximum is `BMP_HARD_MAX_FILE_SIZE` (10 MiB),
 and larger requested limits are rejected.
 
+RGB and RGBA byte arrays can be imported with `initialize_rgb(...)`. The
+image keeps pixels in RGBA order, and `get_pixel(...)` / `set_pixel(...)`
+provide coordinate-based color access. `save(...)` writes a 32-bit
+uncompressed BMP with the current RGBA pixels.
+
 The image object is intended for single-threaded lifecycle use. Callers must
 provide external synchronization when sharing an instance across threads or
 when running lifecycle operations concurrently with accessors.
 
 - `initialize(file_path, maximum_file_size)` - Load a BMP file.
 - `initialize(file_data, file_size, maximum_file_size)` - Decode an in-memory BMP.
+- `initialize_rgb(rgb_data, width, height, has_alpha)` - Import packed RGB or RGBA bytes.
 - `data()` / `pixel_size()` - Access decoded RGBA bytes.
 - `width()` / `height()` - Access decoded dimensions.
+- `get_pixel(x, y, red, green, blue, alpha)` / `set_pixel(...)` - Read or update one RGBA pixel.
+- `save(file_path)` - Encode the image as a 32-bit uncompressed BMP file.
 - `destroy()` - Release decoded pixels.
 - `move(other)` - Explicitly transfer decoded pixels from another initialized image.
 - `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` -

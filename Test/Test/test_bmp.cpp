@@ -230,6 +230,166 @@ FT_TEST(test_bmp_loads_sample_through_file_api)
     return (1);
 }
 
+FT_TEST(test_bmp_initializes_from_rgb_values)
+{
+    const uint8_t rgb_data[6] = {10U, 20U, 30U, 40U, 50U, 60U};
+    bmp_image image;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.initialize_rgb(rgb_data, 2U, 1U, FT_FALSE));
+    FT_ASSERT_EQ(2U, image.width());
+    FT_ASSERT_EQ(1U, image.height());
+    FT_ASSERT_EQ(8U, image.pixel_size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.get_pixel(0U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(10U, red);
+    FT_ASSERT_EQ(20U, green);
+    FT_ASSERT_EQ(30U, blue);
+    FT_ASSERT_EQ(255U, alpha);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.get_pixel(1U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(40U, red);
+    FT_ASSERT_EQ(50U, green);
+    FT_ASSERT_EQ(60U, blue);
+    FT_ASSERT_EQ(255U, alpha);
+    return (1);
+}
+
+FT_TEST(test_bmp_initializes_from_rgba_values_and_edits_pixels)
+{
+    const uint8_t rgba_data[8] = {10U, 20U, 30U, 40U,
+        50U, 60U, 70U, 80U};
+    bmp_image image;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.initialize_rgb(rgba_data, 2U, 1U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.set_pixel(1U, 0U, 100U, 110U, 120U, 130U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.get_pixel(1U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(100U, red);
+    FT_ASSERT_EQ(110U, green);
+    FT_ASSERT_EQ(120U, blue);
+    FT_ASSERT_EQ(130U, alpha);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.get_pixel(0U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(10U, red);
+    FT_ASSERT_EQ(20U, green);
+    FT_ASSERT_EQ(30U, blue);
+    FT_ASSERT_EQ(40U, alpha);
+    return (1);
+}
+
+FT_TEST(test_bmp_rejects_rgb_input_errors)
+{
+    const uint8_t rgb_data[3] = {10U, 20U, 30U};
+    bmp_image image;
+
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize_rgb(ft_nullptr, 1U, 1U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize_rgb(rgb_data, 0U, 1U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize_rgb(rgb_data, 1U, 0U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        image.initialize_rgb(rgb_data, 1U, 1U, static_cast<ft_bool>(2U)));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        image.initialize_rgb(rgb_data, BMP_HARD_MAX_FILE_SIZE, 1U,
+            FT_FALSE));
+    return (1);
+}
+
+FT_TEST(test_bmp_rejects_invalid_pixel_coordinates_and_outputs)
+{
+    const uint8_t rgb_data[3] = {10U, 20U, 30U};
+    bmp_image image;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.initialize_rgb(rgb_data, 1U, 1U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_POINTER,
+        image.get_pixel(0U, 0U, ft_nullptr, &green, &blue, &alpha));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        image.get_pixel(1U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        image.get_pixel(0U, 1U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        image.set_pixel(1U, 0U, 1U, 2U, 3U, 4U));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        image.set_pixel(0U, 1U, 1U, 2U, 3U, 4U));
+    return (1);
+}
+
+FT_TEST(test_bmp_saves_rgb_values_and_round_trips)
+{
+    const uint8_t rgba_data[16] = {10U, 20U, 30U, 40U, 50U, 60U,
+        70U, 80U, 90U, 100U, 110U, 120U, 130U, 140U, 150U, 160U};
+    const char *file_path;
+    bmp_image source_image;
+    bmp_image loaded_image;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+
+    file_path = "Test/tmp_bmp_rgb_round_trip.bmp";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        source_image.initialize_rgb(rgba_data, 2U, 2U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_image.save(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, loaded_image.initialize(file_path));
+    FT_ASSERT_EQ(2U, loaded_image.width());
+    FT_ASSERT_EQ(2U, loaded_image.height());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        loaded_image.get_pixel(0U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(10U, red);
+    FT_ASSERT_EQ(20U, green);
+    FT_ASSERT_EQ(30U, blue);
+    FT_ASSERT_EQ(40U, alpha);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        loaded_image.get_pixel(0U, 1U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(90U, red);
+    FT_ASSERT_EQ(100U, green);
+    FT_ASSERT_EQ(110U, blue);
+    FT_ASSERT_EQ(120U, alpha);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    return (1);
+}
+
+FT_TEST(test_bmp_rgb_operations_with_thread_safety)
+{
+    const uint8_t rgb_data[3] = {10U, 20U, 30U};
+    bmp_image image;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t alpha;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.initialize_rgb(rgb_data, 1U, 1U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.set_pixel(0U, 0U, 40U, 50U, 60U, 70U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.get_pixel(0U, 0U, &red, &green, &blue, &alpha));
+    FT_ASSERT_EQ(40U, red);
+    FT_ASSERT_EQ(50U, green);
+    FT_ASSERT_EQ(60U, blue);
+    FT_ASSERT_EQ(70U, alpha);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.disable_thread_safety());
+    return (1);
+}
+
 FT_TEST(test_bmp_move_transfers_decoded_pixels)
 {
     uint8_t encoded_data[62];

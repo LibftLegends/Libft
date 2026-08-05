@@ -40,8 +40,12 @@ class bmp_image
         int32_t initialize(const uint8_t *file_data,
             ft_size_t file_size,
             ft_size_t maximum_file_size = BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
+        int32_t initialize_rgb(const uint8_t *rgb_data,
+            ft_size_t width, ft_size_t height,
+            ft_bool has_alpha = FT_FALSE) noexcept;
         int32_t destroy() noexcept;
         int32_t move(bmp_image &other) noexcept;
+        int32_t save(const char *file_path) const noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;
@@ -51,6 +55,12 @@ class bmp_image
         ft_size_t height() const noexcept;
         ft_size_t pixel_size() const noexcept;
         ft_bool is_initialised() const noexcept;
+        int32_t get_pixel(ft_size_t coordinate_x, ft_size_t coordinate_y,
+            uint8_t *red, uint8_t *green, uint8_t *blue,
+            uint8_t *alpha) const noexcept;
+        int32_t set_pixel(ft_size_t coordinate_x, ft_size_t coordinate_y,
+            uint8_t red, uint8_t green, uint8_t blue,
+            uint8_t alpha = 255U) noexcept;
 
         int32_t get_error() const noexcept;
         const char *get_error_str() const noexcept;
