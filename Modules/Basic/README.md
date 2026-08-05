@@ -14,6 +14,9 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `FT_NATIVE_SIZE_TO_FT_SIZE_CAST` - Converts a platform-native `size_t` to
   `ft_size_t` where their underlying types differ, such as macOS ABI
   callbacks; it is an identity expression on platforms where they match.
+- `FT_FILE_OFFSET_TO_INT64_CAST` - Converts the platform-specific result of
+  `ftell` to `int64_t` where required, while remaining an identity expression
+  on platforms where the types already match.
 
 ## String Length
 

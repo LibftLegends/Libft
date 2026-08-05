@@ -122,7 +122,8 @@ static int32_t terrain_runtime_load_asset(const char *path,
         error_code = FT_ERR_IO;
     if (error_code == FT_ERR_SUCCESS)
     {
-        file_size_long = std::ftell(file_stream);
+        file_size_long = FT_FILE_OFFSET_TO_INT64_CAST(
+            std::ftell(file_stream));
         if (file_size_long < 0)
             error_code = FT_ERR_IO;
     }

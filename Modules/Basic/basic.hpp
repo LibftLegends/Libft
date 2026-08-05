@@ -33,12 +33,15 @@ typedef uint8_t ft_bool;
     static_cast<long>(value)
 # define FT_SOCKET_DESCRIPTOR_CAST(value) \
     static_cast<socket_file_descriptor_type>(value)
+# define FT_FILE_OFFSET_TO_INT64_CAST(value) \
+    static_cast<int64_t>(value)
 #else
 # define FT_THREAD_ID_FROM_PTHREAD(value) (value)
 # define FT_ZLIB_ULONG_CAST(value) (value)
 # define FT_NETWORKING_SOCKLEN_CAST(value) (value)
 # define FT_TIMEOUT_LONG_CAST(value) (value)
 # define FT_SOCKET_DESCRIPTOR_CAST(value) (value)
+# define FT_FILE_OFFSET_TO_INT64_CAST(value) (value)
 #endif
 
 #ifdef __APPLE__
