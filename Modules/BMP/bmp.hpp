@@ -4,10 +4,10 @@
 #include "../Errno/errno.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-#define FT_BMP_HARD_MAX_FILE_SIZE (10U * 1024U * 1024U)
-#define FT_BMP_DEFAULT_MAX_FILE_SIZE FT_BMP_HARD_MAX_FILE_SIZE
+#define BMP_HARD_MAX_FILE_SIZE (10U * 1024U * 1024U)
+#define BMP_DEFAULT_MAX_FILE_SIZE BMP_HARD_MAX_FILE_SIZE
 
-class ft_bmp_image
+class bmp_image
 {
 #ifdef LIBFT_TEST_BUILD
     public:
@@ -26,22 +26,22 @@ class ft_bmp_image
         void reset_fields(void) noexcept;
 
     public:
-        ft_bmp_image() noexcept;
-        ft_bmp_image(const ft_bmp_image &other) noexcept = delete;
-        ft_bmp_image(ft_bmp_image &&other) noexcept = delete;
-        ~ft_bmp_image() noexcept;
+        bmp_image() noexcept;
+        bmp_image(const bmp_image &other) noexcept = delete;
+        bmp_image(bmp_image &&other) noexcept = delete;
+        ~bmp_image() noexcept;
 
-        ft_bmp_image &operator=(const ft_bmp_image &other) noexcept = delete;
-        ft_bmp_image &operator=(ft_bmp_image &&other) noexcept = delete;
+        bmp_image &operator=(const bmp_image &other) noexcept = delete;
+        bmp_image &operator=(bmp_image &&other) noexcept = delete;
 
         int32_t initialize() noexcept;
         int32_t initialize(const char *file_path,
-            ft_size_t maximum_file_size = FT_BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
+            ft_size_t maximum_file_size = BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
         int32_t initialize(const uint8_t *file_data,
             ft_size_t file_size,
-            ft_size_t maximum_file_size = FT_BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
+            ft_size_t maximum_file_size = BMP_DEFAULT_MAX_FILE_SIZE) noexcept;
         int32_t destroy() noexcept;
-        int32_t move(ft_bmp_image &other) noexcept;
+        int32_t move(bmp_image &other) noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;

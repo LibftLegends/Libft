@@ -44,7 +44,7 @@ static void bmp_make_2x1(uint8_t data[62])
 FT_TEST(test_bmp_loads_24_bit_pixels_as_rgba)
 {
     uint8_t encoded_data[62];
-    ft_bmp_image image;
+    bmp_image image;
 
     bmp_make_2x1(encoded_data);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize(encoded_data, 62U));
@@ -65,7 +65,7 @@ FT_TEST(test_bmp_loads_24_bit_pixels_as_rgba)
 FT_TEST(test_bmp_rejects_truncated_and_oversized_inputs)
 {
     uint8_t encoded_data[62];
-    ft_bmp_image image;
+    bmp_image image;
 
     bmp_make_2x1(encoded_data);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
@@ -74,14 +74,14 @@ FT_TEST(test_bmp_rejects_truncated_and_oversized_inputs)
         image.initialize(encoded_data, 62U, 61U));
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
         image.initialize(encoded_data, 62U,
-            FT_BMP_HARD_MAX_FILE_SIZE + 1U));
+            BMP_HARD_MAX_FILE_SIZE + 1U));
     return (1);
 }
 
 FT_TEST(test_bmp_rejects_dimension_overflow)
 {
     uint8_t encoded_data[62];
-    ft_bmp_image image;
+    bmp_image image;
 
     bmp_make_2x1(encoded_data);
     bmp_write_u32(encoded_data + 18U, 0x7FFFFFFFU);
@@ -92,7 +92,7 @@ FT_TEST(test_bmp_rejects_dimension_overflow)
 
 FT_TEST(test_bmp_thread_safety_controls)
 {
-    ft_bmp_image image;
+    bmp_image image;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize());
     FT_ASSERT_EQ(FT_FALSE, image.is_thread_safe());
