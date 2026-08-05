@@ -8,6 +8,10 @@ row, dimension, and allocation bounds. Each load accepts a caller-selected
 maximum file size. The hard maximum is `FT_BMP_HARD_MAX_FILE_SIZE` (10 MiB),
 and larger requested limits are rejected.
 
+The image object is intended for single-threaded lifecycle use. Callers must
+provide external synchronization when sharing an instance across threads or
+when running lifecycle operations concurrently with accessors.
+
 - `initialize(file_path, maximum_file_size)` - Load a BMP file.
 - `initialize(file_data, file_size, maximum_file_size)` - Decode an in-memory BMP.
 - `data()` / `pixel_size()` - Access decoded RGBA bytes.
