@@ -89,6 +89,9 @@ GET_NEXT_LINE_TEST_FILES := \
 BUFFER_TEST_FILES := \
 	Test/test_buffer_byte_buffer.cpp
 
+BMP_TEST_FILES := \
+	Test/test_bmp.cpp
+
 FILE_TEST_FILES := \
 	Test/test_file_copy.cpp \
 	Test/test_file_copy_directory.cpp \

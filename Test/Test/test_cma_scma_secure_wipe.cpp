@@ -561,7 +561,7 @@ static int32_t runtime_compile_and_run_helper(void)
     compile_command += " -lz -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32";
 #else
     compile_command += " -pthread -Wl,--allow-multiple-definition -rdynamic";
-    compile_command += " -lz -ldl -lssl -lcrypto";
+    compile_command += " -lz -ldl";
 #endif
     compile_command += " -o ";
     compile_command += runtime_shell_quote(file_guard.executable_path);

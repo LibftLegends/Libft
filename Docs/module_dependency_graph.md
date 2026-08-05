@@ -15,6 +15,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | --- | --- |
 | `API` | `Basic`, `CMA`, `CPP_class`, `Compression`, `Encryption`, `Errno`, `JSon`, `Logger`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Advanced` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `System_utils` |
+| `BMP` | `Basic`, `Errno`, `System_utils` |
 | `Application` | `Basic`, `CMA`, `CPP_class`, `Encoding`, `Encryption`, `Errno`, `Filesystem`, `PThread`, `Printf`, `Storage`, `System_utils`, `Template`, `Time` |
 | `Basic` | `Errno` |
 | `Buffer` | `Basic`, `CMA`, `Errno`, `PThread` |

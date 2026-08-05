@@ -61,6 +61,7 @@ else
 endif
 
 SUBDIRS := Modules/Basic \
+           Modules/BMP \
            Modules/Advanced \
            Modules/Compatebility \
            Modules/Debug \
@@ -112,6 +113,7 @@ SUBDIRS := Modules/Basic \
 
 LIB_BASES := \
   Modules/Basic/Basic \
+  Modules/BMP/bmp \
   Modules/Advanced/Advanced \
   Modules/Compatebility/Compatebility \
   Modules/Debug/Debug \
