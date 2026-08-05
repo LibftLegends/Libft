@@ -6,6 +6,7 @@
 #include "../Errno/errno.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../Buffer/byte_buffer.hpp"
+#include "../System_utils/system_utils.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstdio>
@@ -104,7 +105,7 @@ static void terrain_runtime_destroy_block(terrain_runtime_block *block_pointer,
 static int32_t terrain_runtime_load_asset(const char *path,
     ft_byte_buffer &asset_data) noexcept
 {
-    FILE *file_stream;
+    su_file *file_stream;
     int64_t file_size_long;
     ft_size_t file_size;
     ft_size_t read_count;
@@ -113,22 +114,21 @@ static int32_t terrain_runtime_load_asset(const char *path,
 
     if (path == ft_nullptr || path[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    file_stream = std::fopen(path, "rb");
+    file_stream = su_fopen(path);
     if (file_stream == ft_nullptr)
         return (FT_ERR_FILE_OPEN_FAILED);
     error_code = FT_ERR_SUCCESS;
     file_size_long = 0;
-    if (std::fseek(file_stream, 0, SEEK_END) != 0)
+    if (su_fseek(file_stream, 0, SEEK_END) != 0)
         error_code = FT_ERR_IO;
     if (error_code == FT_ERR_SUCCESS)
     {
-        file_size_long = FT_FILE_OFFSET_TO_INT64_CAST(
-            std::ftell(file_stream));
+        file_size_long = su_ftell(file_stream);
         if (file_size_long < 0)
             error_code = FT_ERR_IO;
     }
     if (error_code == FT_ERR_SUCCESS
-        && std::fseek(file_stream, 0, SEEK_SET) != 0)
+        && su_fseek(file_stream, 0, SEEK_SET) != 0)
         error_code = FT_ERR_IO;
     file_size = 0U;
     temporary_data = ft_nullptr;
@@ -142,11 +142,11 @@ static int32_t terrain_runtime_load_asset(const char *path,
     }
     if (error_code == FT_ERR_SUCCESS && file_size > 0U)
     {
-        read_count = std::fread(temporary_data, 1, file_size, file_stream);
+        read_count = su_fread(temporary_data, 1, file_size, file_stream);
         if (read_count != file_size)
             error_code = FT_ERR_IO;
     }
-    if (std::fclose(file_stream) != 0 && error_code == FT_ERR_SUCCESS)
+    if (su_fclose(file_stream) != 0 && error_code == FT_ERR_SUCCESS)
         error_code = FT_ERR_IO;
     if (error_code == FT_ERR_SUCCESS)
         error_code = asset_data.initialize(file_size, FT_TRUE);
