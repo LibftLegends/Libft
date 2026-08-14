@@ -79,7 +79,7 @@ FT_TEST(test_terrain_surface_helpers_match_biome_rules)
 {
     FT_ASSERT_EQ(TERRAIN_GENERATOR_GRASS_BLOCK,
         terrain_surface_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_MOSS_ROCK_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_GRASS_BLOCK,
         terrain_surface_block_for_biome(TERRAIN_BIOME_HILLS));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_SAND_BLOCK,
         terrain_surface_block_for_biome(TERRAIN_BIOME_DESERT));
@@ -89,17 +89,17 @@ FT_TEST(test_terrain_surface_helpers_match_biome_rules)
         terrain_surface_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_DIRT_BLOCK,
         terrain_subsurface_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_MOSS_ROCK_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_DIRT_BLOCK,
         terrain_subsurface_block_for_biome(TERRAIN_BIOME_HILLS));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_CANYON_ROCK_BLOCK,
         terrain_subsurface_block_for_biome(TERRAIN_BIOME_DESERT));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_PERMAFROST_BLOCK,
         terrain_subsurface_block_for_biome(TERRAIN_BIOME_SNOW));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_STONE_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_ANDESITE_BLOCK,
         terrain_subsurface_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_STONE_BLOCK,
         terrain_deep_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CANYON_ROCK_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_BASALT_BLOCK,
         terrain_deep_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
     FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_shrubs(TERRAIN_BIOME_PLAINS));
     FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_shrubs(TERRAIN_BIOME_HILLS));
@@ -156,23 +156,23 @@ FT_TEST(test_terrain_tree_templates_expose_expected_blocks)
         large_pine_tree_template_variant.block_count);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template.blocks[0].block_id);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
         cactus_tree_template.blocks[0].block_id);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template_variant.blocks[0].block_id);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
         cactus_tree_template_variant.blocks[0].block_id);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
         large_oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
         large_pine_tree_template.blocks[0].block_id);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
         large_oak_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
         large_pine_tree_template_variant.blocks[0].block_id);
     return (1);
 }
@@ -206,9 +206,9 @@ FT_TEST(test_terrain_place_tree_template_writes_small_pine_tree)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_place_tree_template(chunk, 8, 12, 8,
         pine_tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 12, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK, block_id);
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 18, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LEAVES_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
@@ -261,7 +261,7 @@ FT_TEST(test_terrain_tree_template_for_biome_uses_seed_selected_large_variants)
         pine_tree_template.block_count);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template.blocks[0].block_id);
     return (1);
 }
@@ -766,7 +766,7 @@ FT_TEST(test_terrain_snow_caps_follow_height_not_biome_identity)
             &block_id));
         if (block_id != GAME_VOXEL_AIR_BLOCK)
         {
-            if (block_id == TERRAIN_GENERATOR_SNOW_BLOCK)
+            if (block_id == config.layers.snow_cap_block_id)
                 found_snow_cap = FT_TRUE;
             break ;
         }
@@ -1334,7 +1334,7 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
     return (1);
 }
 
-FT_TEST(test_terrain_ore_rules_are_disabled_by_default_and_configurable)
+FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
 {
     game_voxel_chunk disabled_chunk;
     game_voxel_chunk enabled_chunk;
@@ -1346,7 +1346,7 @@ FT_TEST(test_terrain_ore_rules_are_disabled_by_default_and_configurable)
     int32_t y;
     int32_t z;
 
-    FT_ASSERT_EQ(FT_FALSE, config.ores[0].enabled);
+    FT_ASSERT_EQ(FT_TRUE, config.ores[0].enabled);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
