@@ -14,8 +14,12 @@ static const int32_t TERRAIN_BIOME_ZONE_BLEND_WIDTH = 16;
 static const int32_t TERRAIN_HEIGHTMAP_SMOOTH_RADIUS = 1;
 static const uint64_t TERRAIN_FEATURE_SHRUB_SALT = UINT64_C(0x2D9C1F4E8B3A6071);
 static const int32_t TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET = 1;
+static const uint64_t TERRAIN_FEATURE_GROUND_COVER_VARIANT_SALT =
+    UINT64_C(0x1A2B3C4D5E6F7081);
 static const uint64_t TERRAIN_FEATURE_TREE_SALT = UINT64_C(0x4F1E2D3C5B6A7980);
 static const uint64_t TERRAIN_FEATURE_WATER_SALT = UINT64_C(0x9182736455463728);
+static const uint64_t TERRAIN_FEATURE_AQUATIC_PLANT_SALT =
+    UINT64_C(0x2F4E6D8C0A1B3547);
 static const uint64_t TERRAIN_BIOME_TRANSITION_SALT = UINT64_C(0x6A09E667F3BCC909);
 static const uint64_t TERRAIN_BIOME_SURFACE_TRANSITION_SALT = UINT64_C(0xBB67AE8584CAA73B);
 static const uint64_t TERRAIN_BIOME_SUBSURFACE_TRANSITION_SALT = UINT64_C(0x3C6EF372FE94F82B);
@@ -548,6 +552,39 @@ static ft_bool terrain_should_place_feature(uint64_t seed_value,
     return (FT_FALSE);
 }
 
+static uint32_t terrain_ground_cover_block_for_biome(uint32_t biome,
+    uint64_t seed_value, int32_t world_block_x,
+    int32_t world_block_z) noexcept
+{
+    uint64_t variant_seed;
+    uint32_t variant;
+
+    variant_seed = terrain_feature_seed(seed_value, world_block_x,
+        world_block_z, TERRAIN_FEATURE_GROUND_COVER_VARIANT_SALT);
+    variant = static_cast<uint32_t>(variant_seed % 100U);
+    if (biome == TERRAIN_BIOME_DESERT)
+    {
+        if (variant < 60U)
+            return (TERRAIN_GENERATOR_DEAD_BUSH_BLOCK);
+        return (TERRAIN_GENERATOR_SHRUB_BLOCK);
+    }
+    if (biome == TERRAIN_BIOME_SNOW || biome == TERRAIN_BIOME_MOUNTAINS)
+        return (TERRAIN_GENERATOR_DEAD_BUSH_BLOCK);
+    if (variant < 25U)
+        return (TERRAIN_GENERATOR_RED_FLOWER_BLOCK);
+    if (variant < 45U)
+        return (TERRAIN_GENERATOR_YELLOW_FLOWER_BLOCK);
+    if (variant < 65U)
+        return (TERRAIN_GENERATOR_TALL_GRASS_BLOCK);
+    if (variant < 80U)
+        return (TERRAIN_GENERATOR_FERN_BLOCK);
+    if (variant < 88U)
+        return (TERRAIN_GENERATOR_RED_MUSHROOM_BLOCK);
+    if (variant < 96U)
+        return (TERRAIN_GENERATOR_BROWN_MUSHROOM_BLOCK);
+    return (TERRAIN_GENERATOR_SHRUB_BLOCK);
+}
+
 static double terrain_cave_noise(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     int32_t scale, uint64_t salt) noexcept
@@ -777,10 +814,28 @@ static ft_bool terrain_should_place_ore(uint64_t seed_value,
     return (FT_TRUE);
 }
 
+static ft_bool terrain_block_is_ore_host(uint32_t block_id,
+    const terrain_generation_config &config) noexcept
+{
+    if (terrain_block_is_solid(block_id) == FT_FALSE)
+        return (FT_FALSE);
+    if (block_id == TERRAIN_GENERATOR_BEDROCK_BLOCK)
+        return (FT_FALSE);
+    if (config.layers.enable_snow_caps == FT_TRUE
+        && block_id == config.layers.snow_cap_block_id)
+        return (FT_FALSE);
+    if (config.layers.enable_beaches == FT_TRUE
+        && (block_id == config.layers.beach_block_id
+            || block_id == config.layers.underwater_block_id))
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_y,
     int32_t world_block_z, int32_t local_x, int32_t local_y, int32_t local_z,
-    const terrain_ore_rule &ore_rule) noexcept
+    const terrain_ore_rule &ore_rule,
+    const terrain_generation_config &config) noexcept
 {
     uint32_t vein_index;
     uint64_t vein_seed;
@@ -809,8 +864,7 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
                 &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            if (terrain_block_is_solid(block_id) == FT_TRUE
-                && block_id != TERRAIN_GENERATOR_BEDROCK_BLOCK)
+            if (terrain_block_is_ore_host(block_id, config) == FT_TRUE)
             {
                 error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
@@ -855,8 +909,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                             local_z, &block_id);
                         if (error_code != FT_ERR_SUCCESS)
                             return (error_code);
-                        if (terrain_block_is_solid(block_id) == FT_TRUE
-                            && block_id != TERRAIN_GENERATOR_BEDROCK_BLOCK
+                        if (terrain_block_is_ore_host(block_id, config) == FT_TRUE
                             && terrain_should_place_ore(seed_value,
                                 world_block_origin_x + local_x, local_y,
                                 world_block_origin_z + local_z,
@@ -867,7 +920,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                                 seed_value, world_block_origin_x + local_x,
                                 local_y, world_block_origin_z + local_z,
                                 local_x, local_y, local_z,
-                                config.ores[ore_index]);
+                                config.ores[ore_index], config);
                             if (error_code != FT_ERR_SUCCESS)
                                 return (error_code);
                         }
@@ -1091,7 +1144,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             {
                 error_code = chunk.write_generated_block(local_x,
                     column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET,
-                    local_z, TERRAIN_GENERATOR_SHRUB_BLOCK);
+                    local_z, terrain_ground_cover_block_for_biome(biome,
+                        seed_value, world_block_x, world_block_z));
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
             }
@@ -1103,11 +1157,38 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 while (local_y <= config.sea_level
                     && local_y < GAME_VOXEL_CHUNK_HEIGHT)
                 {
+                    block_id = TERRAIN_GENERATOR_WATER_BLOCK;
+                    if (local_y == config.sea_level
+                        && biome == TERRAIN_BIOME_SNOW)
+                        block_id = TERRAIN_GENERATOR_ICE_BLOCK;
                     error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                        TERRAIN_GENERATOR_WATER_BLOCK);
+                        block_id);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                     local_y += 1;
+                }
+                if ((biome == TERRAIN_BIOME_PLAINS || biome == TERRAIN_BIOME_HILLS)
+                    && config.sea_level + 1 < GAME_VOXEL_CHUNK_HEIGHT
+                    && terrain_should_place_feature(seed_value, world_block_x,
+                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 10U)
+                        == FT_TRUE)
+                {
+                    error_code = chunk.write_generated_block(local_x,
+                        config.sea_level + 1, local_z,
+                        TERRAIN_GENERATOR_LILY_PAD_BLOCK);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                }
+                else if (column_height + 1 < config.sea_level
+                    && terrain_should_place_feature(seed_value, world_block_x,
+                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 15U)
+                        == FT_TRUE)
+                {
+                    error_code = chunk.write_generated_block(local_x,
+                        column_height + 1, local_z,
+                        TERRAIN_GENERATOR_SEAGRASS_BLOCK);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
                 }
             }
             local_x += 1;
