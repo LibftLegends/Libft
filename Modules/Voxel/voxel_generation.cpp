@@ -814,10 +814,28 @@ static ft_bool terrain_should_place_ore(uint64_t seed_value,
     return (FT_TRUE);
 }
 
+static ft_bool terrain_block_is_ore_host(uint32_t block_id,
+    const terrain_generation_config &config) noexcept
+{
+    if (terrain_block_is_solid(block_id) == FT_FALSE)
+        return (FT_FALSE);
+    if (block_id == TERRAIN_GENERATOR_BEDROCK_BLOCK)
+        return (FT_FALSE);
+    if (config.layers.enable_snow_caps == FT_TRUE
+        && block_id == config.layers.snow_cap_block_id)
+        return (FT_FALSE);
+    if (config.layers.enable_beaches == FT_TRUE
+        && (block_id == config.layers.beach_block_id
+            || block_id == config.layers.underwater_block_id))
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_y,
     int32_t world_block_z, int32_t local_x, int32_t local_y, int32_t local_z,
-    const terrain_ore_rule &ore_rule) noexcept
+    const terrain_ore_rule &ore_rule,
+    const terrain_generation_config &config) noexcept
 {
     uint32_t vein_index;
     uint64_t vein_seed;
@@ -846,8 +864,7 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
                 &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            if (terrain_block_is_solid(block_id) == FT_TRUE
-                && block_id != TERRAIN_GENERATOR_BEDROCK_BLOCK)
+            if (terrain_block_is_ore_host(block_id, config) == FT_TRUE)
             {
                 error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
@@ -892,8 +909,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                             local_z, &block_id);
                         if (error_code != FT_ERR_SUCCESS)
                             return (error_code);
-                        if (terrain_block_is_solid(block_id) == FT_TRUE
-                            && block_id != TERRAIN_GENERATOR_BEDROCK_BLOCK
+                        if (terrain_block_is_ore_host(block_id, config) == FT_TRUE
                             && terrain_should_place_ore(seed_value,
                                 world_block_origin_x + local_x, local_y,
                                 world_block_origin_z + local_z,
@@ -904,7 +920,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                                 seed_value, world_block_origin_x + local_x,
                                 local_y, world_block_origin_z + local_z,
                                 local_x, local_y, local_z,
-                                config.ores[ore_index]);
+                                config.ores[ore_index], config);
                             if (error_code != FT_ERR_SUCCESS)
                                 return (error_code);
                         }
