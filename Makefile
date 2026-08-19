@@ -9,6 +9,9 @@ export LIBFT_POSIX_SHELL := 1
 endif
 
 MAKEFLAGS += -r
+# BUILD_PLAN_MODE=1 is used by the stale-work planning wrapper.  Recipes emit
+# machine-readable markers in that mode and concise status lines otherwise.
+BUILD_PLAN_MODE ?= 0
 # The graph uses GNU Make features available in 3.81. Output synchronization
 # remains an optional command-line feature for newer Make installations.
 LIBFT_SUPPORTED_MAKE_VERSION := $(filter 3.81 3.82 4.% 5.% 6.% 7.% 8.% 9.%,$(MAKE_VERSION))
@@ -37,6 +40,7 @@ LIBFT_LEGACY_OBJECT_ROOTS := $(wildcard Modules/*/objs_* Test/objs_*)
 
 define LIBFT_GLOBAL_ARCHIVE_RULE
 $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
 	@$(MKDIR) $(dir $$@)
 	@$(RM) $$@.tmp
 	@if [ "$$(uname -s)" = "Darwin" ]; then \
@@ -47,6 +51,7 @@ $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
 	fi
 	@mv $$@.tmp $$@
+	@printf '\033[1;35m[LIBFT] Archive ready: %s\033[0m\n' "$(1)"
 endef
 
 $(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
@@ -61,7 +66,14 @@ ssh:
 	git remote set-url origin git@github.com:Adyem/Libft.git
 	git remote -v
 
-all: $(LIBFT_GLOBAL_TARGET) $(LIBFT_GLOBAL_Template_TARGET)
+all:
+	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
+	+$(MAKE) --no-print-directory internal-all BUILD_WRAPPER_ACTIVE=1
+
+plan:
+	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
+
+internal-all: $(LIBFT_GLOBAL_TARGET) $(LIBFT_GLOBAL_Template_TARGET)
 
 global-all: $(LIBFT_GLOBAL_TARGET)
 
@@ -80,8 +92,12 @@ demo:
 template: $(LIBFT_GLOBAL_Template_TARGET)
 	@printf '\033[1;35m[LIBFT BUILD] Template archive ready\033[0m\n'
 
-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+tests:
+	@sh mk/print_build_plan.sh "$(MAKE)" internal-tests
+	+$(MAKE) --no-print-directory internal-tests BUILD_WRAPPER_ACTIVE=1
 	@printf '\033[1;35m[LIBFT BUILD] Test executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_TEST_EXECUTABLE)"
+
+internal-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 
 test-executable: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 
@@ -93,8 +109,12 @@ debug-tests: $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE)
 run-debug-tests: $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE)
 	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE))
 
-performance_benchmarks Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
+performance_benchmarks Efficiency:
+	@sh mk/print_build_plan.sh "$(MAKE)" internal-performance
+	+$(MAKE) --no-print-directory internal-performance BUILD_WRAPPER_ACTIVE=1
 	@printf '\033[1;35m[LIBFT BUILD] Efficiency executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)"
+
+internal-performance: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 
 LIBFT_GLOBAL_AGGREGATE_RELEASE_OBJECTS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))
 LIBFT_ARCHIVE_INTEGRITY_TARGETS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),archive-integrity-$(module_name)) archive-integrity-Full_Libft
@@ -197,6 +217,6 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		$(LIBFT_GLOBAL_Template_TARGET)
 
-.PHONY: all global-all global-debug global-tests debug both template demo re re-tests clean fclean tests test-executable run-tests debug-tests performance_benchmarks Efficiency run_performance_benchmarks run_Efficiency archive-integrity print-build-mode format sanitize-clean \
+.PHONY: all plan internal-all global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity print-build-mode format sanitize-clean \
         run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
         asan asan-tests ubsan ubsan-tests asan-ubsan asan-ubsan-tests

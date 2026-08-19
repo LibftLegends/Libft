@@ -84,12 +84,14 @@ $(LIBFT_GLOBAL_TEST_DIRECTORIES):
 
 define LIBFT_GLOBAL_DEFINE_TEST_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
-	$$(CXX) $$(LIBFT_GLOBAL_TEST_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Test|$$<"; else printf '\033[1;36m[LIBFT][Test] Compiling %s\033[0m\n' "$$<"; fi
+	@$$(CXX) $$(LIBFT_GLOBAL_TEST_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 endef
 
 define LIBFT_GLOBAL_DEFINE_TEST_DEBUG_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
-	$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|TestDebug|$$<"; else printf '\033[1;36m[LIBFT][TestDebug] Compiling %s\033[0m\n' "$$<"; fi
+	@$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 endef
 
 $(foreach source_file,$(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(eval $(call LIBFT_GLOBAL_DEFINE_TEST_OBJECT,$(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/%.o,$(source_file)),$(source_file))))
@@ -97,21 +99,25 @@ $(foreach source_file,$(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(eval $(call LIBFT_GLOB
 
 $(LIBFT_GLOBAL_TEST_EXECUTABLE): $(LIBFT_GLOBAL_TEST_OBJECTS) \
 		$(LIBFT_GLOBAL_TEST_TARGET) mk/global_test_graph.mk
+	@if [ "$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|link|libft|Test|$@"; else printf '\033[1;35m[LIBFT][Test] Linking %s\033[0m\n' "$@"; fi
 	@$(MKDIR) "$(dir $@)"
 	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_EXCLUDED_OBJECTS)
 	@printf '%s\n' "$(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START) $(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END)" >> "$@.rsp"
-	$(CXX) $(LIBFT_GLOBAL_TEST_CXX_FLAGS) -o $@ @$@.rsp \
+	@$(CXX) $(LIBFT_GLOBAL_TEST_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp
+	@printf '\033[1;35m[LIBFT][Test] Link ready: %s\033[0m\n' "$@"
 
 $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE): $(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS) \
 		$(LIBFT_GLOBAL_TEST_DEBUG_TARGET) mk/global_test_graph.mk
+	@if [ "$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|link|libft|TestDebug|$@"; else printf '\033[1;35m[LIBFT][TestDebug] Linking %s\033[0m\n' "$@"; fi
 	@$(MKDIR) "$(dir $@)"
 	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_DEBUG_EXCLUDED_OBJECTS)
 	@printf '%s\n' "$(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START) $(LIBFT_GLOBAL_TEST_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END)" >> "$@.rsp"
-	$(CXX) $(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -o $@ @$@.rsp \
+	@$(CXX) $(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp
+	@printf '\033[1;35m[LIBFT][TestDebug] Link ready: %s\033[0m\n' "$@"
 
 LIBFT_GLOBAL_TEST_ACTIVE_DEPENDENCIES := $(LIBFT_GLOBAL_TEST_DEPENDENCIES)
 ifneq ($(filter debug-tests run-debug-tests,$(MAKECMDGOALS)),)

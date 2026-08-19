@@ -14,12 +14,21 @@ use `--output-sync=target` for grouped parallel output; it is not required.
 
 ```sh
 make -j2 all
+make plan
 make -j2 tests
 FT_TEST_HIDE_SUCCESSFUL=1 make run-tests
 make -j2 archive-integrity
 make -j2 performance_benchmarks
 make run_performance_benchmarks
 ```
+
+Public build targets first run a read-only Make dry run and report the exact
+number of stale compile targets selected by the dependency graph, grouped by
+project and module. The actual build then prints concise compile, archive, and
+link messages while keeping compiler diagnostics visible. The planning pass is
+one complete graph evaluation; it does not scan object directories or create
+shared progress counters. A file changed between planning and compilation can
+make the actual work differ from the initial summary.
 
 With GNU Make 4.0 or newer, `--output-sync=target` can be added to parallel
 commands when grouped output is preferred.
