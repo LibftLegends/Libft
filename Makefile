@@ -9,9 +9,11 @@ export LIBFT_POSIX_SHELL := 1
 endif
 
 MAKEFLAGS += -r
-LIBFT_SUPPORTED_MAKE_VERSION := $(filter 4.% 5.% 6.% 7.% 8.% 9.%,$(MAKE_VERSION))
+# The graph uses GNU Make features available in 3.81. Output synchronization
+# remains an optional command-line feature for newer Make installations.
+LIBFT_SUPPORTED_MAKE_VERSION := $(filter 3.81 3.82 4.% 5.% 6.% 7.% 8.% 9.%,$(MAKE_VERSION))
 ifeq ($(LIBFT_SUPPORTED_MAKE_VERSION),)
-$(error GNU Make 4.0 or newer is required for --output-sync support; found $(MAKE_VERSION))
+$(error GNU Make 3.81 or newer is required; found $(MAKE_VERSION))
 endif
 LIBFT_GLOBAL_GRAPH := 1
 include mk/compiler_flags.mk
@@ -183,6 +185,7 @@ clean:
 		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
+		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
 		$(LIBFT_GLOBAL_Template_TARGET)
 
 fclean:

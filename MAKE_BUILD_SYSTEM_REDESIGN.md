@@ -105,7 +105,8 @@ The original analysis is substantially correct for the current repositories.
 3. One configuration has one isolated object root.
 4. One compile edge launches the compiler, not a chain of bookkeeping tools.
 5. Every real file target has real file prerequisites and no `FORCE` edge.
-6. Parallel output uses GNU Make's `--output-sync`, not filesystem locks.
+6. Parallel output may use GNU Make's `--output-sync` when available; the
+   canonical graph must also work with normal Make output on GNU Make 3.81.
 7. Module archives remain available, but they are products of the global graph,
    not independent recursive builds.
 8. A no-op build performs no compilation, archiving, or linking.
@@ -317,12 +318,15 @@ sites for:
 
 Delete those scripts only after `rg` confirms no remaining references.
 
-Use GNU Make output synchronization. Add a documented opt-in/default policy
-that works with the minimum supported GNU Make version, for example invoking
-CI and developer parallel builds with:
+Use GNU Make output synchronization when available, but keep it optional so
+the graph works with the minimum supported GNU Make version. CI and developer
+builds may use:
 
 ```text
-make --output-sync=target -j<jobs>
+make -j<jobs>
+
+On GNU Make 4.0 or newer, `make --output-sync=target -j<jobs>` may be used for
+grouped parallel output. The Makefile must not require that flag.
 ```
 
 Do not maintain numeric per-file progress. Print the module and source on each
@@ -569,24 +573,24 @@ On Linux and macOS:
 
 ```sh
 make fclean
-make --output-sync=target -j1 all
-make --output-sync=target -j2 all
-make --output-sync=target -j"$(getconf _NPROCESSORS_ONLN)" all
-make --trace --output-sync=target -j2 all 2>&1 | tee /tmp/libft-noop.trace
+make -j1 all
+make -j2 all
+make -j"$(getconf _NPROCESSORS_ONLN)" all
+make --trace -j2 all 2>&1 | tee /tmp/libft-noop.trace
 FT_TEST_HIDE_SUCCESSFUL=1 make run-tests
-make --output-sync=target -j2 run-debug-tests
-make --output-sync=target -j2 run-asan-tests
-make --output-sync=target -j2 run-ubsan-tests
+make -j2 run-debug-tests
+make -j2 run-asan-tests
+make -j2 run-ubsan-tests
 ```
 
 On Windows PowerShell:
 
 ```powershell
 make fclean
-make --output-sync=target -j1 all
-make --output-sync=target -j2 all
-make --output-sync=target -j$env:NUMBER_OF_PROCESSORS all
-make --trace --output-sync=target -j2 all 2>&1 | Tee-Object .\tmp\libft-noop.trace
+make -j1 all
+make -j2 all
+make -j$env:NUMBER_OF_PROCESSORS all
+make --trace -j2 all 2>&1 | Tee-Object .\tmp\libft-noop.trace
 $env:FT_TEST_HIDE_SUCCESSFUL='1'; make run-tests
 ```
 
@@ -633,7 +637,7 @@ make --trace -j2 Modules/Basic/Basic.a
 Run the automated archive gate after the release graph has been built:
 
 ```text
-make --output-sync=target -j<jobs> archive-integrity
+make -j<jobs> archive-integrity
 ```
 
 The gate must report one successful check for each module archive and for
@@ -741,7 +745,7 @@ gate: do not accept a faster result that skipped required rebuilds.
 ### Windows validation snapshot
 
 The current Windows workspace was measured on 2026-08-19 after the graph and
-test validation completed. Three no-op runs with `make --output-sync=target
+test validation completed. Three no-op runs with `make
 -j8 all` measured:
 
 - standalone Libft: 6885, 6970, and 6826 ms (median 6885 ms; range 144 ms);
@@ -769,9 +773,10 @@ performance claims.
 - Different compile definitions cannot share object files. Keep configuration
   roots isolated and never optimize by reusing objects across incompatible
   variants.
-- `--output-sync` support depends on GNU Make version. Both repository roots
-  enforce GNU Make 4.0 or newer rather than restoring custom output locks as a
-  fallback.
+- GNU Make 3.81 does not provide `--output-sync` or the `$(file ...)` function.
+  The graph therefore uses normal output on older Make versions and creates
+  linker response files through portable shell `printf` redirection. GNU Make
+  4.0 or newer may opt into grouped output without changing graph semantics.
 
 ## Definition of done
 

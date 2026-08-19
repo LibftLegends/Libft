@@ -9,17 +9,20 @@ The canonical build is one GNU Make dependency graph. It schedules individual
 objects across modules, then creates module archives and `Full_Libft.a`.
 Module Makefiles remain compatibility wrappers; the repository root is the
 canonical build entry point.
-GNU Make 4.0 or newer is required because parallel commands use
-`--output-sync=target` for readable, lock-free output.
+GNU Make 3.81 or newer is supported. GNU Make 4.0 and newer may optionally
+use `--output-sync=target` for grouped parallel output; it is not required.
 
 ```sh
-make --output-sync=target -j2 all
-make --output-sync=target -j2 tests
+make -j2 all
+make -j2 tests
 FT_TEST_HIDE_SUCCESSFUL=1 make run-tests
-make --output-sync=target -j2 archive-integrity
-make --output-sync=target -j2 performance_benchmarks
+make -j2 archive-integrity
+make -j2 performance_benchmarks
 make run_performance_benchmarks
 ```
+
+With GNU Make 4.0 or newer, `--output-sync=target` can be added to parallel
+commands when grouped output is preferred.
 
 Use `make debug` to build the debug archive. Use `make debug-tests` and
 `make run-debug-tests` to build and execute the debug tester. The corresponding

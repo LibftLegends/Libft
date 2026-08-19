@@ -2,8 +2,12 @@
 # included only by the standalone Libft root Makefile; it deliberately does
 # not define public clean or test targets.
 
+LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES := \
+	Test/main.cpp $(wildcard Test/Test/*.cpp) $(wildcard Test/API/*.cpp)
+LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES := $(sort $(patsubst %/,%,$(patsubst Test/%,%,\
+	$(dir $(filter-out Test/main.cpp,$(LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES))))))
 LIBFT_GLOBAL_TEST_SOURCE_FILES := $(filter-out Test/Test/test_template.cpp,\
-	Test/main.cpp $(wildcard Test/Test/*.cpp) $(wildcard Test/API/*.cpp))
+	$(LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES))
 LIBFT_GLOBAL_TEST_CONFIG_INPUTS := mk/test/dependencies.mk
 LIBFT_GLOBAL_TEST_OBJECT_ROOT := $(LIBFT_GLOBAL_TEST_ROOT)
 LIBFT_GLOBAL_TEST_OBJECTS := $(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/%.o,$(LIBFT_GLOBAL_TEST_SOURCE_FILES))
@@ -37,6 +41,11 @@ LIBFT_GLOBAL_TEST_SOURCE_FILES := $(filter-out \
 	Test/Test/test_encryption_hash_algorithms.cpp, \
 	$(LIBFT_GLOBAL_TEST_SOURCE_FILES))
 endif
+
+LIBFT_GLOBAL_TEST_EXCLUDED_OBJECTS := $(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/%.o,\
+	$(filter-out $(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES)))
+LIBFT_GLOBAL_TEST_DEBUG_EXCLUDED_OBJECTS := $(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/%.o,\
+	$(filter-out $(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES)))
 
 # Recompute the object families after optional-source filtering.  Keeping the
 # old expansion here would leave the executable depending on objects for
@@ -79,17 +88,19 @@ $(foreach source_file,$(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(eval $(call LIBFT_GLOB
 $(foreach source_file,$(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(eval $(call LIBFT_GLOBAL_DEFINE_TEST_DEBUG_OBJECT,$(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/%.o,$(source_file)),$(source_file))))
 
 $(LIBFT_GLOBAL_TEST_EXECUTABLE): $(LIBFT_GLOBAL_TEST_OBJECTS) \
-		$(LIBFT_GLOBAL_TEST_TARGET)
+		$(LIBFT_GLOBAL_TEST_TARGET) mk/global_test_graph.mk
 	@$(MKDIR) "$(dir $@)"
-	$(file >$@.rsp,$(LIBFT_GLOBAL_TEST_OBJECTS) -Wl,--start-group $(LIBFT_GLOBAL_TEST_TARGET) -Wl,--end-group)
+	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_EXCLUDED_OBJECTS)
+	@printf '%s\n' "-Wl,--start-group $(LIBFT_GLOBAL_TEST_TARGET) -Wl,--end-group" >> "$@.rsp"
 	$(CXX) $(LIBFT_GLOBAL_TEST_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp
 
 $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE): $(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS) \
-		$(LIBFT_GLOBAL_TEST_DEBUG_TARGET)
+		$(LIBFT_GLOBAL_TEST_DEBUG_TARGET) mk/global_test_graph.mk
 	@$(MKDIR) "$(dir $@)"
-	$(file >$@.rsp,$(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS) -Wl,--start-group $(LIBFT_GLOBAL_TEST_DEBUG_TARGET) -Wl,--end-group)
+	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_DEBUG_EXCLUDED_OBJECTS)
+	@printf '%s\n' "-Wl,--start-group $(LIBFT_GLOBAL_TEST_DEBUG_TARGET) -Wl,--end-group" >> "$@.rsp"
 	$(CXX) $(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp

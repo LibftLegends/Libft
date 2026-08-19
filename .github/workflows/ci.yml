@@ -55,7 +55,7 @@ jobs:
 
       - name: Validate release archives
         shell: bash
-        run: make --output-sync=target -j2 archive-integrity
+        run: make -j2 archive-integrity
 
       - name: Run test suite on Unix
         if: runner.os != 'Windows'
@@ -162,7 +162,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          make --output-sync=target -j2 performance_benchmarks
+          make -j2 performance_benchmarks
 
       - name: Run performance benchmarks on Unix
         if: always() && runner.os != 'Windows'
