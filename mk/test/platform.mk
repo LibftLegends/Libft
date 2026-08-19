@@ -13,8 +13,6 @@ else ifneq ($(LIBFT_TEST_PARALLEL_JOBS),)
     endif
 endif
 
-LIBFT_TEST_OUTPUT_LOCK = .libft_test_output_lock
-LIBFT_TEST_OUTPUT_LOGS = .libft_test_build_*.log
 LIBFT_TEST_LIGHT_BLUE := \033[1;94m
 LIBFT_TEST_PURPLE := \033[1;35m
 LIBFT_TEST_COLOR_OFF := \033[0m

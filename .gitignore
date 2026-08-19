@@ -42,6 +42,7 @@ Test/performance_benchmarks_failed.json
 Test/*.rsp
 Demo/build/
 Demo/demo_dumb_game
+Demo/demo_dumb_game.exe
 .codex
 **/.codex
 test_*.txt
@@ -51,6 +52,7 @@ Test/.libft_build_*.log.raw.*
 
 # Build configuration-specific object directories
 **/objs_*/
+build/
 
 # Local test and benchmark diagnostics
 Test/*.log
@@ -61,6 +63,11 @@ Test/*.err
 /windows_crash_stack_trace.log
 /windows_full_ci.log
 /tmp_*.log
+/asan_*.log
+/debug_test_*.log
+/full_run_*.log
+/performance_run.log
+/ubsan_dry_run.log
 /tmp/
 performance_benchmarks.json
 performance_benchmarks_failed.json

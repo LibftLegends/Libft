@@ -1,7 +1,7 @@
-TARGET         := file.a
-DEBUG_TARGET   := file_debug.a
+File_TARGET         := file.a
+File_DEBUG_TARGET   := file_debug.a
 
-SRCS := file_opendir.cpp \
+File_SOURCES := file_opendir.cpp \
         file_check_directory.cpp \
         file_mkdir.cpp \
         file_copy.cpp \
@@ -24,8 +24,6 @@ SRCS := file_opendir.cpp \
         file_security.cpp \
         file_status.cpp
 
-HEADERS := open_dir.hpp \
+File_HEADERS := open_dir.hpp \
            file_utils.hpp \
            file_watch.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

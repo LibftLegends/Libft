@@ -1,8 +1,6 @@
-TARGET := regex.a
-DEBUG_TARGET := regex_debug.a
+Regex_TARGET := regex.a
+Regex_DEBUG_TARGET := regex_debug.a
 
-SRCS := regex.cpp
+Regex_SOURCES := regex.cpp
 
-HEADERS := regex.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Regex_HEADERS := regex.hpp

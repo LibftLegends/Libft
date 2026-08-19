@@ -1,6 +1,13 @@
 ifndef LIBFT_BUILD_CONFIG_INCLUDED
 LIBFT_BUILD_CONFIG_INCLUDED := 1
 
+ifeq ($(OS),Windows_NT)
+SHELL := C:/Progra~1/Git/usr/bin/bash.exe
+.SHELLFLAGS := -lc
+export SHELL
+export LIBFT_POSIX_SHELL := 1
+endif
+
 DEMO_OPT_LEVEL ?= 3
 
 CXX             := g++
@@ -9,12 +16,6 @@ ARFLAGS         := rcs
 CLANG_FORMAT   ?= clang-format
 
 MAKEFLAGS      += --no-print-directory
-
-ifeq ($(OS),Windows_NT)
-    ifeq ($(filter -j%,$(MAKEFLAGS)),)
-        MAKEFLAGS += -j4
-    endif
-endif
 
 LIBFT_PARALLEL_JOBS = $(filter -j% j%,$(MAKEFLAGS))
 LIBFT_EXPLICIT_J1 = $(filter -j1 j1,$(MAKEFLAGS))
@@ -33,13 +34,8 @@ endif
 SUBMAKE_OVERRIDES ?=
 LIBFT_ARCHIVE_SUFFIX ?=
 
-TEMP_DIRS := temp_objs temp_objs_test \
-             $(LIBFT_ROOT_DIR)/Test/.libft_output_lock \
-             $(LIBFT_ROOT_DIR)/Test/.libft_progress \
-             $(LIBFT_ROOT_DIR)/Test/.libft_progress.build.lock \
-             $(LIBFT_ROOT_DIR)/Test/.libft_progress.debug.lock \
-             $(LIBFT_ROOT_DIR)/Test/.libft_progress.test.lock
-OUTPUT_LOGS := $(LIBFT_ROOT_DIR)/Test/.libft_build_*.log $(LIBFT_ROOT_DIR)/Test/.libft_build_status_*
+TEMP_DIRS :=
+OUTPUT_LOGS :=
 
 ifeq ($(OS),Windows_NT)
     ifeq ($(strip $(LIBFT_POSIX_SHELL)),)

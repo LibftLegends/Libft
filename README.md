@@ -3,6 +3,35 @@
 FullLibft collects the project's reusable C and C++ helper modules under a single build.
 Each module below has a short purpose statement to clarify its role in the tree.
 
+## GNU Make build and validation
+
+The canonical build is one GNU Make dependency graph. It schedules individual
+objects across modules, then creates module archives and `Full_Libft.a`.
+Module Makefiles remain compatibility wrappers; the repository root is the
+canonical build entry point.
+GNU Make 4.0 or newer is required because parallel commands use
+`--output-sync=target` for readable, lock-free output.
+
+```sh
+make --output-sync=target -j2 all
+make --output-sync=target -j2 tests
+FT_TEST_HIDE_SUCCESSFUL=1 make run-tests
+make --output-sync=target -j2 archive-integrity
+make --output-sync=target -j2 performance_benchmarks
+make run_performance_benchmarks
+```
+
+Use `make debug` to build the debug archive. Use `make debug-tests` and
+`make run-debug-tests` to build and execute the debug tester. The corresponding
+sanitizer commands are `make run-asan-tests`, `make run-ubsan-tests`, and
+`make run-asan-ubsan-tests`; each builds the requested instrumented tester
+before executing it. Build artifacts are isolated under configuration-specific
+directories in `build/libft/`, so different compiler flags cannot reuse
+incompatible objects. The Makefile probes compiler and linker runtime support
+before starting a sanitizer build and reports unsupported toolchains without
+compiling the full graph. `make -n`, `make -pn`, and `make --trace` can be used to
+inspect scheduling and prerequisites without changing source files.
+
 ## Modules
 
 - `API/`: Provides the glue between networking protocols, serialization formats, and business logic so clients and servers expose cohesive endpoints.

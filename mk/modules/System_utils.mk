@@ -1,7 +1,7 @@
-TARGET := System_utils.a
-DEBUG_TARGET := System_utils_debug.a
+System_utils_TARGET := System_utils.a
+System_utils_DEBUG_TARGET := System_utils_debug.a
 
-SRCS := System_utils_assert.cpp \
+System_utils_SOURCES := System_utils_assert.cpp \
         System_utils_env.cpp \
         System_utils_abort.cpp \
         System_utils_sigabrt.cpp \
@@ -22,6 +22,4 @@ SRCS := System_utils_assert.cpp \
         System_utils_locale.cpp \
         test_system_utils_runner.cpp
 
-HEADERS := system_utils.hpp test_system_utils_runner.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+System_utils_HEADERS := system_utils.hpp test_system_utils_runner.hpp

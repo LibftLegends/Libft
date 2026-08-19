@@ -1,7 +1,7 @@
-TARGET := Advanced.a
-DEBUG_TARGET := Advanced_debug.a
+Advanced_TARGET := Advanced.a
+Advanced_DEBUG_TARGET := Advanced_debug.a
 
-SRCS := advanced_to_string.cpp \
+Advanced_SOURCES := advanced_to_string.cpp \
     advanced_string.cpp \
     advanced_utf8.cpp \
     advanced_wide.cpp \
@@ -22,6 +22,4 @@ SRCS := advanced_to_string.cpp \
     advanced_text_transform.cpp \
     advanced_split.cpp
 
-HEADERS := advanced.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Advanced_HEADERS := advanced.hpp

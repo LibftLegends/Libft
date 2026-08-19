@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <cstring>
 #include "voxel.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
@@ -7,7 +8,46 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 6U;
+static const uint32_t TERRAIN_SAVE_VERSION = 7U;
+
+static int32_t terrain_save_append_block_reference(ft_byte_buffer &buffer,
+    uint32_t block_id) noexcept
+{
+    const char *block_name;
+    ft_size_t name_length;
+    int32_t error_code;
+
+    block_name = terrain_get_block_name(block_id);
+    if (block_name == ft_nullptr || block_name[0] == '\0')
+        return (FT_ERR_INVALID_ARGUMENT);
+    name_length = std::strlen(block_name);
+    if (name_length > 255U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = buffer.append_u32_le(static_cast<uint32_t>(name_length));
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = buffer.append(block_name, name_length);
+    return (error_code);
+}
+
+static int32_t terrain_save_read_block_reference(ft_byte_buffer &buffer,
+    uint32_t *block_id_out) noexcept
+{
+    char block_name[256];
+    uint32_t name_length;
+    int32_t error_code;
+
+    if (block_id_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = buffer.read_u32_le(&name_length);
+    if (error_code != FT_ERR_SUCCESS || name_length == 0U
+        || name_length >= sizeof(block_name))
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = buffer.read(block_name, static_cast<ft_size_t>(name_length));
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    block_name[name_length] = '\0';
+    return (terrain_find_block_id_by_name(block_name, block_id_out));
+}
 
 static int32_t terrain_save_append_i32(ft_byte_buffer &buffer,
     int32_t value) noexcept
@@ -59,7 +99,7 @@ static int32_t terrain_save_append_template(ft_byte_buffer &buffer,
             tree_template->blocks[index].offset_z);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        error_code = buffer.append_u32_le(
+        error_code = terrain_save_append_block_reference(buffer,
             tree_template->blocks[index].block_id);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
@@ -94,9 +134,9 @@ static int32_t terrain_save_read_template(ft_byte_buffer &buffer,
         error_code = terrain_save_read_i32(buffer, &blocks[index].offset_z);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        error_code = buffer.read_u32_le(&blocks[index].block_id);
-        if (error_code != FT_ERR_SUCCESS
-            || terrain_block_is_known(blocks[index].block_id) == FT_FALSE)
+        error_code = terrain_save_read_block_reference(buffer,
+            &blocks[index].block_id);
+        if (error_code != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_ARGUMENT);
         index += 1U;
     }
@@ -122,13 +162,16 @@ static int32_t terrain_save_append_biome(ft_byte_buffer &buffer,
         biome.profile.topsoil_depth);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(biome.surface_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        biome.surface_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(biome.subsurface_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        biome.subsurface_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(biome.deep_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        biome.deep_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = buffer.append_u8(biome.allow_shrubs);
@@ -173,13 +216,14 @@ static int32_t terrain_save_read_biome(ft_byte_buffer &buffer,
     error_code = terrain_save_read_i32(buffer, &profile.topsoil_depth);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&surface_block_id);
+    error_code = terrain_save_read_block_reference(buffer, &surface_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&subsurface_block_id);
+    error_code = terrain_save_read_block_reference(buffer,
+        &subsurface_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&deep_block_id);
+    error_code = terrain_save_read_block_reference(buffer, &deep_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = buffer.read_u8(&allow_shrubs);
@@ -228,7 +272,7 @@ static int32_t terrain_save_append_ore(ft_byte_buffer &buffer,
 {
     int32_t error_code;
 
-    error_code = buffer.append_u32_le(ore.block_id);
+    error_code = terrain_save_append_block_reference(buffer, ore.block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = terrain_save_append_i32(buffer, ore.minimum_height);
@@ -243,6 +287,9 @@ static int32_t terrain_save_append_ore(ft_byte_buffer &buffer,
     error_code = buffer.append_u32_le(ore.chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u8(ore.allow_ore_replacement);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     return (buffer.append_u8(ore.enabled));
 }
 
@@ -254,10 +301,11 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
     int32_t maximum_height;
     uint32_t vein_size;
     uint32_t chance_percent;
+    uint8_t allow_ore_replacement;
     uint8_t enabled;
     int32_t error_code;
 
-    error_code = buffer.read_u32_le(&block_id);
+    error_code = terrain_save_read_block_reference(buffer, &block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = terrain_save_read_i32(buffer, &minimum_height);
@@ -272,6 +320,9 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
     error_code = buffer.read_u32_le(&chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.read_u8(&allow_ore_replacement);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.read_u8(&enabled);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -280,6 +331,10 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = ore.set_vein(vein_size, chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = ore.set_ore_replacement(
+        static_cast<ft_bool>(allow_ore_replacement));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     return (ore.set_enabled(static_cast<ft_bool>(enabled)));
@@ -522,13 +577,16 @@ int32_t terrain_generation_config_serialize(
         config.layers.snow_cap_minimum_height);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(config.layers.beach_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        config.layers.beach_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(config.layers.underwater_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        config.layers.underwater_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.append_u32_le(config.layers.snow_cap_block_id);
+    error_code = terrain_save_append_block_reference(buffer,
+        config.layers.snow_cap_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = buffer.append_u8(config.enable_biome_transitions);
@@ -875,13 +933,15 @@ int32_t terrain_generation_config_deserialize(
         &snow_cap_minimum_height);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&beach_block_id);
+    error_code = terrain_save_read_block_reference(buffer, &beach_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&underwater_block_id);
+    error_code = terrain_save_read_block_reference(buffer,
+        &underwater_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = buffer.read_u32_le(&snow_cap_block_id);
+    error_code = terrain_save_read_block_reference(buffer,
+        &snow_cap_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.underground_structures.set_enabled(

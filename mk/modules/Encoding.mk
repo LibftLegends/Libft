@@ -1,8 +1,6 @@
-TARGET         := encoding.a
-DEBUG_TARGET   := encoding_debug.a
+Encoding_TARGET         := encoding.a
+Encoding_DEBUG_TARGET   := encoding_debug.a
 
-SRCS := encoding.cpp
+Encoding_SOURCES := encoding.cpp
 
-HEADERS := encoding.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Encoding_HEADERS := encoding.hpp

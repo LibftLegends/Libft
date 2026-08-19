@@ -460,11 +460,6 @@ int32_t cma_small_arena_deallocate_locked(void *memory_pointer)
     else
         g_cma_current_bytes = 0;
     g_cma_free_count++;
-    if (g_cma_small_arena_live_count == 0)
-    {
-        (void)cma_arena_reset(&g_cma_small_arena);
-        cma_small_arena_clear_free_lists();
-    }
     return (FT_ERR_SUCCESS);
 }
 

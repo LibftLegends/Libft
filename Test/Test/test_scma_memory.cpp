@@ -284,6 +284,52 @@ FT_TEST(test_scma_compaction_reuses_space_for_new_blocks)
     return (1);
 }
 
+FT_TEST(test_scma_free_span_reuse_splits_and_wipes_payload)
+{
+    scma_handle first_handle;
+    scma_handle middle_handle;
+    scma_handle last_handle;
+    scma_handle reused_handle;
+    unsigned char payload[16];
+    unsigned char cleared_payload[8];
+    ft_size_t index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(128));
+    first_handle = scma_allocate(16);
+    middle_handle = scma_allocate(16);
+    last_handle = scma_allocate(16);
+    FT_ASSERT_EQ(1, scma_handle_is_valid(first_handle));
+    FT_ASSERT_EQ(1, scma_handle_is_valid(middle_handle));
+    FT_ASSERT_EQ(1, scma_handle_is_valid(last_handle));
+    index = 0;
+    while (index < sizeof(payload))
+    {
+        payload[index] = static_cast<unsigned char>(0xA0U + index);
+        index = index + 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(middle_handle, 0,
+            payload, sizeof(payload)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(middle_handle));
+    reused_handle = scma_allocate(8);
+    FT_ASSERT_EQ(1, scma_handle_is_valid(reused_handle));
+    FT_ASSERT_EQ(middle_handle.index, reused_handle.index);
+    FT_ASSERT(middle_handle.generation != reused_handle.generation);
+    std::memset(cleared_payload, 0xFF, sizeof(cleared_payload));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(reused_handle, 0,
+            cleared_payload, sizeof(cleared_payload)));
+    index = 0;
+    while (index < sizeof(cleared_payload))
+    {
+        FT_ASSERT_EQ(static_cast<unsigned char>(0), cleared_payload[index]);
+        index = index + 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(first_handle));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(last_handle));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(reused_handle));
+    scma_shutdown();
+    return (1);
+}
+
 FT_TEST(test_scma_resize_grow_and_shrink_preserves_data)
 {
     scma_handle handle;

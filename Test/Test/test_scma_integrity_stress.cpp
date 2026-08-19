@@ -92,14 +92,17 @@ namespace
     {
         std::vector<uint8_t> read_buffer;
         ft_size_t reported_size;
-
-        FT_ASSERT_EQ(1, scma_handle_is_valid(record.handle));
+        if (scma_handle_is_valid(record.handle) != 1)
+            return (0);
         reported_size = scma_get_size(record.handle);
-        FT_ASSERT_EQ(record.bytes.size(), reported_size);
+        if (record.bytes.size() != reported_size)
+            return (0);
         read_buffer.resize(record.bytes.size());
-        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(record.handle, 0, read_buffer.data(),
-            record.bytes.size()));
-        FT_ASSERT(scma_buffers_match(record.bytes, read_buffer));
+        if (scma_read(record.handle, 0, read_buffer.data(),
+                record.bytes.size()) != FT_ERR_SUCCESS)
+            return (0);
+        if (!scma_buffers_match(record.bytes, read_buffer))
+            return (0);
         return (1);
     }
 
@@ -137,7 +140,7 @@ namespace
         ft_size_t expected_used_size;
 
         ft_bzero(&stats, sizeof(stats));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_get_stats(&stats));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_get_stats(&stats));
         expected_used_size = scma_sum_record_sizes(records);
         FT_ASSERT_EQ(expected_used_size, stats.used_size);
         FT_ASSERT(stats.heap_capacity >= stats.used_size);

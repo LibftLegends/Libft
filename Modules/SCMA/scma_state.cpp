@@ -69,6 +69,33 @@ ft_size_t    &scma_used_size_ref(void)
     return (g_scma_used_size);
 }
 
+void scma_recompute_used_size(void)
+{
+    ft_size_t index;
+    ft_size_t maximum_end;
+
+    index = 0;
+    maximum_end = 0;
+    while (index < scma_block_count_ref())
+    {
+        scma_block *block;
+        ft_size_t block_end;
+
+        block = &scma_blocks_data_ref()[index];
+        if (block->in_use
+            && block->size <= static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                - block->offset)
+        {
+            block_end = block->offset + block->size;
+            if (block_end > maximum_end)
+                maximum_end = block_end;
+        }
+        index += 1;
+    }
+    scma_used_size_ref() = maximum_end;
+    return ;
+}
+
 ft_size_t    &scma_live_size_ref(void)
 {
     return (g_scma_live_size);
@@ -193,6 +220,51 @@ static int32_t scma_validate_live_list(scma_block_span span)
     return (FT_ERR_SUCCESS);
 }
 
+static ft_size_t scma_find_first_compaction_block(void)
+{
+    ft_size_t index;
+    ft_size_t selected_index;
+    ft_size_t selected_offset;
+
+    index = 0;
+    selected_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    selected_offset = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    while (index < scma_block_count_ref())
+    {
+        if (scma_blocks_data_ref()[index].in_use
+            && scma_blocks_data_ref()[index].offset < selected_offset)
+        {
+            selected_index = index;
+            selected_offset = scma_blocks_data_ref()[index].offset;
+        }
+        index += 1;
+    }
+    return (selected_index);
+}
+
+static ft_size_t scma_find_next_compaction_block(ft_size_t previous_offset)
+{
+    ft_size_t index;
+    ft_size_t selected_index;
+    ft_size_t selected_offset;
+
+    index = 0;
+    selected_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    selected_offset = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    while (index < scma_block_count_ref())
+    {
+        if (scma_blocks_data_ref()[index].in_use
+            && scma_blocks_data_ref()[index].offset > previous_offset
+            && scma_blocks_data_ref()[index].offset < selected_offset)
+        {
+            selected_index = index;
+            selected_offset = scma_blocks_data_ref()[index].offset;
+        }
+        index += 1;
+    }
+    return (selected_index);
+}
+
 int32_t scma_compact_incremental(ft_size_t byte_budget)
 {
     scma_block_span span;
@@ -219,7 +291,21 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
     if (g_scma_compaction_cursor
             == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
-        g_scma_compaction_cursor = scma_live_head_ref();
+        ft_size_t free_index;
+
+        g_scma_free_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        free_index = 0;
+        while (free_index < g_scma_block_count)
+        {
+            if (!span.data[free_index].in_use)
+            {
+                span.data[free_index].size = 0;
+                span.data[free_index].next_free_index =
+                    static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+            }
+            free_index += 1;
+        }
+        g_scma_compaction_cursor = scma_find_first_compaction_block();
         g_scma_compaction_target_offset = 0;
     }
     moved_bytes = 0;
@@ -235,16 +321,22 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
         if (current_index >= span.count)
             return (FT_ERR_INVALID_STATE);
         block = &span.data[current_index];
-        if (block->offset != g_scma_compaction_target_offset)
         {
-            std::memmove(heap_data + g_scma_compaction_target_offset,
-                heap_data + block->offset,
-                block->size);
-            block->offset = g_scma_compaction_target_offset;
+            ft_size_t source_offset;
+
+            source_offset = block->offset;
+            if (block->offset != g_scma_compaction_target_offset)
+            {
+                std::memmove(heap_data + g_scma_compaction_target_offset,
+                    heap_data + block->offset,
+                    block->size);
+                block->offset = g_scma_compaction_target_offset;
+            }
+            g_scma_compaction_target_offset += block->size;
+            moved_bytes += block->size;
+            g_scma_compaction_cursor =
+                scma_find_next_compaction_block(source_offset);
         }
-        g_scma_compaction_target_offset += block->size;
-        moved_bytes += block->size;
-        g_scma_compaction_cursor = block->next_index;
     }
     if (g_scma_compaction_cursor == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
@@ -252,6 +344,22 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
         if (previous_used_size > g_scma_compaction_target_offset)
             scma_secure_bzero(heap_data + g_scma_compaction_target_offset,
                 previous_used_size - g_scma_compaction_target_offset);
+        {
+            ft_size_t free_index;
+
+            g_scma_free_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+            free_index = 0;
+            while (free_index < g_scma_block_count)
+            {
+                if (!span.data[free_index].in_use)
+                {
+                    span.data[free_index].size = 0;
+                    span.data[free_index].next_free_index =
+                        static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+                }
+                free_index += 1;
+            }
+        }
         scma_compaction_needed_ref() = FT_FALSE;
         scma_reset_compaction();
     }
@@ -345,6 +453,268 @@ void    scma_push_free_block(ft_size_t index)
     blocks_data = scma_blocks_data_ref();
     blocks_data[index].next_free_index = scma_free_head_ref();
     scma_free_head_ref() = index;
+    return ;
+}
+
+static void scma_remove_free_block(ft_size_t index)
+{
+    ft_size_t current_index;
+    ft_size_t previous_index;
+    scma_block *blocks_data;
+    const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+
+    blocks_data = scma_blocks_data_ref();
+    current_index = scma_free_head_ref();
+    previous_index = invalid_index;
+    while (current_index != invalid_index)
+    {
+        if (current_index >= scma_block_count_ref())
+            return ;
+        if (current_index == index)
+        {
+            if (previous_index == invalid_index)
+                scma_free_head_ref() = blocks_data[current_index].next_free_index;
+            else
+                blocks_data[previous_index].next_free_index =
+                    blocks_data[current_index].next_free_index;
+            blocks_data[current_index].next_free_index = invalid_index;
+            return ;
+        }
+        previous_index = current_index;
+        current_index = blocks_data[current_index].next_free_index;
+    }
+    return ;
+}
+
+void scma_discard_free_block(ft_size_t index)
+{
+    if (index >= scma_block_count_ref())
+        return ;
+    scma_remove_free_block(index);
+    scma_blocks_data_ref()[index].size = 0;
+    scma_blocks_data_ref()[index].next_free_index =
+        static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    return ;
+}
+
+void scma_discard_free_spans_from(ft_size_t offset)
+{
+    ft_size_t current_index;
+    ft_size_t next_index;
+
+    current_index = scma_free_head_ref();
+    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        if (current_index >= scma_block_count_ref())
+            return ;
+        next_index = scma_blocks_data_ref()[current_index].next_free_index;
+        if (scma_blocks_data_ref()[current_index].offset >= offset
+            || (scma_blocks_data_ref()[current_index].size > 0
+                && scma_blocks_data_ref()[current_index].offset
+                    <= static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                        - scma_blocks_data_ref()[current_index].size
+                && scma_blocks_data_ref()[current_index].offset
+                    + scma_blocks_data_ref()[current_index].size > offset))
+            scma_discard_free_block(current_index);
+        current_index = next_index;
+    }
+    return ;
+}
+
+static ft_bool scma_free_span_overlaps_live(const scma_block *free_block)
+{
+    ft_size_t free_end;
+    ft_size_t index;
+
+    if (free_block == ft_nullptr || free_block->size == 0)
+        return (FT_TRUE);
+    if (free_block->offset > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+            - free_block->size)
+        return (FT_TRUE);
+    free_end = free_block->offset + free_block->size;
+    index = 0;
+    while (index < scma_block_count_ref())
+    {
+        scma_block *live_block;
+        ft_size_t live_end;
+
+        live_block = &scma_blocks_data_ref()[index];
+        if (live_block->in_use
+            && live_block->size <= static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                - live_block->offset)
+        {
+            live_end = live_block->offset + live_block->size;
+            if (free_block->offset < live_end
+                && live_block->offset < free_end)
+                return (FT_TRUE);
+        }
+        index += 1;
+    }
+    return (FT_FALSE);
+}
+
+void scma_reconcile_free_spans(void)
+{
+    ft_size_t current_index;
+    ft_size_t next_index;
+
+    current_index = scma_free_head_ref();
+    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        if (current_index >= scma_block_count_ref())
+            return ;
+        next_index = scma_blocks_data_ref()[current_index].next_free_index;
+        if (scma_free_span_overlaps_live(
+                &scma_blocks_data_ref()[current_index]))
+            scma_discard_free_block(current_index);
+        current_index = next_index;
+    }
+    return ;
+}
+
+int32_t scma_take_free_span(ft_size_t size, ft_size_t *index_out)
+{
+    ft_size_t current_index;
+    scma_block *block;
+    scma_block *remainder_block;
+    ft_size_t remainder_index;
+    ft_size_t remainder_size;
+    ft_size_t remainder_offset;
+    int32_t capacity_result;
+    ft_bool expands_tail;
+    const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+
+    if (index_out == ft_nullptr || size == 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *index_out = invalid_index;
+    scma_reconcile_free_spans();
+    expands_tail = FT_FALSE;
+    current_index = scma_free_head_ref();
+    while (current_index != invalid_index)
+    {
+        if (current_index >= scma_block_count_ref())
+            return (FT_ERR_INVALID_STATE);
+        block = &scma_blocks_data_ref()[current_index];
+        if (block->in_use)
+            return (FT_ERR_INVALID_STATE);
+        if (block->size >= size)
+            break ;
+        if (block->offset == scma_used_size_ref()
+            && block->offset <= scma_heap_capacity_ref()
+            && size <= scma_heap_capacity_ref() - block->offset)
+        {
+            expands_tail = FT_TRUE;
+            break ;
+        }
+        current_index = block->next_free_index;
+    }
+    if (current_index == invalid_index)
+        return (FT_ERR_SUCCESS);
+    block = &scma_blocks_data_ref()[current_index];
+    remainder_size = 0;
+    remainder_offset = block->offset;
+    if (expands_tail == FT_FALSE)
+    {
+        remainder_size = block->size - size;
+        remainder_offset = block->offset + size;
+    }
+    if (remainder_offset < block->offset)
+        return (FT_ERR_OUT_OF_RANGE);
+    if (remainder_size > 0)
+    {
+        capacity_result = scma_ensure_block_capacity(
+            scma_block_count_ref() + 1);
+        if (capacity_result == 0)
+            return (FT_ERR_NO_MEMORY);
+    }
+    scma_remove_free_block(current_index);
+    block = &scma_blocks_data_ref()[current_index];
+    if (expands_tail == FT_TRUE)
+    {
+        scma_discard_free_spans_from(block->offset);
+        block->size = size;
+    }
+    else if (remainder_size > 0)
+    {
+        remainder_index = scma_block_count_ref();
+        remainder_block = &scma_blocks_data_ref()[remainder_index];
+        remainder_block->offset = remainder_offset;
+        remainder_block->size = remainder_size;
+        remainder_block->in_use = 0;
+        remainder_block->generation = 1;
+        remainder_block->prev_index = invalid_index;
+        remainder_block->next_index = invalid_index;
+        remainder_block->next_free_index = invalid_index;
+        scma_block_count_ref() += 1;
+        scma_push_free_block(remainder_index);
+        block->size = size;
+    }
+    *index_out = current_index;
+    return (FT_ERR_SUCCESS);
+}
+
+void scma_coalesce_free_block(ft_size_t index)
+{
+    scma_block *blocks_data;
+    scma_block *block;
+    ft_size_t current_index;
+    ft_size_t next_index;
+    ft_size_t block_end;
+    ft_size_t other_end;
+
+    if (index >= scma_block_count_ref())
+        return ;
+    blocks_data = scma_blocks_data_ref();
+    block = &blocks_data[index];
+    if (block->in_use)
+        return ;
+    current_index = scma_free_head_ref();
+    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        next_index = blocks_data[current_index].next_free_index;
+        if (current_index != index && !blocks_data[current_index].in_use
+            && blocks_data[current_index].size > 0)
+        {
+            if (block->offset > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                    - block->size
+                || blocks_data[current_index].offset
+                    > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                        - blocks_data[current_index].size)
+            {
+                current_index = next_index;
+                continue ;
+            }
+            block_end = block->offset + block->size;
+            other_end = blocks_data[current_index].offset
+                + blocks_data[current_index].size;
+            if (other_end == block->offset)
+            {
+                if (block->size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                        - blocks_data[current_index].size)
+                {
+                    current_index = next_index;
+                    continue ;
+                }
+                block->offset = blocks_data[current_index].offset;
+                block->size += blocks_data[current_index].size;
+                scma_remove_free_block(current_index);
+                blocks_data[current_index].size = 0;
+            }
+            else if (block_end == blocks_data[current_index].offset)
+            {
+                if (block->size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
+                        - blocks_data[current_index].size)
+                {
+                    current_index = next_index;
+                    continue ;
+                }
+                block->size += blocks_data[current_index].size;
+                scma_remove_free_block(current_index);
+                blocks_data[current_index].size = 0;
+            }
+        }
+        current_index = next_index;
+    }
     return ;
 }
 

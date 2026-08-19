@@ -25,10 +25,14 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `TERRAIN_GENERATOR_OAK_LOG_BLOCK` - Block id used for tree trunks.
 - `TERRAIN_GENERATOR_OAK_LEAVES_BLOCK` - Block id used for tree foliage.
 - `TERRAIN_GENERATOR_CACTUS_BLOCK` - Block id used for cactus decorations.
+- `terrain_builtin_block_id` - Single built-in block-id enum. The
+  `TERRAIN_BUILTIN_BLOCK_COUNT` sentinel defines the first runtime id.
 - `TERRAIN_BIOME_ZONE_WIDTH` - Width in world blocks used to group biome zones.
 - `terrain_biome` - Biome selector enum for plains, hills, desert, snow, and mountains.
 - `terrain_biome_profile` - Surface height, variation, and topsoil depth profile for a biome.
-- `terrain_block_metadata` - Registry entry that describes whether a block is solid, transparent, liquid, replaceable, light-emitting, whether it occludes mesh faces, and how hard it is.
+- `terrain_block_metadata` - Registry entry that describes whether a block is
+  solid, transparent, liquid, replaceable, can host ore, is an ore, light-
+  emitting, whether it occludes mesh faces, and how hard it is.
 - `terrain_block_registration` - Runtime block definition containing metadata and one asset path per block face.
 - `terrain_tree_template_block` - Relative block entry used by tree templates.
 - `terrain_tree_template` - Block list wrapper for reusable tree presets.
@@ -39,9 +43,10 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   slot. Use its `set_*` methods after `initialize()`.
 - `terrain_feature_rule` - Lifecycle-managed seeded placement rule for caller-provided tree or
   object templates, with biome, height, water, and chance constraints.
-- `terrain_ore_rule` - Lifecycle-managed optional deterministic ore policy with block, depth,
-  vein, chance, and enabled settings. Coal, iron, and gold are disabled by
-  default.
+- `terrain_ore_rule` - Lifecycle-managed optional deterministic ore policy with
+  block, depth, vein, chance, enabled, and explicit ore-replacement settings.
+  Existing ore blocks are never replaced unless `set_ore_replacement(FT_TRUE)`
+  is selected. Coal, iron, and gold are disabled by default.
 - `terrain_underground_structure_config` - Lifecycle-managed rounded cave
   rooms, optional surface entrances, and ravine generation ranges and
   densities. Cave radii, large-cave frequency, entrance frequency, and
@@ -62,8 +67,21 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   generation cache validation.
 - `terrain_get_block_metadata(block_id)` - Looks up the metadata entry for a known block id.
 - `terrain_block_is_known(block_id)` - Returns whether a block id exists in the registry and should be accepted by chunk storage.
-- `terrain_register_block(registration, block_id_out)` - Loads six face assets from the supplied paths and registers a process-lifetime runtime block. Runtime ids are allocated after the built-in ids; duplicate names are rejected.
-- `terrain_get_block_name(block_id)` - Returns the registered runtime block name.
+- `terrain_register_block(registration, block_id_out)` - Loads six face assets
+  from the supplied paths and registers a process-lifetime runtime block.
+  Runtime ids are allocated after `TERRAIN_BUILTIN_BLOCK_COUNT`; names must be
+  lowercase `namespace:name` identifiers containing only `a-z`, `0-9`, and
+  `_`. Duplicate names, built-in-name shadowing, and invalid ore metadata are
+  rejected. A failed duplicate registration does not consume an ID.
+- `terrain_get_block_name(block_id)` - Returns a stable built-in or runtime
+  block name.
+- `terrain_find_block_id_by_name(name, block_id_out)` - Resolves a stable
+  built-in or runtime name to the current numeric id.
+
+Built-in names returned by `terrain_get_block_name()` are persistence ABI.
+They must not be renamed or reordered without an explicit save migration or
+alias. Runtime blocks are persisted by their stable names, never by their
+temporary numeric IDs; loading fails when a referenced runtime name is absent.
 - `terrain_get_block_asset_path(block_id, face)` - Returns the source path for one runtime block face.
 - `terrain_get_block_asset_data(block_id, face, size_out)` - Returns the loaded bytes for one runtime block face. The Voxel module stores the bytes; a renderer or asset pipeline can decode them as appropriate.
 - `terrain_block_is_solid(block_id)` - Returns whether a block is treated as a solid collision block.
@@ -113,8 +131,10 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   Minecraft-owned policy once, producing a generation context.
 - `terrain_generation_config_serialize(...)` and
   `terrain_generation_config_deserialize(...)` - Encode/decode the versioned
-  terrain-policy save payload using Libft buffers, including registered tree
-  templates, biome template assignments, and feature rules.
+  terrain-policy save payload using Libft buffers. Block references are stored
+  by stable names and remapped to current numeric ids on load, including
+  registered tree templates, biome palettes, ore rules, layer blocks, and
+  feature rules.
 - `terrain_generation_config_save_file(...)` and
   `terrain_generation_config_load_file(...)` - Libft-owned binary file I/O for
   the terrain policy used by a world save.
@@ -138,6 +158,13 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
   safely clamps custom selector results to the configured biome slots.
 - `terrain_get_biome_index(...)` - Queries the active configured biome index
   for runtime HUD/debug integration, including custom slots.
+
+Generation samples a shared, normalized biome-weight set for each world
+column. Heights, surface/subsurface palette selection, and decoration policy
+therefore use the same transition neighborhood; generation order and chunk
+boundaries do not affect the result. Surface palette selection is deterministic
+in world space, so a biome edge is dithered instead of becoming a hard block
+line.
 
 ## World-generation settings reference
 
@@ -282,6 +309,12 @@ terrain_write_generated_block(8, 80, 8, 13)
 
 - Biomes are selected in world-space zones so adjacent chunks line up cleanly across region boundaries.
 - Height is driven by smooth noise instead of a flat cutoff, which produces hills and terrain variation within each biome.
+- Mountain terrain uses a warped low-frequency range mask, layered ridges,
+  valley subtraction, and erosion detail so ranges form foothills and passes
+  instead of repeating uniformly across the world.
+- Mountain slopes are sampled from neighboring mathematical heights. Steep
+  faces expose the biome's deep/rock block, while snow coverage is restricted
+  by slope and varied in world space to avoid a perfectly horizontal snowline.
 - Biome profiles control baseline elevation, height variation, and topsoil depth, which makes it easy to tune different terrain regions independently.
 - Surface blocks now vary by biome, with snow using grass and mountains using stone, and post-passes place shrubs plus reusable tree templates on suitable surfaces.
 - The block registry records collision, transparency, replaceability, face occlusion, and hardness so terrain code can make local decisions without hardcoding block ids everywhere.

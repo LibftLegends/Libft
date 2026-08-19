@@ -1,86 +1,28 @@
-include ../../mk/compiler_flags.mk
-include ../../mk/modules/common/module_defaults.mk
+# Compatibility wrapper for the canonical root GNU Make graph.
 
-TARGET := Application.a
-DEBUG_TARGET := Application_debug.a
+MODULE_NAME := $(notdir $(CURDIR))
+include ../../mk/modules/$(MODULE_NAME).mk
 
-SRCS := application_settings.cpp application_auth_service.cpp
+MODULE_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_TARGET)
+MODULE_DEBUG_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_DEBUG_TARGET)
+MODULE_TEST_ARCHIVE := Modules/$(MODULE_NAME)/$(patsubst %.a,%_test.a,$($(MODULE_NAME)_TARGET))
 
-HEADERS := application.hpp application_settings.hpp application_auth_service.hpp ../CPP_class/class_string.hpp ../Filesystem/filesystem.hpp ../System_utils/system_utils.hpp ../Time/time.hpp ../Printf/printf.hpp ../Template/vector.hpp
+.PHONY: all debug test clean fclean re
 
-all: $(TARGET)
+all:
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)
 
-$(TARGET): $(OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s] Module archive ready (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS)
+debug:
+	+$(MAKE) -C ../.. $(MODULE_DEBUG_ARCHIVE)
 
-$(OBJDIR)/%.o: %.cpp $(HEADERS) | $(OBJDIR)
-	@$(CXX) $(CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-	@count=$$(find $(OBJDIR) -maxdepth 1 -name '*.o' 2>/dev/null | wc -l); \
-		if [ "$(LIBFT_BATCH_OUTPUT)" != "1" ]; then \
-		    printf '        [%s] Building file %s (%d/%d)\n' "$(MODULE_NAME)" "$<" $$count $(TOTAL_SRCS); \
-		fi
-
-debug: CXXFLAGS += -DDEBUG=1
-debug: $(DEBUG_TARGET)
-
-$(DEBUG_TARGET): $(DEBUG_OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s Debug] Module archive ready (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS)
-
-$(DEBUG_OBJDIR)/%.o: %.cpp $(HEADERS) | $(DEBUG_OBJDIR)
-	@$(CXX) $(CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-	@count=$$(find $(DEBUG_OBJDIR) -maxdepth 1 -name '*.o' 2>/dev/null | wc -l); \
-		if [ "$(LIBFT_BATCH_OUTPUT)" != "1" ]; then \
-		    printf '        [%s Debug] Building file %s (%d/%d)\n' "$(MODULE_NAME)" "$<" $$count $(TOTAL_SRCS); \
-		fi
-
-$(OBJDIR) $(DEBUG_OBJDIR):
-	@$(MKDIR) $@
-
-%_test.a: FORCE
-	@$(MAKE) TARGET="$@" $(SUBMAKE_OVERRIDES) COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD" all
+test:
+	+$(MAKE) -C ../.. $(MODULE_TEST_ARCHIVE)
 
 clean:
-	@status=0; \
-	if ! $(RM) $(CLEAN_FILES); then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(CLEAN_DIRS); then \
-		status=1; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-		printf '        [%s] clean: success\n' "$(MODULE_NAME)"; \
-	else \
-		printf '        [%s] clean: failed\n' "$(MODULE_NAME)"; \
-		exit 1; \
-	fi
+	+$(MAKE) -C ../.. clean
 
-fclean:
-	@status=0; \
-	if ! $(RM) $(FCLEAN_FILES); then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(CLEAN_DIRS); then \
-		status=1; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-		printf '        [%s] fclean: success\n' "$(MODULE_NAME)"; \
-	else \
-		printf '        [%s] fclean: failed\n' "$(MODULE_NAME)"; \
-		exit 1; \
-	fi
+fclean: clean
 
 re:
-	@$(MAKE) fclean
-	@$(MAKE) all
-
-both: all debug
-
--include $(DEPS) $(DEBUG_DEPS)
-
-.PHONY: all clean fclean re debug both
+	+$(MAKE) -C ../.. clean
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)

@@ -1,78 +1,28 @@
-include ../../mk/compiler_flags.mk
-include ../../mk/modules/Template.mk
+# Compatibility wrapper for the canonical root GNU Make graph.
 
-all: $(TARGET)
-	@status=0; \
-	if ! $(RM) $(CLEAN_FILES); then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(CLEAN_DIRS); then \
-		status=1; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-		printf '        [%s] template verification passed (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS); \
-	else \
-		printf '        [%s] cleanup failed\n' "$(MODULE_NAME)"; \
-		exit 1; \
-	fi
+MODULE_NAME := $(notdir $(CURDIR))
+include ../../mk/modules/$(MODULE_NAME).mk
 
-$(TARGET): $(OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s] Module archive ready (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS)
+MODULE_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_TARGET)
+MODULE_DEBUG_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_DEBUG_TARGET)
+MODULE_TEST_ARCHIVE := Modules/$(MODULE_NAME)/$(patsubst %.a,%_test.a,$($(MODULE_NAME)_TARGET))
 
-$(OBJDIR)/%.o: %.cpp | $(OBJDIR)
-	@$(CXX) $(CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-	@count=$$(find $(OBJDIR) -maxdepth 1 -name '*.o' 2>/dev/null | wc -l); \
-		if [ "$(LIBFT_BATCH_OUTPUT)" != "1" ]; then \
-		    printf '        [%s] Building file %s (%d/%d)\n' "$(MODULE_NAME)" "$<" $$count $(TOTAL_SRCS); \
-		fi
+.PHONY: all debug test clean fclean re
 
-$(OBJDIR):
-	@$(MKDIR) $@
+all:
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)
+
+debug:
+	+$(MAKE) -C ../.. $(MODULE_DEBUG_ARCHIVE)
+
+test:
+	+$(MAKE) -C ../.. $(MODULE_TEST_ARCHIVE)
 
 clean:
-	@status=0; \
-	if ! $(RM) $(CLEAN_FILES); then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(CLEAN_DIRS); then \
-		status=1; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-		printf '        [%s] clean: success\n' "$(MODULE_NAME)"; \
-	else \
-		printf '        [%s] clean: failed\n' "$(MODULE_NAME)"; \
-		exit 1; \
-	fi
+	+$(MAKE) -C ../.. clean
 
-fclean:
-	@status=0; \
-	if ! $(RM) $(CLEAN_FILES); then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(CLEAN_DIRS); then \
-		status=1; \
-	fi; \
-	if ! $(RM) $(TARGET) $(DEBUG_TARGET) $(TEST_ARCHIVES); then \
-		status=1; \
-	fi; \
-	if [ $$status -eq 0 ]; then \
-		printf '        [%s] fclean: success\n' "$(MODULE_NAME)"; \
-	else \
-		printf '        [%s] fclean: failed\n' "$(MODULE_NAME)"; \
-		exit 1; \
-	fi
+fclean: clean
 
 re:
-	@$(MAKE) fclean
-	@$(MAKE) all
-
-
-%_test.a: FORCE
-	@$(MAKE) TARGET="$@" $(SUBMAKE_OVERRIDES) COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD" all
-
--include $(DEPS) $(DEBUG_DEPS)
-
-.PHONY: all clean fclean re
+	+$(MAKE) -C ../.. clean
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)

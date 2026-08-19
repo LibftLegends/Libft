@@ -53,6 +53,10 @@ jobs:
         shell: bash
         run: make -j2 tests
 
+      - name: Validate release archives
+        shell: bash
+        run: make --output-sync=target -j2 archive-integrity
+
       - name: Run test suite on Unix
         if: runner.os != 'Windows'
         shell: bash
@@ -63,22 +67,22 @@ jobs:
         run: | # CI_DIAGNOSTIC: Capture the complete Unix test output while preserving the test exit status.
           set +e
           set -o pipefail
-          ./Test/libft_tests 2>&1 | tee Test/ci_unix_full_output.log
+          (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
           test_status=${PIPESTATUS[0]}
           if [ "$test_status" -ne 0 ]; then
             if command -v gdb >/dev/null 2>&1; then
-              gdb -q -batch \
+              (cd Test && gdb -q -batch \
                 -ex 'set pagination off' \
                 -ex 'set env FT_TEST_HIDE_SUCCESSFUL 0' \
                 -ex run \
                 -ex 'thread apply all bt full' \
-                --args ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+                --args ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
             elif command -v lldb >/dev/null 2>&1; then
-              lldb --batch \
+              (cd Test && lldb --batch \
                 -o 'settings set target.env-vars FT_TEST_HIDE_SUCCESSFUL=0' \
                 -k 'thread backtrace all' \
                 -o run \
-                -- ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+                -- ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
             else
               printf '%s\n' 'No debugger was available for stack trace capture.' | tee Test/ci_unix_stack_trace.log
             fi
@@ -96,23 +100,30 @@ jobs:
           Remove-Item Env:FT_TEST_NAME_FILTER -ErrorAction SilentlyContinue
           Remove-Item Env:FT_TEST_SKIP_NAME_FILTER -ErrorAction SilentlyContinue
           $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
+          $test_directory_pushed = $false
+          $windows_output_path = Join-Path (Get-Location) 'Test\ci_windows_full_output.log'
           try {
-            & .\Test\libft_tests.exe *> Test\ci_windows_full_output.log # CI_DIAGNOSTIC: Capture stdout and stderr without a native-command pipeline.
+            Push-Location Test
+            $test_directory_pushed = $true
+            & .\libft_tests.exe *> ci_windows_full_output.log # CI_DIAGNOSTIC: Run from Test so relative fixtures resolve correctly.
             $test_status = $LASTEXITCODE # CI_DIAGNOSTIC: Preserve the executable exit status.
           }
           catch {
-            $_ | Out-File -FilePath Test\ci_windows_full_output.log -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
+            $_ | Out-File -FilePath $windows_output_path -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
+          }
+          finally {
+            if ($test_directory_pushed) { Pop-Location }
           }
           Write-Host "Windows test exit code: $test_status" # CI_DIAGNOSTIC: Make native process failures explicit.
-          if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
-          if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
-          if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
-          if (Test-Path windows_crash_stack_trace.log) { Copy-Item windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
+          if (Test-Path Test\test_failures.log) { Copy-Item Test\test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
+          if (Test-Path Test\secure_wipe_runtime.log) { Copy-Item Test\secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
+          if (Test-Path Test\secure_wipe_runtime.err) { Copy-Item Test\secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+          if (Test-Path Test\windows_crash_stack_trace.log) { Copy-Item Test\windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
           if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
-          if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
-          if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
-          if (Test-Path windows_crash_stack_trace.log) { Get-Content windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
+          if (Test-Path Test\secure_wipe_runtime.log) { Get-Content Test\secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
+          if (Test-Path Test\secure_wipe_runtime.err) { Get-Content Test\secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
+          if (Test-Path Test\windows_crash_stack_trace.log) { Get-Content Test\windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
           if ($test_status -ne 0) { # CI_DIAGNOSTIC: Capture a debugger backtrace for fail-fast heap corruption.
             $gdb_command = Get-Command gdb.exe -ErrorAction SilentlyContinue
             if ($null -ne $gdb_command) {
@@ -151,13 +162,13 @@ jobs:
         if: always()
         shell: bash
         run: |
-          make -C Test -j2 performance_benchmarks
+          make --output-sync=target -j2 performance_benchmarks
 
       - name: Run performance benchmarks on Unix
         if: always() && runner.os != 'Windows'
         shell: bash
         run: |
-          make -C Test run_performance_benchmarks
+          make run_performance_benchmarks
 
       - name: Run performance benchmarks on Windows
         if: always() && runner.os == 'Windows'
@@ -183,10 +194,10 @@ jobs:
         run: |
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
           for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
-            FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./Test/libft_tests > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
-            cp test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
-            if [ -f secure_wipe_runtime.log ]; then cp secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
-            if [ -f secure_wipe_runtime.err ]; then cp secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+            (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
+            cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
+            if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
+            if [ -f Test/secure_wipe_runtime.err ]; then cp Test/secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
             cat "Test/ci_ubuntu_${test_name}_output.log" # CI_DIAGNOSTIC: Print targeted output into the Actions log.
             cat "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Print exact assertion details into the Actions log.
             if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Print runtime status into the Actions log.

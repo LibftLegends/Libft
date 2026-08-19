@@ -16,8 +16,7 @@
 #include <pthread.h>
 
 static const uint32_t TERRAIN_RUNTIME_BLOCK_ID_BASE =
-    TERRAIN_GENERATOR_GOLD_ORE_BLOCK + 1U;
-static const uint32_t TERRAIN_RUNTIME_BLOCK_CAPACITY = 256U;
+    static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT);
 
 struct terrain_runtime_block
 {
@@ -30,6 +29,50 @@ struct terrain_runtime_block
 
 static terrain_runtime_block *g_terrain_runtime_blocks[
     TERRAIN_RUNTIME_BLOCK_CAPACITY] = {};
+
+static const char *const TERRAIN_BUILTIN_BLOCK_NAMES[
+    TERRAIN_BUILTIN_BLOCK_COUNT] =
+{
+    "minecraft:air", "minecraft:grass", "minecraft:dirt",
+    "minecraft:stone", "minecraft:shrub", "minecraft:oak_log",
+    "minecraft:oak_leaves", "minecraft:cactus", "minecraft:water",
+    "minecraft:bedrock", "minecraft:sand", "minecraft:snow",
+    "minecraft:permafrost", "minecraft:canyon_rock", "minecraft:slate",
+    "minecraft:moss_rock", "minecraft:coal_ore", "minecraft:iron_ore",
+    "minecraft:gold_ore"
+};
+
+static ft_bool terrain_block_name_is_valid(const char *name) noexcept
+{
+    uint32_t index;
+    uint32_t separator_index;
+    uint32_t separator_count;
+
+    if (name == ft_nullptr || name[0] == '\0')
+        return (FT_FALSE);
+    index = 0U;
+    separator_index = 0U;
+    separator_count = 0U;
+    while (name[index] != '\0')
+    {
+        if (name[index] == ':')
+        {
+            if (separator_count != 0U || index == 0U)
+                return (FT_FALSE);
+            separator_index = index;
+            separator_count += 1U;
+        }
+        else if (!((name[index] >= 'a' && name[index] <= 'z')
+                || (name[index] >= '0' && name[index] <= '9')
+                || name[index] == '_'))
+            return (FT_FALSE);
+        index += 1U;
+    }
+    if (separator_count != 1U || separator_index + 1U >= index)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 static pthread_once_t g_terrain_runtime_mutex_once = PTHREAD_ONCE_INIT;
 static pt_mutex *g_terrain_runtime_mutex = ft_nullptr;
 
@@ -185,9 +228,30 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
     uint32_t asset_index;
     int32_t error_code;
 
-    if (block_id_out == ft_nullptr || registration.name == ft_nullptr
-        || registration.name[0] == '\0')
+    if (block_id_out == ft_nullptr
+        || terrain_block_name_is_valid(registration.name) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (registration.metadata.solid > FT_TRUE
+        || registration.metadata.transparent > FT_TRUE
+        || registration.metadata.liquid > FT_TRUE
+        || registration.metadata.replaceable > FT_TRUE
+        || registration.metadata.can_host_ore > FT_TRUE
+        || registration.metadata.is_ore > FT_TRUE
+        || registration.metadata.light_emitting > FT_TRUE
+        || registration.metadata.occludes_faces > FT_TRUE
+        || registration.metadata.breakable > FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (registration.metadata.is_ore == FT_TRUE
+        && registration.metadata.can_host_ore == FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    existing_index = 0U;
+    while (existing_index < static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT))
+    {
+        if (std::strcmp(TERRAIN_BUILTIN_BLOCK_NAMES[existing_index],
+                registration.name) == 0)
+            return (FT_ERR_ALREADY_EXISTS);
+        existing_index += 1U;
+    }
     asset_index = 0U;
     while (asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
     {
@@ -261,10 +325,53 @@ const char *terrain_get_block_name(uint32_t block_id) noexcept
 {
     terrain_runtime_block *block_pointer;
 
+    if (block_id < static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT))
+        return (TERRAIN_BUILTIN_BLOCK_NAMES[block_id]);
     block_pointer = terrain_runtime_find_block(block_id);
     if (block_pointer == ft_nullptr)
         return (ft_nullptr);
     return (block_pointer->name.c_str());
+}
+
+int32_t terrain_find_block_id_by_name(const char *name,
+    uint32_t *block_id_out) noexcept
+{
+    uint32_t index;
+    pt_mutex *mutex_pointer;
+
+    if (block_id_out == ft_nullptr
+        || terrain_block_name_is_valid(name) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT))
+    {
+        if (std::strcmp(name, TERRAIN_BUILTIN_BLOCK_NAMES[index]) == 0)
+        {
+            *block_id_out = index;
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    mutex_pointer = terrain_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    index = 0U;
+    while (index < TERRAIN_RUNTIME_BLOCK_CAPACITY)
+    {
+        if (g_terrain_runtime_blocks[index] != ft_nullptr
+            && std::strcmp(g_terrain_runtime_blocks[index]->name.c_str(),
+                name) == 0)
+        {
+            *block_id_out = TERRAIN_RUNTIME_BLOCK_ID_BASE + index;
+            (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_NOT_FOUND);
 }
 
 const char *terrain_get_block_asset_path(uint32_t block_id,
@@ -298,5 +405,31 @@ const uint8_t *terrain_get_block_asset_data(uint32_t block_id,
     *size_out = block_pointer->asset_data[face].size();
     return (block_pointer->asset_data[face].data());
 }
+
+#ifdef LIBFT_TEST_BUILD
+void terrain_runtime_reset_for_tests(void) noexcept
+{
+    uint32_t index;
+    pt_mutex *mutex_pointer;
+    terrain_runtime_block *block_pointer;
+
+    mutex_pointer = terrain_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return ;
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return ;
+    index = 0U;
+    while (index < TERRAIN_RUNTIME_BLOCK_CAPACITY)
+    {
+        block_pointer = g_terrain_runtime_blocks[index];
+        g_terrain_runtime_blocks[index] = ft_nullptr;
+        terrain_runtime_destroy_block(block_pointer,
+            TERRAIN_BLOCK_ASSET_FACE_COUNT);
+        index += 1U;
+    }
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return ;
+}
+#endif
 
 #endif

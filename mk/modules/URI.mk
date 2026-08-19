@@ -1,7 +1,7 @@
-TARGET := uri.a
-DEBUG_TARGET := uri_debug.a
+URI_TARGET := uri.a
+URI_DEBUG_TARGET := uri_debug.a
 
-SRCS := uri_internal.cpp \
+URI_SOURCES := uri_internal.cpp \
         uri_components_reset.cpp \
         uri_components_destroy.cpp \
         uri_parse.cpp \
@@ -11,6 +11,4 @@ SRCS := uri_internal.cpp \
         uri_query_get_value.cpp \
         uri_query_has_key.cpp
 
-HEADERS := uri.hpp uri_internal.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+URI_HEADERS := uri.hpp uri_internal.hpp

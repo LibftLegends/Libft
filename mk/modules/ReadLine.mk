@@ -1,7 +1,7 @@
-TARGET := ReadLine.a
-DEBUG_TARGET := ReadLine_debug.a
+ReadLine_TARGET := ReadLine.a
+ReadLine_DEBUG_TARGET := ReadLine_debug.a
 
-SRCS := readline.cpp \
+ReadLine_SOURCES := readline.cpp \
     readline_clear_history.cpp \
     readline_handle_keypress.cpp \
     readline_suggestions.cpp \
@@ -15,9 +15,7 @@ SRCS := readline.cpp \
     readline_thread_safety.cpp \
     readline_terminal_dimensions.cpp \
     readline_get_terminal_width.cpp
-SRCS += readline_utf8.cpp
+ReadLine_SOURCES += readline_utf8.cpp
 
-HEADERS := readline.hpp \
+ReadLine_HEADERS := readline.hpp \
            readline_internal.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

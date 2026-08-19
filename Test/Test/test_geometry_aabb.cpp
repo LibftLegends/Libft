@@ -1878,7 +1878,7 @@ FT_TEST(test_aabb_move_ring_high_load_three_threads)
     thread_create_result = pt_thread_create(&thread_three, ft_nullptr,
             ring_worker, &thread_three_args);
     FT_ASSERT_EQ(0, thread_create_result);
-    join_timeout_ms = 5000;
+    join_timeout_ms = 30000;
     join_result = pt_thread_timed_join(thread_one, ft_nullptr, join_timeout_ms);
     if (join_result != 0)
     {

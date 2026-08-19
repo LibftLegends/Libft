@@ -182,10 +182,35 @@ scma_handle    scma_allocate(ft_size_t size)
     {
         return (scma_unlock_and_return_handle(result_handle));
     }
+    if (scma_take_free_span(size, &index) != FT_ERR_SUCCESS)
+    {
+        return (scma_unlock_and_return_handle(result_handle));
+    }
+    if (index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    {
+        block = &scma_blocks_data_ref()[index];
+        block->in_use = 1;
+        block->generation = scma_next_generation(block->generation);
+        block->prev_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+        block->next_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+#ifdef LIBFT_TEST_BUILD
+        block->leak_ignored = FT_FALSE;
+        scma_capture_leak_stack(block, 2);
+#endif
+        scma_link_block_at_tail(index);
+        scma_recompute_used_size();
+        live_size += size;
+        result_handle.index = index;
+        result_handle.generation = block->generation;
+        return (scma_unlock_and_return_handle(result_handle));
+    }
     if (scma_compaction_needed_ref() == FT_TRUE)
     {
         if (scma_compact_incremental(static_cast<ft_size_t>(65536))
                 != FT_ERR_SUCCESS)
+            return (scma_unlock_and_return_handle(result_handle));
+        if (scma_compaction_needed_ref() == FT_TRUE
+            && scma_compact() != FT_ERR_SUCCESS)
             return (scma_unlock_and_return_handle(result_handle));
         required_size = used_size + size;
         if (required_size < used_size)
@@ -204,8 +229,7 @@ scma_handle    scma_allocate(ft_size_t size)
     {
         return (scma_unlock_and_return_handle(result_handle));
     }
-    index = scma_pop_free_block();
-    if (index == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    scma_discard_free_spans_from(used_size);
     {
         scma_block *&blocks_data = scma_blocks_data_ref();
         ft_size_t new_index;
@@ -235,24 +259,6 @@ scma_handle    scma_allocate(ft_size_t size)
         result_handle.generation = block->generation;
         return (scma_unlock_and_return_handle(result_handle));
     }
-    block = &scma_blocks_data_ref()[index];
-    block->offset = used_size;
-    block->size = size;
-    block->in_use = 1;
-    block->generation = scma_next_generation(block->generation);
-    block->prev_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
-    block->next_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
-    block->next_free_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
-#ifdef LIBFT_TEST_BUILD
-    block->leak_ignored = FT_FALSE;
-    scma_capture_leak_stack(block, 2);
-#endif
-    result_handle.index = index;
-    result_handle.generation = block->generation;
-    scma_link_block_at_tail(index);
-    used_size += size;
-    live_size += size;
-    return (scma_unlock_and_return_handle(result_handle));
 }
 
 int32_t    scma_free(scma_handle handle)
@@ -273,29 +279,34 @@ int32_t    scma_free(scma_handle handle)
     }
     block_offset = block->offset;
     block_size = block->size;
-    was_tail = FT_FALSE;
-    if (block_offset <= scma_used_size_ref()
-        && block_size == scma_used_size_ref() - block_offset)
-        was_tail = FT_TRUE;
     scma_secure_bzero(scma_get_heap_data() + block_offset, block_size);
     scma_unlink_block(handle.index);
     block->in_use = 0;
-    block->size = 0;
     block->generation = scma_next_generation(block->generation);
 #ifdef LIBFT_TEST_BUILD
     block->leak_ignored = FT_FALSE;
     block->leak_stack_frame_count = 0;
     block->leak_test_name = nullptr;
 #endif
-    scma_push_free_block(handle.index);
     if (scma_live_size_ref() >= block_size)
         scma_live_size_ref() -= block_size;
     else
         scma_live_size_ref() = 0;
+    scma_push_free_block(handle.index);
+    scma_coalesce_free_block(handle.index);
+    block_offset = block->offset;
+    block_size = block->size;
+    was_tail = FT_FALSE;
+    if (block_offset <= scma_used_size_ref()
+        && block_size == scma_used_size_ref() - block_offset)
+        was_tail = FT_TRUE;
     if (was_tail == FT_TRUE)
-        scma_used_size_ref() = block_offset;
+    {
+        scma_recompute_used_size();
+    }
     else
     {
+        scma_recompute_used_size();
         scma_reset_compaction();
         scma_compaction_needed_ref() = FT_TRUE;
     }
@@ -328,6 +339,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     }
     old_size = block->size;
     old_offset = block->offset;
+    scma_recompute_used_size();
     if (new_size == old_size)
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -348,6 +360,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
             scma_reset_compaction();
             scma_compaction_needed_ref() = FT_TRUE;
         }
+        scma_recompute_used_size();
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
     }
@@ -360,8 +373,9 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
         if (!scma_ensure_capacity(required_size))
             return (static_cast<uint32_t>(scma_unlock_and_return_int(
                         FT_ERR_NO_MEMORY)));
+        scma_discard_free_spans_from(used_size);
         block->size = new_size;
-        used_size = required_size;
+        scma_recompute_used_size();
         live_size += new_size - old_size;
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -391,7 +405,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                 return (static_cast<uint32_t>(scma_unlock_and_return_int(
                             FT_ERR_NO_MEMORY)));
             block->size = new_size;
-            used_size = required_size;
+            scma_recompute_used_size();
             live_size += new_size - old_size;
             return (static_cast<uint32_t>(scma_unlock_and_return_int(
                         FT_ERR_SUCCESS)));
@@ -406,6 +420,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_NO_MEMORY)));
     }
+    scma_discard_free_spans_from(used_size);
     heap_data = scma_get_heap_data();
     std::memmove(heap_data + used_size, heap_data + old_offset, old_size);
     scma_secure_bzero(heap_data + old_offset, old_size);
@@ -413,7 +428,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     block->offset = used_size;
     block->size = new_size;
     scma_link_block_at_tail(handle.index);
-    used_size = required_size;
+    scma_recompute_used_size();
     live_size += new_size - old_size;
     scma_compaction_needed_ref() = FT_TRUE;
     scma_reset_compaction();

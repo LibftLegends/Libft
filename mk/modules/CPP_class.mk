@@ -1,7 +1,7 @@
-TARGET := CPP_class.a
-DEBUG_TARGET := CPP_class_debug.a
+CPP_class_TARGET := CPP_class.a
+CPP_class_DEBUG_TARGET := CPP_class_debug.a
 
-SRCS :=  cpp_class_string_constructors.cpp \
+CPP_class_SOURCES :=  cpp_class_string_constructors.cpp \
          cpp_class_string_methods.cpp \
          cpp_class_nullptr.cpp \
          cpp_class_file.cpp \
@@ -16,7 +16,7 @@ SRCS :=  cpp_class_string_constructors.cpp \
          cpp_class_big_number_serialization.cpp \
          cpp_class_bitset.cpp
 
-HEADERS := class_string.hpp \
+CPP_class_HEADERS := class_string.hpp \
           ../Basic/class_nullptr.hpp \
           class_file.hpp \
           class_file_stream.hpp \
@@ -28,5 +28,3 @@ HEADERS := class_string.hpp \
           class_ofstream.hpp \
           class_big_number.hpp \
           bitset.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

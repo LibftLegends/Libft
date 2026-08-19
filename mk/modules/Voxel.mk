@@ -1,8 +1,8 @@
-TARGET := Voxel.a
-DEBUG_TARGET := Voxel_debug.a
+Voxel_TARGET := Voxel.a
+Voxel_DEBUG_TARGET := Voxel_debug.a
 
-SRCS := voxel_data.cpp voxel_generation.cpp voxel_mesh.cpp voxel_mesh_frustum.cpp voxel_save.cpp voxel_world_coordinate.cpp voxel_terrain_scripting_bridge.cpp voxel_block_registry.cpp
+Voxel_SOURCES := voxel_data.cpp voxel_generation.cpp voxel_mesh.cpp voxel_mesh_frustum.cpp voxel_save.cpp voxel_world_coordinate.cpp voxel_terrain_scripting_bridge.cpp voxel_block_registry.cpp
 
-HEADERS := voxel.hpp voxel_mesh.hpp voxel_internal.hpp terrain_scripting_bridge.hpp voxel_block_registry.hpp
+Voxel_CPP_FLAGS := -DGAME_USE_VOXEL_REGION_BACKEND=1
 
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Voxel_HEADERS := voxel.hpp voxel_mesh.hpp voxel_internal.hpp terrain_scripting_bridge.hpp voxel_block_registry.hpp

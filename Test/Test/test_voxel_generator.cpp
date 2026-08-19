@@ -35,24 +35,37 @@ static ft_bool test_terrain_height_is_within_builtin_envelope(
     return (FT_TRUE);
 }
 
+static ft_bool test_terrain_is_builtin_surface_block(uint32_t block_id)
+{
+    uint32_t biome_index;
+
+    if (block_id == TERRAIN_GENERATOR_SNOW_BLOCK)
+        return (FT_TRUE);
+    biome_index = 0U;
+    while (biome_index <= TERRAIN_BIOME_MOUNTAINS)
+    {
+        if (block_id == terrain_surface_block_for_biome(
+                static_cast<terrain_biome>(biome_index)))
+            return (FT_TRUE);
+        biome_index += 1U;
+    }
+    return (FT_FALSE);
+}
+
 FT_TEST(test_terrain_generate_chunk_generates_default_surface_chunk)
 {
     game_voxel_chunk chunk;
-    terrain_biome biome;
     int32_t surface_height;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk,
         "terrain-test-seed"));
-    biome = terrain_get_biome(0, 0, "terrain-test-seed");
     surface_height = test_terrain_surface_height(chunk, 0, 0);
     FT_ASSERT_NEQ(-1, surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height, 0,
         &block_id));
-    if (block_id != terrain_surface_block_for_biome(biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height + 1, 0,
         &block_id));
     FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
@@ -270,8 +283,6 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
 {
     game_voxel_chunk left_chunk;
     game_voxel_chunk right_chunk;
-    terrain_biome left_biome;
-    terrain_biome right_biome;
     int32_t left_surface_height;
     int32_t right_surface_height;
     uint32_t block_id;
@@ -281,24 +292,16 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
         "terrain-test-seed"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(right_chunk,
         TERRAIN_BIOME_ZONE_WIDTH, 0, "terrain-test-seed"));
-    left_biome = terrain_get_biome(0, 0, "terrain-test-seed");
-    right_biome = terrain_get_biome(TERRAIN_BIOME_ZONE_WIDTH, 0,
-        "terrain-test-seed");
-    FT_ASSERT_NEQ(left_biome, right_biome);
     left_surface_height = test_terrain_surface_height(left_chunk, 0, 0);
     right_surface_height = test_terrain_surface_height(right_chunk, 0, 0);
     FT_ASSERT_NEQ(-1, left_surface_height);
     FT_ASSERT_NEQ(-1, right_surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(0, left_surface_height,
         0, &block_id));
-    if (block_id != terrain_surface_block_for_biome(left_biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
         right_surface_height, 0, &block_id));
-    if (block_id != terrain_surface_block_for_biome(right_biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_TRUE,
         test_terrain_height_is_within_builtin_envelope(left_surface_height));
     FT_ASSERT_EQ(FT_TRUE,

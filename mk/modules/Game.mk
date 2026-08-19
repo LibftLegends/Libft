@@ -1,7 +1,7 @@
-TARGET := Game.a
-DEBUG_TARGET := Game_debug.a
+Game_TARGET := Game.a
+Game_DEBUG_TARGET := Game_debug.a
 
-SRCS := game_map3d.cpp \
+Game_SOURCES := game_map3d.cpp \
         game_character_constructor.cpp \
         game_character_getters_setters.cpp \
         game_character_add_remove.cpp \
@@ -54,7 +54,7 @@ SRCS := game_map3d.cpp \
         game_lua_runtime.cpp \
         game_scripting_bridge.cpp
 
-HEADERS := game_map3d.hpp \
+Game_HEADERS := game_map3d.hpp \
 	game_character.hpp \
 	game_quest.hpp \
 	game_achievement.hpp \
@@ -99,5 +99,3 @@ HEADERS := game_map3d.hpp \
         game_state.hpp \
         game_behavior_tree.hpp \
         game_scripting_bridge.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

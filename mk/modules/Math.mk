@@ -1,7 +1,7 @@
-TARGET := Math.a
-DEBUG_TARGET := Math_debug.a
+Math_TARGET := Math.a
+Math_DEBUG_TARGET := Math_debug.a
 
-SRCS := math_abs.cpp \
+Math_SOURCES := math_abs.cpp \
         math_fabs.cpp \
         math_fmod.cpp \
         math_signbit.cpp \
@@ -54,6 +54,4 @@ SRCS := math_abs.cpp \
         math_linear_algebra_vector4.cpp \
         math_linear_algebra_quaternion.cpp
 
-HEADERS := math.hpp roll.hpp math_internal.hpp linear_algebra.hpp vector2.hpp vector3.hpp vector4.hpp matrix2.hpp matrix3.hpp matrix4.hpp quaternion.hpp ft_dual_number.hpp math_fft.hpp math_interval.hpp ft_cubic_spline.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Math_HEADERS := math.hpp roll.hpp math_internal.hpp linear_algebra.hpp vector2.hpp vector3.hpp vector4.hpp matrix2.hpp matrix3.hpp matrix4.hpp quaternion.hpp ft_dual_number.hpp math_fft.hpp math_interval.hpp ft_cubic_spline.hpp

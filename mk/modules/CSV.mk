@@ -1,8 +1,6 @@
-TARGET := CSV.a
-DEBUG_TARGET := CSV_debug.a
+CSV_TARGET := CSV.a
+CSV_DEBUG_TARGET := CSV_debug.a
 
-SRCS :=         csv.cpp
+CSV_SOURCES :=         csv.cpp
 
-HEADERS := csv.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+CSV_HEADERS := csv.hpp

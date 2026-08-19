@@ -1,29 +1,27 @@
-TARGET := GPGR.a
-DEBUG_TARGET := GPGR_debug.a
+GPGR_TARGET := GPGR.a
+GPGR_DEBUG_TARGET := GPGR_debug.a
 
-SRCS := gpgr_gl_funcs.cpp \
+GPGR_SOURCES := gpgr_gl_funcs.cpp \
     gpgr_window.cpp \
     gpgr_shader.cpp
 
-MM_SRCS :=
+GPGR_MM_SOURCES :=
 
-HEADERS := gpgr_gl_funcs.hpp \
+GPGR_HEADERS := gpgr_gl_funcs.hpp \
     ft_gpu_window.hpp \
     ft_gpu_shader.hpp
 
 ifeq ($(OS),Windows_NT)
-    SRCS += gpgr_window_windows.cpp
-    HEADERS += gpgr_window_windows.hpp
+    GPGR_SOURCES += gpgr_window_windows.cpp
+    GPGR_HEADERS += gpgr_window_windows.hpp
 else
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    MM_SRCS += gpgr_window_macos.mm
-    MODULE_MMFLAGS_EXTRA += -x objective-c++
-    HEADERS += gpgr_window_macos.hpp
+    GPGR_MM_SOURCES += gpgr_window_macos.mm
+    GPGR_MM_FLAGS += -x objective-c++
+    GPGR_HEADERS += gpgr_window_macos.hpp
 else
-    SRCS += gpgr_window_linux.cpp
-    HEADERS += gpgr_window_linux.hpp
+    GPGR_SOURCES += gpgr_window_linux.cpp
+    GPGR_HEADERS += gpgr_window_linux.hpp
 endif
 endif
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

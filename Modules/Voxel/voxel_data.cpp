@@ -338,7 +338,7 @@ int32_t terrain_feature_rule::set_requires_dry_land(ft_bool value) noexcept
 terrain_ore_rule::terrain_ore_rule() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), block_id(0U),
       minimum_height(0), maximum_height(0), vein_size(0U),
-      chance_percent(0U), enabled(FT_FALSE)
+      chance_percent(0U), allow_ore_replacement(FT_FALSE), enabled(FT_FALSE)
 {
     return ;
 }
@@ -358,6 +358,7 @@ int32_t terrain_ore_rule::initialize() noexcept
     this->maximum_height = 0;
     this->vein_size = 0U;
     this->chance_percent = 0U;
+    this->allow_ore_replacement = FT_FALSE;
     this->enabled = FT_FALSE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
@@ -376,6 +377,7 @@ int32_t terrain_ore_rule::initialize(const terrain_ore_rule &other) noexcept
     this->maximum_height = other.maximum_height;
     this->vein_size = other.vein_size;
     this->chance_percent = other.chance_percent;
+    this->allow_ore_replacement = other.allow_ore_replacement;
     this->enabled = other.enabled;
     this->_initialised_state = other._initialised_state;
     return (FT_ERR_SUCCESS);
@@ -391,6 +393,7 @@ uint32_t terrain_ore_rule::destroy() noexcept
     this->maximum_height = 0;
     this->vein_size = 0U;
     this->chance_percent = 0U;
+    this->allow_ore_replacement = FT_FALSE;
     this->enabled = FT_FALSE;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
@@ -443,6 +446,16 @@ int32_t terrain_ore_rule::set_enabled(ft_bool value) noexcept
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
     this->enabled = value;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_ore_rule::set_ore_replacement(ft_bool value) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (value > FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->allow_ore_replacement = value;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1031,6 +1044,11 @@ static const terrain_block_metadata TERRAIN_BLOCK_REGISTRY[] =
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE},
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE}
 };
+
+static_assert(sizeof(TERRAIN_BLOCK_REGISTRY)
+        / sizeof(TERRAIN_BLOCK_REGISTRY[0])
+        == static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT),
+    "terrain metadata must cover every built-in block ID");
 
 static const terrain_tree_template_block TERRAIN_SMALL_OAK_TREE_BLOCKS[] =
 {
@@ -1633,6 +1651,34 @@ ft_bool terrain_block_is_liquid(uint32_t block_id) noexcept
 ft_bool terrain_block_is_replaceable(uint32_t block_id) noexcept
 {
     return (terrain_get_block_metadata(block_id).replaceable);
+}
+
+ft_bool terrain_block_can_host_ore(uint32_t block_id) noexcept
+{
+    if (terrain_get_block_metadata(block_id).can_host_ore == FT_TRUE)
+        return (FT_TRUE);
+    if (block_id == TERRAIN_GENERATOR_STONE_BLOCK
+        || block_id == TERRAIN_GENERATOR_GRANITE_BLOCK
+        || block_id == TERRAIN_GENERATOR_ANDESITE_BLOCK
+        || block_id == TERRAIN_GENERATOR_DIORITE_BLOCK
+        || block_id == TERRAIN_GENERATOR_LIMESTONE_BLOCK
+        || block_id == TERRAIN_GENERATOR_BASALT_BLOCK)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+ft_bool terrain_block_is_ore(uint32_t block_id) noexcept
+{
+    if (terrain_get_block_metadata(block_id).is_ore == FT_TRUE)
+        return (FT_TRUE);
+    if (block_id == TERRAIN_GENERATOR_COAL_ORE_BLOCK
+        || block_id == TERRAIN_GENERATOR_IRON_ORE_BLOCK
+        || block_id == TERRAIN_GENERATOR_GOLD_ORE_BLOCK
+        || block_id == TERRAIN_GENERATOR_DIAMOND_ORE_BLOCK
+        || block_id == TERRAIN_GENERATOR_EMERALD_ORE_BLOCK
+        || block_id == TERRAIN_GENERATOR_COPPER_ORE_BLOCK)
+        return (FT_TRUE);
+    return (FT_FALSE);
 }
 
 ft_bool terrain_block_emits_light(uint32_t block_id) noexcept
@@ -2792,7 +2838,9 @@ uint32_t terrain_generation_config_signature(
     {
         signature ^= static_cast<uint64_t>(config.ores[index].block_id)
             + static_cast<uint64_t>(config.ores[index].enabled) * 17U
-            + static_cast<uint64_t>(config.ores[index].chance_percent) * 31U;
+            + static_cast<uint64_t>(config.ores[index].chance_percent) * 31U
+            + static_cast<uint64_t>(config.ores[index]
+                .allow_ore_replacement) * 43U;
         signature = terrain_mix_u64(signature);
         index += 1U;
     }

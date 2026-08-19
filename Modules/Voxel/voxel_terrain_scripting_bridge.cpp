@@ -244,13 +244,13 @@ static int32_t terrain_script_register_block(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
     terrain_block_registration registration;
-    uint32_t metadata_values[7];
+    uint32_t metadata_values[9];
     uint32_t block_id;
     uint32_t argument_index;
     uint32_t asset_index;
     int32_t error_code;
 
-    if (arguments.size() != 15U)
+    if (arguments.size() != 15U && arguments.size() != 17U)
         return (FT_ERR_INVALID_ARGUMENT);
     registration.name = arguments[0].c_str();
     argument_index = 0U;
@@ -271,16 +271,45 @@ static int32_t terrain_script_register_block(game_script_context &context,
     registration.metadata.light_emitting = static_cast<ft_bool>(metadata_values[4]);
     registration.metadata.occludes_faces = static_cast<ft_bool>(metadata_values[5]);
     registration.metadata.hardness = metadata_values[6];
-    error_code = terrain_script_parse_uint32(arguments[8], &metadata_values[0]);
+    if (arguments.size() == 17U)
+    {
+        error_code = terrain_script_parse_uint32(arguments[8],
+            &metadata_values[7]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = terrain_script_parse_uint32(arguments[9],
+            &metadata_values[8]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        if (metadata_values[7] > 1U || metadata_values[8] > 1U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        registration.metadata.can_host_ore = static_cast<ft_bool>(
+            metadata_values[7]);
+        registration.metadata.is_ore = static_cast<ft_bool>(
+            metadata_values[8]);
+        argument_index = 10U;
+    }
+    else
+    {
+        registration.metadata.can_host_ore = static_cast<ft_bool>(
+            registration.metadata.solid == FT_TRUE
+            && registration.metadata.replaceable == FT_FALSE);
+        registration.metadata.is_ore = FT_FALSE;
+        argument_index = 8U;
+    }
+    error_code = terrain_script_parse_uint32(arguments[argument_index],
+        &metadata_values[0]);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     if (metadata_values[0] > 1U)
         return (FT_ERR_INVALID_ARGUMENT);
     registration.metadata.breakable = static_cast<ft_bool>(metadata_values[0]);
+    argument_index += 1U;
     asset_index = 0U;
     while (asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
     {
-        registration.asset_paths[asset_index] = arguments[9U + asset_index].c_str();
+        registration.asset_paths[asset_index] = arguments[
+            argument_index + asset_index].c_str();
         asset_index += 1U;
     }
     error_code = terrain_register_block(registration, &block_id);
