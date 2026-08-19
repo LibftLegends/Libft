@@ -59,6 +59,14 @@ else
 LIBFT_GLOBAL_EFFICIENCY_LINK_FLAGS += -Wl,--allow-multiple-definition -rdynamic -lz -ldl
 endif
 
+ifeq ($(UNAME_S),Darwin)
+LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_START :=
+LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_END :=
+else
+LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_START := -Wl,--start-group
+LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_END := -Wl,--end-group
+endif
+
 define LIBFT_GLOBAL_DEFINE_EFFICIENCY_TEST_OBJECT
 $(1): $(2) | $(patsubst %/,%,$(dir $(1)))
 	$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
@@ -71,7 +79,7 @@ $(sort $(patsubst %/,%,$(dir $(LIBFT_GLOBAL_EFFICIENCY_OBJECTS) $(LIBFT_GLOBAL_E
 $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE): $(LIBFT_GLOBAL_EFFICIENCY_TEST_OBJECTS) $(LIBFT_GLOBAL_EFFICIENCY_ARCHIVES) mk/global_efficiency_graph.mk
 	@$(MKDIR) "$(dir $@)"
 	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_EFFICIENCY_TEST_ROOT)" "Test/Efficiency"
-	@printf '%s\n' "-Wl,--start-group $(LIBFT_GLOBAL_EFFICIENCY_ARCHIVES) -Wl,--end-group" >> "$@.rsp"
+	@printf '%s\n' "$(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_START) $(LIBFT_GLOBAL_EFFICIENCY_ARCHIVES) $(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_GROUP_END)" >> "$@.rsp"
 	$(CXX) $(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) -o $@ @$@.rsp $(LIBFT_GLOBAL_EFFICIENCY_LINK_FLAGS)
 	@$(RM) $@.rsp
 

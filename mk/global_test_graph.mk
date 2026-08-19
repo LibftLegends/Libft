@@ -68,6 +68,14 @@ LIBFT_GLOBAL_TEST_LINK_FLAGS := -Wl,--allow-multiple-definition -rdynamic \
 	$(XEXT_LIBS) $(XI_LIBS) $(GL_LIBS) $(ASOUND_LIBS) -pthread
 endif
 
+ifeq ($(UNAME_S),Darwin)
+LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START :=
+LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END :=
+else
+LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START := -Wl,--start-group
+LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END := -Wl,--end-group
+endif
+
 LIBFT_GLOBAL_TEST_DIRECTORIES := $(sort $(patsubst %/,%,$(dir \
 	$(LIBFT_GLOBAL_TEST_OBJECTS) $(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS))))
 
@@ -91,7 +99,7 @@ $(LIBFT_GLOBAL_TEST_EXECUTABLE): $(LIBFT_GLOBAL_TEST_OBJECTS) \
 		$(LIBFT_GLOBAL_TEST_TARGET) mk/global_test_graph.mk
 	@$(MKDIR) "$(dir $@)"
 	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_EXCLUDED_OBJECTS)
-	@printf '%s\n' "-Wl,--start-group $(LIBFT_GLOBAL_TEST_TARGET) -Wl,--end-group" >> "$@.rsp"
+	@printf '%s\n' "$(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START) $(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END)" >> "$@.rsp"
 	$(CXX) $(LIBFT_GLOBAL_TEST_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp
@@ -100,7 +108,7 @@ $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE): $(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS) \
 		$(LIBFT_GLOBAL_TEST_DEBUG_TARGET) mk/global_test_graph.mk
 	@$(MKDIR) "$(dir $@)"
 	@sh mk/write_object_response_file.sh "$@.rsp" "$(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Test" "Test" $(LIBFT_GLOBAL_TEST_OBJECT_DIRECTORIES) -- $(LIBFT_GLOBAL_TEST_DEBUG_EXCLUDED_OBJECTS)
-	@printf '%s\n' "-Wl,--start-group $(LIBFT_GLOBAL_TEST_DEBUG_TARGET) -Wl,--end-group" >> "$@.rsp"
+	@printf '%s\n' "$(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_START) $(LIBFT_GLOBAL_TEST_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_ARCHIVE_GROUP_END)" >> "$@.rsp"
 	$(CXX) $(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -o $@ @$@.rsp \
 		$(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 	@$(RM) $@.rsp
