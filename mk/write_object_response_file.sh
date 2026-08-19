@@ -26,8 +26,11 @@ append_objects()
     if [ ! -d "$1" ]; then
         return 0
     fi
-    find "$1" -maxdepth 1 -type f -name '*.o' -print | sort | while IFS= read -r object_file
+    for object_file in "$1"/*.o
     do
+        if [ ! -f "$object_file" ]; then
+            continue
+        fi
         relative_object=${object_file#"$object_root"/}
         source_file="$source_root/${relative_object%.o}.cpp"
         excluded=0
