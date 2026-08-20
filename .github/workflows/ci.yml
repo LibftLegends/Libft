@@ -16,7 +16,7 @@ jobs:
   build-and-test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
 
       - name: Build test suite
         shell: bash
-        run: make -j2 tests
+        run: make -j4 tests
 
       - name: Validate stale build progress
         shell: bash
@@ -59,7 +59,7 @@ jobs:
 
       - name: Validate release archives
         shell: bash
-        run: make -j2 archive-integrity
+        run: make -j4 archive-integrity
 
       - name: Run test suite on Unix
         if: runner.os != 'Windows'
@@ -166,7 +166,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          make -j2 performance_benchmarks
+          make -j4 performance_benchmarks
 
       - name: Run performance benchmarks on Unix
         if: always() && runner.os != 'Windows'

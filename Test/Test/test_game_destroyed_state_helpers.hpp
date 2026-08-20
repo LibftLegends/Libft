@@ -7,6 +7,11 @@
 #include <csignal>
 #include <cstring>
 #include <new>
+#if !defined(_WIN32) && !defined(_WIN64)
+# include <sys/types.h>
+# include <sys/wait.h>
+# include <unistd.h>
+#endif
 
 static volatile sig_atomic_t g_game_destroyed_signal_caught = 0;
 static sigjmp_buf g_game_destroyed_jump_buffer;
@@ -18,9 +23,50 @@ static void __attribute__((unused)) game_destroyed_signal_handler(int signal_val
     return ;
 }
 
+#if !defined(_WIN32) && !defined(_WIN64)
+template <typename TypeName>
+static int32_t game_destroyed_expect_sigabrt_process(
+    void (*operation)(TypeName &))
+{
+    pid_t child_process_id;
+    pid_t waited_process_id;
+    int child_status;
+    TypeName object_instance;
+
+    child_process_id = fork();
+    if (child_process_id < 0)
+        return (0);
+    if (child_process_id == 0)
+    {
+        (void)signal(SIGABRT, SIG_DFL);
+        if (SIGIOT != SIGABRT)
+            (void)signal(SIGIOT, SIG_DFL);
+        if (object_instance.initialize() != FT_ERR_SUCCESS)
+            _exit(0);
+        if (object_instance.destroy() != FT_ERR_SUCCESS)
+            _exit(0);
+        operation(object_instance);
+        _exit(0);
+    }
+    waited_process_id = waitpid(child_process_id, &child_status, 0);
+    if (waited_process_id != child_process_id)
+        return (0);
+    if (WIFSIGNALED(child_status) == 0)
+        return (0);
+    if (WTERMSIG(child_status) == SIGABRT)
+        return (1);
+    if (SIGIOT != SIGABRT && WTERMSIG(child_status) == SIGIOT)
+        return (1);
+    return (0);
+}
+#endif
+
 template <typename TypeName>
 static int32_t expect_game_destroyed_sigabrt(void (*operation)(TypeName &))
 {
+#if !defined(_WIN32) && !defined(_WIN64)
+    return (game_destroyed_expect_sigabrt_process<TypeName>(operation));
+#else
     struct sigaction old_action_abort;
     struct sigaction new_action_abort;
     struct sigaction old_action_iot;
@@ -71,6 +117,7 @@ cleanup:
     (void)sigaction(SIGABRT, &old_action_abort, ft_nullptr);
     object_pointer->~TypeName();
     return (result);
+#endif
 }
 
 #endif
