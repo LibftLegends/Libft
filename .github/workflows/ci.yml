@@ -78,6 +78,11 @@ jobs:
               (cd Test && gdb -q -batch \
                 -ex 'set pagination off' \
                 -ex 'set env FT_TEST_HIDE_SUCCESSFUL 0' \
+                -ex 'handle SIGABRT nostop noprint pass' \
+                -ex 'handle SIGIOT nostop noprint pass' \
+                -ex 'handle SIGTERM nostop noprint pass' \
+                -ex 'handle SIGINT nostop noprint pass' \
+                -ex 'handle SIGHUP nostop noprint pass' \
                 -ex run \
                 -ex 'thread apply all bt full' \
                 --args ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
@@ -197,7 +202,7 @@ jobs:
         shell: bash # CI_DIAGNOSTIC: Use the same shell as the Ubuntu test runner.
         run: |
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
-          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
+          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data test_thread_pool_cancellation_allows_execution; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
             (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
             cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
             if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.

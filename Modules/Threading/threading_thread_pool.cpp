@@ -65,7 +65,7 @@ void ft_thread_pool::worker()
         if (this->_tasks.empty())
         {
             (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
-            pt_thread_yield();
+            (void)pt_thread_sleep(1);
             continue ;
         }
         task = this->_tasks.dequeue();
@@ -305,7 +305,7 @@ void ft_thread_pool::wait()
             done = FT_TRUE;
         (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
         if (done == FT_FALSE)
-            pt_thread_yield();
+            (void)pt_thread_sleep(1);
     }
     this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
