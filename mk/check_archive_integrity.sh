@@ -10,12 +10,19 @@ if [ ! -f "$archive_path" ]; then
     exit 1
 fi
 
-actual_members="$(ar t "$archive_path" | tr -d '\r')"
+archive_members()
+{
+    ar t "$1" | tr -d '\r' | sed \
+        -e '/^__\.SYMDEF$/d' \
+        -e '/^__\.SYMDEF SORTED$/d'
+}
+
+actual_members="$(archive_members "$archive_path")"
 expected_members=""
 if [ "$1" = "--from-archives" ]; then
     shift
     for module_archive in "$@"; do
-        expected_members="$expected_members$(ar t "$module_archive" | tr -d '\r')\n"
+        expected_members="$expected_members$(archive_members "$module_archive")\n"
     done
 else
     for object_path in "$@"; do

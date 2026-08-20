@@ -6,6 +6,7 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#include <new>
 
 static volatile sig_atomic_t g_game_destroyed_signal_caught = 0;
 static sigjmp_buf g_game_destroyed_jump_buffer;
@@ -24,10 +25,11 @@ static int32_t expect_game_destroyed_sigabrt(void (*operation)(TypeName &))
     struct sigaction new_action_abort;
     struct sigaction old_action_iot;
     struct sigaction new_action_iot;
-    TypeName object_instance;
-    int32_t jump_result;
+    alignas(TypeName) unsigned char object_storage[sizeof(TypeName)];
+    TypeName *object_pointer;
+    volatile int32_t jump_result;
     ft_bool iot_handler_installed;
-    int32_t result;
+    volatile int32_t result;
 
     iot_handler_installed = FT_FALSE;
     result = 0;
@@ -50,14 +52,16 @@ static int32_t expect_game_destroyed_sigabrt(void (*operation)(TypeName &))
         }
         iot_handler_installed = FT_TRUE;
     }
-    if (object_instance.initialize() != FT_ERR_SUCCESS)
+    std::memset(object_storage, 0, sizeof(object_storage));
+    object_pointer = new (object_storage) TypeName();
+    if (object_pointer->initialize() != FT_ERR_SUCCESS)
         goto cleanup;
-    if (object_instance.destroy() != FT_ERR_SUCCESS)
+    if (object_pointer->destroy() != FT_ERR_SUCCESS)
         goto cleanup;
     g_game_destroyed_signal_caught = 0;
     jump_result = sigsetjmp(g_game_destroyed_jump_buffer, 1);
     if (jump_result == 0)
-        operation(object_instance);
+        operation(*object_pointer);
     if (g_game_destroyed_signal_caught == SIGABRT ||
         (SIGIOT != SIGABRT && g_game_destroyed_signal_caught == SIGIOT))
         result = 1;
@@ -65,6 +69,7 @@ cleanup:
     if (iot_handler_installed == FT_TRUE)
         (void)sigaction(SIGIOT, &old_action_iot, ft_nullptr);
     (void)sigaction(SIGABRT, &old_action_abort, ft_nullptr);
+    object_pointer->~TypeName();
     return (result);
 }
 
