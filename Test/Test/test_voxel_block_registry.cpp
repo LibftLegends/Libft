@@ -147,7 +147,7 @@ FT_TEST(test_terrain_block_names_round_trip_to_current_ids)
         "Lua/export_values.lua";
     error_code = terrain_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
-    error_code = terrain_find_block_id_by_name("minecraft:stone",
+    error_code = terrain_find_block_id_by_name("voxel:stone",
         &resolved_block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
     FT_ASSERT_EQ(TERRAIN_GENERATOR_STONE_BLOCK,
@@ -168,7 +168,7 @@ FT_TEST(test_terrain_runtime_names_cannot_shadow_builtins)
     uint32_t block_id;
 
     terrain_runtime_reset_for_tests();
-    terrain_test_set_registration(registration, "minecraft:stone",
+    terrain_test_set_registration(registration, "voxel:stone",
         FT_TRUE, FT_FALSE);
     FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, terrain_register_block(registration,
         &block_id));

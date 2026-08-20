@@ -14,6 +14,10 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+# include <sys/types.h>
+# include <sys/wait.h>
+#endif
 #include <unistd.h>
 
 #include "../Modules/File/file_utils.hpp"
@@ -446,9 +450,48 @@ static int __attribute__((unused)) test_expect_sigabrt_signal(void (*operation)(
     return (0);
 }
 
+#if !defined(_WIN32) && !defined(_WIN64)
+template <typename TypeName>
+static int32_t test_expect_sigabrt_process_uninitialised(
+    void (*operation)(TypeName &))
+{
+    pid_t child_process_id;
+    pid_t waited_process_id;
+    int child_status;
+
+    child_process_id = fork();
+    if (child_process_id < 0)
+        return (0);
+    if (child_process_id == 0)
+    {
+        (void)signal(SIGABRT, SIG_DFL);
+        if (SIGIOT != SIGABRT)
+            (void)signal(SIGIOT, SIG_DFL);
+        {
+            TypeName object_instance;
+
+            operation(object_instance);
+        }
+        _exit(0);
+    }
+    waited_process_id = waitpid(child_process_id, &child_status, 0);
+    if (waited_process_id != child_process_id
+        || WIFSIGNALED(child_status) == 0)
+        return (0);
+    if (WTERMSIG(child_status) == SIGABRT)
+        return (1);
+    if (SIGIOT != SIGABRT && WTERMSIG(child_status) == SIGIOT)
+        return (1);
+    return (0);
+}
+#endif
+
 template <typename TypeName>
 static int __attribute__((unused)) test_expect_sigabrt_signal_uninitialised(void (*operation)(TypeName &))
 {
+#if !defined(_WIN32) && !defined(_WIN64)
+    return (test_expect_sigabrt_process_uninitialised<TypeName>(operation));
+#else
     struct sigaction old_action_abort;
     struct sigaction new_action_abort;
     struct sigaction old_action_iot;
@@ -509,6 +552,7 @@ static int __attribute__((unused)) test_expect_sigabrt_signal_uninitialised(void
     if (iot_handler_installed != 0 && g_test_abort_signal_caught == SIGIOT)
         return (1);
     return (0);
+#endif
 }
 
 #endif

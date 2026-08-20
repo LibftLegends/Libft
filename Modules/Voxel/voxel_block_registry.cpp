@@ -30,17 +30,38 @@ struct terrain_runtime_block
 static terrain_runtime_block *g_terrain_runtime_blocks[
     TERRAIN_RUNTIME_BLOCK_CAPACITY] = {};
 
-static const char *const TERRAIN_BUILTIN_BLOCK_NAMES[
-    TERRAIN_BUILTIN_BLOCK_COUNT] =
+static const char *const TERRAIN_BUILTIN_BLOCK_NAMES[] =
 {
-    "minecraft:air", "minecraft:grass", "minecraft:dirt",
-    "minecraft:stone", "minecraft:shrub", "minecraft:oak_log",
-    "minecraft:oak_leaves", "minecraft:cactus", "minecraft:water",
-    "minecraft:bedrock", "minecraft:sand", "minecraft:snow",
-    "minecraft:permafrost", "minecraft:canyon_rock", "minecraft:slate",
-    "minecraft:moss_rock", "minecraft:coal_ore", "minecraft:iron_ore",
-    "minecraft:gold_ore"
+    "voxel:air", "voxel:grass", "voxel:dirt",
+    "voxel:stone", "voxel:shrub", "voxel:oak_log",
+    "voxel:oak_leaves", "voxel:cactus", "voxel:water",
+    "voxel:bedrock", "voxel:sand", "voxel:snow",
+    "voxel:permafrost", "voxel:canyon_rock", "voxel:slate",
+    "voxel:moss_rock", "voxel:coal_ore", "voxel:iron_ore",
+    "voxel:gold_ore", "voxel:granite", "voxel:andesite",
+    "voxel:diorite", "voxel:gravel", "voxel:clay",
+    "voxel:obsidian", "voxel:mossy_stone",
+    "voxel:cracked_stone", "voxel:limestone", "voxel:basalt",
+    "voxel:diamond_ore", "voxel:emerald_ore",
+    "voxel:copper_ore", "voxel:pine_log", "voxel:pine_leaves",
+    "voxel:birch_log", "voxel:birch_leaves", "voxel:ice",
+    "voxel:packed_ice", "voxel:red_flower",
+    "voxel:yellow_flower", "voxel:tall_grass", "voxel:fern",
+    "voxel:dead_bush", "voxel:red_mushroom",
+    "voxel:brown_mushroom", "voxel:mushroom_stem",
+    "voxel:lily_pad", "voxel:seagrass", "voxel:coarse_dirt",
+    "voxel:podzol", "voxel:mud", "voxel:frozen_stone",
+    "voxel:chalk", "voxel:red_sand", "voxel:terracotta",
+    "voxel:salt", "voxel:volcanic_rock", "voxel:quartz",
+    "voxel:amethyst", "voxel:packed_snow", "voxel:wet_sand",
+    "voxel:amber", "voxel:frost_crystal",
+    "voxel:shimmer_stone"
 };
+
+static_assert(sizeof(TERRAIN_BUILTIN_BLOCK_NAMES)
+        / sizeof(TERRAIN_BUILTIN_BLOCK_NAMES[0])
+        == TERRAIN_BUILTIN_BLOCK_COUNT,
+    "terrain built-in names must cover every built-in block id");
 
 static ft_bool terrain_block_name_is_valid(const char *name) noexcept
 {
