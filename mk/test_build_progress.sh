@@ -21,6 +21,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 cp -p "$source_file" "$backup_file"
+
+# CI builds the test configuration before this contract check.  Establish the
+# release target first so the touched-source assertion measures one stale
+# compile instead of every missing release object on a clean runner.
+sh mk/run_build_with_progress.sh "$make_command" Modules/Basic/Basic.a \
+    >/dev/null
+
 touch "$source_file"
 
 build_output=$(sh mk/run_build_with_progress.sh \
