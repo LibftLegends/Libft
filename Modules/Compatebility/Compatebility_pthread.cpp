@@ -1,6 +1,7 @@
 #include "compatebility_internal.hpp"
 #include <cerrno>
 #include <atomic>
+#include <cstdlib>
 #include "../PThread/pthread.hpp"
 
 #include "../Basic/limits.hpp"
@@ -105,7 +106,6 @@ int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
 #  include <linux/futex.h>
 #  include <sys/syscall.h>
 # else
-#  include "../CMA/CMA.hpp"
 #  include "../Basic/class_nullptr.hpp"
 
 struct cmp_wait_entry
@@ -162,7 +162,8 @@ static int32_t cmp_wait_create_entry(std::atomic<uint32_t> *address, cmp_wait_en
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    new_entry = reinterpret_cast<cmp_wait_entry *>(cma_malloc(sizeof(cmp_wait_entry)));
+    new_entry = reinterpret_cast<cmp_wait_entry *>(std::malloc(
+        sizeof(cmp_wait_entry)));
     if (!new_entry)
     {
         return (FT_ERR_NO_MEMORY);
@@ -173,7 +174,7 @@ static int32_t cmp_wait_create_entry(std::atomic<uint32_t> *address, cmp_wait_en
     init_result = pthread_cond_init(&new_entry->condition, ft_nullptr);
     if (init_result != 0)
     {
-        cma_free(new_entry);
+        std::free(static_cast<void *>(new_entry));
         return (cmp_map_system_error_to_ft(init_result));
     }
     g_wait_list_head = new_entry;
@@ -206,7 +207,7 @@ static int32_t cmp_wait_remove_entry(cmp_wait_entry *entry) noexcept
                 g_wait_list_head = current_entry->next;
             else
                 previous_entry->next = current_entry->next;
-            cma_free(current_entry);
+            std::free(static_cast<void *>(current_entry));
             return (FT_ERR_SUCCESS);
         }
         previous_entry = current_entry;
