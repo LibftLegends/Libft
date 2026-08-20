@@ -71,10 +71,62 @@ jobs:
         run: | # CI_DIAGNOSTIC: Capture the complete Unix test output while preserving the test exit status.
           set +e
           set -o pipefail
-          (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
-          test_status=${PIPESTATUS[0]}
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            (
+              cd Test || exit 1
+              ulimit -c unlimited
+              ./libft_tests > ci_unix_full_output.log 2>&1 &
+              test_pid=$!
+              tail -f ci_unix_full_output.log &
+              tail_pid=$!
+              last_output_size=-1
+              idle_seconds=0
+              while kill -0 "$test_pid" 2>/dev/null; do
+                output_size=$(wc -c < ci_unix_full_output.log)
+                if [ "$output_size" -eq "$last_output_size" ]; then
+                  idle_seconds=$((idle_seconds + 5))
+                else
+                  last_output_size="$output_size"
+                  idle_seconds=0
+                fi
+                if [ "$idle_seconds" -ge 180 ]; then
+                  printf '%s\n' "macOS test process stalled for 180 seconds; collecting diagnostics."
+                  touch ci_macos_hang_detected.txt
+                  kill "$tail_pid" 2>/dev/null || true
+                  wait "$tail_pid" 2>/dev/null || true
+                  if command -v sample >/dev/null 2>&1; then
+                    sample "$test_pid" 10 -file ci_macos_sample.txt >/dev/null 2>&1 || true
+                  fi
+                  if command -v lldb >/dev/null 2>&1; then
+                    lldb --batch -p "$test_pid" \
+                      -o 'thread backtrace all' \
+                      -o 'process save-core ci_macos_hang.core' \
+                      -o 'detach' \
+                      -o 'quit' > ci_unix_stack_trace.log 2>&1 || true
+                  fi
+                  kill -TERM "$test_pid" 2>/dev/null || true
+                  sleep 5
+                  kill -KILL "$test_pid" 2>/dev/null || true
+                  wait "$test_pid"
+                  exit 124
+                fi
+                sleep 5
+              done
+              wait "$test_pid"
+              test_status=$?
+              kill "$tail_pid" 2>/dev/null || true
+              wait "$tail_pid" 2>/dev/null || true
+              exit "$test_status"
+            )
+            test_status=$?
+          else
+            (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
+            test_status=${PIPESTATUS[0]}
+          fi
           if [ "$test_status" -ne 0 ]; then
-            if command -v gdb >/dev/null 2>&1; then
+            if [ "$RUNNER_OS" = "macOS" ] && [ -f Test/ci_macos_hang_detected.txt ]; then
+              printf '%s\n' 'macOS hang diagnostics were already captured.'
+            elif command -v gdb >/dev/null 2>&1; then
               (cd Test && gdb -q -batch \
                 -ex 'set pagination off' \
                 -ex 'set env FT_TEST_HIDE_SUCCESSFUL 0' \
@@ -230,6 +282,9 @@ jobs:
             Test/ci_ubuntu_*_secure_wipe_runtime.err
             Test/ci_unix_full_output.log
             Test/ci_unix_stack_trace.log
+            Test/ci_macos_sample.txt
+            Test/ci_macos_hang_detected.txt
+            Test/ci_macos_hang.core
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original test failure if a log is unavailable.
 
