@@ -288,6 +288,21 @@ jobs:
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original test failure if a log is unavailable.
 
+      # CI_DIAGNOSTIC: Upload macOS watchdog output, stack traces, and core dumps.
+      - name: Upload macOS hang diagnostics
+        if: always() && failure() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-test-diagnostics-${{ github.run_id }}
+          path: |
+            Test/ci_unix_full_output.log
+            Test/ci_unix_stack_trace.log
+            Test/ci_macos_sample.txt
+            Test/ci_macos_hang_detected.txt
+            Test/ci_macos_hang.core
+            test_failures.log
+          if-no-files-found: warn
+
       # CI_DIAGNOSTIC: Upload Windows output while the cross-platform test failures are being diagnosed.
       - name: Upload Windows diagnostic logs
         if: always() && failure() && runner.os == 'Windows' # CI_DIAGNOSTIC: Upload evidence whenever Windows tests fail.
