@@ -458,6 +458,8 @@ static int32_t test_expect_sigabrt_process_uninitialised(
     pid_t child_process_id;
     pid_t waited_process_id;
     int child_status;
+    alignas(TypeName) unsigned char object_storage[sizeof(TypeName)];
+    TypeName *object_pointer;
 
     child_process_id = fork();
     if (child_process_id < 0)
@@ -467,11 +469,9 @@ static int32_t test_expect_sigabrt_process_uninitialised(
         (void)signal(SIGABRT, SIG_DFL);
         if (SIGIOT != SIGABRT)
             (void)signal(SIGIOT, SIG_DFL);
-        {
-            TypeName object_instance;
-
-            operation(object_instance);
-        }
+        std::memset(object_storage, 0, sizeof(object_storage));
+        object_pointer = reinterpret_cast<TypeName *>(object_storage);
+        operation(*object_pointer);
         _exit(0);
     }
     waited_process_id = waitpid(child_process_id, &child_status, 0);
