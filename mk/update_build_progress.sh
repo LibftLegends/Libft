@@ -76,13 +76,13 @@ if [ "$operation_type" = "compile" ] && [ -n "$source_path" ]
 then
     if [ "$project_name" = "libft" ]
     then
-        printf '\033[1;32m[LIBFT][%s] Compiling %s (%s/%s files completed)\033[0m\n' \
-            "$module_name" "$source_path" "$completed_count" "$total_count"
+        printf '[LIBFT][%s] Compiling %s (%s/%s files completed)\n' \
+            "$module_name" "$source_path" "$completed_count" "$total_count" >&2
     else
-        printf '\033[1;32m[MINECRAFT] Compiling %s (%s/%s files completed)\033[0m\n' \
-            "$source_path" "$completed_count" "$total_count"
+        printf '[MINECRAFT] Compiling %s (%s/%s files completed)\n' \
+            "$source_path" "$completed_count" "$total_count" >&2
     fi
 else
-    printf '\033[1;32m[BUILD PROGRESS][%s] %s/%s %s completed\033[0m\n' \
-        "$label" "$completed_count" "$total_count" "$unit_name"
+    printf '[BUILD PROGRESS][%s] %s/%s %s completed\n' \
+        "$label" "$completed_count" "$total_count" "$unit_name" >&2
 fi

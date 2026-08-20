@@ -31,7 +31,7 @@ sh mk/run_build_with_progress.sh "$make_command" Modules/Basic/Basic.a \
 touch "$source_file"
 
 build_output=$(sh mk/run_build_with_progress.sh \
-    "$make_command" Modules/Basic/Basic.a)
+    "$make_command" Modules/Basic/Basic.a 2>&1)
 printf '%s\n' "$build_output"
 
 printf '%s\n' "$build_output" \
