@@ -24,14 +24,18 @@ Libft/Voxel:  4
 Libft/Game:   2
 
 [LIBFT][Basic] Compiling basic_memcpy.cpp
+[BUILD PROGRESS][Libft/Basic] 1/3 completed
 [LIBFT][Lua] Compiling lapi.c
 [MINECRAFT] Compiling terrain_generator.cpp
 [LIBFT][Basic] Archive ready: Modules/Basic/Basic.a
+[BUILD PROGRESS][archives] 1/4 completed
 ```
 
 The summary reports the work Make determined was stale at the start of the
-invocation. Compile and archive messages then identify the work that actually
-runs. A live numeric `completed/total` counter is deliberately not required.
+invocation. The actual build also reports session-local completion counters for
+each module and for archives. These counters are seeded from the same dry-run
+plan; they must never be based on how many object files happen to exist in an
+object directory.
 
 ## Non-negotiable requirements
 
@@ -44,7 +48,8 @@ runs. A live numeric `completed/total` counter is deliberately not required.
 4. `--output-sync=target` may remain an optional user flag on Make 4 or newer,
    but progress reporting must work without it.
 5. No process-global progress file, fixed lock directory, or repository-global
-   counter may be introduced.
+   counter may be introduced. Live counters must use a unique per-invocation
+   session directory.
 6. Planning must not modify archives, objects, dependency files, generated
    source files, or configuration state.
 7. Libft and Minecraft must use the same marker format and parser rules.
@@ -78,13 +83,14 @@ public command
     |       |
     |       +-- one flattened dependency graph
     |       +-- no filesystem mutation
-    |       +-- summary parser counts markers
+    |       +-- summary parser counts markers and writes session totals
     |
     +-- actual Make invocation
             |
             +-- one flattened dependency graph
             +-- all available jobs share one scheduler
             +-- concise human-readable compile/archive/link messages
+            +-- successful operations update session-local counters
 ```
 
 The planning phase evaluates the graph a second time, but it does not perform
@@ -202,6 +208,15 @@ and Git Bash used by the Windows build. It should:
 6. print modules in manifest order or another deterministic order;
 7. return non-zero if the dry-run Make invocation fails.
 
+The existing public `plan` target is the dry-run interface for this work.
+`make plan` must remain useful on its own: it prints the stale summary and
+does not start a build. The normal public build wrapper should reuse the same
+parser immediately before invoking the corresponding internal target. When a
+session directory is supplied, the parser also writes machine-readable totals
+for the current invocation, including one total per project/module and one
+archive total. The actual recipes must consume these totals rather than
+rediscovering staleness.
+
 Do not hide errors from the planning Make invocation. A missing prerequisite or
 invalid graph must stop the public build before the actual build begins.
 
@@ -234,6 +249,7 @@ Archive output:
 ```text
 [LIBFT][Basic] Archiving Modules/Basic/Basic.a
 [LIBFT][Basic] Archive ready: Modules/Basic/Basic.a
+[BUILD PROGRESS][archives] 1/4 completed
 ```
 
 Link output:
@@ -251,6 +267,28 @@ lines may interleave. Each status message must be produced by one `printf`
 call so individual status lines remain as coherent as the host pipe permits.
 Make 4 users may add `--output-sync=target` for grouped recipe output.
 
+### Live counters seeded by the plan
+
+The public wrapper creates a unique temporary session directory, runs the same
+dry-run plan used by `make plan`, and passes that directory to the actual
+internal Make invocation. Every successful compile recipe calls a small
+portable progress helper with its project and module name. Every successful
+archive recipe calls the helper with the archive operation. The helper reads
+the immutable total written by the planning phase, obtains a lock private to
+the session, increments the matching completed count, prints one complete
+`completed/total` line, and releases the lock.
+
+Counter updates occur only after the compiler or archiver succeeds. A failed
+or interrupted counter update must not fail the build; the compiler,
+archiver, or linker remains authoritative for the build result. The wrapper
+removes the session directory with an ownership-safe cleanup trap when the
+internal Make process ends.
+
+The output is completion-ordered rather than source-ordered. With parallel
+Make, a module may print `2/8` before another module prints `1/3`, and that is
+correct. The totals are fixed by the plan while completed counts reflect
+successful operations in this invocation.
+
 ## Counts and semantics
 
 The initial number means:
@@ -266,14 +304,18 @@ authoritative. It may compile more or fewer targets than the initial plan. This
 race is unavoidable without freezing the source tree. Document it, but do not
 add locking around source files.
 
-Do not print a live `completed/total` count by default. Parallel recipes would
-need shared synchronized mutation, and out-of-order completion makes a module
-sequence misleading. The initial exact stale count plus one line per operation
-provides truthful progress without shared state.
+Live `completed/total` counts are part of the normal public build output
+because the project uses them to show stale-work progress. They are
+informational only: they must never participate in dependency decisions or
+determine whether a target is up to date. Parallel recipes require
+synchronized mutation, so the state must be private to the current wrapper
+invocation and the lock must be created inside that session directory. There
+must be no fixed repository-wide counter or reusable lock directory.
 
-If a live count is added later, it must be explicitly optional and use a
-per-invocation session directory with verified lock ownership. It must never be
-required for compilation correctness.
+If files change between planning and the actual build, Make remains
+authoritative. The wrapper may report an operation outside the original total
+as unplanned or document the short plan/build race; it must not silently fall
+back to counting every object in a directory.
 
 ## Libft implementation plan
 
@@ -285,23 +327,29 @@ required for compilation correctness.
 4. Add concise actual-build status lines and hide raw compiler commands.
 5. Add archive marker/status lines to every generated archive recipe.
 6. Add link marker/status lines to test and efficiency executable recipes.
-7. Implement the single-pass plan parser in `mk/print_build_plan.sh`.
-8. Route public targets through the planning script and then through exactly
-   one internal build invocation.
-9. Ensure direct developer targets such as `Modules/Basic/Basic.a` continue to
+7. Implement the single-pass plan parser in `mk/print_build_plan.sh`, with an
+   optional session-total output mode used by public wrappers.
+8. Add a session-local progress-update helper and call it only after
+   successful compile and archive recipes.
+9. Route public targets through one wrapper that runs the planning script,
+   stores per-module and archive totals in a unique session directory, and
+   then invokes exactly one internal build target with that session directory.
+10. Ensure direct developer targets such as `Modules/Basic/Basic.a` continue to
    work without requiring the wrapper. Direct targets may print operation
    messages without an initial aggregate summary.
-10. Ensure archive-integrity helper invocations use internal targets where
+11. Ensure archive-integrity helper invocations use internal targets where
     appropriate so they do not recursively print plans.
 
 ## Minecraft implementation plan
 
 1. Keep including `Libft/mk/global_graph.mk`; do not return to `make -C Libft`.
 2. Add marker and concise output lines to Minecraft C++ and Objective-C++
-   compile recipes.
-3. Add marker and status lines to Minecraft link recipes.
+   compile recipes, followed by session-counter updates after success.
+3. Add marker and status lines to Minecraft link recipes. Compile and archive
+   counters must include the Libft recipes when the combined graph is built.
 4. Create internal `all`, test, debug, and validation graph targets.
-5. Make the Minecraft planning wrapper evaluate the combined internal graph.
+5. Make the Minecraft planning wrapper evaluate the combined internal graph
+   and seed the same session-local counter files used by its build recipes.
 6. Group plan results into `Minecraft` and `Libft`, with Libft further grouped
    by module.
 7. Pass the exact same Libft configuration suffix, compiler flags, debug mode,
@@ -312,14 +360,19 @@ required for compilation correctness.
 
 ## Avoiding accidental recursive planning
 
-Use an explicit guard variable, for example:
+Target separation is the primary recursion guard. An explicit variable may be
+retained for diagnostics, but it is not a substitute for keeping internal
+targets free of public wrapper dependencies:
 
 ```make
 BUILD_WRAPPER_ACTIVE ?= 0
 ```
 
-The public wrapper sets it for child Make invocations. Internal targets never
-call public targets. Document the allowed call direction:
+If this variable is retained, the public wrapper sets it only for the child
+invocation. The implementation may omit it when the target graph itself
+provides the guard.
+
+Internal targets never call public targets. Document the allowed call direction:
 
 ```text
 public target -> plan internal target -> build internal target
@@ -414,14 +467,17 @@ Validate that:
 CI should invoke the same public targets developers use unless a job explicitly
 tests an internal target. Do not add mandatory `--output-sync=target`.
 
-Add a lightweight progress-contract job or script that:
+Add the lightweight `mk/test_build_progress.sh` contract script (and run it
+from CI) that:
 
 1. builds a small selected target;
 2. confirms the next plan reports zero;
 3. touches or copies a controlled fixture source;
 4. confirms the plan reports one stale compile;
-5. builds it and confirms one compile marker/status line;
-6. restores the fixture through a temporary workspace or disposable checkout.
+5. builds it and confirms the matching module prints `1/1 completed`;
+6. confirms an archive is reported through the archive `completed/total`
+   counter;
+7. restores the fixture through a temporary workspace or disposable checkout.
 
 Do not modify tracked files in the primary CI checkout without restoring them.
 Prefer a temporary copied fixture graph for exact plan-parser unit tests and use
@@ -447,6 +503,8 @@ The work is complete only when all of the following are true:
 
 - a no-op build prints zero stale compile targets;
 - touching one source prints one stale compile target;
+- each active module prints a `completed/total` counter based on the plan;
+- archive recipes print a session-wide `completed/total` counter;
 - header-triggered rebuild counts match the `.d` dependency graph;
 - Libft standalone output identifies every compiling module;
 - Minecraft output distinguishes Minecraft and Libft work;
@@ -463,13 +521,15 @@ The work is complete only when all of the following are true:
 
 1. Add markers and concise operation output without changing public targets.
 2. Unit-test the plan parser with fixed marker fixtures.
-3. Add standalone Libft internal targets and wrapper.
-4. Validate Libft clean/no-op/incremental behavior on all platforms.
-5. Add Minecraft internal targets and its combined wrapper.
-6. Validate cross-project scheduling and combined plan grouping.
-7. Add CI progress-contract checks.
-8. Update documentation.
-9. Remove any remaining raw-command output or obsolete progress variables only
+3. Add session-total output and the session-local counter helper; test
+   concurrent counter updates.
+4. Add standalone Libft internal targets and wrapper.
+5. Validate Libft clean/no-op/incremental behavior on all platforms.
+6. Add Minecraft internal targets and its combined wrapper.
+7. Validate cross-project scheduling and combined plan grouping.
+8. Add CI progress-contract checks.
+9. Update documentation.
+10. Remove any remaining raw-command output or obsolete progress variables only
    after repository-wide reference checks.
 
 This ordering keeps build correctness changes separate from output formatting

@@ -12,6 +12,8 @@ MAKEFLAGS += -r
 # BUILD_PLAN_MODE=1 is used by the stale-work planning wrapper.  Recipes emit
 # machine-readable markers in that mode and concise status lines otherwise.
 BUILD_PLAN_MODE ?= 0
+BUILD_PROGRESS_ACTIVE ?= 0
+BUILD_PROGRESS_SESSION_DIR ?=
 # The graph uses GNU Make features available in 3.81. Output synchronization
 # remains an optional command-line feature for newer Make installations.
 LIBFT_SUPPORTED_MAKE_VERSION := $(filter 3.81 3.82 4.% 5.% 6.% 7.% 8.% 9.%,$(MAKE_VERSION))
@@ -52,6 +54,9 @@ $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	fi
 	@mv $$@.tmp $$@
 	@printf '\033[1;35m[LIBFT] Archive ready: %s\033[0m\n' "$(1)"
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft || true; \
+	fi
 endef
 
 $(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
@@ -67,8 +72,7 @@ ssh:
 	git remote -v
 
 all:
-	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
-	+$(MAKE) --no-print-directory internal-all BUILD_WRAPPER_ACTIVE=1
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
 
 plan:
 	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
@@ -81,7 +85,10 @@ global-debug: $(LIBFT_GLOBAL_DEBUG_TARGET)
 
 global-tests: $(LIBFT_GLOBAL_TEST_TARGET)
 
-debug: $(DEBUG_TARGET)
+debug:
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-debug
+
+internal-debug: $(LIBFT_GLOBAL_DEBUG_TARGET)
 
 both: all debug
 
@@ -93,8 +100,7 @@ template: $(LIBFT_GLOBAL_Template_TARGET)
 	@printf '\033[1;35m[LIBFT BUILD] Template archive ready\033[0m\n'
 
 tests:
-	@sh mk/print_build_plan.sh "$(MAKE)" internal-tests
-	+$(MAKE) --no-print-directory internal-tests BUILD_WRAPPER_ACTIVE=1
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-tests
 	@printf '\033[1;35m[LIBFT BUILD] Test executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_TEST_EXECUTABLE)"
 
 internal-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
@@ -110,8 +116,7 @@ run-debug-tests: $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE)
 	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE))
 
 performance_benchmarks Efficiency:
-	@sh mk/print_build_plan.sh "$(MAKE)" internal-performance
-	+$(MAKE) --no-print-directory internal-performance BUILD_WRAPPER_ACTIVE=1
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-performance
 	@printf '\033[1;35m[LIBFT BUILD] Efficiency executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)"
 
 internal-performance: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
@@ -217,6 +222,6 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		$(LIBFT_GLOBAL_Template_TARGET)
 
-.PHONY: all plan internal-all global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity print-build-mode format sanitize-clean \
+.PHONY: all plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity print-build-mode format sanitize-clean \
         run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
         asan asan-tests ubsan ubsan-tests asan-ubsan asan-ubsan-tests

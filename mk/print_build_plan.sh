@@ -4,6 +4,7 @@ set -eu
 
 make_command=$1
 build_target=$2
+progress_session_directory=${3-}
 plan_output=$(mktemp "${TMPDIR:-/tmp}/libft-build-plan.XXXXXX")
 
 cleanup()
@@ -11,7 +12,10 @@ cleanup()
     rm -f "$plan_output"
 }
 
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if "$make_command" --no-print-directory -n BUILD_PLAN_MODE=1 "$build_target" >"$plan_output"
 then
@@ -22,7 +26,13 @@ else
     exit "$status"
 fi
 
-awk '
+if [ -n "$progress_session_directory" ] && [ ! -d "$progress_session_directory" ]
+then
+    printf '%s\n' "[BUILD PLAN] progress session directory does not exist: $progress_session_directory" >&2
+    exit 1
+fi
+
+awk -v state_directory="$progress_session_directory" '
 index($0, "__BUILD_PLAN__|") == 0 {
     next
 }
@@ -64,6 +74,19 @@ END {
     {
         split(module_order[position], module_fields, SUBSEP)
         printf "%s/%s: %d\n", module_fields[1], module_fields[2], module_compile[module_order[position]] + 0
+    }
+    if (state_directory != "")
+    {
+        state_file = state_directory "/total.archive"
+        printf "%d\n", total_archive + 0 > state_file
+        close(state_file)
+        for (position = 1; position <= module_count; position += 1)
+        {
+            split(module_order[position], module_fields, SUBSEP)
+            state_file = state_directory "/total.compile." module_fields[1] "." module_fields[2]
+            printf "%d\n", module_compile[module_order[position]] + 0 > state_file
+            close(state_file)
+        }
     }
 }
 ' "$plan_output"

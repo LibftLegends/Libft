@@ -83,6 +83,11 @@ index($0, ":=") != 0 {
 }
 ' "$manifest_path" > "$temporary_manifest"
 mv -f "$temporary_manifest" "$manifest_path"
+# Windows filesystems can report the archive and the temporarily rewritten
+# manifest with the same timestamp.  Remove the backed-up archive so the
+# exact rebuild is driven by target absence rather than timestamp resolution;
+# restore_archive() still recovers it if the rebuild fails.
+rm -f "$archive_path"
 env -u MAKEFLAGS -u MFLAGS -u MAKE_JOBSERVER_FDS \
     make --no-print-directory -j1 "$archive_path"
 

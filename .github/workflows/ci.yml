@@ -53,6 +53,10 @@ jobs:
         shell: bash
         run: make -j2 tests
 
+      - name: Validate stale build progress
+        shell: bash
+        run: sh mk/test_build_progress.sh make
+
       - name: Validate release archives
         shell: bash
         run: make -j2 archive-integrity

@@ -29,6 +29,12 @@ LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 
+define LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) || true; \
+	fi
+endef
+
 LIBFT_GLOBAL_MANIFESTS := $(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/,$(addsuffix .mk,$(LIBFT_GLOBAL_MODULE_NAMES)))
 
 define LIBFT_LOAD_GLOBAL_MANIFEST
@@ -84,33 +90,37 @@ $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $(LIBFT_GLOB
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS)
+	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
 	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
+$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
 
 $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS)
+	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
 	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
+$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
 
 $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS)
+	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
 	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
+$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
 
 $$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS)
+	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
 	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
+$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
 
 $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS): | $$(LIBFT_GLOBAL_$(1)_RELEASE_DIRECTORIES)
 $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS): | $$(LIBFT_GLOBAL_$(1)_DEBUG_DIRECTORIES)
@@ -156,62 +166,80 @@ LIBFT_GLOBAL_TEST_COMPILE_FLAGS := $(COMPILE_FLAGS) -DLIBFT_TEST_BUILD
 LIBFT_GLOBAL_DEBUG_COMPILE_FLAGS := $(COMPILE_FLAGS) -DDEBUG=1
 LIBFT_GLOBAL_TEST_DEBUG_COMPILE_FLAGS := $(COMPILE_FLAGS) -DLIBFT_TEST_BUILD -DDEBUG=1
 
+define LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" compile libft $(1) || true; \
+	fi
+endef
+
 define LIBFT_DEFINE_CPP_RULES
-$$(LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_CPP_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_DEBUG_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_CPP_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_CPP_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_CPP_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_CPP_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 endef
 
 $(foreach module_name,$(LIBFT_GLOBAL_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_CPP_RULES,$(module_name))))
 
 define LIBFT_DEFINE_C_RULES
-$$(LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(LIBFT_GLOBAL_CC) $$(LIBFT_GLOBAL_$(1)_C_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(LIBFT_GLOBAL_CC) $$(LIBFT_GLOBAL_$(1)_C_FLAGS) -DDEBUG=1 -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_C_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_C_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(LIBFT_GLOBAL_CC) $$(LIBFT_GLOBAL_$(1)_C_FLAGS) -DLIBFT_TEST_BUILD -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_C_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_C_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(LIBFT_GLOBAL_CC) $$(LIBFT_GLOBAL_$(1)_C_FLAGS) -DLIBFT_TEST_BUILD -DDEBUG=1 -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 endef
 
 $(foreach module_name,$(LIBFT_GLOBAL_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_C_RULES,$(module_name))))
 
 define LIBFT_DEFINE_MM_RULES
-$$(LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS): $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_CPP_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS): $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_DEBUG_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_MM_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_MM_OBJECTS): $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 
-$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_MM_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
+$$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_MM_OBJECTS): $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $(LIBFT_GLOBAL_TEST_DEBUG_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|$(1)|$$<"; else printf '\033[1;36m[LIBFT][$(1)] Compiling %s\033[0m\n' "$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+$(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,$(1))
 endef
 
 $(foreach module_name,$(LIBFT_GLOBAL_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_MM_RULES,$(module_name))))
