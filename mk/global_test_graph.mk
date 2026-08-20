@@ -84,14 +84,14 @@ $(LIBFT_GLOBAL_TEST_DIRECTORIES):
 
 define LIBFT_GLOBAL_DEFINE_TEST_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
-	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Test|$$<"; else printf '\033[1;36m[LIBFT][Test] Compiling %s\033[0m\n' "$$<"; fi
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Test|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Test)
 endef
 
 define LIBFT_GLOBAL_DEFINE_TEST_DEBUG_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
-	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|TestDebug|$$<"; else printf '\033[1;36m[LIBFT][TestDebug] Compiling %s\033[0m\n' "$$<"; fi
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|TestDebug|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,TestDebug)
 endef

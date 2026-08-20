@@ -31,14 +31,14 @@ endef
 
 define LIBFT_GLOBAL_DEFINE_EFFICIENCY_CPP_RULE
 $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)
-	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; else printf '\033[1;36m[LIBFT][Efficiency$(1)] Compiling %s\033[0m\n' "$$<"; fi
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Efficiency$(1))
 endef
 
 define LIBFT_GLOBAL_DEFINE_EFFICIENCY_MM_RULE
 $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)
-	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; else printf '\033[1;36m[LIBFT][Efficiency$(1)] Compiling %s\033[0m\n' "$$<"; fi
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Efficiency$(1))
 endef
@@ -76,7 +76,7 @@ endif
 
 define LIBFT_GLOBAL_DEFINE_EFFICIENCY_TEST_OBJECT
 $(1): $(2) | $(patsubst %/,%,$(dir $(1)))
-	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|EfficiencyTest|$$<"; else printf '\033[1;36m[LIBFT][EfficiencyTest] Compiling %s\033[0m\n' "$$<"; fi
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|EfficiencyTest|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,EfficiencyTest)
 endef

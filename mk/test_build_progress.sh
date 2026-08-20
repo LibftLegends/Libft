@@ -30,7 +30,7 @@ printf '%s\n' "$build_output"
 printf '%s\n' "$build_output" \
     | grep -F '[BUILD PLAN] 1 source files require rebuilding' >/dev/null
 printf '%s\n' "$build_output" \
-    | grep -F '[BUILD PROGRESS][libft/Basic] 1/1 files completed' >/dev/null
+    | grep -F '[LIBFT][Basic] Compiling Modules/Basic/basic_memcpy.cpp (1/1 files completed)' >/dev/null
 printf '%s\n' "$build_output" \
     | grep -F '[BUILD PROGRESS][archives] 1/1 archives completed' >/dev/null
 

@@ -6,6 +6,7 @@ progress_session_directory=${1-}
 operation_type=${2-}
 project_name=${3-}
 module_name=${4-}
+source_path=${5-}
 
 if [ -z "$progress_session_directory" ] || [ -z "$operation_type" ] \
     || [ -z "$project_name" ] || [ -z "$module_name" ]
@@ -71,5 +72,17 @@ fi
 
 completed_count=$((completed_count + 1))
 printf '%s\n' "$completed_count" > "$completed_file"
-printf '\033[1;32m[BUILD PROGRESS][%s] %s/%s %s completed\033[0m\n' \
-    "$label" "$completed_count" "$total_count" "$unit_name"
+if [ "$operation_type" = "compile" ] && [ -n "$source_path" ]
+then
+    if [ "$project_name" = "libft" ]
+    then
+        printf '\033[1;32m[LIBFT][%s] Compiling %s (%s/%s files completed)\033[0m\n' \
+            "$module_name" "$source_path" "$completed_count" "$total_count"
+    else
+        printf '\033[1;32m[MINECRAFT] Compiling %s (%s/%s files completed)\033[0m\n' \
+            "$source_path" "$completed_count" "$total_count"
+    fi
+else
+    printf '\033[1;32m[BUILD PROGRESS][%s] %s/%s %s completed\033[0m\n' \
+        "$label" "$completed_count" "$total_count" "$unit_name"
+fi

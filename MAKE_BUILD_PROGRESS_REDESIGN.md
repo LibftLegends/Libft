@@ -23,10 +23,9 @@ Libft/Lua:    8
 Libft/Voxel:  4
 Libft/Game:   2
 
-[LIBFT][Basic] Compiling basic_memcpy.cpp
-[BUILD PROGRESS][Libft/Basic] 1/3 completed
-[LIBFT][Lua] Compiling lapi.c
-[MINECRAFT] Compiling terrain_generator.cpp
+[LIBFT][Basic] Compiling basic_memcpy.cpp (1/3 files completed)
+[LIBFT][Lua] Compiling lapi.c (1/8 files completed)
+[MINECRAFT] Compiling terrain_generator.cpp (1/6 files completed)
 [LIBFT][Basic] Archive ready: Modules/Basic/Basic.a
 [BUILD PROGRESS][archives] 1/4 completed
 ```
@@ -229,19 +228,20 @@ Never use a fixed filename such as `stale_modules` or `total`.
 ## Actual build output
 
 Prefix compiler, archiver, and linker commands with `@` and print one concise
-status line before each real operation.
+status line for each real operation. Wrapped compile recipes print the source
+and its completion count together after the compiler succeeds.
 
 Libft compile output:
 
 ```text
-[LIBFT][Basic] Compiling basic_memcpy.cpp
-[LIBFT][Lua] Compiling vendor/lua-5.4.8/lapi.c
+[LIBFT][Basic] Compiling basic_memcpy.cpp (1/3 files completed)
+[LIBFT][Lua] Compiling vendor/lua-5.4.8/lapi.c (1/8 files completed)
 ```
 
 Minecraft compile output:
 
 ```text
-[MINECRAFT] Compiling src/terrain_generator.cpp
+[MINECRAFT] Compiling src/terrain_generator.cpp (1/6 files completed)
 ```
 
 Archive output:
@@ -272,11 +272,11 @@ Make 4 users may add `--output-sync=target` for grouped recipe output.
 The public wrapper creates a unique temporary session directory, runs the same
 dry-run plan used by `make plan`, and passes that directory to the actual
 internal Make invocation. Every successful compile recipe calls a small
-portable progress helper with its project and module name. Every successful
-archive recipe calls the helper with the archive operation. The helper reads
-the immutable total written by the planning phase, obtains a lock private to
-the session, increments the matching completed count, prints one complete
-`completed/total` line, and releases the lock.
+portable progress helper with its project, module name, and source path. Every
+successful archive recipe calls the helper with the archive operation. The
+helper reads the immutable total written by the planning phase, obtains a lock
+private to the session, increments the matching completed count, prints the
+source and its combined `completed/total` line, and releases the lock.
 
 Counter updates occur only after the compiler or archiver succeeds. A failed
 or interrupted counter update must not fail the build; the compiler,
