@@ -29,7 +29,9 @@ void    su_abort(void)
         su_run_resource_tracers(reason);
         std::fprintf(stderr, "libft abort: %s\n", reason);
     }
+#ifndef LIBFT_TEST_BUILD
     std::fflush(nullptr);
+#endif
     (void)std::raise(SIGABRT);
     std::abort();
     return ;
