@@ -49,6 +49,7 @@ static std::atomic<const char *> g_current_test_name;
 #endif
 
 static std::mutex g_test_failure_log_mutex;
+static const int32_t TEST_PROGRESS_INTERVAL = 100;
 
 static void append_test_failure_log(const char *message)
 {
@@ -736,6 +737,11 @@ int32_t ft_run_registered_tests(void)
             {
                 if (show_running_line != 0)
                     printf("\r\033[2K");
+                if (selected_tests % TEST_PROGRESS_INTERVAL == 0)
+                {
+                    printf("[LIBFT][Test] %d tests completed\n", selected_tests);
+                    fflush(stdout);
+                }
             }
             else
                 printf("\r\033[2K\033[32mSUCCESS\033[0m %d %s\n",
