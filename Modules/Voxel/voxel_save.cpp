@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <cstring>
+#include "../Basic/basic.hpp"
 #include "voxel.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
@@ -252,16 +253,16 @@ static int32_t terrain_save_read_biome(ft_byte_buffer &buffer,
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = biome.set_decoration_policy(
-        static_cast<ft_bool>(allow_shrubs), static_cast<ft_bool>(allow_trees),
+        ft_platform_cast<ft_bool>(allow_shrubs), ft_platform_cast<ft_bool>(allow_trees),
         shrub_chance_percent, tree_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = biome.set_snow_cap_policy(
-        static_cast<ft_bool>(allow_snow_caps));
+        ft_platform_cast<ft_bool>(allow_snow_caps));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = biome.set_mountain_ridge_policy(
-        static_cast<ft_bool>(allow_mountain_ridges));
+        ft_platform_cast<ft_bool>(allow_mountain_ridges));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     return (biome.set_tree_template_override(ft_nullptr));
@@ -337,7 +338,7 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
         static_cast<ft_bool>(allow_ore_replacement));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (ore.set_enabled(static_cast<ft_bool>(enabled)));
+    return (ore.set_enabled(ft_platform_cast<ft_bool>(enabled)));
 }
 
 int32_t terrain_generation_config_serialize(
@@ -817,7 +818,7 @@ int32_t terrain_generation_config_deserialize(
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         error_code = loaded_feature.set_requires_dry_land(
-            static_cast<ft_bool>(feature_dry_land));
+            ft_platform_cast<ft_bool>(feature_dry_land));
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         if (has_template != 0U)
@@ -945,8 +946,8 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.underground_structures.set_enabled(
-        static_cast<ft_bool>(enable_ravines),
-        static_cast<ft_bool>(enable_cave_rooms));
+        ft_platform_cast<ft_bool>(enable_ravines),
+        ft_platform_cast<ft_bool>(enable_cave_rooms));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.underground_structures.set_chances(
@@ -970,12 +971,12 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.underground_structures.set_cavern_rooms(
-        static_cast<ft_bool>(enable_cavern_rooms),
+        ft_platform_cast<ft_bool>(enable_cavern_rooms),
         cavern_room_chance_percent, cavern_room_radius);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.fluids.set_enabled(
-        static_cast<ft_bool>(enable_rivers), static_cast<ft_bool>(enable_lakes));
+        ft_platform_cast<ft_bool>(enable_rivers), ft_platform_cast<ft_bool>(enable_lakes));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.fluids.set_river_settings(
@@ -987,8 +988,8 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.layers.set_enabled(
-        static_cast<ft_bool>(enable_beaches),
-        static_cast<ft_bool>(enable_snow_caps));
+        ft_platform_cast<ft_bool>(enable_beaches),
+        ft_platform_cast<ft_bool>(enable_snow_caps));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.layers.set_depths(
@@ -1018,7 +1019,7 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.set_biome_transitions_enabled(
-        static_cast<ft_bool>(enable_biome_transitions));
+        ft_platform_cast<ft_bool>(enable_biome_transitions));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.set_biome_transition_settings(
@@ -1026,11 +1027,11 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.set_mountain_ridges_enabled(
-        static_cast<ft_bool>(enable_mountain_ridges));
+        ft_platform_cast<ft_bool>(enable_mountain_ridges));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = loaded_config.set_erosion_enabled(
-        static_cast<ft_bool>(enable_erosion));
+        ft_platform_cast<ft_bool>(enable_erosion));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = terrain_save_read_i32(buffer, &loaded_config.mountain_ridge_scale);

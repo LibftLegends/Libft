@@ -2,6 +2,7 @@
 # define LIBFT_HPP
 
 #include <cstdint>
+#include <type_traits>
 
 #ifndef FT_TYPES_HPP
 # define FT_TYPES_HPP
@@ -43,6 +44,15 @@ typedef uint8_t ft_bool;
 # define FT_SOCKET_DESCRIPTOR_CAST(value) (value)
 # define FT_FILE_OFFSET_TO_INT64_CAST(value) (value)
 #endif
+
+template <typename TargetType, typename SourceType>
+constexpr TargetType ft_platform_cast(SourceType value)
+{
+    if constexpr (std::is_same<TargetType, SourceType>::value)
+        return (value);
+    else
+        return (static_cast<TargetType>(value));
+}
 
 #ifdef __APPLE__
 # define FT_NATIVE_SIZE_TO_FT_SIZE_CAST(value) \

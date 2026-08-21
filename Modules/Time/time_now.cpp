@@ -1,4 +1,5 @@
 #include "time.hpp"
+#include "../Basic/basic.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include <chrono>
@@ -56,7 +57,7 @@ t_time  time_now(void)
             (void)(FT_ERR_OUT_OF_RANGE);
             return (-1);
         }
-        standard_time = static_cast<std::time_t>(seconds_count);
+        standard_time = ft_platform_cast<std::time_t>(seconds_count);
     }
     else
         standard_time = ::time(ft_nullptr);
