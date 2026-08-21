@@ -39,7 +39,9 @@ printf '%s\n' "$build_output" \
 printf '%s\n' "$build_output" \
     | grep -F '[LIBFT][Basic] Compiling Modules/Basic/basic_memcpy.cpp (1/1 files completed)' >/dev/null
 printf '%s\n' "$build_output" \
-    | grep -F '[BUILD PROGRESS][archives] 1/1 archives completed' >/dev/null
+    | grep -F '1/1 archives completed' >/dev/null
+printf '%s\n' "$build_output" \
+    | grep -E 'Archive ready: .* 1/1 archives completed' >/dev/null
 
 plan_output=$(sh mk/print_build_plan.sh \
     "$make_command" Modules/Basic/Basic.a)

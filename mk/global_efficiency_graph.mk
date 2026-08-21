@@ -25,8 +25,11 @@ $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE): $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECT
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT][Efficiency$(1)] Archive ready: %s\033[0m\n' "$$@"
-$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,Efficiency$(1))
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Efficiency$(1) "$$@" || true; \
+	else \
+		printf '\033[1;35m[LIBFT][Efficiency$(1)] Archive ready: %s\033[0m\n' "$$@"; \
+	fi
 endef
 
 define LIBFT_GLOBAL_DEFINE_EFFICIENCY_CPP_RULE

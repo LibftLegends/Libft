@@ -29,12 +29,6 @@ LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 
-define LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE
-	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
-		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) || true; \
-	fi
-endef
-
 LIBFT_GLOBAL_MANIFESTS := $(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/,$(addsuffix .mk,$(LIBFT_GLOBAL_MODULE_NAMES)))
 
 define LIBFT_LOAD_GLOBAL_MANIFEST
@@ -92,8 +86,11 @@ $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $(LIBFT_GLOB
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
-$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
+	else \
+		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
+	fi
 
 $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
@@ -101,8 +98,11 @@ $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $(LIBFT_
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
-$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
+	else \
+		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
+	fi
 
 $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
@@ -110,8 +110,11 @@ $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TES
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
-$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
+	else \
+		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
+	fi
 
 $$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
@@ -119,8 +122,11 @@ $$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"
-$(call LIBFT_GLOBAL_ARCHIVE_PROGRESS_RECIPE,$(1))
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
+	else \
+		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
+	fi
 
 $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS): | $$(LIBFT_GLOBAL_$(1)_RELEASE_DIRECTORIES)
 $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS): | $$(LIBFT_GLOBAL_$(1)_DEBUG_DIRECTORIES)

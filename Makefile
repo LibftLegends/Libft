@@ -53,9 +53,10 @@ $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
 	fi
 	@mv $$@.tmp $$@
-	@printf '\033[1;35m[LIBFT] Archive ready: %s\033[0m\n' "$(1)"
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
-		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft || true; \
+		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft "$(1)" || true; \
+	else \
+		printf '\033[1;35m[LIBFT] Archive ready: %s\033[0m\n' "$(1)"; \
 	fi
 endef
 
