@@ -41,6 +41,8 @@ static int32_t game_destroyed_expect_sigabrt_process(
         (void)signal(SIGABRT, SIG_DFL);
         if (SIGIOT != SIGABRT)
             (void)signal(SIGIOT, SIG_DFL);
+        test_disable_child_core_dumps();
+        test_unblock_abort_signals();
         if (object_instance.initialize() != FT_ERR_SUCCESS)
             _exit(0);
         if (object_instance.destroy() != FT_ERR_SUCCESS)

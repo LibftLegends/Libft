@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fcntl.h>
 #if !defined(_WIN32) && !defined(_WIN64)
+# include <sys/resource.h>
 # include <sys/types.h>
 # include <sys/wait.h>
 # include <pthread.h>
@@ -394,6 +395,16 @@ static int32_t __attribute__((unused)) test_capture_abort_output_end(
 }
 
 #if !defined(_WIN32) && !defined(_WIN64)
+static void test_disable_child_core_dumps(void)
+{
+    struct rlimit core_limit;
+
+    core_limit.rlim_cur = 0;
+    core_limit.rlim_max = 0;
+    (void)setrlimit(RLIMIT_CORE, &core_limit);
+    return ;
+}
+
 static void test_unblock_abort_signals(void)
 {
     sigset_t unblocked_signals;
@@ -422,6 +433,7 @@ static int __attribute__((unused)) test_expect_sigabrt_process(
         (void)signal(SIGABRT, SIG_DFL);
         if (SIGIOT != SIGABRT)
             (void)signal(SIGIOT, SIG_DFL);
+        test_disable_child_core_dumps();
         test_unblock_abort_signals();
         null_descriptor = open("/dev/null", O_WRONLY);
         if (null_descriptor >= 0)
@@ -525,6 +537,7 @@ static int32_t test_expect_sigabrt_process_uninitialised(
         (void)signal(SIGABRT, SIG_DFL);
         if (SIGIOT != SIGABRT)
             (void)signal(SIGIOT, SIG_DFL);
+        test_disable_child_core_dumps();
         test_unblock_abort_signals();
         std::memset(object_storage, 0, sizeof(object_storage));
         object_pointer = reinterpret_cast<TypeName *>(object_storage);
