@@ -28,6 +28,8 @@ FT_TEST(test_logger_context_push_field_is_visible_in_json_output)
     ssize_t read_count;
     char buffer[512];
 
+    ft_log_enable_async(FT_FALSE);
+    ft_log_set_level(LOG_LEVEL_INFO);
     FT_ASSERT_EQ(0, pipe(pipe_fds));
     write_fd = pipe_fds[1];
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(ft_json_sink, &write_fd));
