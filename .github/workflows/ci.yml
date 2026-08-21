@@ -83,7 +83,8 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             (
               cd Test || exit 1
-              ulimit -c unlimited
+              ulimit -c 0 # CI_DIAGNOSTIC: Expected abort tests must not create one core file per child process.
+              printf '%s\n' "macOS automatic core dump limit: $(ulimit -c)" # CI_DIAGNOSTIC: Keep LLDB's explicit hang core capture available without filling the runner disk.
               ./libft_tests > ci_unix_full_output.log 2>&1 &
               test_pid=$!
               tail -f ci_unix_full_output.log &
