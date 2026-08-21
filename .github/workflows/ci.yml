@@ -290,7 +290,7 @@ jobs:
 
       # CI_DIAGNOSTIC: Upload macOS watchdog output, stack traces, and core dumps.
       - name: Upload macOS hang diagnostics
-        if: always() && failure() && runner.os == 'macOS'
+        if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@v6
         with:
           name: macos-test-diagnostics-${{ github.run_id }}
