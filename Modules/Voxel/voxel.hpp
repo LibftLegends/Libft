@@ -498,8 +498,13 @@ class terrain_generation_config
         int32_t set_sea_level(int32_t value) noexcept;
         int32_t set_noise_scales(int32_t large_scale, int32_t detail_scale,
             int32_t detail_percent) noexcept;
+        int32_t set_biome_size_control_enabled(ft_bool enabled) noexcept;
         int32_t set_biome_size_range(int32_t minimum_size,
             int32_t maximum_size) noexcept;
+        int32_t set_biome_size_range_for_biome(uint32_t biome_index,
+            int32_t minimum_size, int32_t maximum_size) noexcept;
+        int32_t set_biome_size_override_enabled(uint32_t biome_index,
+            ft_bool enabled) noexcept;
         int32_t set_water_chance_percent(uint32_t value) noexcept;
         int32_t set_biome_count(uint32_t value) noexcept;
         int32_t set_biome_selector(terrain_biome_selector selector,
@@ -549,8 +554,12 @@ class terrain_generation_config
         int32_t large_noise_scale;
         int32_t detail_noise_scale;
         int32_t detail_noise_percent;
+        ft_bool enable_biome_size_control;
         int32_t biome_size_min;
         int32_t biome_size_max;
+        int32_t biome_size_min_by_biome[TERRAIN_MAX_CUSTOM_BIOMES];
+        int32_t biome_size_max_by_biome[TERRAIN_MAX_CUSTOM_BIOMES];
+        ft_bool biome_size_override_enabled[TERRAIN_MAX_CUSTOM_BIOMES];
         uint32_t water_chance_percent;
         uint32_t biome_count;
         terrain_biome_definition biomes[TERRAIN_MAX_CUSTOM_BIOMES];
@@ -679,6 +688,9 @@ uint32_t terrain_select_biome(const terrain_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z) noexcept;
 int32_t terrain_get_biome_zone_width(
     const terrain_generation_config &config, uint64_t seed_value) noexcept;
+int32_t terrain_get_biome_zone_width_for_biome(
+    const terrain_generation_config &config, uint64_t seed_value,
+    uint32_t biome_index) noexcept;
 uint32_t terrain_get_biome_index(const terrain_generation_config &config,
     int32_t world_block_x, int32_t world_block_z,
     const char *seed_string = ft_nullptr) noexcept;

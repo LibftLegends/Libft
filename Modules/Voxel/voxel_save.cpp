@@ -9,7 +9,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 8U;
+static const uint32_t TERRAIN_SAVE_VERSION = 9U;
 
 static int32_t terrain_save_append_block_reference(ft_byte_buffer &buffer,
     uint32_t block_id) noexcept
@@ -378,6 +378,26 @@ int32_t terrain_generation_config_serialize(
     error_code = terrain_save_append_i32(buffer, config.biome_size_max);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u8(config.enable_biome_size_control);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    index = 0U;
+    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    {
+        error_code = terrain_save_append_i32(buffer,
+            config.biome_size_min_by_biome[index]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = terrain_save_append_i32(buffer,
+            config.biome_size_max_by_biome[index]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.append_u8(
+            config.biome_size_override_enabled[index]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        index += 1U;
+    }
     error_code = buffer.append_u32_le(config.water_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -635,6 +655,7 @@ int32_t terrain_generation_config_deserialize(
     uint32_t version;
     uint32_t index;
     uint8_t enable_biome_transitions;
+    uint8_t enable_biome_size_control;
     int32_t biome_transition_noise_scale;
     uint32_t biome_transition_noise_strength;
     uint8_t enable_mountain_ridges;
@@ -685,7 +706,8 @@ int32_t terrain_generation_config_deserialize(
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = buffer.read_u32_le(&version);
     if (error_code != FT_ERR_SUCCESS
-        || (version != TERRAIN_SAVE_VERSION && version != 7U))
+        || (version != TERRAIN_SAVE_VERSION && version != 8U
+            && version != 7U))
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = terrain_save_read_i32(buffer, &loaded_config.sea_level);
     if (error_code != FT_ERR_SUCCESS)
@@ -699,16 +721,60 @@ int32_t terrain_generation_config_deserialize(
     error_code = terrain_save_read_i32(buffer, &loaded_config.detail_noise_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (version >= TERRAIN_SAVE_VERSION)
+    if (version >= 8U)
     {
-        error_code = terrain_save_read_i32(buffer,
-            &loaded_config.biome_size_min);
+        error_code = terrain_save_read_i32(buffer, &loaded_config.biome_size_min);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        error_code = terrain_save_read_i32(buffer,
-            &loaded_config.biome_size_max);
+        error_code = terrain_save_read_i32(buffer, &loaded_config.biome_size_max);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
+        if (version >= 9U)
+        {
+            error_code = buffer.read_u8(&enable_biome_size_control);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+            loaded_config.enable_biome_size_control =
+                static_cast<ft_bool>(enable_biome_size_control);
+            index = 0U;
+            while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+            {
+                uint8_t override_enabled;
+
+                error_code = terrain_save_read_i32(buffer,
+                    &loaded_config.biome_size_min_by_biome[index]);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+                error_code = terrain_save_read_i32(buffer,
+                    &loaded_config.biome_size_max_by_biome[index]);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+                error_code = buffer.read_u8(&override_enabled);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+                loaded_config.biome_size_override_enabled[index] =
+                    static_cast<ft_bool>(override_enabled);
+                index += 1U;
+            }
+        }
+        else
+        {
+            loaded_config.enable_biome_size_control = FT_TRUE;
+            index = 0U;
+            while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+            {
+                loaded_config.biome_size_min_by_biome[index] =
+                    loaded_config.biome_size_min;
+                loaded_config.biome_size_max_by_biome[index] =
+                    loaded_config.biome_size_max;
+                loaded_config.biome_size_override_enabled[index] = FT_FALSE;
+                index += 1U;
+            }
+        }
+    }
+    else
+    {
+        loaded_config.enable_biome_size_control = FT_FALSE;
     }
     error_code = buffer.read_u32_le(&loaded_config.water_chance_percent);
     if (error_code != FT_ERR_SUCCESS)

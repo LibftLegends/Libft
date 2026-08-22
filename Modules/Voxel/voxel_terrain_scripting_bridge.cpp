@@ -105,6 +105,76 @@ static int32_t terrain_script_set_noise_scales(game_script_context &context,
         detail_scale, detail_percent));
 }
 
+static int32_t terrain_script_set_biome_size_control(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    uint32_t enabled;
+    int32_t error_code;
+
+    if (arguments.size() != 1U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_uint32(arguments[0], &enabled);
+    if (error_code != FT_ERR_SUCCESS || enabled > 1U)
+        return (error_code == FT_ERR_SUCCESS ? FT_ERR_INVALID_ARGUMENT
+            : error_code);
+    return (terrain_context->config->set_biome_size_control_enabled(
+        static_cast<ft_bool>(enabled)));
+}
+
+static int32_t terrain_script_set_biome_size_range(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    int32_t minimum_size;
+    int32_t maximum_size;
+    int32_t error_code;
+
+    if (arguments.size() != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_int32(arguments[0], &minimum_size);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[1], &maximum_size);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (terrain_context->config->set_biome_size_range(minimum_size,
+        maximum_size));
+}
+
+static int32_t terrain_script_set_biome_size_range_for_biome(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    uint32_t biome_index;
+    int32_t minimum_size;
+    int32_t maximum_size;
+    int32_t error_code;
+
+    if (arguments.size() != 3U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_uint32(arguments[0], &biome_index);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[1], &minimum_size);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[2], &maximum_size);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (terrain_context->config->set_biome_size_range_for_biome(
+        biome_index, minimum_size, maximum_size));
+}
+
 static int32_t terrain_script_set_biome_height(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
@@ -345,6 +415,18 @@ int32_t terrain_script_register_api(game_script_bridge &bridge) noexcept
     if (error_code == FT_ERR_SUCCESS)
         error_code = terrain_script_register_function(bridge,
             "terrain_set_noise_scales", terrain_script_set_noise_scales);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_control",
+            terrain_script_set_biome_size_control);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_range",
+            terrain_script_set_biome_size_range);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_range_for_biome",
+            terrain_script_set_biome_size_range_for_biome);
     if (error_code == FT_ERR_SUCCESS)
         error_code = terrain_script_register_function(bridge,
             "terrain_set_biome_height", terrain_script_set_biome_height);

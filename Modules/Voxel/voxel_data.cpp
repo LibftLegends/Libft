@@ -1537,6 +1537,75 @@ terrain_biome terrain_pick_biome(uint64_t seed_value,
     return (TERRAIN_BIOME_MOUNTAINS);
 }
 
+static uint32_t terrain_pick_biome_with_individual_sizes(
+    const terrain_generation_config &config, uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z) noexcept
+{
+    uint32_t biome_index;
+    uint32_t best_biome;
+    double best_score;
+
+    best_biome = 0U;
+    best_score = 1.0e30;
+    biome_index = 0U;
+    while (biome_index < config.biome_count
+        && biome_index < TERRAIN_MAX_CUSTOM_BIOMES)
+    {
+        const int32_t width = terrain_get_biome_zone_width_for_biome(
+            config, seed_value, biome_index);
+        const int32_t cell_x = terrain_floor_div(world_block_x, width);
+        const int32_t cell_z = terrain_floor_div(world_block_z, width);
+        int32_t neighbour_z = -1;
+        while (neighbour_z <= 1)
+        {
+            int32_t neighbour_x = -1;
+            while (neighbour_x <= 1)
+            {
+                const int32_t candidate_cell_x = cell_x + neighbour_x;
+                const int32_t candidate_cell_z = cell_z + neighbour_z;
+                const int32_t origin_x = candidate_cell_x * width;
+                const int32_t origin_z = candidate_cell_z * width;
+                const int32_t site_x = origin_x + width / 2
+                    + static_cast<int32_t>(terrain_signed_unit_noise(
+                        seed_value ^ UINT64_C(0xA24BAED4963EE407)
+                            ^ (static_cast<uint64_t>(biome_index + 1U)
+                                * UINT64_C(0xD6E8FEB86659FD93)),
+                        candidate_cell_x, candidate_cell_z)
+                        * static_cast<double>(width) * 0.35);
+                const int32_t site_z = origin_z + width / 2
+                    + static_cast<int32_t>(terrain_signed_unit_noise(
+                        seed_value ^ UINT64_C(0x9FB21C651E98DF25)
+                            ^ (static_cast<uint64_t>(biome_index + 1U)
+                                * UINT64_C(0x94D049BB133111EB)),
+                        candidate_cell_x, candidate_cell_z)
+                        * static_cast<double>(width) * 0.35);
+                const double distance_x = static_cast<double>(world_block_x
+                    - site_x);
+                const double distance_z = static_cast<double>(world_block_z
+                    - site_z);
+                const double normaliser = static_cast<double>(width)
+                    * static_cast<double>(width);
+                const double tie_break = (terrain_signed_unit_noise(
+                    seed_value ^ UINT64_C(0xC6BC279692B5CC83),
+                    candidate_cell_x + static_cast<int32_t>(biome_index),
+                    candidate_cell_z - static_cast<int32_t>(biome_index))
+                    + 1.0) * 1.0e-6;
+                const double score = ((distance_x * distance_x)
+                    + (distance_z * distance_z)) / normaliser + tie_break;
+                if (score < best_score)
+                {
+                    best_score = score;
+                    best_biome = biome_index;
+                }
+                neighbour_x += 1;
+            }
+            neighbour_z += 1;
+        }
+        biome_index += 1U;
+    }
+    return (best_biome);
+}
+
 uint32_t terrain_surface_block_for_biome(terrain_biome biome) noexcept
 {
     if (biome == TERRAIN_BIOME_DESERT)
@@ -1673,7 +1742,8 @@ int32_t terrain_get_biome_zone_width(
 {
     int64_t range;
 
-    if (config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
+    if (config.enable_biome_size_control == FT_FALSE
+        || config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
         || config.biome_size_max < config.biome_size_min)
         return (TERRAIN_BIOME_ZONE_WIDTH);
     range = static_cast<int64_t>(config.biome_size_max)
@@ -1681,6 +1751,37 @@ int32_t terrain_get_biome_zone_width(
     if (range <= 1)
         return (config.biome_size_min);
     return (config.biome_size_min + static_cast<int32_t>(seed_value
+        % static_cast<uint64_t>(range)));
+}
+
+int32_t terrain_get_biome_zone_width_for_biome(
+    const terrain_generation_config &config, uint64_t seed_value,
+    uint32_t biome_index) noexcept
+{
+    int32_t minimum_size;
+    int32_t maximum_size;
+    int64_t range;
+
+    if (config.enable_biome_size_control == FT_FALSE
+        || biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+        return (TERRAIN_BIOME_ZONE_WIDTH);
+    minimum_size = config.biome_size_min;
+    maximum_size = config.biome_size_max;
+    if (config.biome_size_override_enabled[biome_index] == FT_TRUE)
+    {
+        minimum_size = config.biome_size_min_by_biome[biome_index];
+        maximum_size = config.biome_size_max_by_biome[biome_index];
+    }
+    if (minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+        || maximum_size < minimum_size)
+        return (TERRAIN_BIOME_ZONE_WIDTH);
+    range = static_cast<int64_t>(maximum_size)
+        - static_cast<int64_t>(minimum_size) + 1;
+    if (range <= 1)
+        return (minimum_size);
+    return (minimum_size + static_cast<int32_t>((seed_value
+        ^ (UINT64_C(0x9E3779B97F4A7C15)
+            * static_cast<uint64_t>(biome_index + 1U)))
         % static_cast<uint64_t>(range)));
 }
 
@@ -1853,6 +1954,9 @@ uint32_t terrain_select_biome(const terrain_generation_config &config,
     if (config.biome_selector != ft_nullptr)
         selected = config.biome_selector(seed_value, world_block_x,
             world_block_z, config.biome_count, config.biome_selector_user_data);
+    else if (config.enable_biome_size_control == FT_TRUE)
+        selected = terrain_pick_biome_with_individual_sizes(config, seed_value,
+            world_block_x, world_block_z);
     else
         selected = static_cast<uint32_t>(terrain_pick_biome(seed_value,
             world_block_x, world_block_z,
@@ -1871,7 +1975,10 @@ uint32_t terrain_get_biome_index(const terrain_generation_config &config,
 terrain_generation_config::terrain_generation_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), sea_level(0),
       large_noise_scale(0), detail_noise_scale(0), detail_noise_percent(0),
+      enable_biome_size_control(FT_FALSE),
       biome_size_min(0), biome_size_max(0),
+      biome_size_min_by_biome(), biome_size_max_by_biome(),
+      biome_size_override_enabled(),
       water_chance_percent(0U), biome_count(0U), biomes(),
       tree_template_count(0U), tree_templates(), tree_template_blocks(),
       biome_selector(ft_nullptr),
@@ -1943,8 +2050,18 @@ int32_t terrain_generation_config::initialize(
     this->large_noise_scale = other.large_noise_scale;
     this->detail_noise_scale = other.detail_noise_scale;
     this->detail_noise_percent = other.detail_noise_percent;
+    this->enable_biome_size_control = other.enable_biome_size_control;
     this->biome_size_min = other.biome_size_min;
     this->biome_size_max = other.biome_size_max;
+    ft_memcpy(this->biome_size_min_by_biome,
+        other.biome_size_min_by_biome,
+        sizeof(this->biome_size_min_by_biome));
+    ft_memcpy(this->biome_size_max_by_biome,
+        other.biome_size_max_by_biome,
+        sizeof(this->biome_size_max_by_biome));
+    ft_memcpy(this->biome_size_override_enabled,
+        other.biome_size_override_enabled,
+        sizeof(this->biome_size_override_enabled));
     this->water_chance_percent = other.water_chance_percent;
     this->biome_count = other.biome_count;
     this->tree_template_count = other.tree_template_count;
@@ -2054,8 +2171,15 @@ uint32_t terrain_generation_config::destroy() noexcept
     this->large_noise_scale = 0;
     this->detail_noise_scale = 0;
     this->detail_noise_percent = 0;
+    this->enable_biome_size_control = FT_FALSE;
     this->biome_size_min = 0;
     this->biome_size_max = 0;
+    ft_memset(this->biome_size_min_by_biome, 0,
+        sizeof(this->biome_size_min_by_biome));
+    ft_memset(this->biome_size_max_by_biome, 0,
+        sizeof(this->biome_size_max_by_biome));
+    ft_memset(this->biome_size_override_enabled, 0,
+        sizeof(this->biome_size_override_enabled));
     this->water_chance_percent = 0U;
     this->biome_count = 0U;
     this->tree_template_count = 0U;
@@ -2110,6 +2234,7 @@ static int32_t terrain_apply_default_generation_config(
     config.large_noise_scale = 32;
     config.detail_noise_scale = 8;
     config.detail_noise_percent = 50;
+    config.enable_biome_size_control = FT_TRUE;
     config.biome_size_min = TERRAIN_BIOME_ZONE_WIDTH;
     config.biome_size_max = TERRAIN_BIOME_ZONE_WIDTH;
     config.water_chance_percent = 0U;
@@ -2266,6 +2391,9 @@ static int32_t terrain_apply_default_generation_config(
             config.biomes[index].tree_template_count += 1U;
         }
         config.biomes[index].tree_template = ft_nullptr;
+        config.biome_size_min_by_biome[index] = config.biome_size_min;
+        config.biome_size_max_by_biome[index] = config.biome_size_max;
+        config.biome_size_override_enabled[index] = FT_FALSE;
         index += 1U;
     }
     config.biomes[TERRAIN_BIOME_PLAINS].tree_template_count = 5U;
@@ -2398,6 +2526,46 @@ int32_t terrain_generation_config::set_biome_size_range(
         return (FT_ERR_INVALID_ARGUMENT);
     this->biome_size_min = minimum_size;
     this->biome_size_max = maximum_size;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_generation_config::set_biome_size_control_enabled(
+    ft_bool enabled) noexcept
+{
+    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    if (enabled != FT_FALSE && enabled != FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->enable_biome_size_control = enabled;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_generation_config::set_biome_size_range_for_biome(
+    uint32_t biome_index, int32_t minimum_size,
+    int32_t maximum_size) noexcept
+{
+    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES
+        || minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+        || maximum_size < minimum_size
+        || maximum_size > TERRAIN_BIOME_SIZE_MAXIMUM)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->biome_size_min_by_biome[biome_index] = minimum_size;
+    this->biome_size_max_by_biome[biome_index] = maximum_size;
+    this->biome_size_override_enabled[biome_index] = FT_TRUE;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_generation_config::set_biome_size_override_enabled(
+    uint32_t biome_index, ft_bool enabled) noexcept
+{
+    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES
+        || (enabled != FT_FALSE && enabled != FT_TRUE))
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->biome_size_override_enabled[biome_index] = enabled;
     return (FT_ERR_SUCCESS);
 }
 
@@ -2844,6 +3012,8 @@ uint32_t terrain_generation_config_signature(
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.detail_noise_percent));
     signature = terrain_mix_u64(signature);
+    signature ^= static_cast<uint64_t>(config.enable_biome_size_control);
+    signature = terrain_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.biome_size_min));
     signature = terrain_mix_u64(signature);
@@ -2856,6 +3026,15 @@ uint32_t terrain_generation_config_signature(
     index = 0U;
     while (index < config.biome_count && index < TERRAIN_MAX_CUSTOM_BIOMES)
     {
+        signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+            config.biome_size_min_by_biome[index]));
+        signature = terrain_mix_u64(signature);
+        signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+            config.biome_size_max_by_biome[index]));
+        signature = terrain_mix_u64(signature);
+        signature ^= static_cast<uint64_t>(
+            config.biome_size_override_enabled[index]);
+        signature = terrain_mix_u64(signature);
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biomes[index].profile.surface_height));
         signature = terrain_mix_u64(signature);
@@ -3281,6 +3460,8 @@ ft_bool terrain_generation_config_is_valid(
     if (config.is_initialised() == FT_FALSE)
         return (FT_FALSE);
     if (config.biome_count == 0U || config.biome_count > TERRAIN_MAX_CUSTOM_BIOMES
+        || (config.enable_biome_size_control != FT_FALSE
+            && config.enable_biome_size_control != FT_TRUE)
         || config.tree_template_count > TERRAIN_MAX_TREE_TEMPLATES
         || config.feature_count > TERRAIN_MAX_FEATURE_RULES
         || config.ore_rule_count > TERRAIN_MAX_ORE_RULES
@@ -3331,6 +3512,15 @@ ft_bool terrain_generation_config_is_valid(
     index = 0U;
     while (index < config.biome_count)
     {
+        if (config.biome_size_min_by_biome[index]
+                < TERRAIN_BIOME_SIZE_MINIMUM
+            || config.biome_size_max_by_biome[index]
+                < config.biome_size_min_by_biome[index]
+            || config.biome_size_max_by_biome[index]
+                > TERRAIN_BIOME_SIZE_MAXIMUM
+            || (config.biome_size_override_enabled[index] != FT_FALSE
+                && config.biome_size_override_enabled[index] != FT_TRUE))
+            return (FT_FALSE);
         if (config.biomes[index].is_initialised() == FT_FALSE
             || config.biomes[index].profile.height_variation < 0
             || config.biomes[index].profile.topsoil_depth < 0
