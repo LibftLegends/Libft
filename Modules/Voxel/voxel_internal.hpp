@@ -19,7 +19,7 @@ double terrain_signed_unit_noise(uint64_t seed_value, int32_t grid_x,
 double terrain_value_noise(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, int32_t scale) noexcept;
 terrain_biome terrain_pick_biome(uint64_t seed_value, int32_t world_block_x,
-    int32_t world_block_z) noexcept;
+    int32_t world_block_z, int32_t biome_zone_width) noexcept;
 
 #endif
 

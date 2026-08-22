@@ -57,7 +57,8 @@ const char *game_server::get_error_str() const noexcept
 
 game_server::game_server() noexcept
     : _server(ft_nullptr), _world(), _clients(), _auth_token(),
-      _on_join(ft_nullptr), _on_leave(ft_nullptr), _mutex(ft_nullptr),
+      _on_join(ft_nullptr), _on_leave(ft_nullptr), _on_message(ft_nullptr),
+      _message_user_data(ft_nullptr), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -138,6 +139,8 @@ int32_t game_server::initialize(const ft_sharedptr<game_world> &world,
     this->_clients.clear();
     this->_on_join = ft_nullptr;
     this->_on_leave = ft_nullptr;
+    this->_on_message = ft_nullptr;
+    this->_message_user_data = ft_nullptr;
     if (this->_server != ft_nullptr)
     {
         delete this->_server;
@@ -193,6 +196,8 @@ int32_t game_server::destroy() noexcept
     this->_auth_token.clear();
     this->_on_join = ft_nullptr;
     this->_on_leave = ft_nullptr;
+    this->_on_message = ft_nullptr;
+    this->_message_user_data = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (disable_error == FT_ERR_SUCCESS && world_destroy_error != FT_ERR_SUCCESS)
         disable_error = world_destroy_error;
@@ -294,6 +299,8 @@ int32_t game_server::move(game_server &other) noexcept
     this->_server = server_pointer;
     this->_on_join = other._on_join;
     this->_on_leave = other._on_leave;
+    this->_on_message = other._on_message;
+    this->_message_user_data = other._message_user_data;
     this->_mutex = mutex_pointer;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     source_destroy_error = other.destroy();
@@ -417,6 +424,27 @@ void game_server::set_leave_callback(void (*callback)(int32_t)) noexcept
     return ;
 }
 
+void game_server::set_message_callback(game_server_message_callback callback,
+    void *user_data) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_server::set_message_callback");
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        this->set_error(lock_error);
+        return ;
+    }
+    this->_on_message = callback;
+    this->_message_user_data = user_data;
+    (void)this->unlock_internal(lock_acquired);
+    this->set_error(FT_ERR_SUCCESS);
+}
+
 int32_t game_server::handle_message_locked(int32_t client_handle,
     const ft_string &message) noexcept
 {
@@ -437,6 +465,15 @@ int32_t game_server::handle_message_locked(int32_t client_handle,
     {
         this->set_error(FT_ERR_GAME_GENERAL_ERROR);
         return (FT_ERR_GAME_GENERAL_ERROR);
+    }
+    if (json_find_group(groups, "world_revision") != ft_nullptr
+        && this->_on_message != ft_nullptr)
+    {
+        int32_t callback_result = this->_on_message(client_handle,
+            message.c_str(), this->_message_user_data);
+        json_free_groups(groups);
+        this->set_error(callback_result);
+        return (callback_result);
     }
     join_group = json_find_group(groups, "join");
     if (join_group != ft_nullptr)

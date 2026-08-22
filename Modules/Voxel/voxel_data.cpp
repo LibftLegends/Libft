@@ -1511,14 +1511,15 @@ double terrain_value_noise(uint64_t seed_value, int32_t world_block_x,
 }
 
 terrain_biome terrain_pick_biome(uint64_t seed_value,
-    int32_t world_block_x, int32_t world_block_z) noexcept
+    int32_t world_block_x, int32_t world_block_z,
+    int32_t biome_zone_width) noexcept
 {
     int32_t biome_zone_x;
     int32_t biome_zone_z;
     int64_t biome_selector;
 
-    biome_zone_x = terrain_floor_div(world_block_x, TERRAIN_BIOME_ZONE_WIDTH);
-    biome_zone_z = terrain_floor_div(world_block_z, TERRAIN_BIOME_ZONE_WIDTH);
+    biome_zone_x = terrain_floor_div(world_block_x, biome_zone_width);
+    biome_zone_z = terrain_floor_div(world_block_z, biome_zone_width);
     biome_selector = static_cast<int64_t>(seed_value % 5U)
         + static_cast<int64_t>(biome_zone_x)
         + static_cast<int64_t>(biome_zone_z);
@@ -1665,6 +1666,22 @@ ft_bool terrain_block_can_host_ore(uint32_t block_id) noexcept
         || block_id == TERRAIN_GENERATOR_BASALT_BLOCK)
         return (FT_TRUE);
     return (FT_FALSE);
+}
+
+int32_t terrain_get_biome_zone_width(
+    const terrain_generation_config &config, uint64_t seed_value) noexcept
+{
+    int64_t range;
+
+    if (config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
+        || config.biome_size_max < config.biome_size_min)
+        return (TERRAIN_BIOME_ZONE_WIDTH);
+    range = static_cast<int64_t>(config.biome_size_max)
+        - static_cast<int64_t>(config.biome_size_min) + 1;
+    if (range <= 1)
+        return (config.biome_size_min);
+    return (config.biome_size_min + static_cast<int32_t>(seed_value
+        % static_cast<uint64_t>(range)));
 }
 
 ft_bool terrain_block_is_ore(uint32_t block_id) noexcept
@@ -1823,7 +1840,7 @@ terrain_biome terrain_get_biome(int32_t world_block_x, int32_t world_block_z,
     const char *seed_string) noexcept
 {
     return (terrain_pick_biome(terrain_seed_value(seed_string), world_block_x,
-        world_block_z));
+        world_block_z, TERRAIN_BIOME_ZONE_WIDTH));
 }
 
 uint32_t terrain_select_biome(const terrain_generation_config &config,
@@ -1838,7 +1855,8 @@ uint32_t terrain_select_biome(const terrain_generation_config &config,
             world_block_z, config.biome_count, config.biome_selector_user_data);
     else
         selected = static_cast<uint32_t>(terrain_pick_biome(seed_value,
-            world_block_x, world_block_z));
+            world_block_x, world_block_z,
+            terrain_get_biome_zone_width(config, seed_value)));
     return (selected % config.biome_count);
 }
 
@@ -1853,6 +1871,7 @@ uint32_t terrain_get_biome_index(const terrain_generation_config &config,
 terrain_generation_config::terrain_generation_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), sea_level(0),
       large_noise_scale(0), detail_noise_scale(0), detail_noise_percent(0),
+      biome_size_min(0), biome_size_max(0),
       water_chance_percent(0U), biome_count(0U), biomes(),
       tree_template_count(0U), tree_templates(), tree_template_blocks(),
       biome_selector(ft_nullptr),
@@ -1924,6 +1943,8 @@ int32_t terrain_generation_config::initialize(
     this->large_noise_scale = other.large_noise_scale;
     this->detail_noise_scale = other.detail_noise_scale;
     this->detail_noise_percent = other.detail_noise_percent;
+    this->biome_size_min = other.biome_size_min;
+    this->biome_size_max = other.biome_size_max;
     this->water_chance_percent = other.water_chance_percent;
     this->biome_count = other.biome_count;
     this->tree_template_count = other.tree_template_count;
@@ -2033,6 +2054,8 @@ uint32_t terrain_generation_config::destroy() noexcept
     this->large_noise_scale = 0;
     this->detail_noise_scale = 0;
     this->detail_noise_percent = 0;
+    this->biome_size_min = 0;
+    this->biome_size_max = 0;
     this->water_chance_percent = 0U;
     this->biome_count = 0U;
     this->tree_template_count = 0U;
@@ -2087,6 +2110,8 @@ static int32_t terrain_apply_default_generation_config(
     config.large_noise_scale = 32;
     config.detail_noise_scale = 8;
     config.detail_noise_percent = 50;
+    config.biome_size_min = TERRAIN_BIOME_ZONE_WIDTH;
+    config.biome_size_max = TERRAIN_BIOME_ZONE_WIDTH;
     config.water_chance_percent = 0U;
     config.biome_count = 5U;
     config.tree_template_count = 13U;
@@ -2359,6 +2384,20 @@ int32_t terrain_generation_config::set_noise_scales(int32_t large_scale,
     this->large_noise_scale = large_scale;
     this->detail_noise_scale = detail_scale;
     this->detail_noise_percent = detail_percent;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_generation_config::set_biome_size_range(
+    int32_t minimum_size, int32_t maximum_size) noexcept
+{
+    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    if (minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+        || maximum_size < minimum_size
+        || maximum_size > TERRAIN_BIOME_SIZE_MAXIMUM)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->biome_size_min = minimum_size;
+    this->biome_size_max = maximum_size;
     return (FT_ERR_SUCCESS);
 }
 
@@ -2805,6 +2844,12 @@ uint32_t terrain_generation_config_signature(
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.detail_noise_percent));
     signature = terrain_mix_u64(signature);
+    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+        config.biome_size_min));
+    signature = terrain_mix_u64(signature);
+    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+        config.biome_size_max));
+    signature = terrain_mix_u64(signature);
     signature ^= static_cast<uint64_t>(config.water_chance_percent);
     signature = terrain_mix_u64(signature);
     signature ^= static_cast<uint64_t>(config.biome_count);
@@ -3241,6 +3286,9 @@ ft_bool terrain_generation_config_is_valid(
         || config.ore_rule_count > TERRAIN_MAX_ORE_RULES
         || config.large_noise_scale <= 0 || config.detail_noise_scale <= 0
         || config.detail_noise_percent < 0 || config.detail_noise_percent > 100
+        || config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
+        || config.biome_size_max < config.biome_size_min
+        || config.biome_size_max > TERRAIN_BIOME_SIZE_MAXIMUM
         || config.water_chance_percent > 100
         || config.biome_transition_noise_scale <= 0
         || config.biome_transition_noise_strength > 100U

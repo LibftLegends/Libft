@@ -9,7 +9,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 7U;
+static const uint32_t TERRAIN_SAVE_VERSION = 8U;
 
 static int32_t terrain_save_append_block_reference(ft_byte_buffer &buffer,
     uint32_t block_id) noexcept
@@ -372,6 +372,12 @@ int32_t terrain_generation_config_serialize(
     error_code = terrain_save_append_i32(buffer, config.detail_noise_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = terrain_save_append_i32(buffer, config.biome_size_min);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = terrain_save_append_i32(buffer, config.biome_size_max);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u32_le(config.water_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -678,7 +684,8 @@ int32_t terrain_generation_config_deserialize(
     if (error_code != FT_ERR_SUCCESS || magic != TERRAIN_SAVE_MAGIC)
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = buffer.read_u32_le(&version);
-    if (error_code != FT_ERR_SUCCESS || version != TERRAIN_SAVE_VERSION)
+    if (error_code != FT_ERR_SUCCESS
+        || (version != TERRAIN_SAVE_VERSION && version != 7U))
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = terrain_save_read_i32(buffer, &loaded_config.sea_level);
     if (error_code != FT_ERR_SUCCESS)
@@ -692,6 +699,17 @@ int32_t terrain_generation_config_deserialize(
     error_code = terrain_save_read_i32(buffer, &loaded_config.detail_noise_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (version >= TERRAIN_SAVE_VERSION)
+    {
+        error_code = terrain_save_read_i32(buffer,
+            &loaded_config.biome_size_min);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = terrain_save_read_i32(buffer,
+            &loaded_config.biome_size_max);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     error_code = buffer.read_u32_le(&loaded_config.water_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);

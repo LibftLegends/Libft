@@ -27,7 +27,7 @@ The `Voxel` module is compiled when `GAME_USE_VOXEL_REGION_BACKEND` is enabled. 
 - `TERRAIN_GENERATOR_CACTUS_BLOCK` - Block id used for cactus decorations.
 - `terrain_builtin_block_id` - Single built-in block-id enum. The
   `TERRAIN_BUILTIN_BLOCK_COUNT` sentinel defines the first runtime id.
-- `TERRAIN_BIOME_ZONE_WIDTH` - Width in world blocks used to group biome zones.
+- `TERRAIN_BIOME_ZONE_WIDTH` - Default width in world blocks used to group biome zones.
 - `terrain_biome` - Biome selector enum for plains, hills, desert, snow, and mountains.
 - `terrain_biome_profile` - Surface height, variation, and topsoil depth profile for a biome.
 - `terrain_block_metadata` - Registry entry that describes whether a block is
@@ -156,6 +156,8 @@ temporary numeric IDs; loading fails when a referenced runtime name is absent.
   blocks outside the current chunk into neighboring chunks.
 - `terrain_select_biome(...)` - Applies the configured biome selector and
   safely clamps custom selector results to the configured biome slots.
+- `terrain_get_biome_zone_width(...)` - Returns the deterministic biome-cell
+  width selected from the active configuration and world seed.
 - `terrain_get_biome_index(...)` - Queries the active configured biome index
   for runtime HUD/debug integration, including custom slots.
 
@@ -179,6 +181,7 @@ arguments use `FT_TRUE` / `FT_FALSE`.
 | --- | --- | --- |
 | `set_sea_level(value)` | Water-fill height in world blocks. | `72`; any signed height. |
 | `set_noise_scales(large, detail, percent)` | Main terrain scale, detail scale, and detail contribution. Smaller scales create more frequent variation. | `32`, `8`, `50%`; scales must be positive, percent `0`-`100`. |
+| `set_biome_size_range(minimum, maximum)` | Sets the world-space width range for built-in biome cells. One deterministic width is selected per world seed, so every chunk agrees on biome boundaries and cells are never smaller than `minimum`. Transition blending can soften edges, and adjacent cells can share a biome. | Default `128`-`128`; sizes are `16`-`32768` blocks and maximum must be at least minimum. |
 | `set_water_chance_percent(value)` | Per-column seeded chance for extra water in eligible low terrain, in addition to river/lake noise. This is not the percentage of the world that becomes water. | `0%`; `0`-`100`. Recommended `0`-`5%`. |
 | `set_biome_count(value)` | Number of active biome slots. | `5`; `1`-`TERRAIN_MAX_CUSTOM_BIOMES` (`16`). |
 | `set_biome_selector(selector, user_data)` | Optional callback that chooses the biome for a world position. | Built-in selector when callback is null. |

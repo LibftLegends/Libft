@@ -78,6 +78,8 @@ class game_voxel_region;
 # define TERRAIN_GENERATOR_SHIMMER_STONE_BLOCK 63U
 # define TERRAIN_RUNTIME_BLOCK_CAPACITY 256U
 # define TERRAIN_BIOME_ZONE_WIDTH 128
+# define TERRAIN_BIOME_SIZE_MINIMUM 16
+# define TERRAIN_BIOME_SIZE_MAXIMUM 32768
 # define TERRAIN_MAX_CUSTOM_BIOMES 16U
 # define TERRAIN_MAX_FEATURE_RULES 16U
 # define TERRAIN_MAX_ORE_RULES 32U
@@ -496,6 +498,8 @@ class terrain_generation_config
         int32_t set_sea_level(int32_t value) noexcept;
         int32_t set_noise_scales(int32_t large_scale, int32_t detail_scale,
             int32_t detail_percent) noexcept;
+        int32_t set_biome_size_range(int32_t minimum_size,
+            int32_t maximum_size) noexcept;
         int32_t set_water_chance_percent(uint32_t value) noexcept;
         int32_t set_biome_count(uint32_t value) noexcept;
         int32_t set_biome_selector(terrain_biome_selector selector,
@@ -545,6 +549,8 @@ class terrain_generation_config
         int32_t large_noise_scale;
         int32_t detail_noise_scale;
         int32_t detail_noise_percent;
+        int32_t biome_size_min;
+        int32_t biome_size_max;
         uint32_t water_chance_percent;
         uint32_t biome_count;
         terrain_biome_definition biomes[TERRAIN_MAX_CUSTOM_BIOMES];
@@ -671,6 +677,8 @@ int32_t terrain_generation_config_load_file(const char *file_path,
     terrain_generation_config &config) noexcept;
 uint32_t terrain_select_biome(const terrain_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z) noexcept;
+int32_t terrain_get_biome_zone_width(
+    const terrain_generation_config &config, uint64_t seed_value) noexcept;
 uint32_t terrain_get_biome_index(const terrain_generation_config &config,
     int32_t world_block_x, int32_t world_block_z,
     const char *seed_string = ft_nullptr) noexcept;
@@ -748,6 +756,10 @@ int32_t terrain_generate_chunk_with_context(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const char *seed_string,
     const terrain_generation_context &context) noexcept;
+int32_t terrain_generate_chunk_with_stage_mask(
+    game_voxel_chunk &chunk, int32_t world_block_origin_x,
+    int32_t world_block_origin_z, const char *seed_string,
+    const terrain_generation_config &config, uint32_t stage_mask) noexcept;
 int32_t terrain_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
     const terrain_world_chunk_coordinate &coordinate,
     const char *seed_string, const terrain_generation_config &config) noexcept;
