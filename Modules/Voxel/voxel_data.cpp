@@ -2237,6 +2237,14 @@ static int32_t terrain_apply_default_generation_config(
     config.enable_biome_size_control = FT_TRUE;
     config.biome_size_min = TERRAIN_BIOME_ZONE_WIDTH;
     config.biome_size_max = TERRAIN_BIOME_ZONE_WIDTH;
+    index = 0U;
+    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    {
+        config.biome_size_min_by_biome[index] = config.biome_size_min;
+        config.biome_size_max_by_biome[index] = config.biome_size_max;
+        config.biome_size_override_enabled[index] = FT_FALSE;
+        index += 1U;
+    }
     config.water_chance_percent = 0U;
     config.biome_count = 5U;
     config.tree_template_count = 13U;
@@ -2582,10 +2590,24 @@ int32_t terrain_generation_config::set_water_chance_percent(
 
 int32_t terrain_generation_config::set_biome_count(uint32_t value) noexcept
 {
+    uint32_t index;
+
     if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (value == 0U || value > TERRAIN_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
+    index = this->biome_count;
+    while (index < value)
+    {
+        if (this->biome_size_min_by_biome[index] == 0
+            && this->biome_size_max_by_biome[index] == 0)
+        {
+            this->biome_size_min_by_biome[index] = this->biome_size_min;
+            this->biome_size_max_by_biome[index] = this->biome_size_max;
+            this->biome_size_override_enabled[index] = FT_FALSE;
+        }
+        index += 1U;
+    }
     this->biome_count = value;
     return (FT_ERR_SUCCESS);
 }
