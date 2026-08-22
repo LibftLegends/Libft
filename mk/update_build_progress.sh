@@ -102,11 +102,14 @@ if [ "$operation_type" = "compile" ] && [ -n "$display_path" ]
 then
     if [ "$project_name" = "libft" ]
     then
+        # Keep all progress records on stdout. GitHub Actions merges stdout
+        # and stderr independently on Windows; using both streams can make
+        # the beginning of a parallel progress line appear truncated.
         printf '[LIBFT][%s] Compiling %s (%s/%s files completed)\n' \
-            "$module_name" "$display_path" "$completed_count" "$total_count" >&2
+            "$module_name" "$display_path" "$completed_count" "$total_count"
     else
         printf '[MINECRAFT] Compiling %s (%s/%s files completed)\n' \
-            "$display_path" "$completed_count" "$total_count" >&2
+            "$display_path" "$completed_count" "$total_count"
     fi
 else
     if [ "$operation_type" = "archive" ] && [ -n "$display_path" ]
@@ -127,6 +130,6 @@ else
         fi
     else
         printf '\033[0m %s/%s %s completed\n' \
-            "$completed_count" "$total_count" "$unit_name" >&2
+            "$completed_count" "$total_count" "$unit_name"
     fi
 fi
