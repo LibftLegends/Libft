@@ -1,7 +1,7 @@
-TARGET := Basic.a
-DEBUG_TARGET := Basic_debug.a
+Basic_TARGET := Basic.a
+Basic_DEBUG_TARGET := Basic_debug.a
 
-SRCS := basic_atoi.cpp \
+Basic_SOURCES := basic_atoi.cpp \
     basic_nullptr.cpp \
     basic_bzero.cpp \
     basic_memchr.cpp \
@@ -57,5 +57,3 @@ SRCS := basic_atoi.cpp \
     basic_memmem.cpp \
     basic_parse_fixed.cpp \
     basic_utf8_validate.cpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

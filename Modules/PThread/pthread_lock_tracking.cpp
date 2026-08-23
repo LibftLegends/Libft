@@ -14,12 +14,63 @@ struct s_pt_owned_mutex_buffer_cache;
 static thread_local bool g_registry_mutex_owned = false;
 static std::atomic<uint64_t> g_pt_lock_tracking_next_generation(1);
 static thread_local uint64_t g_pt_lock_tracking_generation = 0;
+static thread_local ft_bool g_pt_lock_tracking_exit_cleanup_armed = FT_FALSE;
 static pthread_key_t g_pt_lock_tracking_exit_key;
 static std::atomic<ft_bool> g_pt_lock_tracking_exit_key_initialised(FT_FALSE);
 static pthread_once_t g_pt_lock_tracking_exit_mutex_once = PTHREAD_ONCE_INIT;
 static std::mutex *g_pt_lock_tracking_exit_mutex = nullptr;
 static pthread_once_t g_pt_owned_mutex_buffer_cache_once = PTHREAD_ONCE_INIT;
 static s_pt_owned_mutex_buffer_cache *g_pt_owned_mutex_buffer_cache = nullptr;
+static void pt_lock_tracking_arm_thread_exit_cleanup(void);
+
+struct s_pt_local_lock_tracking_state
+{
+    ft_bool initialised;
+    ft_bool registry_published;
+    ft_bool registry_tracking_required;
+    pt_mutex_vector owned_mutexes;
+    const void *waiting_mutex;
+    int64_t wait_started_ms;
+};
+
+static thread_local s_pt_local_lock_tracking_state
+    g_pt_local_lock_tracking_state = {FT_FALSE, FT_FALSE, FT_FALSE,
+        {nullptr, 0, 0}, nullptr, 0};
+
+static s_pt_local_lock_tracking_state *pt_lock_tracking_get_local_state(
+    int *error_code)
+{
+    int init_error;
+
+    if (g_pt_local_lock_tracking_state.initialised == FT_TRUE)
+    {
+        if (error_code)
+            *error_code = FT_ERR_SUCCESS;
+        return (&g_pt_local_lock_tracking_state);
+    }
+    pt_buffer_init(g_pt_local_lock_tracking_state.owned_mutexes);
+    g_pt_local_lock_tracking_state.waiting_mutex = ft_nullptr;
+    g_pt_local_lock_tracking_state.wait_started_ms = 0;
+    g_pt_local_lock_tracking_state.registry_published = FT_FALSE;
+    g_pt_local_lock_tracking_state.registry_tracking_required = FT_FALSE;
+    init_error = FT_ERR_SUCCESS;
+    pt_lock_tracking_arm_thread_exit_cleanup();
+    if (error_code)
+        *error_code = init_error;
+    g_pt_local_lock_tracking_state.initialised = FT_TRUE;
+    return (&g_pt_local_lock_tracking_state);
+}
+
+static void pt_lock_tracking_reset_local_state(void)
+{
+    pt_buffer_destroy(g_pt_local_lock_tracking_state.owned_mutexes);
+    g_pt_local_lock_tracking_state.initialised = FT_FALSE;
+    g_pt_local_lock_tracking_state.registry_published = FT_FALSE;
+    g_pt_local_lock_tracking_state.registry_tracking_required = FT_FALSE;
+    g_pt_local_lock_tracking_state.waiting_mutex = ft_nullptr;
+    g_pt_local_lock_tracking_state.wait_started_ms = 0;
+    return ;
+}
 
 static void pt_lock_tracking_initialize_exit_mutex(void)
 {
@@ -95,11 +146,14 @@ static thread_local s_pt_lock_tracking_thread_exit_guard
 
 static void pt_lock_tracking_arm_thread_exit_cleanup(void)
 {
+    if (g_pt_lock_tracking_exit_cleanup_armed == FT_TRUE)
+        return ;
     pt_lock_tracking_initialise_exit_key();
     if (g_pt_lock_tracking_exit_key_initialised.load(std::memory_order_acquire)
         == FT_TRUE)
         (void)pthread_setspecific(g_pt_lock_tracking_exit_key,
             reinterpret_cast<void *>(static_cast<uintptr_t>(1U)));
+    g_pt_lock_tracking_exit_cleanup_armed = FT_TRUE;
     (void)g_pt_lock_tracking_thread_exit_guard;
     return ;
 }
@@ -381,9 +435,21 @@ pt_mutex_vector pt_lock_tracking::get_owned_mutexes
     int lock_error;
     bool lock_acquired;
     int error_code;
+    int copy_error;
 
     pt_buffer_init(owned_mutexes);
     error_code = FT_ERR_SUCCESS;
+    if (thread_identifier == THREAD_ID
+        && g_pt_local_lock_tracking_state.initialised == FT_TRUE)
+    {
+        copy_error = pt_buffer_copy(owned_mutexes,
+            g_pt_local_lock_tracking_state.owned_mutexes);
+        if (error_code_out)
+            *error_code_out = copy_error;
+        if (copy_error != FT_ERR_SUCCESS)
+            pt_buffer_destroy(owned_mutexes);
+        return (owned_mutexes);
+    }
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
     {
         if (error_code_out)
@@ -427,7 +493,7 @@ pt_mutex_vector pt_lock_tracking::get_owned_mutexes
         return (owned_mutexes);
     }
     pt_buffer_init(owned_mutexes);
-    int copy_error = pt_buffer_copy(owned_mutexes, info->owned_mutexes);
+    copy_error = pt_buffer_copy(owned_mutexes, info->owned_mutexes);
     if (copy_error != FT_ERR_SUCCESS)
     {
         if (lock_acquired)
@@ -621,6 +687,30 @@ int pt_lock_tracking::detect_cycle(const s_pt_thread_lock_info *origin,
     return (FT_ERR_SUCCESS);
 }
 
+static int pt_lock_tracking_publish_local_state(
+    s_pt_thread_lock_info *info,
+    const s_pt_local_lock_tracking_state &local_state)
+{
+    ft_size_t index;
+    int copy_error;
+    int owner_error;
+
+    copy_error = pt_buffer_copy(info->owned_mutexes,
+        local_state.owned_mutexes);
+    if (copy_error != FT_ERR_SUCCESS)
+        return (copy_error);
+    index = 0;
+    while (index < local_state.owned_mutexes.size)
+    {
+        owner_error = pt_lock_tracking_set_mutex_owner(
+            local_state.owned_mutexes.data[index], info->thread_identifier);
+        if (owner_error != FT_ERR_SUCCESS)
+            return (owner_error);
+        index += 1;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int pt_lock_tracking::notify_wait(pt_thread_id_type thread_identifier,
         const void *requested_mutex)
 {
@@ -651,6 +741,28 @@ int pt_lock_tracking::notify_wait(pt_thread_id_type thread_identifier,
     }
     else
     {
+        if (thread_identifier == THREAD_ID)
+        {
+            int local_error;
+            s_pt_local_lock_tracking_state *local_state;
+
+            local_state = pt_lock_tracking_get_local_state(&local_error);
+            if (local_state == ft_nullptr)
+                result_code = local_error;
+            else
+            {
+                result_code = pt_lock_tracking_publish_local_state(info,
+                    *local_state);
+                if (result_code == FT_ERR_SUCCESS)
+                {
+                    local_state->waiting_mutex = requested_mutex;
+                    local_state->wait_started_ms = time_now_ms();
+                    local_state->registry_published = FT_TRUE;
+                }
+            }
+        }
+        if (result_code != FT_ERR_SUCCESS)
+            goto cleanup_wait;
         bool cycle_detected;
         int detect_error;
 
@@ -674,6 +786,7 @@ int pt_lock_tracking::notify_wait(pt_thread_id_type thread_identifier,
         pt_buffer_destroy(visited_threads_inner);
         pt_buffer_destroy(visited_mutexes_inner);
     }
+cleanup_wait:
     if (lock_acquired)
     {
         pt_lock_tracking::unlock_registry_mutex();
@@ -688,10 +801,37 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
     int lock_error;
     s_pt_thread_lock_info *info;
     bool lock_acquired = false;
+    ft_size_t index;
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
     pt_lock_tracking_arm_thread_exit_cleanup();
+#ifdef LIBFT_TEST_BUILD
+    result_code = pt_lock_tracking_notify_acquired_override_error_code.load();
+    if (result_code != FT_ERR_SUCCESS)
+        return (result_code);
+#endif
+    {
+        s_pt_local_lock_tracking_state *local_state;
+
+        local_state = pt_lock_tracking_get_local_state(&error_code);
+        if (local_state == ft_nullptr)
+            return (error_code);
+        if (thread_identifier == THREAD_ID
+            && local_state->waiting_mutex == ft_nullptr
+            && local_state->registry_published == FT_FALSE
+            && local_state->registry_tracking_required == FT_FALSE)
+        {
+            index = 0;
+            while (index < local_state->owned_mutexes.size)
+            {
+                if (local_state->owned_mutexes.data[index] == mutex_pointer)
+                    return (FT_ERR_SUCCESS);
+                index += 1;
+            }
+            return (pt_buffer_push(local_state->owned_mutexes, mutex_pointer));
+        }
+    }
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
     if (!g_registry_mutex_owned)
@@ -711,11 +851,6 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
             result_code = error_code;
         goto cleanup_acquired;
     }
-#ifdef LIBFT_TEST_BUILD
-    result_code = pt_lock_tracking_notify_acquired_override_error_code.load();
-    if (result_code != FT_ERR_SUCCESS)
-        goto cleanup_acquired;
-#endif
     if (!pt_lock_tracking::vector_contains_mutex(info->owned_mutexes, mutex_pointer))
     {
         int push_error = pt_buffer_push(info->owned_mutexes, mutex_pointer);
@@ -730,6 +865,15 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
         goto cleanup_acquired;
     info->waiting_mutex = ft_nullptr;
     info->wait_started_ms = 0;
+    if (thread_identifier == THREAD_ID)
+    {
+        g_pt_local_lock_tracking_state.waiting_mutex = ft_nullptr;
+        g_pt_local_lock_tracking_state.wait_started_ms = 0;
+        if (!pt_lock_tracking::vector_contains_mutex(
+                g_pt_local_lock_tracking_state.owned_mutexes, mutex_pointer))
+            result_code = pt_buffer_push(
+                g_pt_local_lock_tracking_state.owned_mutexes, mutex_pointer);
+    }
 cleanup_acquired:
     if (lock_acquired)
     {
@@ -787,6 +931,22 @@ int pt_lock_tracking::notify_thread_exit(pt_thread_id_type thread_identifier)
         pt_lock_tracking::unlock_registry_mutex();
         g_registry_mutex_owned = false;
     }
+    if (thread_identifier == THREAD_ID)
+        pt_lock_tracking_reset_local_state();
+    return (FT_ERR_SUCCESS);
+}
+
+int pt_lock_tracking::notify_thread_enter(pt_thread_id_type thread_identifier)
+{
+    int error_code;
+    s_pt_local_lock_tracking_state *local_state;
+
+    pt_lock_tracking_arm_thread_exit_cleanup();
+    local_state = pt_lock_tracking_get_local_state(&error_code);
+    if (local_state == ft_nullptr)
+        return (error_code);
+    if (thread_identifier == THREAD_ID)
+        local_state->registry_tracking_required = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -801,6 +961,31 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
     int result_code = FT_ERR_SUCCESS;
 
     pt_lock_tracking_arm_thread_exit_cleanup();
+    if (thread_identifier == THREAD_ID)
+    {
+        s_pt_local_lock_tracking_state *local_state;
+
+        local_state = pt_lock_tracking_get_local_state(&error_code);
+        if (local_state == ft_nullptr)
+            return (error_code);
+        index = 0;
+        while (index < local_state->owned_mutexes.size)
+        {
+            if (local_state->owned_mutexes.data[index] == mutex_pointer)
+            {
+                pt_buffer_erase(local_state->owned_mutexes, index);
+                break ;
+            }
+            index += 1;
+        }
+        if (local_state->waiting_mutex == mutex_pointer)
+        {
+            local_state->waiting_mutex = ft_nullptr;
+            local_state->wait_started_ms = 0;
+        }
+        if (local_state->registry_published == FT_FALSE)
+            return (FT_ERR_SUCCESS);
+    }
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
     if (!g_registry_mutex_owned)
@@ -836,6 +1021,10 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
         info->waiting_mutex = ft_nullptr;
         info->wait_started_ms = 0;
     }
+    if (thread_identifier == THREAD_ID
+        && g_pt_local_lock_tracking_state.owned_mutexes.size == 0
+        && g_pt_local_lock_tracking_state.waiting_mutex == ft_nullptr)
+        g_pt_local_lock_tracking_state.registry_published = FT_FALSE;
 cleanup_released:
     if (lock_acquired)
     {
@@ -932,6 +1121,15 @@ int pt_lock_tracking::get_thread_state(pt_thread_id_type thread_identifier,
     state.thread_identifier = thread_identifier;
     state.waiting_mutex = ft_nullptr;
     state.wait_started_ms = 0;
+    if (thread_identifier == THREAD_ID
+        && g_pt_local_lock_tracking_state.initialised == FT_TRUE)
+    {
+        state.waiting_mutex = g_pt_local_lock_tracking_state.waiting_mutex;
+        state.wait_started_ms = g_pt_local_lock_tracking_state.wait_started_ms;
+        result_code = pt_buffer_copy(state.owned_mutexes,
+            g_pt_local_lock_tracking_state.owned_mutexes);
+        return (result_code);
+    }
     if (!g_registry_mutex_owned)
     {
         lock_error = pt_lock_tracking::lock_registry_mutex();

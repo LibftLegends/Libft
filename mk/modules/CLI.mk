@@ -1,7 +1,7 @@
-TARGET := cli.a
-DEBUG_TARGET := cli_debug.a
+CLI_TARGET := cli.a
+CLI_DEBUG_TARGET := cli_debug.a
 
-SRCS := cli.cpp \
+CLI_SOURCES := cli.cpp \
         cli_completion.cpp \
         cli_config.cpp \
         cli_get_bool.cpp \
@@ -12,6 +12,4 @@ SRCS := cli.cpp \
         cli_get_uint64.cpp \
         cli_validate.cpp
 
-HEADERS := cli.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+CLI_HEADERS := cli.hpp

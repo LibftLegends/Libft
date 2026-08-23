@@ -62,6 +62,7 @@ Libft exposes a large surface area with many cooperating modules. This document 
 
 ## Voxel
 - **Design goals:** Generate biome-aware voxel terrain and chunk meshes behind the `GAME_USE_VOXEL_REGION_BACKEND` gate without making the rest of the game stack care about the implementation details.
+- Terrain configuration classes expose `serialize_json(ft_string&)` and `save_json_file(...)`. File modes are create-only, replace/truncate, and append; append writes newline-delimited JSON records so existing records remain intact.
 - **Key invariants:**
   - Biome selection and heightmap generation are deterministic for a given seed and world origin.
   - Tree templates are reusable presets and are checked for footprint safety before placement.

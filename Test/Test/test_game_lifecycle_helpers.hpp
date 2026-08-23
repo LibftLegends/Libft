@@ -6,7 +6,7 @@
 template <typename TypeName>
 static int32_t expect_game_lifecycle_sigabrt(void (*operation)(TypeName &))
 {
-  return (test_expect_sigabrt_signal_uninitialised<TypeName>(operation));
+    return (test_expect_sigabrt_signal_uninitialised<TypeName>(operation));
 }
 
 template <typename TypeName>

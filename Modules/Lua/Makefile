@@ -1,55 +1,28 @@
-include ../../mk/compiler_flags.mk
-include ../../mk/modules/Lua.mk
+# Compatibility wrapper for the canonical root GNU Make graph.
 
-all: $(TARGET)
+MODULE_NAME := $(notdir $(CURDIR))
+include ../../mk/modules/$(MODULE_NAME).mk
 
-$(TARGET): $(OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s] Module archive ready (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS)
+MODULE_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_TARGET)
+MODULE_DEBUG_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_DEBUG_TARGET)
+MODULE_TEST_ARCHIVE := Modules/$(MODULE_NAME)/$(patsubst %.a,%_test.a,$($(MODULE_NAME)_TARGET))
 
-$(OBJDIR)/%.o: $(LUA_VENDOR_DIR)/%.c | $(OBJDIR)
-	@$(CC) $(LUA_CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-	@if [ "$(LIBFT_BATCH_OUTPUT)" != "1" ]; then \
-		printf '        [%s] Building file %s\n' "$(MODULE_NAME)" "$<"; \
-	fi
+.PHONY: all debug test clean fclean re
 
-debug: LUA_CFLAGS += -DDEBUG=1
-debug: $(DEBUG_TARGET)
+all:
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)
 
-$(DEBUG_TARGET): $(DEBUG_OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s Debug] Module archive ready (%d files)\n' "$(MODULE_NAME)" $(TOTAL_SRCS)
+debug:
+	+$(MAKE) -C ../.. $(MODULE_DEBUG_ARCHIVE)
 
-$(DEBUG_OBJDIR)/%.o: $(LUA_VENDOR_DIR)/%.c | $(DEBUG_OBJDIR)
-	@$(CC) $(LUA_CFLAGS) -DDEBUG=1 -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-	@if [ "$(LIBFT_BATCH_OUTPUT)" != "1" ]; then \
-		printf '        [%s Debug] Building file %s\n' "$(MODULE_NAME)" "$<"; \
-	fi
-
-$(OBJDIR) $(DEBUG_OBJDIR):
-	@$(MKDIR) $@
+test:
+	+$(MAKE) -C ../.. $(MODULE_TEST_ARCHIVE)
 
 clean:
-	@$(RMDIR) $(CLEAN_DIRS)
+	+$(MAKE) -C ../.. clean
 
 fclean: clean
-	@$(RM) $(FCLEAN_FILES)
 
 re:
-	@$(MAKE) fclean
-	@$(MAKE) all
-
-both: all debug
-
-%_test.a: FORCE
-	@$(MAKE) TARGET="$@" $(SUBMAKE_OVERRIDES) all
-
--include $(OBJS:.o=.d) $(DEBUG_OBJS:.o=.d)
-
-.PHONY: all clean fclean re debug both FORCE
-
-FORCE:
+	+$(MAKE) -C ../.. clean
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)

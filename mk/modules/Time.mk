@@ -1,7 +1,7 @@
-TARGET         := time.a
-DEBUG_TARGET   := time_debug.a
+Time_TARGET         := time.a
+Time_DEBUG_TARGET   := time_debug.a
 
-SRCS := time_active_clock.cpp \
+Time_SOURCES := time_active_clock.cpp \
         time_now.cpp \
         time_now_ms.cpp \
         time_monotonic.cpp \
@@ -29,8 +29,6 @@ SRCS := time_active_clock.cpp \
         time_trace.cpp \
         time_basic.cpp
 
-HEADERS := time.hpp \
+Time_HEADERS := time.hpp \
            time_fps.hpp \
            time_timer.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk

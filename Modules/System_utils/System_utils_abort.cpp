@@ -9,16 +9,16 @@
 
 const char  *su_internal_take_abort_reason(void);
 
+#ifndef LIBFT_TEST_BUILD
 static ft_bool su_abort_should_print_diagnostics(void) noexcept
 {
-#ifdef LIBFT_TEST_BUILD
-    return (FT_FALSE);
-#endif
     return (FT_TRUE);
 }
+#endif
 
 void    su_abort(void)
 {
+#ifndef LIBFT_TEST_BUILD
     const char  *reason;
 
     reason = su_internal_take_abort_reason();
@@ -30,6 +30,7 @@ void    su_abort(void)
         std::fprintf(stderr, "libft abort: %s\n", reason);
     }
     std::fflush(nullptr);
+#endif
     (void)std::raise(SIGABRT);
     std::abort();
     return ;

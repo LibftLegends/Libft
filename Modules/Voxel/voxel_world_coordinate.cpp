@@ -1,4 +1,4 @@
-#include "voxel.hpp"
+#include "terrain_generation.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 

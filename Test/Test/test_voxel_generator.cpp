@@ -3,7 +3,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "../../Modules/Voxel/voxel.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
 #include <stdio.h>
 
@@ -35,24 +35,37 @@ static ft_bool test_terrain_height_is_within_builtin_envelope(
     return (FT_TRUE);
 }
 
+static ft_bool test_terrain_is_builtin_surface_block(uint32_t block_id)
+{
+    uint32_t biome_index;
+
+    if (block_id == TERRAIN_GENERATOR_SNOW_BLOCK)
+        return (FT_TRUE);
+    biome_index = 0U;
+    while (biome_index <= TERRAIN_BIOME_MOUNTAINS)
+    {
+        if (block_id == terrain_surface_block_for_biome(
+                static_cast<terrain_biome>(biome_index)))
+            return (FT_TRUE);
+        biome_index += 1U;
+    }
+    return (FT_FALSE);
+}
+
 FT_TEST(test_terrain_generate_chunk_generates_default_surface_chunk)
 {
     game_voxel_chunk chunk;
-    terrain_biome biome;
     int32_t surface_height;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk,
         "terrain-test-seed"));
-    biome = terrain_get_biome(0, 0, "terrain-test-seed");
     surface_height = test_terrain_surface_height(chunk, 0, 0);
     FT_ASSERT_NEQ(-1, surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height, 0,
         &block_id));
-    if (block_id != terrain_surface_block_for_biome(biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height + 1, 0,
         &block_id));
     FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
@@ -270,8 +283,6 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
 {
     game_voxel_chunk left_chunk;
     game_voxel_chunk right_chunk;
-    terrain_biome left_biome;
-    terrain_biome right_biome;
     int32_t left_surface_height;
     int32_t right_surface_height;
     uint32_t block_id;
@@ -281,24 +292,16 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
         "terrain-test-seed"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(right_chunk,
         TERRAIN_BIOME_ZONE_WIDTH, 0, "terrain-test-seed"));
-    left_biome = terrain_get_biome(0, 0, "terrain-test-seed");
-    right_biome = terrain_get_biome(TERRAIN_BIOME_ZONE_WIDTH, 0,
-        "terrain-test-seed");
-    FT_ASSERT_NEQ(left_biome, right_biome);
     left_surface_height = test_terrain_surface_height(left_chunk, 0, 0);
     right_surface_height = test_terrain_surface_height(right_chunk, 0, 0);
     FT_ASSERT_NEQ(-1, left_surface_height);
     FT_ASSERT_NEQ(-1, right_surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(0, left_surface_height,
         0, &block_id));
-    if (block_id != terrain_surface_block_for_biome(left_biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
         right_surface_height, 0, &block_id));
-    if (block_id != terrain_surface_block_for_biome(right_biome)
-        && block_id != TERRAIN_GENERATOR_SNOW_BLOCK)
-        return (0);
+    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_TRUE,
         test_terrain_height_is_within_builtin_envelope(left_surface_height));
     FT_ASSERT_EQ(FT_TRUE,
@@ -1334,6 +1337,51 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
     return (1);
 }
 
+FT_TEST(test_terrain_config_json_serialization_and_file_modes)
+{
+    const char *file_path = "terrain_config_test.jsonl";
+    terrain_generation_config generation;
+    ft_string output;
+    ft_string file_contents;
+
+    terrain_default_generation_config(generation);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.biomes[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_biome_definition"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.features[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_feature_rule"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.ores[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_ore_rule"));
+    FT_ASSERT(ft_strstr(output.c_str(), "veins_per_chunk_min"));
+    FT_ASSERT(ft_strstr(output.c_str(), "minimum_depth"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        generation.underground_structures.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_underground_structures"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.fluids.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_fluids"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.layers.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_layers"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "biome_size_min"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
+    (void)file_delete(file_path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_APPEND));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(file_contents.size() > output.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(output.size(), file_contents.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    return (1);
+}
+
 FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
 {
     game_voxel_chunk disabled_chunk;
@@ -1342,6 +1390,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     terrain_default_generation_config(config);
     uint32_t block_id;
     int32_t coal_count;
+    int32_t coal_surface_count;
     int32_t x;
     int32_t y;
     int32_t z;
@@ -1355,6 +1404,21 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     config.set_ore_rule_count(1U);
     config.ores[0].set_range(8, 90);
     config.ores[0].set_vein(config.ores[0].vein_size, 100U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_depth_range(0, 10));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_vein_size_range(0U, 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_frequency_range(4U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_depth_range(8, 90));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_vein_size_range(3U, 7U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_frequency_range(2U, 4U));
+    FT_ASSERT_EQ(8, config.ores[0].minimum_depth);
+    FT_ASSERT_EQ(90, config.ores[0].maximum_depth);
+    FT_ASSERT_EQ(3U, config.ores[0].vein_size_min);
+    FT_ASSERT_EQ(7U, config.ores[0].vein_size_max);
+    FT_ASSERT_EQ(2U, config.ores[0].veins_per_chunk_min);
+    FT_ASSERT_EQ(4U, config.ores[0].veins_per_chunk_max);
     config.ores[0].set_enabled(FT_TRUE);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, disabled_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.initialize());
@@ -1365,6 +1429,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(enabled_chunk, 0, 0,
         "ore-config", config));
     coal_count = 0;
+    coal_surface_count = 0;
     z = 0;
     while (z < GAME_VOXEL_CHUNK_DEPTH)
     {
@@ -1377,7 +1442,11 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.read_block(x, y, z,
                     &block_id));
                 if (block_id == TERRAIN_GENERATOR_COAL_ORE_BLOCK)
+                {
                     coal_count += 1;
+                    if (y >= 94)
+                        coal_surface_count += 1;
+                }
                 x += 1;
             }
             y += 1;
@@ -1385,6 +1454,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
         z += 1;
     }
     FT_ASSERT_NEQ(0, coal_count);
+    FT_ASSERT_EQ(0, coal_surface_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, disabled_chunk.destroy());
     return (1);

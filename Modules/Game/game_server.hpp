@@ -14,6 +14,9 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/mutex.hpp"
 
+typedef int32_t (*game_server_message_callback)(int32_t client_handle,
+    const char *message, void *user_data);
+
 class game_server
 {
     #ifdef LIBFT_TEST_BUILD
@@ -27,6 +30,8 @@ class game_server
         ft_string          _auth_token;
         void              (*_on_join)(int32_t);
         void              (*_on_leave)(int32_t);
+        game_server_message_callback _on_message;
+        void                         *_message_user_data;
         mutable pt_recursive_mutex    *_mutex;
         static thread_local int32_t _last_error;
         uint8_t                       _initialised_state;
@@ -55,6 +60,8 @@ class game_server
 
         void set_join_callback(void (*callback)(int32_t)) noexcept;
         void set_leave_callback(void (*callback)(int32_t)) noexcept;
+        void set_message_callback(game_server_message_callback callback,
+            void *user_data) noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;

@@ -1,4 +1,4 @@
-SRCS := template_basic_types.cpp \
+Template_SOURCES := template_basic_types.cpp \
         template_optional.cpp \
         template_variant.cpp \
         template_compile_algorithm.cpp \
@@ -29,6 +29,5 @@ SRCS := template_basic_types.cpp \
         template_compile_unordered_map.cpp \
         template_compile_variant.cpp \
         template_compile_vector.cpp
-TARGET := template_basic_types.a
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/template_defaults.mk
+Template_TARGET := template_basic_types.a
+Template_DEBUG_TARGET := template_basic_types_debug.a

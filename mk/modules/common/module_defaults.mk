@@ -1,3 +1,5 @@
+ifeq ($(LIBFT_GLOBAL_MANIFEST_LOAD),)
+
 MODULE_NAME ?= $(notdir $(CURDIR))
 TOTAL_SRCS ?= $(words $(SRCS) $(MM_SRCS))
 LIBFT_BATCH_OUTPUT ?= 0
@@ -80,24 +82,4 @@ CFLAGS ?= -Wall -Wextra -Werror -g -O0 -std=c++17 \
 endif
 MMFLAGS ?= $(CFLAGS) $(MODULE_MMFLAGS_EXTRA)
 
-CLEAN_OBJS ?= $(shell find . -type f \( -name *.o -o -name *.d \
-	-o -name *.gcda -o -name *.gcno \) 2>/dev/null)
-CLEAN_DIRS ?= $(wildcard objs*)
-TEST_ARCHIVES ?= $(wildcard *_test.a) $(wildcard *_debug_test.a)
-GENERATED_FILES ?= compile_commands.json
-
-.PHONY: FORCE
-FORCE:
-
-ifeq ($(OS),Windows_NT)
-    ifeq ($(LIBFT_POSIX_SHELL),)
-        CLEAN_FILES := $(subst /,\\,$(CLEAN_OBJS))
-        CLEAN_DIRS := $(subst /,\\,$(CLEAN_DIRS))
-    else
-        CLEAN_FILES := $(CLEAN_OBJS)
-    endif
-    FCLEAN_FILES := $(CLEAN_FILES) $(TARGET) $(DEBUG_TARGET) $(TEST_ARCHIVES) $(GENERATED_FILES)
-else
-    CLEAN_FILES := $(CLEAN_OBJS)
-    FCLEAN_FILES := $(CLEAN_FILES) $(TARGET) $(DEBUG_TARGET) $(TEST_ARCHIVES) $(GENERATED_FILES)
 endif

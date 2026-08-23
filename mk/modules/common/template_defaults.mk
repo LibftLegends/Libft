@@ -1,3 +1,5 @@
+ifeq ($(LIBFT_GLOBAL_MANIFEST_LOAD),)
+
 MODULE_NAME ?= $(notdir $(CURDIR))
 TOTAL_SRCS ?= $(words $(SRCS))
 
@@ -62,4 +64,6 @@ ifeq ($(OS),Windows_NT)
         CLEAN_FILES := $(subst /,\\,$(CLEAN_FILES))
         CLEAN_DIRS := $(subst /,\\,$(CLEAN_DIRS))
     endif
+endif
+
 endif

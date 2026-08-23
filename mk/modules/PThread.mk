@@ -1,7 +1,7 @@
-TARGET := PThread.a
-DEBUG_TARGET := PThread_debug.a
+PThread_TARGET := PThread.a
+PThread_DEBUG_TARGET := PThread_debug.a
 
-SRCS := pthread_lock_mutex.cpp \
+PThread_SOURCES := pthread_lock_mutex.cpp \
         pthread_unlock_mutex.cpp \
         pthread_try_lock_mutex.cpp \
         pthread_thread_join.cpp \
@@ -28,6 +28,4 @@ SRCS := pthread_lock_mutex.cpp \
         pthread_rwlock.cpp \
         pthread_lock_tracking.cpp \
 
-HEADERS := pthread.hpp mutex.hpp condition.hpp pthread_lock_tracking.hpp recursive_mutex.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+PThread_HEADERS := pthread.hpp mutex.hpp condition.hpp pthread_lock_tracking.hpp recursive_mutex.hpp

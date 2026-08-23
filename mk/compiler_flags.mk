@@ -48,6 +48,12 @@ ifneq ($(strip $(SANITIZERS)),)
     EMPTY :=
     SPACE := $(EMPTY) $(EMPTY)
     SANITIZER_SUFFIX := _san_$(subst $(SPACE),_,$(SANITIZER_SELECTION))
+
+    LIBFT_SANITIZER_PROBE := /tmp/libft_sanitizer_probe_$(SANITIZER_SUFFIX)
+    LIBFT_SANITIZER_PROBE_RESULT := $(shell printf 'int main(void){return 0;}\n' | $(CXX) $(SANITIZER_FLAGS) -pthread -x c++ - -o $(LIBFT_SANITIZER_PROBE) >/dev/null 2>&1; probe_status=$$?; rm -f $(LIBFT_SANITIZER_PROBE); if [ $$probe_status -eq 0 ]; then printf '1'; else printf '0'; fi)
+    ifneq ($(LIBFT_SANITIZER_PROBE_RESULT),1)
+        $(error Sanitizer toolchain unavailable for SANITIZERS=$(SANITIZER_SELECTION); compiler/linker runtime support is required)
+    endif
 endif
 
 BUILD_OUTPUT_SUFFIX := _opt$(OPT_LEVEL)$(SANITIZER_SUFFIX)
@@ -62,35 +68,13 @@ ifeq ($(UNAME_S),Darwin)
     COMPILE_FLAGS += -Wno-format-nonliteral -Wno-tautological-compare
 else
     COMPILE_FLAGS += -Wold-style-cast -Wconversion -Wuseless-cast \
-        -Wzero-as-null-pointer-constant -Wmaybe-uninitialized
+        -Wzero-as-null-pointer-constant
+    ifneq ($(findstring clang,$(CXX)),)
+        COMPILE_FLAGS += -Wuninitialized
+        COMPILE_FLAGS := $(filter-out -Wuseless-cast,$(COMPILE_FLAGS))
+    else
+        COMPILE_FLAGS += -Wmaybe-uninitialized
+    endif
 endif
 
-ifeq ($(OS),Windows_NT)
-FIXDEP = :
-else
-FIXDEP = dep_file="$(@:.o=.d)"; \
-         if [ -f "$$dep_file" ]; then \
-             dep_root="$(LIBFT_ROOT_DIR)"; \
-             case "$$dep_root" in \
-                 /mnt/[a-zA-Z]/*) \
-                     drive=$$(printf '%s' "$$dep_root" | cut -d/ -f3 | tr '[:lower:]' '[:upper:]'); \
-                     rest=$$(printf '%s' "$$dep_root" | sed "s|^/mnt/$$drive||"); \
-                     dep_root="$$drive:$$rest"; \
-                     ;; \
-             esac; \
-             dep_root="$${dep_root%/}/"; \
-             perl -0pi -e "s|\\Q$$dep_root\\E|./|g; s/\\r//g" "$$dep_file"; \
-         fi
-endif
-
-export BUILD_OUTPUT_SUFFIX
-export COMPILE_FLAGS
-export SANITIZER_FLAGS
-export SANITIZERS
-export FIXDEP
-
-# Makefile edits can change source lists and recipes without touching a source
-# file. Treat every parsed build file as an extra prerequisite; GNU make omits
-# these from automatic variables such as $^, so archive member lists stay clean.
-.EXTRA_PREREQS = $(filter-out %.d,$(MAKEFILE_LIST))
 endif

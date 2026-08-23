@@ -1,11 +1,9 @@
-TARGET := Sink.a
-DEBUG_TARGET := Sink_debug.a
+Sink_TARGET := Sink.a
+Sink_DEBUG_TARGET := Sink_debug.a
 
-SRCS := \
+Sink_SOURCES := \
     sink.cpp
 
-HEADERS := sink.hpp
+Sink_HEADERS := sink.hpp
 
-MODULE_CFLAGS_EXTRA :=
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Sink_CPP_FLAGS :=

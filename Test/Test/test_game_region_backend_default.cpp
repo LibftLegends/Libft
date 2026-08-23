@@ -1,4 +1,7 @@
 #include "../test_internal.hpp"
+#ifdef GAME_USE_VOXEL_REGION_BACKEND
+# undef GAME_USE_VOXEL_REGION_BACKEND
+#endif
 #include "../../Modules/Game/game_region_backend.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"

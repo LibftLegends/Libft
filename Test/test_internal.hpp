@@ -14,6 +14,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+# include <sys/resource.h>
+# include <sys/types.h>
+# include <sys/wait.h>
+# include <pthread.h>
+#endif
 #include <unistd.h>
 
 #include "../Modules/File/file_utils.hpp"
@@ -388,8 +394,73 @@ static int32_t __attribute__((unused)) test_capture_abort_output_end(
     return (1);
 }
 
+#if !defined(_WIN32) && !defined(_WIN64)
+static void test_disable_child_core_dumps(void)
+{
+    struct rlimit core_limit;
+
+    core_limit.rlim_cur = 0;
+    core_limit.rlim_max = 0;
+    (void)setrlimit(RLIMIT_CORE, &core_limit);
+    return ;
+}
+
+static void test_unblock_abort_signals(void)
+{
+    sigset_t unblocked_signals;
+
+    sigemptyset(&unblocked_signals);
+    sigaddset(&unblocked_signals, SIGABRT);
+    if (SIGIOT != SIGABRT)
+        sigaddset(&unblocked_signals, SIGIOT);
+    (void)pthread_sigmask(SIG_UNBLOCK, &unblocked_signals, nullptr);
+    return ;
+}
+
+static int __attribute__((unused)) test_expect_sigabrt_process(
+    void (*operation)(void))
+{
+    pid_t child_process_id;
+    pid_t waited_process_id;
+    int child_status;
+    int null_descriptor;
+
+    child_process_id = fork();
+    if (child_process_id < 0)
+        return (0);
+    if (child_process_id == 0)
+    {
+        (void)signal(SIGABRT, SIG_DFL);
+        if (SIGIOT != SIGABRT)
+            (void)signal(SIGIOT, SIG_DFL);
+        test_disable_child_core_dumps();
+        test_unblock_abort_signals();
+        null_descriptor = open("/dev/null", O_WRONLY);
+        if (null_descriptor >= 0)
+        {
+            (void)dup2(null_descriptor, STDERR_FILENO);
+            (void)close(null_descriptor);
+        }
+        operation();
+        _exit(0);
+    }
+    waited_process_id = waitpid(child_process_id, &child_status, 0);
+    if (waited_process_id != child_process_id
+        || WIFSIGNALED(child_status) == 0)
+        return (0);
+    if (WTERMSIG(child_status) == SIGABRT)
+        return (1);
+    if (SIGIOT != SIGABRT && WTERMSIG(child_status) == SIGIOT)
+        return (1);
+    return (0);
+}
+#endif
+
 static int __attribute__((unused)) test_expect_sigabrt_signal(void (*operation)(void))
 {
+#if !defined(_WIN32) && !defined(_WIN64)
+    return (test_expect_sigabrt_process(operation));
+#else
     struct sigaction old_action_abort;
     struct sigaction new_action_abort;
     struct sigaction old_action_iot;
@@ -444,11 +515,53 @@ static int __attribute__((unused)) test_expect_sigabrt_signal(void (*operation)(
     if (iot_handler_installed != 0 && g_test_abort_signal_caught == SIGIOT)
         return (1);
     return (0);
+#endif
 }
+
+#if !defined(_WIN32) && !defined(_WIN64)
+template <typename TypeName>
+static int32_t test_expect_sigabrt_process_uninitialised(
+    void (*operation)(TypeName &))
+{
+    pid_t child_process_id;
+    pid_t waited_process_id;
+    int child_status;
+    alignas(TypeName) unsigned char object_storage[sizeof(TypeName)];
+    TypeName *object_pointer;
+
+    child_process_id = fork();
+    if (child_process_id < 0)
+        return (0);
+    if (child_process_id == 0)
+    {
+        (void)signal(SIGABRT, SIG_DFL);
+        if (SIGIOT != SIGABRT)
+            (void)signal(SIGIOT, SIG_DFL);
+        test_disable_child_core_dumps();
+        test_unblock_abort_signals();
+        std::memset(object_storage, 0, sizeof(object_storage));
+        object_pointer = reinterpret_cast<TypeName *>(object_storage);
+        operation(*object_pointer);
+        _exit(0);
+    }
+    waited_process_id = waitpid(child_process_id, &child_status, 0);
+    if (waited_process_id != child_process_id
+        || WIFSIGNALED(child_status) == 0)
+        return (0);
+    if (WTERMSIG(child_status) == SIGABRT)
+        return (1);
+    if (SIGIOT != SIGABRT && WTERMSIG(child_status) == SIGIOT)
+        return (1);
+    return (0);
+}
+#endif
 
 template <typename TypeName>
 static int __attribute__((unused)) test_expect_sigabrt_signal_uninitialised(void (*operation)(TypeName &))
 {
+#if !defined(_WIN32) && !defined(_WIN64)
+    return (test_expect_sigabrt_process_uninitialised<TypeName>(operation));
+#else
     struct sigaction old_action_abort;
     struct sigaction new_action_abort;
     struct sigaction old_action_iot;
@@ -509,6 +622,7 @@ static int __attribute__((unused)) test_expect_sigabrt_signal_uninitialised(void
     if (iot_handler_installed != 0 && g_test_abort_signal_caught == SIGIOT)
         return (1);
     return (0);
+#endif
 }
 
 #endif

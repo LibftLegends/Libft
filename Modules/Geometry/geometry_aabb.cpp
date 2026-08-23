@@ -3,6 +3,7 @@
 #include "../PThread/pthread.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../Errno/errno_internal.hpp"
+#include <functional>
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -14,6 +15,9 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
     const aabb *ordered_second;
     uint32_t lower_error;
     uint32_t upper_error;
+    uint32_t retry_count;
+    std::less<const aabb *> pointer_order;
+    std::less<const pt_recursive_mutex *> mutex_order;
 
     ordered_first = this;
     ordered_second = &other;
@@ -23,20 +27,50 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
         upper = this;
         return (pt_recursive_mutex_lock_if_not_null(this->_mutex));
     }
-    if (ordered_first > ordered_second)
+    if (ordered_first->_mutex == ft_nullptr
+        && ordered_second->_mutex != ft_nullptr)
+    {
+        ordered_first = &other;
+        ordered_second = this;
+    }
+    else if (ordered_first->_mutex != ft_nullptr
+        && ordered_second->_mutex != ft_nullptr
+        && mutex_order(ordered_second->_mutex, ordered_first->_mutex))
+    {
+        ordered_first = &other;
+        ordered_second = this;
+    }
+    else if (ordered_first->_mutex == ft_nullptr
+        && ordered_second->_mutex == ft_nullptr
+        && pointer_order(ordered_second, ordered_first))
     {
         ordered_first = &other;
         ordered_second = this;
     }
     lower = ordered_first;
     upper = ordered_second;
-    lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
-    if (lower_error != FT_ERR_SUCCESS)
-        return (lower_error);
-    upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
-    if (upper_error == FT_ERR_SUCCESS)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
+    retry_count = 0;
+    upper_error = FT_ERR_MUTEX_ALREADY_LOCKED;
+    while (retry_count < 8U)
+    {
+        lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
+        if (lower_error != FT_ERR_SUCCESS)
+        {
+            if (lower_error != FT_ERR_MUTEX_ALREADY_LOCKED)
+                return (lower_error);
+            (void)pt_thread_yield();
+            retry_count += 1U;
+            continue ;
+        }
+        upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
+        if (upper_error == FT_ERR_SUCCESS)
+            return (FT_ERR_SUCCESS);
+        (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
+        if (upper_error != FT_ERR_MUTEX_ALREADY_LOCKED)
+            return (upper_error);
+        (void)pt_thread_yield();
+        retry_count += 1U;
+    }
     return (upper_error);
 }
 
@@ -115,10 +149,6 @@ int32_t aabb::initialize(const aabb &other) noexcept
         if (destroy_error != FT_ERR_SUCCESS)
             return (destroy_error);
     }
-    this->_minimum_x = 0.0;
-    this->_minimum_y = 0.0;
-    this->_maximum_x = 0.0;
-    this->_maximum_y = 0.0;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -130,6 +160,10 @@ int32_t aabb::initialize(const aabb &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (lock_error);
     }
+    this->_minimum_x = 0.0;
+    this->_minimum_y = 0.0;
+    this->_maximum_x = 0.0;
+    this->_maximum_y = 0.0;
     this->_minimum_x = other._minimum_x;
     this->_minimum_y = other._minimum_y;
     this->_maximum_x = other._maximum_x;
@@ -153,10 +187,6 @@ uint32_t aabb::move(aabb &other) noexcept
     }
     if (this == &other)
         return (FT_ERR_SUCCESS);
-    this->_minimum_x = 0.0;
-    this->_minimum_y = 0.0;
-    this->_maximum_x = 0.0;
-    this->_maximum_y = 0.0;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;

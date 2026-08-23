@@ -21,9 +21,9 @@ FT_TEST(test_terrain_script_register_api_is_idempotent)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(world_pointer));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.enable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_register_api(bridge));
-    FT_ASSERT_EQ(8U, bridge.get_callback_count());
+    FT_ASSERT_EQ(11U, bridge.get_callback_count());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_register_api(bridge));
-    FT_ASSERT_EQ(8U, bridge.get_callback_count());
+    FT_ASSERT_EQ(11U, bridge.get_callback_count());
     return (1);
 }
 

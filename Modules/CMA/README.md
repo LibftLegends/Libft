@@ -47,6 +47,13 @@ The `CMA` module is the project allocator layer. It wraps allocation, reallocati
 
 ## Test-Build Leak API
 
+The test suite also provides `Test/Test/test_cma_failure_injection.hpp`. It
+installs a test-only CMA backend through the existing backend-hook API and can
+fail the next, nth, or post-N-successful allocation, reallocation, or aligned
+allocation event. This keeps deterministic failure injection out of CMA
+production sources and avoids relying on requested-byte thresholds. The
+controller owns cleanup of backend allocations when its test scope ends.
+
 The following public declarations exist only under `LIBFT_TEST_BUILD`.
 
 - `cma_leak_entry` - One tracked live allocation pointer and size.

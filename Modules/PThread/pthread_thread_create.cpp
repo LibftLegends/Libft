@@ -31,6 +31,7 @@ static void *pt_thread_start_trampoline(void *argument)
     payload = static_cast<s_pt_thread_start_payload *>(argument);
     result = ft_nullptr;
     pthread_cleanup_push(pt_thread_tracking_cleanup, payload);
+    (void)pt_lock_tracking::notify_thread_enter(THREAD_ID);
     if (payload != ft_nullptr && payload->start_routine != ft_nullptr)
         result = payload->start_routine(payload->argument);
     pthread_cleanup_pop(1);

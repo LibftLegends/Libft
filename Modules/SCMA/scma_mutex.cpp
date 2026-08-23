@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <new>
@@ -23,7 +24,11 @@ static const uint64_t SCMA_DEFAULT_TRANSITION_TIMEOUT_MS =
 
 static std::atomic<pt_recursive_mutex *> g_scma_mutex(nullptr);
 static std::atomic<uint64_t> g_scma_operation_state(0);
+static std::atomic<uint32_t> g_scma_operation_epoch(0U);
 static thread_local ft_size_t g_scma_lock_depth = 0;
+static thread_local ft_bool g_scma_operation_exit_cleanup_armed = FT_FALSE;
+static thread_local pt_recursive_mutex *g_scma_operation_mutex = nullptr;
+static thread_local ft_bool g_scma_operation_mutex_locked = FT_FALSE;
 static pthread_key_t g_scma_operation_exit_key;
 static std::atomic<ft_bool> g_scma_operation_exit_key_initialised(FT_FALSE);
 static pthread_once_t g_scma_operation_exit_mutex_once = PTHREAD_ONCE_INIT;
@@ -93,11 +98,17 @@ static thread_local s_scma_operation_exit_guard g_scma_operation_exit_cleanup;
 
 static void scma_arm_operation_exit_cleanup(void)
 {
+    if (g_scma_operation_exit_cleanup_armed == FT_TRUE)
+    {
+        (void)g_scma_operation_exit_cleanup;
+        return ;
+    }
     scma_initialise_operation_exit_key();
     if (g_scma_operation_exit_key_initialised.load(std::memory_order_acquire)
         == FT_TRUE)
         (void)pthread_setspecific(g_scma_operation_exit_key,
             reinterpret_cast<void *>(static_cast<uintptr_t>(1U)));
+    g_scma_operation_exit_cleanup_armed = FT_TRUE;
     (void)g_scma_operation_exit_cleanup;
     return ;
 }
@@ -132,6 +143,8 @@ static void scma_cancel_transition(void)
 {
     (void)g_scma_operation_state.fetch_and(
         ~SCMA_OPERATION_STATE_TRANSITION, std::memory_order_release);
+    g_scma_operation_epoch.fetch_add(1U, std::memory_order_release);
+    (void)pt_thread_wake_all_uint32(&g_scma_operation_epoch);
     return ;
 }
 
@@ -203,6 +216,8 @@ static void scma_finish_operation(void)
 {
     g_scma_operation_state.fetch_sub(SCMA_OPERATION_STATE_ACTIVE_INCREMENT,
         std::memory_order_release);
+    g_scma_operation_epoch.fetch_add(1U, std::memory_order_release);
+    (void)pt_thread_wake_all_uint32(&g_scma_operation_epoch);
     return ;
 }
 
@@ -211,7 +226,10 @@ static int32_t scma_begin_transition(ft_bool enable, uint64_t timeout_ms)
     uint64_t state;
     uint64_t transitioned_state;
     int32_t result;
-    uint64_t elapsed_ms;
+    int32_t wait_result;
+    uint64_t remaining_timeout_ms;
+    std::chrono::steady_clock::time_point transition_deadline;
+    std::chrono::milliseconds remaining_duration;
 
     state = g_scma_operation_state.load(std::memory_order_acquire);
     while (true)
@@ -224,16 +242,31 @@ static int32_t scma_begin_transition(ft_bool enable, uint64_t timeout_ms)
                 std::memory_order_acquire))
             break ;
     }
-    elapsed_ms = 0;
+    transition_deadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(timeout_ms);
     while (scma_active_operation_count(transitioned_state) != 0)
     {
-        if (elapsed_ms >= timeout_ms)
+        remaining_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            transition_deadline - std::chrono::steady_clock::now());
+        if (remaining_duration.count() <= 0)
         {
             scma_cancel_transition();
             return (FT_ERR_TIMEOUT);
         }
-        (void)pt_thread_sleep(1);
-        elapsed_ms++;
+        remaining_timeout_ms = static_cast<uint64_t>(remaining_duration.count());
+        wait_result = pt_thread_wait_uint32_timed(&g_scma_operation_epoch,
+            g_scma_operation_epoch.load(std::memory_order_acquire),
+            remaining_timeout_ms);
+        if (wait_result == FT_ERR_TIMEOUT)
+        {
+            scma_cancel_transition();
+            return (FT_ERR_TIMEOUT);
+        }
+        if (wait_result != FT_ERR_SUCCESS)
+        {
+            scma_cancel_transition();
+            return (wait_result);
+        }
         transitioned_state = g_scma_operation_state.load(
                 std::memory_order_acquire);
     }
@@ -252,6 +285,8 @@ static int32_t scma_begin_transition(ft_bool enable, uint64_t timeout_ms)
             g_scma_operation_state.store(
                 scma_state_without_transition(transitioned_state),
                 std::memory_order_release);
+        g_scma_operation_epoch.fetch_add(1U, std::memory_order_release);
+        (void)pt_thread_wake_all_uint32(&g_scma_operation_epoch);
         return (result);
     }
     result = scma_destroy_mutex();
@@ -261,6 +296,8 @@ static int32_t scma_begin_transition(ft_bool enable, uint64_t timeout_ms)
         g_scma_operation_state.store(
             scma_state_without_transition(transitioned_state),
             std::memory_order_release);
+    g_scma_operation_epoch.fetch_add(1U, std::memory_order_release);
+    (void)pt_thread_wake_all_uint32(&g_scma_operation_epoch);
     return (result);
 }
 
@@ -344,7 +381,14 @@ int32_t scma_mutex_lock(void)
         state = g_scma_operation_state.load(std::memory_order_acquire);
         if ((state & SCMA_OPERATION_STATE_TRANSITION) != 0)
         {
-            pt_thread_yield();
+            uint32_t operation_epoch;
+
+            operation_epoch = g_scma_operation_epoch.load(
+                std::memory_order_acquire);
+            if ((g_scma_operation_state.load(std::memory_order_acquire)
+                    & SCMA_OPERATION_STATE_TRANSITION) != 0)
+                (void)pt_thread_wait_uint32(&g_scma_operation_epoch,
+                    operation_epoch);
             continue ;
         }
         if (scma_active_operation_count(state)
@@ -372,14 +416,17 @@ int32_t scma_mutex_lock(void)
         scma_finish_operation();
         return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
     }
+    g_scma_operation_mutex = mutex_pointer;
+    if (mutex_pointer != nullptr)
+        g_scma_operation_mutex_locked = FT_TRUE;
+    else
+        g_scma_operation_mutex_locked = FT_FALSE;
     g_scma_lock_depth = 1;
     return (FT_ERR_SUCCESS);
 }
 
 int32_t scma_mutex_unlock(void)
 {
-    pt_recursive_mutex *mutex_pointer;
-
     if (g_scma_lock_depth == 0)
         return (FT_ERR_SYS_MUTEX_UNLOCK_FAILED);
     if (g_scma_lock_depth > 1)
@@ -387,8 +434,10 @@ int32_t scma_mutex_unlock(void)
         g_scma_lock_depth--;
         return (FT_ERR_SUCCESS);
     }
-    mutex_pointer = g_scma_mutex.load(std::memory_order_acquire);
-    (void)pt_recursive_mutex_unlock_if_not_null(mutex_pointer);
+    if (g_scma_operation_mutex_locked == FT_TRUE)
+        (void)pt_recursive_mutex_unlock_if_not_null(g_scma_operation_mutex);
+    g_scma_operation_mutex = nullptr;
+    g_scma_operation_mutex_locked = FT_FALSE;
     g_scma_lock_depth = 0;
     scma_finish_operation();
     return (FT_ERR_SUCCESS);

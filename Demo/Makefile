@@ -1,21 +1,22 @@
+include ../mk/build_config.mk
 include ../mk/compiler_flags.mk
 include ../mk/demo/config.mk
 
-all: FORCE $(TARGET) $(LEGACY_TARGET)
+all: $(TARGET) $(LEGACY_TARGET)
 
 validate-levels:
 	@perl tools/demo_validate_levels.pl demo_levels.cpp
 
-$(TARGET): FORCE ../Full_Libft.a $(SRCS)
+$(TARGET): ../Full_Libft.a $(SRCS)
 	@printf '        [%s] Linking %s\n' "$(MODULE_NAME)" "$(TARGET)"
 	@mkdir -p $(TARGET_DIR)
 	@$(CXX) $(COMPILE_FLAGS) $(SRCS) -o $@ ../Full_Libft.a $(LINK_FLAGS)
 
-$(LEGACY_TARGET): FORCE $(TARGET)
+$(LEGACY_TARGET): $(TARGET)
 	@printf '        [%s] Syncing %s\n' "$(MODULE_NAME)" "$(LEGACY_TARGET)"
 	@cp $(TARGET) $(LEGACY_TARGET)
 
-../Full_Libft.a: FORCE
+../Full_Libft.a:
 	@$(MAKE) -C .. Full_Libft.a OPT_LEVEL=$(OPT_LEVEL)
 
 clean:
@@ -40,7 +41,4 @@ re:
 	@$(MAKE) fclean
 	@$(MAKE) all
 
-.PHONY: all clean fclean re validate-levels FORCE
-
-FORCE:
-	@true
+.PHONY: all clean fclean re validate-levels

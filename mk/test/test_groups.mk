@@ -59,6 +59,7 @@ TIME_TEST_FILES := \
 	Test/test_time_active_clock.cpp
 
 CMA_TEST_FILES := \
+	Test/test_cma_failure_injection.cpp \
 	Test/test_cma_alloc.cpp \
 	Test/test_cma_arena.cpp \
 	Test/test_cma_backend.cpp \
@@ -69,6 +70,7 @@ CMA_TEST_FILES := \
 	Test/test_cma_stats.cpp \
 	Test/test_cma_strings.cpp \
 	Test/test_cma_scma_secure_wipe.cpp \
+	Test/test_cma_transition_timeout.cpp \
 	Test/test_scma_accessor.cpp \
 	Test/test_scma_accessor_lifecycle.cpp \
 	Test/test_scma_accessor_proxy_chain_errors.cpp \
@@ -77,6 +79,7 @@ CMA_TEST_FILES := \
 	Test/test_scma_memory.cpp \
 	Test/test_scma_recursive_mutex.cpp \
 	Test/test_scma_thread_safety_controls.cpp \
+	Test/test_scma_transition_timeout.cpp \
 	Test/test_scma_resize.cpp
 
 GET_NEXT_LINE_TEST_FILES := \
@@ -110,6 +113,7 @@ STORAGE_TEST_FILES := \
 VOXEL_TEST_FILES := \
 	Test/test_voxel_block_metadata.cpp \
 	Test/test_voxel_generator.cpp \
+	Test/test_voxel_terrain_transitions.cpp \
 	Test/test_voxel_mesh.cpp \
 	Test/test_terrain_script_register_api.cpp \
 	Test/test_terrain_script_execute.cpp \

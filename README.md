@@ -3,6 +3,57 @@
 FullLibft collects the project's reusable C and C++ helper modules under a single build.
 Each module below has a short purpose statement to clarify its role in the tree.
 
+## GNU Make build and validation
+
+The canonical build is one GNU Make dependency graph. It schedules individual
+objects across modules, then creates module archives and `Full_Libft.a`.
+Module Makefiles remain compatibility wrappers; the repository root is the
+canonical build entry point.
+GNU Make 3.81 or newer is supported. GNU Make 4.0 and newer may optionally
+use `--output-sync=target` for grouped parallel output; it is not required.
+
+```sh
+make -j2 all
+make plan
+make -j2 tests
+FT_TEST_HIDE_SUCCESSFUL=1 make run-tests
+make -j2 archive-integrity
+make -j2 performance_benchmarks
+make run_performance_benchmarks
+```
+
+Public build targets first run a read-only Make dry run and report the exact
+number of stale compile targets selected by the dependency graph, grouped by
+project and module. The actual build then prints concise compile, archive, and
+link messages while keeping compiler diagnostics visible. After each successful
+compile, the build prints a session-local `completed/total` counter for the
+active module, and each successful archive advances the archive counter. Those
+totals come from the same complete graph evaluation; the build never counts
+objects in directories and never creates a repository-wide counter. A file
+changed between planning and compilation can make the actual work differ from
+the initial summary. The initial count is the number of compile targets Make
+considered out of date at the start, not the number of source files or objects
+present in a module. Archive and link work are reported separately from the
+compile count. Public targets perform one read-only plan pass followed by one
+actual graph build; the extra dry run is intentional and is especially useful
+for avoiding repeated filesystem scans on Windows.
+
+With GNU Make 4.0 or newer, `--output-sync=target` can be added to parallel
+commands when grouped output is preferred.
+
+Use `make debug` to build the debug archive. Use `make debug-tests` and
+`make run-debug-tests` to build and execute the debug tester. The corresponding
+sanitizer commands are `make run-asan-tests`, `make run-ubsan-tests`, and
+`make run-asan-ubsan-tests`; each builds the requested instrumented tester
+before executing it. Build artifacts are isolated under configuration-specific
+directories in `build/libft/`, so different compiler flags cannot reuse
+incompatible objects. The Makefile probes compiler and linker runtime support
+before starting a sanitizer build and reports unsupported toolchains without
+compiling the full graph. `make -n`, `make -pn`, and `make --trace` can be used to
+inspect scheduling and prerequisites without changing source files. For
+build-system diagnostics that intentionally bypass the summary wrapper, use
+`make internal-all` or `make internal-tests`.
+
 ## Modules
 
 - `API/`: Provides the glue between networking protocols, serialization formats, and business logic so clients and servers expose cohesive endpoints.

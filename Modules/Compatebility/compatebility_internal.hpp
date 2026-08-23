@@ -125,7 +125,10 @@ int32_t cmp_thread_cancel(pthread_t thread);
 int32_t cmp_thread_yield(void);
 int32_t cmp_thread_sleep(uint32_t milliseconds);
 int32_t cmp_thread_wait_uint32(std::atomic<uint32_t> *address, uint32_t expected_value);
+int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
+    uint32_t expected_value, uint64_t timeout_ms);
 int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address);
+int32_t cmp_thread_wake_all_uint32(std::atomic<uint32_t> *address);
 
 int32_t cmp_readline_enable_raw_mode(void);
 int32_t cmp_readline_disable_raw_mode(void);

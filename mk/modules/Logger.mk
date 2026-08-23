@@ -1,7 +1,7 @@
-TARGET := Logger.a
-DEBUG_TARGET := Logger_debug.a
+Logger_TARGET := Logger.a
+Logger_DEBUG_TARGET := Logger_debug.a
 
-SRCS := \
+Logger_SOURCES := \
     logger_log_state.cpp \
     logger_log_rotate.cpp \
     logger_log_level_to_str.cpp \
@@ -38,8 +38,6 @@ SRCS := \
     logger_syslog.cpp \
     logger_network.cpp
 
-HEADERS := logger.hpp logger_internal.hpp
+Logger_HEADERS := logger.hpp logger_internal.hpp
 
-MODULE_CFLAGS_EXTRA := -pthread
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+Logger_CPP_FLAGS := -pthread

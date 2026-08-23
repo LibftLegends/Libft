@@ -16,7 +16,7 @@ jobs:
   build-and-test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +43,15 @@ jobs:
           brew untap aws/tap 2>/dev/null || true
           brew install llvm cmake pkg-config python openssl@3 sqlite3
 
+      - name: Free macOS runner disk space
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew cleanup --prune=all || true
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
+          rm -rf "$HOME/.cocoapods"
+          df -h
+
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         shell: powershell
@@ -51,34 +60,100 @@ jobs:
 
       - name: Build test suite
         shell: bash
-        run: make -j2 tests
+        run: make -j4 tests
+
+      - name: Validate stale build progress
+        shell: bash
+        run: sh mk/test_build_progress.sh make
+
+      - name: Validate release archives
+        shell: bash
+        run: make -j4 archive-integrity
 
       - name: Run test suite on Unix
         if: runner.os != 'Windows'
         shell: bash
         id: unix_tests
         env:
-          FT_TEST_HIDE_SUCCESSFUL: '1'
+          FT_TEST_HIDE_SUCCESSFUL: '1' # CI_DIAGNOSTIC: Keep successful tests out of the Actions log to avoid exhausting runner storage.
           FT_TEST_PRESERVE_FAILURE_LOG: '1' # CI_DIAGNOSTIC: Preserve assertion details for failed Unix runs.
         run: | # CI_DIAGNOSTIC: Capture the complete Unix test output while preserving the test exit status.
           set +e
           set -o pipefail
-          ./Test/libft_tests 2>&1 | tee Test/ci_unix_full_output.log
-          test_status=${PIPESTATUS[0]}
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            (
+              cd Test || exit 1
+              ulimit -c unlimited # CI_DIAGNOSTIC: Preserve automatic core dumps for the main tester process.
+              printf '%s\n' "macOS main tester core dump limit: $(ulimit -c)" # CI_DIAGNOSTIC: Record the runner limit; expected-abort children disable it themselves.
+              ./libft_tests > ci_unix_full_output.log 2>&1 &
+              test_pid=$!
+              tail -f ci_unix_full_output.log &
+              tail_pid=$!
+              last_output_size=-1
+              idle_seconds=0
+              while kill -0 "$test_pid" 2>/dev/null; do
+                output_size=$(wc -c < ci_unix_full_output.log)
+                if [ "$output_size" -eq "$last_output_size" ]; then
+                  idle_seconds=$((idle_seconds + 5))
+                else
+                  last_output_size="$output_size"
+                  idle_seconds=0
+                fi
+                if [ "$idle_seconds" -ge 180 ]; then
+                  printf '%s\n' "macOS test process stalled for 180 seconds; collecting diagnostics."
+                  touch ci_macos_hang_detected.txt
+                  kill "$tail_pid" 2>/dev/null || true
+                  wait "$tail_pid" 2>/dev/null || true
+                  if command -v sample >/dev/null 2>&1; then
+                    sample "$test_pid" 10 -file ci_macos_sample.txt >/dev/null 2>&1 || true
+                  fi
+                  if command -v lldb >/dev/null 2>&1; then
+                    lldb --batch -p "$test_pid" \
+                      -o 'thread backtrace all' \
+                      -o 'process save-core ci_macos_hang.core' \
+                      -o 'detach' \
+                      -o 'quit' > ci_unix_stack_trace.log 2>&1 || true
+                  fi
+                  kill -TERM "$test_pid" 2>/dev/null || true
+                  sleep 5
+                  kill -KILL "$test_pid" 2>/dev/null || true
+                  wait "$test_pid"
+                  exit 124
+                fi
+                sleep 5
+              done
+              wait "$test_pid"
+              test_status=$?
+              kill "$tail_pid" 2>/dev/null || true
+              wait "$tail_pid" 2>/dev/null || true
+              exit "$test_status"
+            )
+            test_status=$?
+          else
+            (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
+            test_status=${PIPESTATUS[0]}
+          fi
           if [ "$test_status" -ne 0 ]; then
-            if command -v gdb >/dev/null 2>&1; then
-              gdb -q -batch \
+            if [ "$RUNNER_OS" = "macOS" ] && [ -f Test/ci_macos_hang_detected.txt ]; then
+              printf '%s\n' 'macOS hang diagnostics were already captured.'
+            elif command -v gdb >/dev/null 2>&1; then
+              (cd Test && gdb -q -batch \
                 -ex 'set pagination off' \
                 -ex 'set env FT_TEST_HIDE_SUCCESSFUL 0' \
+                -ex 'handle SIGABRT nostop noprint pass' \
+                -ex 'handle SIGIOT nostop noprint pass' \
+                -ex 'handle SIGTERM nostop noprint pass' \
+                -ex 'handle SIGINT nostop noprint pass' \
+                -ex 'handle SIGHUP nostop noprint pass' \
                 -ex run \
                 -ex 'thread apply all bt full' \
-                --args ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+                --args ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
             elif command -v lldb >/dev/null 2>&1; then
-              lldb --batch \
+              (cd Test && lldb --batch \
                 -o 'settings set target.env-vars FT_TEST_HIDE_SUCCESSFUL=0' \
                 -k 'thread backtrace all' \
                 -o run \
-                -- ./Test/libft_tests 2>&1 | tee Test/ci_unix_stack_trace.log
+                -- ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
             else
               printf '%s\n' 'No debugger was available for stack trace capture.' | tee Test/ci_unix_stack_trace.log
             fi
@@ -96,23 +171,30 @@ jobs:
           Remove-Item Env:FT_TEST_NAME_FILTER -ErrorAction SilentlyContinue
           Remove-Item Env:FT_TEST_SKIP_NAME_FILTER -ErrorAction SilentlyContinue
           $test_status = 1 # CI_DIAGNOSTIC: Default to failure if process launch itself fails.
+          $test_directory_pushed = $false
+          $windows_output_path = Join-Path (Get-Location) 'Test\ci_windows_full_output.log'
           try {
-            & .\Test\libft_tests.exe *> Test\ci_windows_full_output.log # CI_DIAGNOSTIC: Capture stdout and stderr without a native-command pipeline.
+            Push-Location Test
+            $test_directory_pushed = $true
+            & .\libft_tests.exe *> ci_windows_full_output.log # CI_DIAGNOSTIC: Run from Test so relative fixtures resolve correctly.
             $test_status = $LASTEXITCODE # CI_DIAGNOSTIC: Preserve the executable exit status.
           }
           catch {
-            $_ | Out-File -FilePath Test\ci_windows_full_output.log -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
+            $_ | Out-File -FilePath $windows_output_path -Append # CI_DIAGNOSTIC: Preserve launch exceptions.
+          }
+          finally {
+            if ($test_directory_pushed) { Pop-Location }
           }
           Write-Host "Windows test exit code: $test_status" # CI_DIAGNOSTIC: Make native process failures explicit.
-          if (Test-Path test_failures.log) { Copy-Item test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
-          if (Test-Path secure_wipe_runtime.log) { Copy-Item secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
-          if (Test-Path secure_wipe_runtime.err) { Copy-Item secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
-          if (Test-Path windows_crash_stack_trace.log) { Copy-Item windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
+          if (Test-Path Test\test_failures.log) { Copy-Item Test\test_failures.log Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Preserve Windows assertion details.
+          if (Test-Path Test\secure_wipe_runtime.log) { Copy-Item Test\secure_wipe_runtime.log Test\ci_windows_secure_wipe_runtime.log } # CI_DIAGNOSTIC: Preserve runtime compilation status.
+          if (Test-Path Test\secure_wipe_runtime.err) { Copy-Item Test\secure_wipe_runtime.err Test\ci_windows_secure_wipe_runtime.err } # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+          if (Test-Path Test\windows_crash_stack_trace.log) { Copy-Item Test\windows_crash_stack_trace.log Test\ci_windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Preserve the native Windows exception stack trace.
           if (Test-Path Test\ci_windows_full_output.log) { Get-Content Test\ci_windows_full_output.log } # CI_DIAGNOSTIC: Make the executable output visible in the Actions log.
           if (Test-Path Test\ci_windows_failures.log) { Get-Content Test\ci_windows_failures.log } # CI_DIAGNOSTIC: Make assertion details visible in the Actions log.
-          if (Test-Path secure_wipe_runtime.log) { Get-Content secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
-          if (Test-Path secure_wipe_runtime.err) { Get-Content secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
-          if (Test-Path windows_crash_stack_trace.log) { Get-Content windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
+          if (Test-Path Test\secure_wipe_runtime.log) { Get-Content Test\secure_wipe_runtime.log } # CI_DIAGNOSTIC: Make runtime status visible in the Actions log.
+          if (Test-Path Test\secure_wipe_runtime.err) { Get-Content Test\secure_wipe_runtime.err } # CI_DIAGNOSTIC: Make runtime compiler errors visible in the Actions log.
+          if (Test-Path Test\windows_crash_stack_trace.log) { Get-Content Test\windows_crash_stack_trace.log } # CI_DIAGNOSTIC: Print the native Windows exception stack trace.
           if ($test_status -ne 0) { # CI_DIAGNOSTIC: Capture a debugger backtrace for fail-fast heap corruption.
             $gdb_command = Get-Command gdb.exe -ErrorAction SilentlyContinue
             if ($null -ne $gdb_command) {
@@ -151,13 +233,13 @@ jobs:
         if: always()
         shell: bash
         run: |
-          make -C Test -j2 performance_benchmarks
+          make -j4 performance_benchmarks
 
       - name: Run performance benchmarks on Unix
         if: always() && runner.os != 'Windows'
         shell: bash
         run: |
-          make -C Test run_performance_benchmarks
+          make run_performance_benchmarks
 
       - name: Run performance benchmarks on Windows
         if: always() && runner.os == 'Windows'
@@ -182,11 +264,11 @@ jobs:
         shell: bash # CI_DIAGNOSTIC: Use the same shell as the Ubuntu test runner.
         run: |
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
-          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
-            FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./Test/libft_tests > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
-            cp test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
-            if [ -f secure_wipe_runtime.log ]; then cp secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
-            if [ -f secure_wipe_runtime.err ]; then cp secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
+          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data test_thread_pool_cancellation_allows_execution; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
+            (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
+            cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
+            if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
+            if [ -f Test/secure_wipe_runtime.err ]; then cp Test/secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
             cat "Test/ci_ubuntu_${test_name}_output.log" # CI_DIAGNOSTIC: Print targeted output into the Actions log.
             cat "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Print exact assertion details into the Actions log.
             if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Print runtime status into the Actions log.
@@ -210,8 +292,26 @@ jobs:
             Test/ci_ubuntu_*_secure_wipe_runtime.err
             Test/ci_unix_full_output.log
             Test/ci_unix_stack_trace.log
+            Test/ci_macos_sample.txt
+            Test/ci_macos_hang_detected.txt
+            Test/ci_macos_hang.core
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original test failure if a log is unavailable.
+
+      # CI_DIAGNOSTIC: Upload macOS watchdog output, stack traces, and core dumps.
+      - name: Upload macOS hang diagnostics
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-test-diagnostics-${{ github.run_id }}
+          path: |
+            Test/ci_unix_full_output.log
+            Test/ci_unix_stack_trace.log
+            Test/ci_macos_sample.txt
+            Test/ci_macos_hang_detected.txt
+            Test/ci_macos_hang.core
+            test_failures.log
+          if-no-files-found: warn
 
       # CI_DIAGNOSTIC: Upload Windows output while the cross-platform test failures are being diagnosed.
       - name: Upload Windows diagnostic logs

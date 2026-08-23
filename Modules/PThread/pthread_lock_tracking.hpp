@@ -76,6 +76,7 @@ class pt_lock_tracking
                 const void *mutex_pointer);
         static int notify_released(pt_thread_id_type thread_identifier,
                 const void *mutex_pointer);
+        static int notify_thread_enter(pt_thread_id_type thread_identifier);
         static int notify_thread_exit(pt_thread_id_type thread_identifier);
         static int snapshot_waiters(pt_lock_wait_snapshot_vector &snapshot);
         static int get_thread_state(pt_thread_id_type thread_identifier,

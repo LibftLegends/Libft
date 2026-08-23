@@ -1,4 +1,5 @@
 #include "terrain_scripting_bridge.hpp"
+#include "terrain_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
@@ -103,6 +104,76 @@ static int32_t terrain_script_set_noise_scales(game_script_context &context,
         return (error_code);
     return (terrain_context->config->set_noise_scales(large_scale,
         detail_scale, detail_percent));
+}
+
+static int32_t terrain_script_set_biome_size_control(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    uint32_t enabled;
+    int32_t error_code;
+
+    if (arguments.size() != 1U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_uint32(arguments[0], &enabled);
+    if (error_code != FT_ERR_SUCCESS || enabled > 1U)
+        return (error_code == FT_ERR_SUCCESS ? FT_ERR_INVALID_ARGUMENT
+            : error_code);
+    return (terrain_context->config->set_biome_size_control_enabled(
+        static_cast<ft_bool>(enabled)));
+}
+
+static int32_t terrain_script_set_biome_size_range(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    int32_t minimum_size;
+    int32_t maximum_size;
+    int32_t error_code;
+
+    if (arguments.size() != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_int32(arguments[0], &minimum_size);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[1], &maximum_size);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (terrain_context->config->set_biome_size_range(minimum_size,
+        maximum_size));
+}
+
+static int32_t terrain_script_set_biome_size_range_for_biome(
+    game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    terrain_script_execution_context *terrain_context;
+    uint32_t biome_index;
+    int32_t minimum_size;
+    int32_t maximum_size;
+    int32_t error_code;
+
+    if (arguments.size() != 3U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    error_code = terrain_script_parse_uint32(arguments[0], &biome_index);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[1], &minimum_size);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_parse_int32(arguments[2], &maximum_size);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (terrain_context->config->set_biome_size_range_for_biome(
+        biome_index, minimum_size, maximum_size));
 }
 
 static int32_t terrain_script_set_biome_height(game_script_context &context,
@@ -244,13 +315,13 @@ static int32_t terrain_script_register_block(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
     terrain_block_registration registration;
-    uint32_t metadata_values[7];
+    uint32_t metadata_values[9];
     uint32_t block_id;
     uint32_t argument_index;
     uint32_t asset_index;
     int32_t error_code;
 
-    if (arguments.size() != 15U)
+    if (arguments.size() != 15U && arguments.size() != 17U)
         return (FT_ERR_INVALID_ARGUMENT);
     registration.name = arguments[0].c_str();
     argument_index = 0U;
@@ -271,16 +342,45 @@ static int32_t terrain_script_register_block(game_script_context &context,
     registration.metadata.light_emitting = static_cast<ft_bool>(metadata_values[4]);
     registration.metadata.occludes_faces = static_cast<ft_bool>(metadata_values[5]);
     registration.metadata.hardness = metadata_values[6];
-    error_code = terrain_script_parse_uint32(arguments[8], &metadata_values[0]);
+    if (arguments.size() == 17U)
+    {
+        error_code = terrain_script_parse_uint32(arguments[8],
+            &metadata_values[7]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = terrain_script_parse_uint32(arguments[9],
+            &metadata_values[8]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        if (metadata_values[7] > 1U || metadata_values[8] > 1U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        registration.metadata.can_host_ore = static_cast<ft_bool>(
+            metadata_values[7]);
+        registration.metadata.is_ore = static_cast<ft_bool>(
+            metadata_values[8]);
+        argument_index = 10U;
+    }
+    else
+    {
+        registration.metadata.can_host_ore = static_cast<ft_bool>(
+            registration.metadata.solid == FT_TRUE
+            && registration.metadata.replaceable == FT_FALSE);
+        registration.metadata.is_ore = FT_FALSE;
+        argument_index = 8U;
+    }
+    error_code = terrain_script_parse_uint32(arguments[argument_index],
+        &metadata_values[0]);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     if (metadata_values[0] > 1U)
         return (FT_ERR_INVALID_ARGUMENT);
     registration.metadata.breakable = static_cast<ft_bool>(metadata_values[0]);
+    argument_index += 1U;
     asset_index = 0U;
     while (asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
     {
-        registration.asset_paths[asset_index] = arguments[9U + asset_index].c_str();
+        registration.asset_paths[asset_index] = arguments[
+            argument_index + asset_index].c_str();
         asset_index += 1U;
     }
     error_code = terrain_register_block(registration, &block_id);
@@ -316,6 +416,18 @@ int32_t terrain_script_register_api(game_script_bridge &bridge) noexcept
     if (error_code == FT_ERR_SUCCESS)
         error_code = terrain_script_register_function(bridge,
             "terrain_set_noise_scales", terrain_script_set_noise_scales);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_control",
+            terrain_script_set_biome_size_control);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_range",
+            terrain_script_set_biome_size_range);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = terrain_script_register_function(bridge,
+            "terrain_set_biome_size_range_for_biome",
+            terrain_script_set_biome_size_range_for_biome);
     if (error_code == FT_ERR_SUCCESS)
         error_code = terrain_script_register_function(bridge,
             "terrain_set_biome_height", terrain_script_set_biome_height);

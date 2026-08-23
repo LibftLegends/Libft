@@ -3,7 +3,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "../../Modules/Voxel/voxel.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/Voxel/voxel_mesh.hpp"
 
 FT_TEST(test_terrain_block_metadata_registry_reports_expected_properties)

@@ -1,6 +1,7 @@
 #include "compatebility_internal.hpp"
 #include <cerrno>
 #include <atomic>
+#include <cstdlib>
 #include "../PThread/pthread.hpp"
 
 #include "../Basic/limits.hpp"
@@ -8,6 +9,12 @@
 #include "../PThread/recursive_mutex.hpp"
 #if defined(_WIN32) || defined(_WIN64)
 # include <windows.h>
+# include <condition_variable>
+# include <chrono>
+# include <mutex>
+
+static std::mutex g_windows_wait_mutex;
+static std::condition_variable g_windows_wait_condition;
 
 static int32_t cmp_thread_map_windows_error(DWORD error_code)
 {
@@ -58,6 +65,37 @@ int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address)
 {
     if (address == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
+    g_windows_wait_condition.notify_one();
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_thread_wake_all_uint32(std::atomic<uint32_t> *address)
+{
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    g_windows_wait_condition.notify_all();
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
+    uint32_t expected_value, uint64_t timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(g_windows_wait_mutex);
+    std::chrono::milliseconds wait_duration;
+
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (address->load() != expected_value)
+        return (FT_ERR_SUCCESS);
+    wait_duration = std::chrono::milliseconds(timeout_ms);
+    if (g_windows_wait_condition.wait_for(lock, wait_duration,
+            [address, expected_value]()
+            {
+                return (address->load() != expected_value);
+            }))
+        return (FT_ERR_SUCCESS);
+    if (address->load() == expected_value)
+        return (FT_ERR_TIMEOUT);
     return (FT_ERR_SUCCESS);
 }
 #else
@@ -68,7 +106,6 @@ int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address)
 #  include <linux/futex.h>
 #  include <sys/syscall.h>
 # else
-#  include "../CMA/CMA.hpp"
 #  include "../Basic/class_nullptr.hpp"
 
 struct cmp_wait_entry
@@ -125,7 +162,8 @@ static int32_t cmp_wait_create_entry(std::atomic<uint32_t> *address, cmp_wait_en
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    new_entry = reinterpret_cast<cmp_wait_entry *>(cma_malloc(sizeof(cmp_wait_entry)));
+    new_entry = reinterpret_cast<cmp_wait_entry *>(std::malloc(
+        sizeof(cmp_wait_entry)));
     if (!new_entry)
     {
         return (FT_ERR_NO_MEMORY);
@@ -136,7 +174,7 @@ static int32_t cmp_wait_create_entry(std::atomic<uint32_t> *address, cmp_wait_en
     init_result = pthread_cond_init(&new_entry->condition, ft_nullptr);
     if (init_result != 0)
     {
-        cma_free(new_entry);
+        std::free(static_cast<void *>(new_entry));
         return (cmp_map_system_error_to_ft(init_result));
     }
     g_wait_list_head = new_entry;
@@ -169,7 +207,7 @@ static int32_t cmp_wait_remove_entry(cmp_wait_entry *entry) noexcept
                 g_wait_list_head = current_entry->next;
             else
                 previous_entry->next = current_entry->next;
-            cma_free(current_entry);
+            std::free(static_cast<void *>(current_entry));
             return (FT_ERR_SUCCESS);
         }
         previous_entry = current_entry;
@@ -322,6 +360,99 @@ int32_t cmp_thread_wait_uint32(std::atomic<uint32_t> *address, uint32_t expected
 # endif
 }
 
+int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
+    uint32_t expected_value, uint64_t timeout_ms)
+{
+# if defined(__linux__)
+    int64_t syscall_result;
+    struct timespec timeout;
+
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    timeout.tv_sec = static_cast<time_t>(timeout_ms / 1000U);
+    timeout.tv_nsec = static_cast<long>((timeout_ms % 1000U) * 1000000U);
+    syscall_result = syscall(SYS_futex, reinterpret_cast<uint32_t *>(address),
+#  ifdef FUTEX_WAIT_PRIVATE
+            FUTEX_WAIT_PRIVATE,
+#  else
+            FUTEX_WAIT,
+#  endif
+            expected_value, &timeout, NULL, 0);
+    if (syscall_result == 0 || errno == EAGAIN)
+        return (FT_ERR_SUCCESS);
+    if (errno == ETIMEDOUT)
+        return (FT_ERR_TIMEOUT);
+    if (errno == EINTR)
+        return (FT_ERR_TIMEOUT);
+    return (cmp_map_system_error_to_ft(errno));
+# else
+    int32_t lock_error;
+    cmp_wait_entry *entry;
+    int32_t create_error;
+    int32_t wait_result;
+    int32_t remove_error;
+    int32_t unlock_error;
+    uint32_t current_value;
+    struct timespec deadline;
+
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
+        return (cmp_map_system_error_to_ft(errno));
+    deadline.tv_sec += static_cast<time_t>(timeout_ms / 1000U);
+    deadline.tv_nsec += static_cast<long>((timeout_ms % 1000U) * 1000000U);
+    if (deadline.tv_nsec >= 1000000000L)
+    {
+        deadline.tv_sec += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    lock_error = pt_pthread_mutex_lock_with_error(&g_wait_list_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    entry = cmp_wait_lookup_entry(address);
+    if (entry == ft_nullptr)
+    {
+        create_error = cmp_wait_create_entry(address, &entry);
+        if (create_error != FT_ERR_SUCCESS)
+        {
+            (void)pt_pthread_mutex_unlock_with_error(&g_wait_list_mutex);
+            return (create_error);
+        }
+    }
+    entry->waiter_count += 1;
+    current_value = address->load();
+    while (current_value == expected_value)
+    {
+        wait_result = pthread_cond_timedwait(&entry->condition,
+            &g_wait_list_mutex, &deadline);
+        if (wait_result != 0)
+            break ;
+        current_value = address->load();
+    }
+    if (entry->waiter_count > 0)
+        entry->waiter_count -= 1;
+    if (entry->waiter_count == 0)
+    {
+        remove_error = cmp_wait_remove_entry(entry);
+        if (remove_error != FT_ERR_SUCCESS)
+        {
+            (void)pt_pthread_mutex_unlock_with_error(&g_wait_list_mutex);
+            return (remove_error);
+        }
+    }
+    unlock_error = pt_pthread_mutex_unlock_with_error(&g_wait_list_mutex);
+    if (unlock_error != FT_ERR_SUCCESS)
+        return (unlock_error);
+    if (current_value != expected_value)
+        return (FT_ERR_SUCCESS);
+    if (wait_result == ETIMEDOUT)
+        return (FT_ERR_TIMEOUT);
+    if (wait_result != 0)
+        return (cmp_map_system_error_to_ft(wait_result));
+    return (FT_ERR_SUCCESS);
+# endif
+}
+
 int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address)
 {
 # if defined(__linux__)
@@ -371,6 +502,51 @@ int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address)
     {
         return (unlock_error);
     }
+    return (FT_ERR_SUCCESS);
+# endif
+}
+
+int32_t cmp_thread_wake_all_uint32(std::atomic<uint32_t> *address)
+{
+# if defined(__linux__)
+    int64_t syscall_result;
+
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    syscall_result = syscall(SYS_futex, reinterpret_cast<uint32_t *>(address),
+#  ifdef FUTEX_WAKE_PRIVATE
+            FUTEX_WAKE_PRIVATE,
+#  else
+            FUTEX_WAKE,
+#  endif
+            0x7FFFFFFF, NULL, NULL, 0);
+    if (syscall_result == -1)
+        return (cmp_map_system_error_to_ft(errno));
+    return (FT_ERR_SUCCESS);
+# else
+    int32_t lock_error;
+    cmp_wait_entry *entry;
+    int32_t signal_result;
+    int32_t unlock_error;
+
+    if (address == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    lock_error = pt_pthread_mutex_lock_with_error(&g_wait_list_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    entry = cmp_wait_lookup_entry(address);
+    if (entry != ft_nullptr)
+    {
+        signal_result = pthread_cond_broadcast(&entry->condition);
+        if (signal_result != 0)
+        {
+            (void)pt_pthread_mutex_unlock_with_error(&g_wait_list_mutex);
+            return (cmp_map_system_error_to_ft(signal_result));
+        }
+    }
+    unlock_error = pt_pthread_mutex_unlock_with_error(&g_wait_list_mutex);
+    if (unlock_error != FT_ERR_SUCCESS)
+        return (unlock_error);
     return (FT_ERR_SUCCESS);
 # endif
 }

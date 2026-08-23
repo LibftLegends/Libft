@@ -1308,7 +1308,7 @@ static char *api_http_execute_plain_once(
         char request_length_buffer[128];
 
         pf_snprintf(request_length_buffer, sizeof(request_length_buffer),
-            "plain_once: request_size=%zu", request.size());
+            "plain_once: request_size=%" FT_UINT64_FORMAT, request.size());
         api_http_plain_debug_log(request_length_buffer);
 #endif
         if (!api_http_send_request(socket_wrapper, request, error_code))

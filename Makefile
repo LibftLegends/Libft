@@ -1,3 +1,6 @@
+Exit code: 0
+Wall time: 5.3 seconds
+Output:
 ifeq ($(OS),Windows_NT)
 SHELL := C:/Progra~1/Git/usr/bin/bash.exe
 .SHELLFLAGS := -lc
@@ -5,55 +8,88 @@ export SHELL
 export LIBFT_POSIX_SHELL := 1
 endif
 
+MAKEFLAGS += -r
+# BUILD_PLAN_MODE=1 is used by the stale-work planning wrapper.  Recipes emit
+# machine-readable markers in that mode and concise status lines otherwise.
+BUILD_PLAN_MODE ?= 0
+BUILD_PROGRESS_ACTIVE ?= 0
+BUILD_PROGRESS_SESSION_DIR ?=
+# The graph uses GNU Make features available in 3.81. Output synchronization
+# remains an optional command-line feature for newer Make installations.
+LIBFT_SUPPORTED_MAKE_VERSION := $(filter 3.81 3.82 4.% 5.% 6.% 7.% 8.% 9.%,$(MAKE_VERSION))
+ifeq ($(LIBFT_SUPPORTED_MAKE_VERSION),)
+$(error GNU Make 3.81 or newer is required; found $(MAKE_VERSION))
+endif
+LIBFT_GLOBAL_GRAPH := 1
 include mk/compiler_flags.mk
 include mk/build_config.mk
+LIBFT_ROOT_TARGET := $(TARGET)
+LIBFT_ROOT_DEBUG_TARGET := $(DEBUG_TARGET)
+LIBFT_ROOT_TEST_TARGET := $(TEST_TARGET)
+LIBFT_ROOT_TEST_DEBUG_TARGET := $(TEST_DEBUG_TARGET)
+include mk/global_graph.mk
 
-# Compiler-generated .d files cover source and header changes. Include a stable
-# configuration fingerprint in child object paths so compiler/flag changes can
-# never reuse incompatible objects.
-MODULE_CONFIG_FINGERPRINT := $(shell printf '%s\n' '$(CXX)|$(COMPILE_FLAGS)|$(BUILD_OUTPUT_SUFFIX)' | cksum | awk '{print $$1}')
-MODULE_BUILD_OUTPUT_SUFFIX := $(BUILD_OUTPUT_SUFFIX)_cfg$(MODULE_CONFIG_FINGERPRINT)
+TARGET := $(LIBFT_ROOT_TARGET)
+DEBUG_TARGET := $(LIBFT_ROOT_DEBUG_TARGET)
+TEST_TARGET := $(LIBFT_ROOT_TEST_TARGET)
+TEST_DEBUG_TARGET := $(LIBFT_ROOT_TEST_DEBUG_TARGET)
 
-define PRINT_ORDERED_LOGS
-	if [ "$(LIBFT_BATCH_OUTPUT)" = "1" ]; then \
-		for lib in $(1); do \
-			log_file="Test/.libft_build_$$(printf '%s' "$$lib" | tr '/.' '__').log"; \
-			if [ -f "$$log_file" ]; then \
-				cat "$$log_file"; \
-				$(RM) "$$log_file"; \
-			fi; \
-		done; \
+LIBFT_GLOBAL_TARGET := $(TARGET)
+LIBFT_GLOBAL_DEBUG_TARGET := $(DEBUG_TARGET)
+LIBFT_GLOBAL_TEST_TARGET := $(TEST_TARGET)
+LIBFT_GLOBAL_TEST_DEBUG_TARGET := $(TEST_DEBUG_TARGET)
+LIBFT_LEGACY_OBJECT_ROOTS := $(wildcard Modules/*/objs_* Test/objs_*)
+
+define LIBFT_GLOBAL_ARCHIVE_RULE
+$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
+	@$(MKDIR) $(dir $$@)
+	@$(RM) $$@.tmp
+	@if [ "$(UNAME_S)" = "Darwin" ]; then \
+		libtool -static -o "$$@.tmp" $(2); \
+	else \
+		{ printf 'CREATE %s\n' "$$@.tmp"; \
+		  for lib in $(2); do printf 'ADDLIB %s\n' "$$$$lib"; done; \
+		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
+	fi
+	@mv $$@.tmp $$@
+	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
+		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft "$(1)" || true; \
+	else \
+		printf '\033[1;35m[LIBFT] Archive ready: %s\033[0m\n' "$(1)"; \
 	fi
 endef
 
-TEST_PROGRESS_SESSION := $(shell date +%s%N)
-TEST_PROGRESS_INIT := Test/.libft_progress/initialized.$(TEST_PROGRESS_SESSION)
-BUILD_PROGRESS_INIT := Test/.libft_progress/build/initialized.$(TEST_PROGRESS_SESSION)
-DEBUG_PROGRESS_INIT := Test/.libft_progress/debug/initialized.$(TEST_PROGRESS_SESSION)
-BUILD_SCAN_INIT := Test/.libft_progress/build/scanning.$(TEST_PROGRESS_SESSION)
-DEBUG_SCAN_INIT := Test/.libft_progress/debug/scanning.$(TEST_PROGRESS_SESSION)
-BUILD_STALE_FILE := Test/.libft_progress/build/stale_modules
-DEBUG_STALE_FILE := Test/.libft_progress/debug/stale_modules
-sanitize_path = $(subst .,_,$(subst /,_,$(1)))
-REQUESTED_BUILD_LIBS := $(filter $(LIBS),$(MAKECMDGOALS))
-REQUESTED_DEBUG_LIBS := $(filter $(DEBUG_LIBS),$(MAKECMDGOALS))
-REQUESTED_TEST_LIBS := $(filter $(TEST_LIBS),$(MAKECMDGOALS))
-ACTIVE_BUILD_LIBS := $(if $(REQUESTED_BUILD_LIBS),$(REQUESTED_BUILD_LIBS),$(LIBS))
-ACTIVE_DEBUG_LIBS := $(if $(REQUESTED_DEBUG_LIBS),$(REQUESTED_DEBUG_LIBS),$(DEBUG_LIBS))
-ACTIVE_TEST_LIBS := $(if $(REQUESTED_TEST_LIBS),$(REQUESTED_TEST_LIBS),$(TEST_LIBS))
-BUILD_CHECK_STAMPS := $(foreach lib,$(ACTIVE_BUILD_LIBS),Test/.libft_progress/build/checks/$(call sanitize_path,$(lib)).check)
-DEBUG_CHECK_STAMPS := $(foreach lib,$(ACTIVE_DEBUG_LIBS),Test/.libft_progress/debug/checks/$(call sanitize_path,$(lib)).check)
-
-TEST_EXECUTABLE_MAKE_FLAGS :=
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_DEBUG_TARGET),$(LIBFT_GLOBAL_DEBUG_ARCHIVES)))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_TARGET),$(LIBFT_GLOBAL_TEST_ARCHIVES)))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_DEBUG_TARGET),$(LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES)))
+include mk/global_test_graph.mk
+include mk/global_efficiency_graph.mk
 
 ssh:
 	printf '\033[1;35m[LIBFT GIT] Switching GitHub remote to SSH\033[0m\n'
 	git remote set-url origin git@github.com:Adyem/Libft.git
 	git remote -v
 
-all: $(TARGET) template
+all:
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
 
-debug: $(DEBUG_TARGET)
+plan:
+	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
+
+internal-all: $(LIBFT_GLOBAL_TARGET) $(LIBFT_GLOBAL_Template_TARGET)
+
+global-all: $(LIBFT_GLOBAL_TARGET)
+
+global-debug: $(LIBFT_GLOBAL_DEBUG_TARGET)
+
+global-tests: $(LIBFT_GLOBAL_TEST_TARGET)
+
+debug:
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-debug
+
+internal-debug: $(LIBFT_GLOBAL_DEBUG_TARGET)
 
 both: all debug
 
@@ -61,31 +97,54 @@ demo:
 	printf '\033[1;35m[LIBFT BUILD] Building Demo module\033[0m\n'
 	$(MAKE) -C Demo all -B $(SUBMAKE_OVERRIDES) OPT_LEVEL=$(DEMO_OPT_LEVEL)
 
-template: $(CPP_CLASS_LIB)
-	printf '\033[1;35m[LIBFT BUILD] Running Template verification\033[0m\n'
-	$(MAKE) -C Modules/Template all $(SUBMAKE_OVERRIDES)
+template: $(LIBFT_GLOBAL_Template_TARGET)
+	@printf '\033[1;35m[LIBFT BUILD] Template archive ready\033[0m\n'
 
-tests: $(TEST_TARGET)
-	@need_build=0; \
-	if $(MAKE) -C Test -q all $(SUBMAKE_OVERRIDES); then \
-		printf '\033[1;35m[LIBFT CHECK] Test suite is up to date\033[0m\n'; \
-	else \
-		status=$$?; \
-		if [ $$status -eq 1 ]; then \
-			need_build=1; \
-		else \
-			exit $$status; \
-		fi; \
-	fi; \
-	if [ $$need_build -eq 1 ]; then \
-		printf '\033[1;35m[LIBFT BUILD] Updating test suite\033[0m\n'; \
-		batch_output=0; \
-		case "$$MAKEFLAGS" in \
-			*"-j1"*) batch_output=0 ;; \
-			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
-		esac; \
-		$(MAKE) -C Test $(TEST_EXECUTABLE_MAKE_FLAGS) all $(SUBMAKE_OVERRIDES) LIBFT_TEST_BATCH_OUTPUT="$$batch_output"; \
-	fi
+tests:
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-tests
+	@printf '\033[1;35m[LIBFT BUILD] Test executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_TEST_EXECUTABLE)"
+
+internal-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+
+test-executable: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+
+run-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+
+debug-tests: $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE)
+
+run-debug-tests: $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE)
+	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE))
+
+performance_benchmarks Efficiency:
+	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-performance
+	@printf '\033[1;35m[LIBFT BUILD] Efficiency executable ready (%s)\033[0m\n' "$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)"
+
+internal-performance: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
+
+LIBFT_GLOBAL_AGGREGATE_RELEASE_OBJECTS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))
+LIBFT_ARCHIVE_INTEGRITY_TARGETS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),archive-integrity-$(module_name)) archive-integrity-Full_Libft
+LIBFT_ARCHIVE_NOOP_STATE := $(LIBFT_GLOBAL_ROOT)/archive-noop-timestamps
+
+define LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE
+archive-integrity-$(1): $(2)
+	@bash mk/check_archive_integrity.sh "$(2)" $(3)
+endef
+
+$(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,$(module_name),$(LIBFT_GLOBAL_$(module_name)_TARGET),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))))
+$(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,Full_Libft,$(LIBFT_GLOBAL_TARGET),--from-archives $(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
+
+archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS)
+	@sh mk/check_archive_rebuild.sh "$(LIBFT_GLOBAL_Basic_TARGET)" "$(LIBFT_GLOBAL_Basic_MANIFEST)" $(LIBFT_GLOBAL_Basic_RELEASE_OBJECTS)
+	+$(MAKE) --no-print-directory global-all
+	@sh mk/check_archive_noop.sh capture "$(LIBFT_ARCHIVE_NOOP_STATE)" $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
+	+$(MAKE) --no-print-directory global-all
+	@sh mk/check_archive_noop.sh verify "$(LIBFT_ARCHIVE_NOOP_STATE)"
+	@$(RM) "$(LIBFT_ARCHIVE_NOOP_STATE)"
+	@printf '\033[1;35m[LIBFT BUILD] Archive integrity checks passed\033[0m\n'
+
+run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
+	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 
 print-build-mode:
 	printf "MAKEFLAGS=%s\n" "$(MAKEFLAGS)"
@@ -114,17 +173,26 @@ asan: sanitize-clean
 asan-tests: sanitize-clean
 	$(MAKE) SANITIZERS=address tests
 
+run-asan-tests: asan-tests
+	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+
 ubsan: sanitize-clean
 	$(MAKE) SANITIZERS=undefined all
 
 ubsan-tests: sanitize-clean
 	$(MAKE) SANITIZERS=undefined tests
 
+run-ubsan-tests: ubsan-tests
+	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+
 asan-ubsan: sanitize-clean
 	$(MAKE) SANITIZERS="address undefined" all
 
 asan-ubsan-tests: sanitize-clean
 	$(MAKE) SANITIZERS="address undefined" tests
+
+run-asan-ubsan-tests: asan-ubsan-tests
+	@cd Test && ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 re:
 	$(MAKE) fclean
@@ -135,223 +203,26 @@ re-tests:
 	$(MAKE) all
 	$(MAKE) tests
 
-$(TARGET): FORCE $(LIBS)
-	@mk/progress.sh finish build
-	@$(RM) $@
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		libtool -static -o "$@" $(LIBS); \
-	else \
-		{ printf 'CREATE %s\n' "$@"; \
-		  for lib in $(LIBS); do printf 'ADDLIB %s\n' "$$lib"; done; \
-		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
-	fi
-
-$(DEBUG_TARGET): FORCE $(DEBUG_LIBS)
-	@mk/progress.sh finish debug
-	@$(RM) $@
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		libtool -static -o "$@" $(DEBUG_LIBS); \
-	else \
-		{ printf 'CREATE %s\n' "$@"; \
-		  for lib in $(DEBUG_LIBS); do printf 'ADDLIB %s\n' "$$lib"; done; \
-		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
-	fi
-
-$(TEST_TARGET): FORCE $(TEST_LIBS)
-	@mk/progress.sh finish test
-	@$(RM) $@
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		libtool -static -o "$@" $(TEST_LIBS); \
-	else \
-		{ printf 'CREATE %s\n' "$@"; \
-		  for lib in $(TEST_LIBS); do printf 'ADDLIB %s\n' "$$lib"; done; \
-		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
-	fi
-
-$(LIBFT_ROOT_DIR)/Test/Full_Libft_test.a: $(TEST_TARGET)
-
-$(TEST_DEBUG_TARGET): FORCE $(DEBUG_LIBS)
-	@mk/progress.sh finish debug
-	@$(RM) $@
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		libtool -static -o "$@" $(DEBUG_LIBS); \
-	else \
-		{ printf 'CREATE %s\n' "$@"; \
-		  for lib in $(DEBUG_LIBS); do printf 'ADDLIB %s\n' "$$lib"; done; \
-		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
-	fi
-
-$(LIBFT_ROOT_DIR)/Test/Full_Libft_test_debug.a: $(TEST_DEBUG_TARGET)
-
-Modules/%_test.a: FORCE
-Modules/%_test.a: | $(TEST_PROGRESS_INIT)
-	@module_dir="$(patsubst %/,%,$(dir $@))"; \
-	module_target="$(notdir $@)"; \
-	module_path="$$module_dir/$$module_target"; \
-	progress_index=$$(printf '%s\n' "$(ACTIVE_TEST_LIBS)" | tr ' ' '\n' | nl -ba | awk -v target="$$module_path" '$$2==target {print $$1}'); \
-	log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
-	batch_output=0; \
-	case "$$MAKEFLAGS" in \
-		*"-j1"*) batch_output=0 ;; \
-		*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
-	esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$(words $(ACTIVE_TEST_LIBS))" "$$progress_index" "$$module_path" "$$log_file" test -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD"; \
-		status=$$?; \
-		if [ $$status -ne 0 ]; then exit $$status; fi
-
-$(TEST_PROGRESS_INIT):
-	@mk/progress.sh init "$(words $(ACTIVE_TEST_LIBS))" test; \
-	$(MKDIR) $(dir $@); \
-	: > "$@"
-
-define BUILD_CHECK_RULE
-Test/.libft_progress/build/checks/$(call sanitize_path,$(1)).check: FORCE | $(BUILD_SCAN_INIT)
-	+@$(MKDIR) $$(dir $$@); \
-	module_path="$(1)"; module_dir="$$$${module_path%/*}"; module_target="$$$${module_path##*/}"; \
-	if $$(MAKE) -C "$$$$module_dir" -q "$$$$module_target" $$(SUBMAKE_OVERRIDES) TARGET="$$$$module_target" BUILD_OUTPUT_SUFFIX="$$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$$(COMPILE_FLAGS)"; then \
-		: > "$$@"; \
-	else \
-		status=$$$$?; \
-		if [ $$$$status -eq 1 ]; then printf '%s\n' "$$$$module_path" > "$$@"; else exit $$$$status; fi; \
-	fi
-endef
-
-define DEBUG_CHECK_RULE
-Test/.libft_progress/debug/checks/$(call sanitize_path,$(1)).check: FORCE | $(DEBUG_SCAN_INIT)
-	+@$(MKDIR) $$(dir $$@); \
-	module_path="$(1)"; module_dir="$$$${module_path%/*}"; module_target="$$$${module_path##*/}"; \
-	if $$(MAKE) -C "$$$$module_dir" -q "$$$$module_target" $$(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$$$module_target" BUILD_OUTPUT_SUFFIX="$$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$$(COMPILE_FLAGS)"; then \
-		: > "$$@"; \
-	else \
-		status=$$$$?; \
-		if [ $$$$status -eq 1 ]; then printf '%s\n' "$$$$module_path" > "$$@"; else exit $$$$status; fi; \
-	fi
-endef
-
-$(foreach lib,$(LIBS),$(eval $(call BUILD_CHECK_RULE,$(lib))))
-$(foreach lib,$(DEBUG_LIBS),$(eval $(call DEBUG_CHECK_RULE,$(lib))))
-
-$(BUILD_SCAN_INIT):
-	@$(MKDIR) $(dir $@)
-	@printf '\033[1;35m[LIBFT CHECK]\033[0m Scanning %d modules for stale work...\n' "$(words $(ACTIVE_BUILD_LIBS))"
-	@: > "$@"
-
-$(DEBUG_SCAN_INIT):
-	@$(MKDIR) $(dir $@)
-	@printf '\033[1;35m[LIBFT CHECK]\033[0m Scanning %d debug modules for stale work...\n' "$(words $(ACTIVE_DEBUG_LIBS))"
-	@: > "$@"
-
-$(BUILD_PROGRESS_INIT): $(BUILD_CHECK_STAMPS)
-	@$(MKDIR) $(dir $@); \
-	: > "$(BUILD_STALE_FILE)"; \
-	for check_file in $(BUILD_CHECK_STAMPS); do \
-		if [ -s "$$check_file" ]; then cat "$$check_file" >> "$(BUILD_STALE_FILE)"; fi; \
-	done; \
-	total=$$(wc -l < "$(BUILD_STALE_FILE)" | tr -d ' '); \
-	mk/progress.sh init "$$total" build; \
-	printf '%s\n' "$$total" > "$(dir $(BUILD_STALE_FILE))total"; \
-	: > "$@"
-
-$(DEBUG_PROGRESS_INIT): $(DEBUG_CHECK_STAMPS)
-	@$(MKDIR) $(dir $@); \
-	: > "$(DEBUG_STALE_FILE)"; \
-	for check_file in $(DEBUG_CHECK_STAMPS); do \
-		if [ -s "$$check_file" ]; then cat "$$check_file" >> "$(DEBUG_STALE_FILE)"; fi; \
-	done; \
-	total=$$(wc -l < "$(DEBUG_STALE_FILE)" | tr -d ' '); \
-	mk/progress.sh init "$$total" debug; \
-	printf '%s\n' "$$total" > "$(dir $(DEBUG_STALE_FILE))total"; \
-	: > "$@"
-
-Modules/%.a: FORCE | $(BUILD_PROGRESS_INIT)
-	@module_dir="$(patsubst %/,%,$(dir $@))"; \
-	module_target="$(notdir $@)"; \
-	if grep -Fqx "$@" "$(BUILD_STALE_FILE)"; then \
-		module_path="$$module_dir/$$module_target"; \
-		progress_index=$$(nl -ba "$(BUILD_STALE_FILE)" | awk -v target="$$module_path" '$$2==target {print $$1}'); \
-		progress_total=$$(cat "$(dir $(BUILD_STALE_FILE))total"); \
-		log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
-		batch_output=0; \
-		case "$$MAKEFLAGS" in \
-			*"-j1"*) batch_output=0 ;; \
-			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
-		esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$$progress_total" "$$progress_index" "$$module_path" "$$log_file" build -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
-		status=$$?; \
-		if [ $$status -ne 0 ]; then exit $$status; fi; \
-	fi
-
-Modules/%_debug.a: FORCE | $(DEBUG_PROGRESS_INIT)
-	@module_dir="$(patsubst %/,%,$(dir $@))"; \
-	module_target="$(notdir $@)"; \
-	if grep -Fqx "$@" "$(DEBUG_STALE_FILE)"; then \
-		module_path="$$module_dir/$$module_target"; \
-		progress_index=$$(nl -ba "$(DEBUG_STALE_FILE)" | awk -v target="$$module_path" '$$2==target {print $$1}'); \
-		progress_total=$$(cat "$(dir $(DEBUG_STALE_FILE))total"); \
-		log_file="Test/.libft_build_$$(printf '%s' "$$module_path" | tr '/.' '__').log"; \
-		batch_output=0; \
-		case "$$MAKEFLAGS" in \
-			*"-j1"*) batch_output=0 ;; \
-			*"-j"*|*"--jobserver-auth="*) batch_output=1 ;; \
-		esac; \
-		LIBFT_BATCH_OUTPUT="$$batch_output" mk/run_module_build.sh "$$progress_total" "$$progress_index" "$$module_path" "$$log_file" debug -- env LIBFT_POSIX_SHELL=1 LIBFT_BATCH_OUTPUT="$$batch_output" $(MAKE) -C $$module_dir $$module_target $(SUBMAKE_OVERRIDES) DEBUG_TARGET="$$module_target" BUILD_OUTPUT_SUFFIX="$(MODULE_BUILD_OUTPUT_SUFFIX)" COMPILE_FLAGS="$(COMPILE_FLAGS)"; \
-		status=$$?; \
-		if [ $$status -ne 0 ]; then exit $$status; fi; \
-	fi
 
 clean:
-	@status=0; \
-	for dir in $(SUBDIRS); do \
-		if ! $(MAKE) -C $$dir clean $(SUBMAKE_OVERRIDES); then \
-			status=1; \
-		fi; \
-	done; \
-	if ! $(MAKE) -C Demo clean $(SUBMAKE_OVERRIDES) LIBFT_PARENT_CLEAN=1; then \
-		status=1; \
-	fi; \
-	if ! $(MAKE) -C Test clean $(SUBMAKE_OVERRIDES) LIBFT_PARENT_CLEAN=1; then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(TEMP_DIRS); then \
-		status=1; \
-	fi; \
-		if ! $(RM) $(TARGET) $(DEBUG_TARGET) $(TEST_TARGET) $(TEST_DEBUG_TARGET) $(OUTPUT_LOGS); then \
-			status=1; \
-		fi; \
-		if [ $$status -eq 0 ]; then \
-			printf '\033[1;35m[LIBFT CLEAN] Success\033[0m\n'; \
-		else \
-			printf '\033[1;35m[LIBFT CLEAN] Failed\033[0m\n'; \
-			exit 1; \
-		fi
+	@$(RMDIR) "$(LIBFT_GLOBAL_ROOT)"
+	@for legacy_object_root in $(LIBFT_LEGACY_OBJECT_ROOTS); do $(RMDIR) "$$legacy_object_root"; done
+	@$(RM) $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_DEBUG_ARCHIVES) \
+		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
+		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
+		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
+		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
+		$(LIBFT_GLOBAL_Template_TARGET)
 
 fclean:
-	@status=0; \
-	for dir in $(SUBDIRS); do \
-		if ! $(MAKE) -C $$dir fclean $(SUBMAKE_OVERRIDES); then \
-			status=1; \
-		fi; \
-	done; \
-	if ! $(MAKE) -C Demo fclean $(SUBMAKE_OVERRIDES) LIBFT_PARENT_CLEAN=1; then \
-		status=1; \
-	fi; \
-	if ! $(MAKE) -C Test fclean $(SUBMAKE_OVERRIDES) LIBFT_PARENT_CLEAN=1; then \
-		status=1; \
-	fi; \
-	if ! $(RMDIR) $(TEMP_DIRS); then \
-		status=1; \
-	fi; \
-		if ! $(RM) $(TARGET) $(DEBUG_TARGET) $(TEST_TARGET) $(TEST_DEBUG_TARGET) $(OUTPUT_LOGS); then \
-			status=1; \
-		fi; \
-		if [ $$status -eq 0 ]; then \
-			printf '\033[1;35m[LIBFT FCLEAN] Success\033[0m\n'; \
-		else \
-			printf '\033[1;35m[LIBFT FCLEAN] Failed\033[0m\n'; \
-			exit 1; \
-		fi
+	@$(RMDIR) build/libft
+	@for legacy_object_root in $(LIBFT_LEGACY_OBJECT_ROOTS); do $(RMDIR) "$$legacy_object_root"; done
+	@$(RM) $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_DEBUG_ARCHIVES) \
+		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
+		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
+		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
+		$(LIBFT_GLOBAL_Template_TARGET)
 
-.PHONY: all debug both template demo re re-tests clean fclean tests print-build-mode format sanitize-clean \
-        asan asan-tests ubsan ubsan-tests asan-ubsan asan-ubsan-tests FORCE
-
-FORCE:
+.PHONY: all plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity print-build-mode format sanitize-clean \
+        run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
+        asan asan-tests ubsan ubsan-tests asan-ubsan asan-ubsan-tests
