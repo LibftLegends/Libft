@@ -1337,6 +1337,49 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
     return (1);
 }
 
+FT_TEST(test_terrain_config_json_serialization_and_file_modes)
+{
+    const char *file_path = "terrain_config_test.jsonl";
+    terrain_generation_config generation;
+    ft_string output;
+    ft_string file_contents;
+
+    terrain_default_generation_config(generation);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.biomes[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_biome_definition"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.features[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_feature_rule"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.ores[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_ore_rule"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        generation.underground_structures.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_underground_structures"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.fluids.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_fluids"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.layers.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "terrain_layers"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "biome_size_min"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
+    (void)file_delete(file_path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_APPEND));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(file_contents.size() > output.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(output.size(), file_contents.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    return (1);
+}
+
 FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
 {
     game_voxel_chunk disabled_chunk;

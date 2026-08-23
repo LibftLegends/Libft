@@ -6,6 +6,7 @@
 # include "../Game/game_voxel_chunk.hpp"
 # include "../Basic/class_nullptr.hpp"
 # include "../CPP_class/class_big_number.hpp"
+# include "../CPP_class/class_string.hpp"
 # include "../Buffer/byte_buffer.hpp"
 # include <stdint.h>
 
@@ -177,6 +178,13 @@ enum terrain_biome
     TERRAIN_BIOME_MOUNTAINS = 4
 };
 
+enum terrain_json_file_mode
+{
+    TERRAIN_JSON_FILE_CREATE_ONLY = 0,
+    TERRAIN_JSON_FILE_REPLACE = 1,
+    TERRAIN_JSON_FILE_APPEND = 2
+};
+
 struct terrain_biome_profile
 {
     int32_t surface_height;
@@ -260,6 +268,9 @@ class terrain_biome_definition
         int32_t set_mountain_ridge_policy(ft_bool enabled) noexcept;
         int32_t set_tree_template_override(
             const terrain_tree_template *value) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         terrain_biome_profile profile;
         uint32_t surface_block_id;
@@ -301,6 +312,9 @@ class terrain_feature_rule
             int32_t maximum) noexcept;
         int32_t set_chance(uint32_t value) noexcept;
         int32_t set_requires_dry_land(ft_bool value) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         const terrain_tree_template *template_data;
         int32_t biome_index;
@@ -333,6 +347,9 @@ class terrain_ore_rule
         int32_t set_vein(uint32_t size, uint32_t chance) noexcept;
         int32_t set_ore_replacement(ft_bool value) noexcept;
         int32_t set_enabled(ft_bool value) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         uint32_t block_id;
         int32_t minimum_height;
@@ -376,6 +393,9 @@ class terrain_underground_structure_config
             uint32_t radius) noexcept;
         int32_t set_cavern_rooms(ft_bool enabled, uint32_t chance,
             uint32_t radius) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         ft_bool enable_ravines;
         ft_bool enable_cave_rooms;
@@ -417,6 +437,9 @@ class terrain_fluid_config
         int32_t set_enabled(ft_bool rivers, ft_bool lakes) noexcept;
         int32_t set_river_settings(int32_t scale, int32_t width) noexcept;
         int32_t set_lake_settings(int32_t scale, uint32_t chance) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         ft_bool enable_rivers;
         ft_bool enable_lakes;
@@ -451,6 +474,9 @@ class terrain_layer_config
         int32_t set_snowline(int32_t minimum_height) noexcept;
         int32_t set_block_palette(uint32_t beach, uint32_t underwater,
             uint32_t snow) noexcept;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 
         ft_bool enable_beaches;
         ft_bool enable_snow_caps;
@@ -588,6 +614,9 @@ class terrain_generation_config
         ft_bool allow_cross_chunk_features;
         terrain_cross_chunk_block_writer cross_chunk_block_writer;
         void *cross_chunk_block_writer_user_data;
+        int32_t serialize_json(ft_string &output) const noexcept;
+        int32_t save_json_file(const char *file_path,
+            terrain_json_file_mode mode) const noexcept;
 };
 
 class terrain_generation_context
