@@ -337,7 +337,9 @@ int32_t terrain_feature_rule::set_requires_dry_land(ft_bool value) noexcept
 
 terrain_ore_rule::terrain_ore_rule() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), block_id(0U),
-      minimum_height(0), maximum_height(0), vein_size(0U),
+      minimum_height(0), maximum_height(0), minimum_depth(0),
+      maximum_depth(0), vein_size(0U), vein_size_min(0U), vein_size_max(0U),
+      veins_per_chunk_min(0U), veins_per_chunk_max(0U),
       chance_percent(0U), allow_ore_replacement(FT_FALSE), enabled(FT_FALSE)
 {
     return ;
@@ -356,7 +358,13 @@ int32_t terrain_ore_rule::initialize() noexcept
     this->block_id = 0U;
     this->minimum_height = 0;
     this->maximum_height = 0;
+    this->minimum_depth = 0;
+    this->maximum_depth = 0;
     this->vein_size = 0U;
+    this->vein_size_min = 0U;
+    this->vein_size_max = 0U;
+    this->veins_per_chunk_min = 0U;
+    this->veins_per_chunk_max = 0U;
     this->chance_percent = 0U;
     this->allow_ore_replacement = FT_FALSE;
     this->enabled = FT_FALSE;
@@ -375,7 +383,13 @@ int32_t terrain_ore_rule::initialize(const terrain_ore_rule &other) noexcept
     this->block_id = other.block_id;
     this->minimum_height = other.minimum_height;
     this->maximum_height = other.maximum_height;
+    this->minimum_depth = other.minimum_depth;
+    this->maximum_depth = other.maximum_depth;
     this->vein_size = other.vein_size;
+    this->vein_size_min = other.vein_size_min;
+    this->vein_size_max = other.vein_size_max;
+    this->veins_per_chunk_min = other.veins_per_chunk_min;
+    this->veins_per_chunk_max = other.veins_per_chunk_max;
     this->chance_percent = other.chance_percent;
     this->allow_ore_replacement = other.allow_ore_replacement;
     this->enabled = other.enabled;
@@ -391,7 +405,13 @@ uint32_t terrain_ore_rule::destroy() noexcept
     this->block_id = 0U;
     this->minimum_height = 0;
     this->maximum_height = 0;
+    this->minimum_depth = 0;
+    this->maximum_depth = 0;
     this->vein_size = 0U;
+    this->vein_size_min = 0U;
+    this->vein_size_max = 0U;
+    this->veins_per_chunk_min = 0U;
+    this->veins_per_chunk_max = 0U;
     this->chance_percent = 0U;
     this->allow_ore_replacement = FT_FALSE;
     this->enabled = FT_FALSE;
@@ -426,6 +446,21 @@ int32_t terrain_ore_rule::set_range(int32_t minimum,
         return (FT_ERR_INVALID_ARGUMENT);
     this->minimum_height = minimum;
     this->maximum_height = maximum;
+    this->minimum_depth = minimum;
+    this->maximum_depth = maximum;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_ore_rule::set_depth_range(int32_t minimum_depth_value,
+    int32_t maximum_depth_value) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (minimum_depth_value < 1
+        || minimum_depth_value > maximum_depth_value)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->minimum_depth = minimum_depth_value;
+    this->maximum_depth = maximum_depth_value;
     return (FT_ERR_SUCCESS);
 }
 
@@ -437,7 +472,40 @@ int32_t terrain_ore_rule::set_vein(uint32_t size,
     if (chance > 100U || (size == 0U && chance != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
     this->vein_size = size;
+    this->vein_size_min = size;
+    this->vein_size_max = size;
     this->chance_percent = chance;
+    if (this->veins_per_chunk_min == 0U
+        && this->veins_per_chunk_max == 0U)
+    {
+        this->veins_per_chunk_min = 1U;
+        this->veins_per_chunk_max = 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_ore_rule::set_vein_size_range(uint32_t minimum_size,
+    uint32_t maximum_size) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (minimum_size == 0U || minimum_size > maximum_size)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->vein_size_min = minimum_size;
+    this->vein_size_max = maximum_size;
+    this->vein_size = minimum_size;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_ore_rule::set_frequency_range(uint32_t minimum_veins,
+    uint32_t maximum_veins) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (minimum_veins > maximum_veins)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->veins_per_chunk_min = minimum_veins;
+    this->veins_per_chunk_max = maximum_veins;
     return (FT_ERR_SUCCESS);
 }
 

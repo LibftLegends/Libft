@@ -9,7 +9,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t TERRAIN_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t TERRAIN_SAVE_VERSION = 9U;
+static const uint32_t TERRAIN_SAVE_VERSION = 10U;
 
 static int32_t terrain_save_append_block_reference(ft_byte_buffer &buffer,
     uint32_t block_id) noexcept
@@ -291,11 +291,29 @@ static int32_t terrain_save_append_ore(ft_byte_buffer &buffer,
     error_code = buffer.append_u8(ore.allow_ore_replacement);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (buffer.append_u8(ore.enabled));
+    error_code = buffer.append_u8(ore.enabled);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = terrain_save_append_i32(buffer, ore.minimum_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = terrain_save_append_i32(buffer, ore.maximum_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(ore.vein_size_min);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(ore.vein_size_max);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(ore.veins_per_chunk_min);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (buffer.append_u32_le(ore.veins_per_chunk_max));
 }
 
 static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
-    terrain_ore_rule &ore) noexcept
+    terrain_ore_rule &ore, uint32_t version) noexcept
 {
     uint32_t block_id;
     int32_t minimum_height;
@@ -304,6 +322,12 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
     uint32_t chance_percent;
     uint8_t allow_ore_replacement;
     uint8_t enabled;
+    int32_t minimum_depth;
+    int32_t maximum_depth;
+    uint32_t vein_size_min;
+    uint32_t vein_size_max;
+    uint32_t veins_per_chunk_min;
+    uint32_t veins_per_chunk_max;
     int32_t error_code;
 
     error_code = terrain_save_read_block_reference(buffer, &block_id);
@@ -338,7 +362,41 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
         static_cast<ft_bool>(allow_ore_replacement));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (ore.set_enabled(ft_platform_cast<ft_bool>(enabled)));
+    error_code = ore.set_enabled(ft_platform_cast<ft_bool>(enabled));
+    if (error_code != FT_ERR_SUCCESS || version < 10U)
+        return (error_code);
+    error_code = terrain_save_read_i32(buffer, &minimum_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = terrain_save_read_i32(buffer, &maximum_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&vein_size_min);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&vein_size_max);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&veins_per_chunk_min);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.read_u32_le(&veins_per_chunk_max);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (minimum_depth != 0 || maximum_depth != 0)
+    {
+        error_code = ore.set_depth_range(minimum_depth, maximum_depth);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    if (vein_size_min != 0U || vein_size_max != 0U)
+    {
+        error_code = ore.set_vein_size_range(vein_size_min, vein_size_max);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    return (ore.set_frequency_range(veins_per_chunk_min,
+        veins_per_chunk_max));
 }
 
 int32_t terrain_generation_config_serialize(
@@ -706,7 +764,7 @@ int32_t terrain_generation_config_deserialize(
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = buffer.read_u32_le(&version);
     if (error_code != FT_ERR_SUCCESS
-        || (version != TERRAIN_SAVE_VERSION && version != 8U
+        || (version != TERRAIN_SAVE_VERSION && version != 9U && version != 8U
             && version != 7U))
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = terrain_save_read_i32(buffer, &loaded_config.sea_level);
@@ -928,7 +986,8 @@ int32_t terrain_generation_config_deserialize(
     index = 0U;
     while (index < TERRAIN_MAX_ORE_RULES)
     {
-        error_code = terrain_save_read_ore(buffer, loaded_config.ores[index]);
+        error_code = terrain_save_read_ore(buffer, loaded_config.ores[index],
+            version);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         index += 1U;

@@ -1351,6 +1351,8 @@ FT_TEST(test_terrain_config_json_serialization_and_file_modes)
     FT_ASSERT(ft_strstr(output.c_str(), "terrain_feature_rule"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.ores[0].serialize_json(output));
     FT_ASSERT(ft_strstr(output.c_str(), "terrain_ore_rule"));
+    FT_ASSERT(ft_strstr(output.c_str(), "veins_per_chunk_min"));
+    FT_ASSERT(ft_strstr(output.c_str(), "minimum_depth"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         generation.underground_structures.serialize_json(output));
     FT_ASSERT(ft_strstr(output.c_str(), "terrain_underground_structures"));
@@ -1388,6 +1390,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     terrain_default_generation_config(config);
     uint32_t block_id;
     int32_t coal_count;
+    int32_t coal_surface_count;
     int32_t x;
     int32_t y;
     int32_t z;
@@ -1401,6 +1404,21 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     config.set_ore_rule_count(1U);
     config.ores[0].set_range(8, 90);
     config.ores[0].set_vein(config.ores[0].vein_size, 100U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_depth_range(0, 10));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_vein_size_range(0U, 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config.ores[0].set_frequency_range(4U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_depth_range(8, 90));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_vein_size_range(3U, 7U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.ores[0].set_frequency_range(2U, 4U));
+    FT_ASSERT_EQ(8, config.ores[0].minimum_depth);
+    FT_ASSERT_EQ(90, config.ores[0].maximum_depth);
+    FT_ASSERT_EQ(3U, config.ores[0].vein_size_min);
+    FT_ASSERT_EQ(7U, config.ores[0].vein_size_max);
+    FT_ASSERT_EQ(2U, config.ores[0].veins_per_chunk_min);
+    FT_ASSERT_EQ(4U, config.ores[0].veins_per_chunk_max);
     config.ores[0].set_enabled(FT_TRUE);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, disabled_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.initialize());
@@ -1411,6 +1429,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(enabled_chunk, 0, 0,
         "ore-config", config));
     coal_count = 0;
+    coal_surface_count = 0;
     z = 0;
     while (z < GAME_VOXEL_CHUNK_DEPTH)
     {
@@ -1423,7 +1442,11 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.read_block(x, y, z,
                     &block_id));
                 if (block_id == TERRAIN_GENERATOR_COAL_ORE_BLOCK)
+                {
                     coal_count += 1;
+                    if (y >= 94)
+                        coal_surface_count += 1;
+                }
                 x += 1;
             }
             y += 1;
@@ -1431,6 +1454,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
         z += 1;
     }
     FT_ASSERT_NEQ(0, coal_count);
+    FT_ASSERT_EQ(0, coal_surface_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, disabled_chunk.destroy());
     return (1);

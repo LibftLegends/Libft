@@ -344,7 +344,13 @@ class terrain_ore_rule
         uint32_t move(terrain_ore_rule &other) noexcept;
         ft_bool is_initialised() const noexcept;
         int32_t set_range(int32_t minimum, int32_t maximum) noexcept;
+        int32_t set_depth_range(int32_t minimum_depth,
+            int32_t maximum_depth) noexcept;
         int32_t set_vein(uint32_t size, uint32_t chance) noexcept;
+        int32_t set_vein_size_range(uint32_t minimum_size,
+            uint32_t maximum_size) noexcept;
+        int32_t set_frequency_range(uint32_t minimum_veins,
+            uint32_t maximum_veins) noexcept;
         int32_t set_ore_replacement(ft_bool value) noexcept;
         int32_t set_enabled(ft_bool value) noexcept;
         int32_t serialize_json(ft_string &output) const noexcept;
@@ -354,7 +360,13 @@ class terrain_ore_rule
         uint32_t block_id;
         int32_t minimum_height;
         int32_t maximum_height;
+        int32_t minimum_depth;
+        int32_t maximum_depth;
         uint32_t vein_size;
+        uint32_t vein_size_min;
+        uint32_t vein_size_max;
+        uint32_t veins_per_chunk_min;
+        uint32_t veins_per_chunk_max;
         uint32_t chance_percent;
         ft_bool allow_ore_replacement;
         ft_bool enabled;

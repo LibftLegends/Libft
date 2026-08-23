@@ -1034,27 +1034,6 @@ static ft_bool terrain_should_fill_water(uint64_t seed_value,
     return (FT_FALSE);
 }
 
-static ft_bool terrain_should_place_ore(uint64_t seed_value,
-    int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
-    const terrain_ore_rule &ore_rule) noexcept
-{
-    uint64_t ore_seed;
-
-    if (ore_rule.enabled == FT_FALSE
-        || world_block_y < ore_rule.minimum_height
-        || world_block_y > ore_rule.maximum_height
-        || ore_rule.chance_percent == 0U)
-        return (FT_FALSE);
-    ore_seed = seed_value ^ static_cast<uint64_t>(world_block_x)
-        * UINT64_C(0x9E3779B97F4A7C15)
-        ^ static_cast<uint64_t>(world_block_y) * UINT64_C(0xC2B2AE3D27D4EB4F)
-        ^ static_cast<uint64_t>(world_block_z) * UINT64_C(0x165667B19E3779F9);
-    ore_seed = terrain_mix_u64(ore_seed);
-    if ((ore_seed % 100U) >= ore_rule.chance_percent)
-        return (FT_FALSE);
-    return (FT_TRUE);
-}
-
 static ft_bool terrain_block_is_ore_host(uint32_t block_id,
     const terrain_generation_config &config) noexcept
 {
@@ -1072,10 +1051,28 @@ static ft_bool terrain_block_is_ore_host(uint32_t block_id,
     return (FT_TRUE);
 }
 
+static int32_t terrain_find_surface_height(const game_voxel_chunk &chunk,
+    int32_t local_x, int32_t local_z) noexcept
+{
+    int32_t local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
+    uint32_t block_id;
+
+    while (local_y >= 0)
+    {
+        if (chunk.read_block(local_x, local_y, local_z, &block_id)
+            != FT_ERR_SUCCESS)
+            return (-1);
+        if (terrain_block_is_solid(block_id) == FT_TRUE)
+            return (local_y);
+        local_y -= 1;
+    }
+    return (-1);
+}
+
 static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_y,
     int32_t world_block_z, int32_t local_x, int32_t local_y, int32_t local_z,
-    const terrain_ore_rule &ore_rule,
+    const terrain_ore_rule &ore_rule, uint32_t vein_size,
     const terrain_generation_config &config) noexcept
 {
     uint32_t vein_index;
@@ -1084,10 +1081,12 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     int32_t target_y;
     int32_t target_z;
     uint32_t block_id;
+    int32_t target_surface;
+    int32_t target_depth;
     int32_t error_code;
 
     vein_index = 0U;
-    while (vein_index < ore_rule.vein_size)
+    while (vein_index < vein_size)
     {
         vein_seed = terrain_mix_u64(seed_value
             ^ static_cast<uint64_t>(world_block_x)
@@ -1105,9 +1104,15 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
                 &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            if (terrain_block_is_ore_host(block_id, config) == FT_TRUE
-                || (ore_rule.allow_ore_replacement == FT_TRUE
-                    && terrain_block_is_ore(block_id) == FT_TRUE))
+            target_surface = terrain_find_surface_height(chunk,
+                target_x, target_z);
+            target_depth = target_surface - target_y;
+            if (target_surface >= 0
+                && target_depth >= ore_rule.minimum_depth
+                && target_depth <= ore_rule.maximum_depth
+                && (terrain_block_is_ore_host(block_id, config) == FT_TRUE
+                    || (ore_rule.allow_ore_replacement == FT_TRUE
+                        && terrain_block_is_ore(block_id) == FT_TRUE)))
             {
                 error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
@@ -1129,7 +1134,12 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
     int32_t local_x;
     int32_t local_y;
     int32_t local_z;
-    uint32_t block_id;
+    int32_t surface_height;
+    uint32_t vein_count;
+    uint32_t vein_size;
+    uint32_t vein_index;
+    uint64_t ore_seed;
+    uint64_t vein_seed;
     int32_t error_code;
 
     ore_index = 0U;
@@ -1138,44 +1148,57 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
     {
         if (config.ores[ore_index].enabled == FT_TRUE)
         {
-            local_z = 0;
-            while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+            if (config.ores[ore_index].vein_size_min == 0U
+                || config.ores[ore_index].vein_size_max == 0U
+                || config.ores[ore_index].veins_per_chunk_max == 0U
+                || config.ores[ore_index].minimum_depth < 1)
             {
-                local_y = config.ores[ore_index].minimum_height;
-                while (local_y <= config.ores[ore_index].maximum_height
-                    && local_y < GAME_VOXEL_CHUNK_HEIGHT)
+                ore_index += 1U;
+                continue ;
+            }
+            ore_seed = terrain_mix_u64(seed_value
+                ^ static_cast<uint64_t>(ore_index)
+                    * UINT64_C(0x9E3779B97F4A7C15));
+            vein_count = config.ores[ore_index].veins_per_chunk_min;
+            if (config.ores[ore_index].veins_per_chunk_max
+                > config.ores[ore_index].veins_per_chunk_min)
+                vein_count += static_cast<uint32_t>(ore_seed
+                    % (config.ores[ore_index].veins_per_chunk_max
+                        - config.ores[ore_index].veins_per_chunk_min + 1U));
+            vein_index = 0U;
+            while (vein_index < vein_count)
+            {
+                vein_seed = terrain_mix_u64(ore_seed
+                    ^ static_cast<uint64_t>(vein_index));
+                local_x = static_cast<int32_t>((vein_seed >> 8)
+                    % GAME_VOXEL_CHUNK_WIDTH);
+                local_z = static_cast<int32_t>((vein_seed >> 24)
+                    % GAME_VOXEL_CHUNK_DEPTH);
+                surface_height = terrain_find_surface_height(chunk,
+                    local_x, local_z);
+                if (surface_height >= 0)
                 {
-                    local_x = 0;
-                    while (local_x < GAME_VOXEL_CHUNK_WIDTH)
-                    {
-                        error_code = chunk.read_block(local_x, local_y,
-                            local_z, &block_id);
-                        if (error_code != FT_ERR_SUCCESS)
-                            return (error_code);
-                        if ((terrain_block_is_ore_host(block_id, config) == FT_TRUE
-                                || (config.ores[ore_index]
-                                    .allow_ore_replacement == FT_TRUE
-                                    && terrain_block_is_ore(block_id)
-                                        == FT_TRUE))
-                            && terrain_should_place_ore(seed_value,
-                                world_block_origin_x + local_x, local_y,
-                                world_block_origin_z + local_z,
-                                config.ores[ore_index])
-                                == FT_TRUE)
-                        {
-                            error_code = terrain_place_ore_vein(chunk,
-                                seed_value, world_block_origin_x + local_x,
-                                local_y, world_block_origin_z + local_z,
-                                local_x, local_y, local_z,
-                                config.ores[ore_index], config);
-                            if (error_code != FT_ERR_SUCCESS)
-                                return (error_code);
-                        }
-                        local_x += 1;
-                    }
-                    local_y += 1;
+                    local_y = surface_height
+                        - config.ores[ore_index].minimum_depth;
+                    if (config.ores[ore_index].maximum_depth
+                        > config.ores[ore_index].minimum_depth)
+                        local_y -= static_cast<int32_t>((vein_seed >> 40)
+                            % (config.ores[ore_index].maximum_depth
+                                - config.ores[ore_index].minimum_depth + 1U));
+                    vein_size = config.ores[ore_index].vein_size_min;
+                    if (config.ores[ore_index].vein_size_max
+                        > config.ores[ore_index].vein_size_min)
+                        vein_size += static_cast<uint32_t>((vein_seed >> 52)
+                            % (config.ores[ore_index].vein_size_max
+                                - config.ores[ore_index].vein_size_min + 1U));
+                    error_code = terrain_place_ore_vein(chunk, seed_value,
+                        world_block_origin_x + local_x, local_y,
+                        world_block_origin_z + local_z, local_x, local_y,
+                        local_z, config.ores[ore_index], vein_size, config);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
                 }
-                local_z += 1;
+                vein_index += 1U;
             }
         }
         ore_index += 1U;

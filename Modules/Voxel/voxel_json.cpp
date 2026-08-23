@@ -261,7 +261,15 @@ int32_t terrain_ore_rule::serialize_json(ft_string &output) const noexcept
     TERRAIN_JSON_U32(output, "block_id", this->block_id);
     TERRAIN_JSON_I32(output, "minimum_height", this->minimum_height);
     TERRAIN_JSON_I32(output, "maximum_height", this->maximum_height);
+    TERRAIN_JSON_I32(output, "minimum_depth", this->minimum_depth);
+    TERRAIN_JSON_I32(output, "maximum_depth", this->maximum_depth);
     TERRAIN_JSON_U32(output, "vein_size", this->vein_size);
+    TERRAIN_JSON_U32(output, "vein_size_min", this->vein_size_min);
+    TERRAIN_JSON_U32(output, "vein_size_max", this->vein_size_max);
+    TERRAIN_JSON_U32(output, "veins_per_chunk_min",
+        this->veins_per_chunk_min);
+    TERRAIN_JSON_U32(output, "veins_per_chunk_max",
+        this->veins_per_chunk_max);
     TERRAIN_JSON_U32(output, "chance_percent", this->chance_percent);
     TERRAIN_JSON_BOOL(output, "allow_ore_replacement", this->allow_ore_replacement);
     TERRAIN_JSON_BOOL(output, "enabled", this->enabled);
