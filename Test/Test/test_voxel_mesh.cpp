@@ -5,7 +5,7 @@
 
 #include "../../Modules/Voxel/voxel_mesh.hpp"
 #include "../../Modules/Geometry/geometry_3d.hpp"
-#include "../../Modules/Voxel/voxel.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 
 static int32_t initialize_unit_cube_frustum_or_fail(geometry_frustum &frustum)
 {

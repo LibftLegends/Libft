@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <cstring>
 #include "../Basic/basic.hpp"
-#include "voxel.hpp"
+#include "terrain_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 

@@ -2,7 +2,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "voxel.hpp"
+#include "terrain_api.hpp"
 #include "../Errno/errno.hpp"
 #include "../Game/game_voxel_chunk.hpp"
 #include "../Template/vector.hpp"

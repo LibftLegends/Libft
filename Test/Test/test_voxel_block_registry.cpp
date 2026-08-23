@@ -3,7 +3,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "../../Modules/Voxel/voxel.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/Voxel/voxel_block_registry.hpp"
 #include "../../Modules/Buffer/byte_buffer.hpp"
 #include <cstdio>

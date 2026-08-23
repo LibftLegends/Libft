@@ -5,4 +5,4 @@ Voxel_SOURCES := voxel_data.cpp voxel_generation.cpp voxel_mesh.cpp voxel_mesh_f
 
 Voxel_CPP_FLAGS := -DGAME_USE_VOXEL_REGION_BACKEND=1
 
-Voxel_HEADERS := voxel.hpp voxel_mesh.hpp voxel_internal.hpp terrain_scripting_bridge.hpp voxel_block_registry.hpp
+Voxel_HEADERS := voxel.hpp terrain_types.hpp terrain_config.hpp terrain_generation.hpp terrain_api.hpp voxel_mesh.hpp voxel_internal.hpp terrain_scripting_bridge.hpp voxel_block_registry.hpp

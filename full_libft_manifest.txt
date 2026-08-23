@@ -230,7 +230,10 @@ Modules/Threading/unique_lock.hpp
 Modules/Time/time.hpp
 Modules/Time/time_fps.hpp
 Modules/Time/time_timer.hpp
-Modules/Voxel/voxel.hpp
+Modules/Voxel/terrain_api.hpp
+Modules/Voxel/terrain_config.hpp
+Modules/Voxel/terrain_generation.hpp
+Modules/Voxel/terrain_types.hpp
 Modules/Voxel/voxel_mesh.hpp
 Modules/XML/xml.hpp
 Modules/XML/xml_document.hpp

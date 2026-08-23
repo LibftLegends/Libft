@@ -3,7 +3,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "voxel.hpp"
+#include "terrain_types.hpp"
 #include <stdint.h>
 
 int32_t terrain_floor_div(int32_t value, int32_t divisor) noexcept;

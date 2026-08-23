@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "voxel.hpp"
+#include "terrain_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 

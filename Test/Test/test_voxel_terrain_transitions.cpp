@@ -1,5 +1,5 @@
 #include "../test_internal.hpp"
-#include "../../Modules/Voxel/voxel.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/Game/game_voxel_chunk.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 

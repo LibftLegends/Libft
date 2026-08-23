@@ -1,4 +1,5 @@
 #include "voxel_block_registry.hpp"
+#include "terrain_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 

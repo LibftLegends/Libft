@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Voxel/terrain_scripting_bridge.hpp"
+#include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/File/file_utils.hpp"

@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "../Basic/class_nullptr.hpp"
-#include "voxel.hpp"
+#include "terrain_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 

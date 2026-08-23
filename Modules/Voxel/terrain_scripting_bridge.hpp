@@ -1,7 +1,9 @@
 #ifndef TERRAIN_SCRIPTING_BRIDGE_HPP
 # define TERRAIN_SCRIPTING_BRIDGE_HPP
 
-#include "voxel.hpp"
+#include "terrain_config.hpp"
+#include "../Game/game_voxel_chunk.hpp"
+#include "../CPP_class/class_string.hpp"
 #include "../Game/game_scripting_bridge.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
