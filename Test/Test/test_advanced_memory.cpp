@@ -3,6 +3,7 @@
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "test_cma_failure_injection.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
 #ifndef LIBFT_TEST_BUILD
@@ -33,11 +34,19 @@ FT_TEST(test_adv_calloc_rejects_invalid_sizes)
 
 FT_TEST(test_adv_calloc_allocation_failure)
 {
+    test_cma_failure_controller controller;
     void *memory_pointer;
 
-    cma_set_alloc_limit(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
     memory_pointer = adv_calloc(8, sizeof(unsigned char));
-    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
     FT_ASSERT_EQ(ft_nullptr, memory_pointer);
     return (1);
 }

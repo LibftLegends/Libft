@@ -59,6 +59,7 @@ TIME_TEST_FILES := \
 	Test/test_time_active_clock.cpp
 
 CMA_TEST_FILES := \
+	Test/test_cma_failure_injection.cpp \
 	Test/test_cma_alloc.cpp \
 	Test/test_cma_arena.cpp \
 	Test/test_cma_backend.cpp \
