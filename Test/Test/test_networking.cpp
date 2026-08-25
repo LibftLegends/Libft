@@ -35,6 +35,34 @@ static int socket_creation_failure_hook(int, int, int)
     return (-1);
 }
 
+static ft_bool networking_local_sockets_available(void)
+{
+    int32_t socket_fd;
+    struct sockaddr_in bind_address;
+    int bind_result;
+
+    errno = 0;
+    socket_fd = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_fd < 0)
+    {
+        if (errno == EPERM || errno == EACCES)
+            return (FT_FALSE);
+        return (FT_TRUE);
+    }
+    ft_bzero(&bind_address, sizeof(bind_address));
+    bind_address.sin_family = AF_INET;
+    bind_address.sin_port = 0;
+    bind_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    errno = 0;
+    bind_result = nw_bind(socket_fd,
+            reinterpret_cast<struct sockaddr *>(&bind_address),
+            sizeof(bind_address));
+    nw_close(socket_fd);
+    if (bind_result < 0 && (errno == EPERM || errno == EACCES))
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 #if NETWORKING_HAS_OPENSSL
 static bool get_socket_port_string(ft_socket &socket, ft_string &port_string)
 {
@@ -306,6 +334,8 @@ FT_TEST(test_udp_send_to_validates_destination_mode_and_length)
     const char *message;
     ssize_t send_result;
 
+    if (networking_local_sockets_available() == FT_FALSE)
+        return (1);
     if (configuration.initialize() != FT_ERR_SUCCESS)
         return (0);
     configuration._type = SocketType::SERVER;
