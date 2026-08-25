@@ -387,7 +387,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang llvm
+          sudo apt-get install --yes build-essential clang llvm libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build networking libFuzzer target
         shell: bash
@@ -475,7 +475,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang llvm
+          sudo apt-get install --yes build-essential clang llvm libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build Crypto libFuzzer target
         shell: bash

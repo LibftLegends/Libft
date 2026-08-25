@@ -109,7 +109,7 @@ assert_plan_matches_dependencies()
     actual_path="$plan_path.actual"
     dependency_path=''
     dependent_sources "$header_name" | sort -u >"$expected_path"
-    grep '__BUILD_PLAN__|compile|libft|' "$plan_path" \
+    grep -F '__BUILD_PLAN__|compile|libft|' "$plan_path" \
         | awk -F'|' '{print $NF}' | sort -u >"$actual_path"
     if ! diff -u "$expected_path" "$actual_path" \
         >"$plan_path.diff" 2>&1; then
