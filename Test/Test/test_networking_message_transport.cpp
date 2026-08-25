@@ -2457,6 +2457,7 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     ft_size_t received_size;
     uint32_t receive_attempts;
     int32_t receive_result;
+    int32_t wait_result;
 
     if (networking_test_local_ipv4_available() == FT_FALSE)
         return (1);
@@ -2488,8 +2489,14 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     receive_result = FT_ERR_EMPTY;
     received_size = 0U;
     receive_attempts = 0U;
-    while (receive_result == FT_ERR_EMPTY && receive_attempts < 100000U)
+    while (receive_result == FT_ERR_EMPTY && receive_attempts < 20U)
     {
+        if (receive_attempts != 0U)
+        {
+            wait_result = server_io.wait_readable(100);
+            FT_ASSERT(wait_result == FT_ERR_SUCCESS
+                || wait_result == FT_ERR_TIMEOUT);
+        }
         receive_result = server_io.receive_datagram(source, received_payload,
             sizeof(received_payload), &received_size);
         receive_attempts += 1U;

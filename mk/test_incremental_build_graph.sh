@@ -8,6 +8,8 @@ temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/libft-incremental-build.XXXXXX")
 checkout_directory="$temporary_root/checkout"
 log_directory="$temporary_root/logs"
 make_jobs=${LIBFT_INCREMENTAL_JOBS:-4}
+make_timeout_seconds=${LIBFT_INCREMENTAL_TIMEOUT_SECONDS:-900}
+heartbeat_seconds=${LIBFT_CI_HEARTBEAT_SECONDS:-30}
 mkdir -p "$log_directory"
 
 cleanup()
@@ -38,7 +40,9 @@ run_make()
 {
     log_name=$1
     shift
-    if ! make --no-print-directory "-j$make_jobs" "$@" \
+    if ! LIBFT_CI_HEARTBEAT_SECONDS="$heartbeat_seconds" \
+        sh "$script_directory/ci_run_with_timeout.sh" "$make_timeout_seconds" \
+        make --no-print-directory "-j$make_jobs" "$@" \
         >"$log_directory/$log_name.log" 2>&1; then
         printf '%s\n' "make failed: $*" >&2
         cat "$log_directory/$log_name.log" >&2
@@ -264,10 +268,12 @@ parent_one="$temporary_root/parent one"
 parent_two="$temporary_root/parent two"
 cp -a . "$parent_one"
 cp -a . "$parent_two"
-(cd "$parent_one" && make --no-print-directory "-j$make_jobs" global-all \
+(cd "$parent_one" && sh "$parent_one/mk/ci_run_with_timeout.sh" \
+    "$make_timeout_seconds" make --no-print-directory "-j$make_jobs" global-all \
     >"$log_directory/parent_one.log" 2>&1) &
 parent_one_pid=$!
-(cd "$parent_two" && make --no-print-directory "-j$make_jobs" global-all \
+(cd "$parent_two" && sh "$parent_two/mk/ci_run_with_timeout.sh" \
+    "$make_timeout_seconds" make --no-print-directory "-j$make_jobs" global-all \
     >"$log_directory/parent_two.log" 2>&1) &
 parent_two_pid=$!
 if ! wait "$parent_one_pid"; then

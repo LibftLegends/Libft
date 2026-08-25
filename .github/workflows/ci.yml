@@ -58,11 +58,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          choco install make llvm --no-progress --yes
+          $ErrorActionPreference = 'Stop'
+          choco install make llvm --execution-timeout=600 --no-progress --limit-output --yes
 
       - name: Build test suite
         shell: bash
-        run: make -j4 tests
+        run: sh mk/ci_run_with_timeout.sh 1800 make -j4 tests
 
       - name: Validate stale build progress
         shell: bash
@@ -701,8 +702,10 @@ jobs:
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         shell: powershell
-        run: choco install make llvm --no-progress --yes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install make llvm --execution-timeout=600 --no-progress --limit-output --yes
 
       - name: Run adversarial incremental-build graph suite
         shell: bash
-        run: make JOBS=8 incremental-build-tests
+        run: sh mk/ci_run_with_timeout.sh 13800 make JOBS=8 incremental-build-tests
