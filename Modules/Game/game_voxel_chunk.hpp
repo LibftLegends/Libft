@@ -4,6 +4,7 @@
 #include "../Buffer/byte_buffer.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
+#include "game_block_edit_op.hpp"
 #include <stdint.h>
 
 #define GAME_VOXEL_CHUNK_WIDTH 16
@@ -13,6 +14,7 @@
 #define GAME_VOXEL_SECTION_BLOCKS 4096
 #define GAME_VOXEL_CHUNK_SECTION_COUNT 16
 #define GAME_VOXEL_AIR_BLOCK 0U
+#define GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS 256U
 
 struct game_voxel_generation_metadata
 {
@@ -85,12 +87,17 @@ class game_voxel_chunk
         ft_bool     _dirty;
         ft_bool     _generation_protected;
         game_voxel_generation_metadata _generation_metadata;
+        uint32_t    _biome_id;
+        game_block_edit_op *_dirty_edits;
+        uint32_t    _dirty_edit_count;
+        uint32_t    _dirty_edit_capacity;
         uint8_t     _initialised_state;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
         static uint16_t local_index(int32_t local_x, int32_t local_y,
             int32_t local_z) noexcept;
+        int32_t grow_dirty_edits(uint32_t minimum_capacity) noexcept;
 
     public:
         game_voxel_chunk() noexcept;
@@ -125,6 +132,13 @@ class game_voxel_chunk
         game_voxel_chunk_section &get_section(uint8_t section_index) noexcept;
         const game_voxel_chunk_section &get_section(
             uint8_t section_index) const noexcept;
+        uint32_t get_biome_id() const noexcept;
+        void set_biome_id(uint32_t biome_id) noexcept;
+        int32_t record_dirty_edit(const game_block_edit_op &edit) noexcept;
+        uint32_t get_dirty_edit_count() const noexcept;
+        int32_t get_dirty_edit(uint32_t index,
+            game_block_edit_op *edit_out) const noexcept;
+        void clear_dirty_edits() noexcept;
         int32_t serialize(ft_byte_buffer &buffer) const noexcept;
         int32_t deserialize(ft_byte_buffer &buffer) noexcept;
         int32_t get_error() const noexcept;

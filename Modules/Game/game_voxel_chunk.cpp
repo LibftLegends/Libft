@@ -11,7 +11,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #define GAME_VOXEL_CHUNK_MAGIC 0x474D4348U
-#define GAME_VOXEL_CHUNK_VERSION 3U
+#define GAME_VOXEL_CHUNK_VERSION 4U
 
 thread_local int32_t game_voxel_chunk_section::_last_error = FT_ERR_SUCCESS;
 thread_local int32_t game_voxel_chunk::_last_error = FT_ERR_SUCCESS;
@@ -386,11 +386,35 @@ int32_t game_voxel_chunk::set_error(int32_t error_code) noexcept
 
 game_voxel_chunk::game_voxel_chunk() noexcept
     : _sections(), _dirty(FT_FALSE), _generation_protected(FT_FALSE),
-    _generation_metadata(),
+    _generation_metadata(), _biome_id(0U), _dirty_edits(ft_nullptr),
+    _dirty_edit_count(0U), _dirty_edit_capacity(0U),
     _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
     return ;
+}
+
+int32_t game_voxel_chunk::grow_dirty_edits(uint32_t minimum_capacity) noexcept
+{
+    uint32_t new_capacity;
+    game_block_edit_op *new_buffer;
+
+    if (minimum_capacity <= this->_dirty_edit_capacity)
+        return (FT_ERR_SUCCESS);
+    if (minimum_capacity > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
+        minimum_capacity = GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS;
+    new_capacity = this->_dirty_edit_capacity == 0U ? 16U : this->_dirty_edit_capacity * 2U;
+    if (new_capacity < minimum_capacity)
+        new_capacity = minimum_capacity;
+    if (new_capacity > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
+        new_capacity = GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS;
+    new_buffer = static_cast<game_block_edit_op *>(cma_realloc(this->_dirty_edits,
+        sizeof(game_block_edit_op) * new_capacity));
+    if (new_buffer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    this->_dirty_edits = new_buffer;
+    this->_dirty_edit_capacity = new_capacity;
+    return (FT_ERR_SUCCESS);
 }
 
 game_voxel_chunk::~game_voxel_chunk() noexcept
@@ -433,6 +457,10 @@ int32_t game_voxel_chunk::initialize() noexcept
     this->_dirty = FT_FALSE;
     this->_generation_protected = FT_FALSE;
     this->clear_generation_metadata();
+    this->_biome_id = 0U;
+    this->_dirty_edits = ft_nullptr;
+    this->_dirty_edit_count = 0U;
+    this->_dirty_edit_capacity = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (this->set_error(FT_ERR_SUCCESS));
 }
@@ -455,6 +483,12 @@ int32_t game_voxel_chunk::destroy() noexcept
     this->_dirty = FT_FALSE;
     this->_generation_protected = FT_FALSE;
     this->clear_generation_metadata();
+    this->_biome_id = 0U;
+    if (this->_dirty_edits != ft_nullptr)
+        cma_free(this->_dirty_edits);
+    this->_dirty_edits = ft_nullptr;
+    this->_dirty_edit_count = 0U;
+    this->_dirty_edit_capacity = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (this->set_error(FT_ERR_SUCCESS));
 }
@@ -479,6 +513,8 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
         this->_dirty = FT_FALSE;
         this->_generation_protected = FT_FALSE;
         this->clear_generation_metadata();
+        this->_biome_id = 0U;
+        this->_dirty_edit_count = 0U;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (this->set_error(FT_ERR_SUCCESS));
     }
@@ -500,9 +536,17 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
     this->_dirty = other._dirty;
     this->_generation_protected = other._generation_protected;
     this->_generation_metadata = other._generation_metadata;
+    this->_biome_id = other._biome_id;
+    this->_dirty_edits = other._dirty_edits;
+    this->_dirty_edit_count = other._dirty_edit_count;
+    this->_dirty_edit_capacity = other._dirty_edit_capacity;
     other.clear_generation_metadata();
     other._generation_protected = FT_FALSE;
     other._dirty = FT_FALSE;
+    other._biome_id = 0U;
+    other._dirty_edits = ft_nullptr;
+    other._dirty_edit_count = 0U;
+    other._dirty_edit_capacity = 0U;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
     return (this->set_error(FT_ERR_SUCCESS));
 }
@@ -669,9 +713,80 @@ const game_voxel_chunk_section &game_voxel_chunk::get_section(
     return (this->_sections[section_index]);
 }
 
+uint32_t game_voxel_chunk::get_biome_id() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::get_biome_id");
+    return (this->_biome_id);
+}
+
+void game_voxel_chunk::set_biome_id(uint32_t biome_id) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::set_biome_id");
+    this->_biome_id = biome_id;
+    return ;
+}
+
+int32_t game_voxel_chunk::record_dirty_edit(
+    const game_block_edit_op &edit) noexcept
+{
+    uint32_t index;
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::record_dirty_edit");
+    if (this->_dirty_edit_count >= GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
+    {
+        index = 0U;
+        while (index < GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS - 1U)
+        {
+            this->_dirty_edits[index] = this->_dirty_edits[index + 1U];
+            index += 1U;
+        }
+        this->_dirty_edits[GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS - 1U] = edit;
+        return (this->set_error(FT_ERR_SUCCESS));
+    }
+    error_code = this->grow_dirty_edits(this->_dirty_edit_count + 1U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    this->_dirty_edits[this->_dirty_edit_count] = edit;
+    this->_dirty_edit_count += 1U;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+uint32_t game_voxel_chunk::get_dirty_edit_count() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::get_dirty_edit_count");
+    return (this->_dirty_edit_count);
+}
+
+int32_t game_voxel_chunk::get_dirty_edit(uint32_t index,
+    game_block_edit_op *edit_out) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::get_dirty_edit");
+    if (edit_out == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    if (index >= this->_dirty_edit_count)
+        return (game_voxel_chunk::set_error(FT_ERR_OUT_OF_RANGE));
+    *edit_out = this->_dirty_edits[index];
+    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+}
+
+void game_voxel_chunk::clear_dirty_edits() noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::clear_dirty_edits");
+    this->_dirty_edit_count = 0U;
+    return ;
+}
+
 int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
 {
     uint8_t section_index;
+    uint32_t edit_index;
     int32_t error_code;
 
     error_code = buffer.append_u32_le(GAME_VOXEL_CHUNK_MAGIC);
@@ -716,6 +831,21 @@ int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
             return (error_code);
         section_index += 1;
     }
+    error_code = buffer.append_u32_le(this->_biome_id);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(this->_dirty_edit_count);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    edit_index = 0U;
+    while (edit_index < this->_dirty_edit_count)
+    {
+        error_code = game_block_edit_op_serialize(
+            this->_dirty_edits[edit_index], buffer);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        edit_index += 1U;
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -729,6 +859,9 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
     uint64_t metadata_seed_value;
     uint32_t metadata_origin_x;
     uint32_t metadata_origin_z;
+    uint32_t biome_id;
+    uint32_t dirty_edit_count;
+    uint32_t edit_index;
     int32_t error_code;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
@@ -799,6 +932,42 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
         }
         section_index += 1;
     }
+    error_code = buffer.read_u32_le(&biome_id);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = buffer.read_u32_le(&dirty_edit_count);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(FT_ERR_IO));
+    }
+    if (dirty_edit_count > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
+    {
+        (void)this->destroy();
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    }
+    if (dirty_edit_count > 0U)
+    {
+        error_code = this->grow_dirty_edits(dirty_edit_count);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            (void)this->destroy();
+            return (this->set_error(error_code));
+        }
+    }
+    edit_index = 0U;
+    while (edit_index < dirty_edit_count)
+    {
+        error_code = game_block_edit_op_deserialize(
+            this->_dirty_edits[edit_index], buffer);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            (void)this->destroy();
+            return (this->set_error(error_code));
+        }
+        edit_index += 1U;
+    }
+    this->_biome_id = biome_id;
+    this->_dirty_edit_count = dirty_edit_count;
     this->_dirty = FT_FALSE;
     return (this->set_error(FT_ERR_SUCCESS));
 }
