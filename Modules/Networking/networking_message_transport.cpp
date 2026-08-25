@@ -5433,7 +5433,9 @@ int32_t networking_message_transport::poll() noexcept
         index += 1U;
     }
     this->unlock_transport();
-    this->dispatch_event_callbacks();
+    if (this->_worker_native_id.load(std::memory_order_acquire)
+        != pt_thread_self())
+        this->dispatch_event_callbacks();
     return (first_error);
 }
 
