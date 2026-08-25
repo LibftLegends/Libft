@@ -49,7 +49,7 @@ struct networking_message_command
     ft_vector<uint8_t> payload;
     int32_t result;
     std::atomic<uint32_t> completion_epoch;
-    ft_bool completed;
+    std::atomic<ft_bool> completed;
 
     networking_message_command() noexcept
         : type(networking_message_command_type::SEND_MESSAGE),
@@ -1771,10 +1771,10 @@ int32_t networking_message_transport::enqueue_command(
     }
     this->wake_worker();
     this->unlock_transport();
-    while (command.completed == FT_FALSE)
+    while (command.completed.load(std::memory_order_acquire) == FT_FALSE)
     {
         expected_epoch = command.completion_epoch.load(std::memory_order_acquire);
-        if (command.completed != FT_FALSE)
+        if (command.completed.load(std::memory_order_acquire) != FT_FALSE)
             break ;
         (void)pt_thread_wait_uint32_timed(&command.completion_epoch,
             expected_epoch, 100U);
@@ -1804,7 +1804,7 @@ void networking_message_transport::process_command_queue() noexcept
             return ;
         result = this->execute_command(*command);
         command->result = result;
-        command->completed = FT_TRUE;
+        command->completed.store(FT_TRUE, std::memory_order_release);
         completion_epoch = command->completion_epoch.fetch_add(
             1U, std::memory_order_release) + 1U;
         (void)completion_epoch;
@@ -1872,7 +1872,7 @@ void networking_message_transport::fail_pending_commands(int32_t result) noexcep
         if (command == ft_nullptr)
             continue ;
         command->result = result;
-        command->completed = FT_TRUE;
+        command->completed.store(FT_TRUE, std::memory_order_release);
         command->completion_epoch.fetch_add(1U, std::memory_order_release);
         (void)pt_thread_wake_all_uint32(&command->completion_epoch);
     }
