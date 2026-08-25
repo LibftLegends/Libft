@@ -8,6 +8,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
+#include <atomic>
 #include <cstdint>
 #include <new>
 
@@ -16,7 +17,7 @@ class ft_sharedptr
 {
     private:
         ManagedType                *_managed_pointer;
-        ft_size_t                  *_reference_count;
+        std::atomic<ft_size_t>     *_reference_count;
         ft_size_t                  _array_size;
         ft_bool                    _is_array_type;
         mutable pt_recursive_mutex *_mutex;
@@ -140,6 +141,8 @@ void ft_sharedptr<ManagedType>::unlock_internal(ft_bool lock_acquired) const noe
 template <typename ManagedType>
 void ft_sharedptr<ManagedType>::destroy_storage() noexcept
 {
+    ft_size_t reference_count;
+
     if (this->_managed_pointer == ft_nullptr)
     {
         this->_reference_count = ft_nullptr;
@@ -156,9 +159,10 @@ void ft_sharedptr<ManagedType>::destroy_storage() noexcept
         this->_is_array_type = FT_FALSE;
         return ;
     }
-    if (*this->_reference_count > 1)
+    reference_count = this->_reference_count->fetch_sub(1,
+        std::memory_order_acq_rel);
+    if (reference_count > 1)
     {
-        *this->_reference_count = *this->_reference_count - 1;
         this->_managed_pointer = ft_nullptr;
         this->_reference_count = ft_nullptr;
         this->_array_size = 0;
@@ -301,7 +305,8 @@ ft_sharedptr<ManagedType> &ft_sharedptr<ManagedType>::operator=(
     this->_array_size = other._array_size;
     this->_is_array_type = other._is_array_type;
     if (this->_reference_count != ft_nullptr)
-        *this->_reference_count = *this->_reference_count + 1;
+        (void)this->_reference_count->fetch_add(1,
+            std::memory_order_relaxed);
     set_error(FT_ERR_SUCCESS);
     return (*this);
 }
@@ -353,7 +358,8 @@ int32_t ft_sharedptr<ManagedType>::initialize(ManagedType *pointer,
     this->_reference_count = ft_nullptr;
     if (pointer != ft_nullptr)
     {
-        this->_reference_count = new (std::nothrow) ft_size_t(1);
+        this->_reference_count = new (std::nothrow)
+            std::atomic<ft_size_t>(1);
         if (this->_reference_count == ft_nullptr)
         {
             this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -392,7 +398,8 @@ int32_t ft_sharedptr<ManagedType>::initialize(ft_size_t size) noexcept
     this->_array_size = size;
     if (this->_managed_pointer != ft_nullptr)
     {
-        this->_reference_count = new (std::nothrow) ft_size_t(1);
+        this->_reference_count = new (std::nothrow)
+            std::atomic<ft_size_t>(1);
         if (this->_reference_count == ft_nullptr)
         {
             delete[] this->_managed_pointer;
@@ -460,7 +467,8 @@ int32_t ft_sharedptr<ManagedType>::initialize(const ft_sharedptr &other) noexcep
     this->_mutex = new_mutex;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     if (this->_reference_count != ft_nullptr)
-        *this->_reference_count = *this->_reference_count + 1;
+        (void)this->_reference_count->fetch_add(1,
+            std::memory_order_relaxed);
     return (set_error(FT_ERR_SUCCESS));
 }
 
@@ -658,7 +666,8 @@ int32_t ft_sharedptr<ManagedType>::use_count() const noexcept
     if (this->_reference_count == ft_nullptr)
         return (1);
     set_error(FT_ERR_SUCCESS);
-    return (static_cast<int32_t>(*this->_reference_count));
+    return (static_cast<int32_t>(this->_reference_count->load(
+        std::memory_order_acquire)));
 }
 
 template <typename ManagedType>
@@ -687,7 +696,8 @@ void ft_sharedptr<ManagedType>::reset(ManagedType *pointer, ft_size_t size,
     this->_reference_count = ft_nullptr;
     if (pointer != ft_nullptr)
     {
-        this->_reference_count = new (std::nothrow) ft_size_t(1);
+        this->_reference_count = new (std::nothrow)
+            std::atomic<ft_size_t>(1);
         if (this->_reference_count == ft_nullptr)
         {
             this->_managed_pointer = ft_nullptr;
