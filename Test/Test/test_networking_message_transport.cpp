@@ -2445,6 +2445,7 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     const uint8_t payload[4] = {'p', 'i', 'n', 'g'};
     uint8_t received_payload[4] = {0U, 0U, 0U, 0U};
     ft_size_t received_size;
+    uint32_t receive_attempts;
     int32_t receive_result;
 
     if (networking_test_local_ipv4_available() == FT_FALSE)
@@ -2475,9 +2476,13 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_io.send_datagram(destination, payload, sizeof(payload)));
     receive_result = FT_ERR_EMPTY;
     received_size = 0U;
-    while (receive_result == FT_ERR_EMPTY)
+    receive_attempts = 0U;
+    while (receive_result == FT_ERR_EMPTY && receive_attempts < 100000U)
+    {
         receive_result = server_io.receive_datagram(source, received_payload,
             sizeof(received_payload), &received_size);
+        receive_attempts += 1U;
+    }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, receive_result);
     FT_ASSERT_EQ(sizeof(payload), received_size);
     FT_ASSERT_EQ(static_cast<int32_t>('p'), static_cast<int32_t>(received_payload[0]));

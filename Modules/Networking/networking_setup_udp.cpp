@@ -5,6 +5,7 @@
 #include "../PThread/pthread_internal.hpp"
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <new>
 
 #include "../Basic/limits.hpp"
@@ -399,6 +400,11 @@ ssize_t udp_socket::receive_from(void *buffer, ft_size_t size, int32_t flags,
 {
     int32_t lock_error;
     ssize_t receive_result;
+#ifndef _WIN32
+    int32_t saved_errno;
+#else
+    int32_t saved_socket_error;
+#endif
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "udp_socket::receive_from");
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
@@ -410,7 +416,17 @@ ssize_t udp_socket::receive_from(void *buffer, ft_size_t size, int32_t flags,
         return (-1);
     }
     receive_result = nw_recvfrom(this->_socket_fd, buffer, size, flags, source_address, address_length);
+#ifndef _WIN32
+    saved_errno = errno;
+#else
+    saved_socket_error = WSAGetLastError();
+#endif
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+#ifndef _WIN32
+    errno = saved_errno;
+#else
+    WSASetLastError(saved_socket_error);
+#endif
     return (receive_result);
 }
 
