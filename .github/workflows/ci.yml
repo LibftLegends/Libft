@@ -356,8 +356,8 @@ jobs:
         env:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
-          ASAN_OPTIONS: 'log_path=asan_report:abort_on_error=1'
-          UBSAN_OPTIONS: 'log_path=ubsan_report:halt_on_error=1:print_stacktrace=1'
+          ASAN_OPTIONS: 'log_path=../asan_report:abort_on_error=1'
+          UBSAN_OPTIONS: 'log_path=../ubsan_report:halt_on_error=1:print_stacktrace=1'
           # CMA allocation-limit tests are covered by the regular suite.  The
           # sanitizer allocators intercept the allocation path used by those
           # tests, so exclude those semantic fault-injection cases here and
@@ -378,6 +378,8 @@ jobs:
             sanitizer_full_output.log
             asan_report.*
             ubsan_report.*
+            Test/asan_report.*
+            Test/ubsan_report.*
             Test/test_failures.log
             Test/ci_unix_full_output.log
           if-no-files-found: warn
@@ -454,7 +456,7 @@ jobs:
         env:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
-          TSAN_OPTIONS: 'log_path=tsan_report:halt_on_error=1:second_deadlock_stack=1'
+          TSAN_OPTIONS: 'log_path=../tsan_report:halt_on_error=1:second_deadlock_stack=1'
           # TSan replaces the global C++ allocation path.  CMA allocation-limit
           # tests are covered by the regular suite; exclude them here so this
           # job measures thread races instead of sanitizer allocator behavior.
@@ -473,6 +475,7 @@ jobs:
           path: |
             tsan_full_output.log
             tsan_report.*
+            Test/tsan_report.*
             Test/test_failures.log
           if-no-files-found: warn
 
