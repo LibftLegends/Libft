@@ -73,19 +73,6 @@ build_plan()
     fi
 }
 
-plan_compile_count()
-{
-    grep -c '__BUILD_PLAN__|compile|libft|' "$1" || true
-}
-
-plan_contains_source()
-{
-    source_name=$1
-    plan_path=$2
-    grep '__BUILD_PLAN__|compile|libft|' "$plan_path" \
-        | grep -F "|$source_name" >/dev/null 2>&1
-}
-
 dependency_source_from_file()
 {
     dependency_path=$1
@@ -118,18 +105,16 @@ assert_plan_matches_dependencies()
     header_name=$1
     plan_path=$2
     header_basename=${header_name##*/}
-    expected_count=0
+    expected_path="$plan_path.expected"
+    actual_path="$plan_path.actual"
     dependency_path=''
-    for dependency_path in $(find "$release_root" -type f -name '*.d' -print); do
-        if grep -F "$header_basename" "$dependency_path" \
-            >/dev/null 2>&1; then
-            expected_count=$((expected_count + 1))
-        fi
-    done
-    actual_count=$(plan_compile_count "$plan_path")
-    if [ "$expected_count" -ne "$actual_count" ]; then
-        printf '%s\n' "dependency closure count mismatch for $header_name" >&2
-        printf 'expected %s, planned %s\n' "$expected_count" "$actual_count" >&2
+    dependent_sources "$header_name" | sort -u >"$expected_path"
+    grep '__BUILD_PLAN__|compile|libft|' "$plan_path" \
+        | awk -F'|' '{print $NF}' | sort -u >"$actual_path"
+    if ! diff -u "$expected_path" "$actual_path" \
+        >"$plan_path.diff" 2>&1; then
+        printf '%s\n' "dependency closure mismatch for $header_name" >&2
+        cat "$plan_path.diff" >&2
         cat "$plan_path" >&2
         exit 1
     fi
