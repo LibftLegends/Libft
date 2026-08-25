@@ -732,7 +732,7 @@ void ft_sharedptr<ManagedType>::swap(ft_sharedptr &other) noexcept
         return ;
     }
     pointer_value = this->_managed_pointer;
-    ft_size_t *reference_count_value;
+    std::atomic<ft_size_t> *reference_count_value;
     array_size_value = this->_array_size;
     is_array_type_value = this->_is_array_type;
     reference_count_value = this->_reference_count;
