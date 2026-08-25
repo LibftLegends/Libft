@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - main
+  schedule:
+    - cron: '17 3 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -329,3 +331,356 @@ jobs:
             Test/ci_windows_gdb_commands.txt
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original Windows test failure if a log is unavailable.
+
+  sanitizer-tests:
+    name: ubuntu-sanitizers
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install sanitizer dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+
+      - name: Build and run AddressSanitizer plus UBSan suite
+        shell: bash
+        env:
+          FT_TEST_HIDE_SUCCESSFUL: '1'
+          FT_TEST_PRESERVE_FAILURE_LOG: '1'
+        run: |
+          set +e
+          make -j4 run-asan-ubsan-tests 2>&1 | tee sanitizer_full_output.log
+          test_status=${PIPESTATUS[0]}
+          exit "$test_status"
+
+      - name: Upload sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanitizer-evidence-${{ github.run_id }}
+          path: |
+            sanitizer_full_output.log
+            Test/test_failures.log
+            Test/ci_unix_full_output.log
+          if-no-files-found: warn
+
+  networking-fuzz:
+    name: networking-fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install fuzzing dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang llvm
+
+      - name: Build networking libFuzzer target
+        shell: bash
+        run: make -j4 networking-fuzz networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz FUZZ_CXX=clang++
+
+      - name: Run bounded networking fuzzing
+        shell: bash
+        run: |
+          set +e
+          ./Test/networking_fuzz -max_total_time=60 Test/Fuzz/corpus/networking 2>&1 | tee networking_fuzz.log
+          first_status=${PIPESTATUS[0]}
+          ./Test/networking_simulator_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_simulator 2>&1 | tee networking_simulator_fuzz.log
+          second_status=${PIPESTATUS[0]}
+          ./Test/networking_nat_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_nat 2>&1 | tee networking_nat_fuzz.log
+          third_status=${PIPESTATUS[0]}
+          ./Test/networking_handshake_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_handshake 2>&1 | tee networking_handshake_fuzz.log
+          fourth_status=${PIPESTATUS[0]}
+          if [ "$first_status" -ne 0 ]; then exit "$first_status"; fi
+          if [ "$second_status" -ne 0 ]; then exit "$second_status"; fi
+          if [ "$third_status" -ne 0 ]; then exit "$third_status"; fi
+          exit "$fourth_status"
+
+      - name: Upload networking fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: networking-fuzz-evidence-${{ github.run_id }}
+          path: |
+            networking_fuzz.log
+            networking_simulator_fuzz.log
+            networking_nat_fuzz.log
+            networking_handshake_fuzz.log
+            Test/Fuzz/corpus/networking/**
+            Test/Fuzz/corpus/networking_simulator/**
+            Test/Fuzz/corpus/networking_nat/**
+            Test/Fuzz/corpus/networking_handshake/**
+          if-no-files-found: warn
+
+  thread-sanitizer-tests:
+    name: ubuntu-thread-sanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install ThreadSanitizer dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+
+      - name: Build and run ThreadSanitizer suite
+        shell: bash
+        env:
+          FT_TEST_HIDE_SUCCESSFUL: '1'
+          FT_TEST_PRESERVE_FAILURE_LOG: '1'
+        run: |
+          set +e
+          make -j4 run-tsan-tests 2>&1 | tee tsan_full_output.log
+          test_status=${PIPESTATUS[0]}
+          exit "$test_status"
+
+      - name: Upload ThreadSanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tsan-evidence-${{ github.run_id }}
+          path: |
+            tsan_full_output.log
+            Test/test_failures.log
+          if-no-files-found: warn
+
+  crypto-fuzz:
+    name: crypto-fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install fuzzing dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang llvm
+
+      - name: Build Crypto libFuzzer target
+        shell: bash
+        run: make -j4 crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz FUZZ_CXX=clang++
+
+      - name: Run bounded Crypto fuzzing
+        shell: bash
+        run: |
+          set +e
+          ./Test/crypto_fuzz -max_total_time=60 Test/Fuzz/corpus/crypto 2>&1 | tee crypto_fuzz.log
+          first_status=${PIPESTATUS[0]}
+          ./Test/crypto_sha_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_sha 2>&1 | tee crypto_sha_fuzz.log
+          second_status=${PIPESTATUS[0]}
+          ./Test/crypto_aead_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_aead 2>&1 | tee crypto_aead_fuzz.log
+          third_status=${PIPESTATUS[0]}
+          ./Test/crypto_x25519_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_x25519 2>&1 | tee crypto_x25519_fuzz.log
+          fourth_status=${PIPESTATUS[0]}
+          ./Test/crypto_hmac_hkdf_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_hmac_hkdf 2>&1 | tee crypto_hmac_hkdf_fuzz.log
+          fifth_status=${PIPESTATUS[0]}
+          if [ "$first_status" -ne 0 ]; then exit "$first_status"; fi
+          if [ "$second_status" -ne 0 ]; then exit "$second_status"; fi
+          if [ "$third_status" -ne 0 ]; then exit "$third_status"; fi
+          if [ "$fourth_status" -ne 0 ]; then exit "$fourth_status"; fi
+          exit "$fifth_status"
+
+      - name: Upload Crypto fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: crypto-fuzz-evidence-${{ github.run_id }}
+          path: |
+            crypto_fuzz.log
+            crypto_sha_fuzz.log
+            crypto_aead_fuzz.log
+            crypto_x25519_fuzz.log
+            crypto_hmac_hkdf_fuzz.log
+            Test/Fuzz/corpus/crypto/**
+            Test/Fuzz/corpus/crypto_sha/**
+            Test/Fuzz/corpus/crypto_aead/**
+            Test/Fuzz/corpus/crypto_x25519/**
+            Test/Fuzz/corpus/crypto_hmac_hkdf/**
+          if-no-files-found: warn
+
+  crypto-slow-vectors:
+    name: crypto-slow-rfc-vectors
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install crypto vector dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang
+
+      - name: Build RFC 7748 million-iteration test
+        shell: bash
+        run: make -j4 crypto-x25519-million
+
+      - name: Run RFC 7748 million-iteration test
+        shell: bash
+        run: ./Test/crypto_x25519_million 2>&1 | tee crypto_x25519_million.log
+
+      - name: Upload slow vector evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: crypto-slow-vector-evidence-${{ github.run_id }}
+          path: crypto_x25519_million.log
+          if-no-files-found: warn
+
+  networking-scheduled-stress:
+    name: networking-scheduled-stress
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install networking stress dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev iproute2
+
+      - name: Run seeded networking netem matrix
+        shell: bash
+        run: |
+          set +e
+          make -j4 networking-netem-tests 2>&1 | tee networking_netem.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Run Linux namespace and netem smoke test
+        shell: bash
+        run: |
+          set +e
+          make networking-namespace-netem-tests 2>&1 | tee networking_namespace_netem.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Run networking soak suite
+        shell: bash
+        run: |
+          set +e
+          make -j4 networking-soak 2>&1 | tee networking_soak.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Run maximum parallel incremental-build stress
+        shell: bash
+        run: |
+          set +e
+          make JOBS=32 incremental-build-tests 2>&1 | tee incremental_build_stress.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload networking stress evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: networking-stress-evidence-${{ github.run_id }}
+          path: |
+            networking_netem.log
+            networking_namespace_netem.log
+            networking_soak.log
+            incremental_build_stress.log
+            Test/test_failures.log
+          if-no-files-found: warn
+
+  no-openssl-transport:
+    name: crypto-networking-without-openssl
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install non-OpenSSL dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+
+      - name: Build and run Crypto and Networking without OpenSSL
+        shell: bash
+        env:
+          FT_TEST_HIDE_SUCCESSFUL: '1'
+        run: |
+          set +e
+          make -j4 global-all LIBFT_DISABLE_OPENSSL=1 2>&1 | tee no_openssl_global.log
+          first_status=${PIPESTATUS[0]}
+          make -j4 tests LIBFT_DISABLE_OPENSSL=1 2>&1 | tee no_openssl_tests.log
+          second_status=${PIPESTATUS[0]}
+          make -j4 crypto-tests LIBFT_DISABLE_OPENSSL=1 2>&1 | tee no_openssl_crypto.log
+          third_status=${PIPESTATUS[0]}
+          make -j4 networking-message-tests LIBFT_DISABLE_OPENSSL=1 2>&1 | tee no_openssl_networking.log
+          fourth_status=${PIPESTATUS[0]}
+          if [ "$first_status" -ne 0 ]; then exit "$first_status"; fi
+          if [ "$second_status" -ne 0 ]; then exit "$second_status"; fi
+          if [ "$third_status" -ne 0 ]; then exit "$third_status"; fi
+          exit "$fourth_status"
+
+      - name: Upload no-OpenSSL evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: no-openssl-evidence-${{ github.run_id }}
+          path: |
+            no_openssl_global.log
+            no_openssl_tests.log
+            no_openssl_crypto.log
+            no_openssl_networking.log
+            Test/test_failures.log
+          if-no-files-found: warn
+
+  incremental-build:
+    name: incremental-build-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install llvm cmake pkg-config python openssl@3 sqlite3
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: choco install make llvm --no-progress --yes
+
+      - name: Run adversarial incremental-build graph suite
+        shell: bash
+        run: make JOBS=8 incremental-build-tests

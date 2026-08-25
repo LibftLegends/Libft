@@ -34,7 +34,7 @@ SANITIZER_FLAGS :=
 SANITIZER_SUFFIX :=
 ifneq ($(strip $(SANITIZERS)),)
     SANITIZER_SELECTION := $(sort $(SANITIZERS))
-    UNSUPPORTED_SANITIZERS := $(filter-out address undefined,$(SANITIZER_SELECTION))
+    UNSUPPORTED_SANITIZERS := $(filter-out address undefined thread,$(SANITIZER_SELECTION))
     ifneq ($(UNSUPPORTED_SANITIZERS),)
         $(error Unsupported SANITIZERS: $(UNSUPPORTED_SANITIZERS))
     endif
@@ -43,6 +43,9 @@ ifneq ($(strip $(SANITIZERS)),)
     endif
     ifneq ($(filter undefined,$(SANITIZER_SELECTION)),)
         SANITIZER_FLAGS += -fsanitize=undefined
+    endif
+    ifneq ($(filter thread,$(SANITIZER_SELECTION)),)
+        SANITIZER_FLAGS += -fsanitize=thread
     endif
     SANITIZER_FLAGS += -fno-omit-frame-pointer
     EMPTY :=

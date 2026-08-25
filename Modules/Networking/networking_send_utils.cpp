@@ -1,4 +1,5 @@
 #include "networking.hpp"
+#include "networking_ssl_compat.hpp"
 #include "socket_class.hpp"
 #include "../Errno/errno.hpp"
 #include <thread>

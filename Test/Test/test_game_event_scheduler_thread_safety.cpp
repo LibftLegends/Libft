@@ -18,6 +18,7 @@
 struct scheduler_schedule_args
 {
     game_event_scheduler *scheduler_pointer;
+    ft_vector<ft_sharedptr<game_event> > *event_batch;
     int thread_index;
     int events_per_thread;
     int result_code;
@@ -27,33 +28,24 @@ static void *scheduler_schedule_task(void *argument)
 {
     scheduler_schedule_args *arguments;
     int index;
-    int base_identifier;
+    ft_sharedptr<game_event> event_instance;
 
     arguments = static_cast<scheduler_schedule_args *>(argument);
     if (arguments == ft_nullptr)
         return (ft_nullptr);
-    base_identifier = arguments->thread_index * arguments->events_per_thread;
     index = 0;
     while (index < arguments->events_per_thread)
     {
-        ft_sharedptr<game_event> event_instance(new (std::nothrow) game_event());
-
+        event_instance = (*(arguments->event_batch))[index];
         if (!event_instance)
         {
             arguments->result_code = FT_ERR_NO_MEMORY;
             return (ft_nullptr);
         }
-        arguments->result_code = event_instance->initialize();
+        arguments->scheduler_pointer->schedule_event(event_instance);
+        arguments->result_code = arguments->scheduler_pointer->get_error();
         if (arguments->result_code != FT_ERR_SUCCESS)
             return (ft_nullptr);
-        if (event_instance->get_error() != FT_ERR_SUCCESS)
-        {
-            arguments->result_code = event_instance->get_error();
-            return (ft_nullptr);
-        }
-        event_instance->set_id(base_identifier + index);
-        event_instance->set_duration(index + 1);
-        arguments->scheduler_pointer->schedule_event(event_instance);
         index += 1;
     }
     arguments->result_code = FT_ERR_SUCCESS;
@@ -65,6 +57,8 @@ FT_TEST(test_game_event_scheduler_concurrent_schedule)
     game_event_scheduler *scheduler_instance;
     pthread_t *threads;
     scheduler_schedule_args *arguments;
+    ft_vector<ft_sharedptr<game_event> > event_batches[4];
+    ft_sharedptr<game_event> event_instance;
     int thread_index;
     int create_result;
     int join_result;
@@ -96,7 +90,29 @@ FT_TEST(test_game_event_scheduler_concurrent_schedule)
     thread_index = 0;
     while (thread_index < 4)
     {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, event_batches[thread_index].initialize());
+        int32_t event_index = 0;
+        while (event_index < events_per_thread)
+        {
+            event_instance = ft_sharedptr<game_event>(new (std::nothrow)
+                game_event());
+            FT_ASSERT(event_instance);
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, event_instance->initialize());
+            event_instance->set_id(thread_index * events_per_thread
+                + event_index);
+            event_instance->set_duration(event_index + 1);
+            event_batches[thread_index].push_back(event_instance);
+            FT_ASSERT_EQ(FT_ERR_SUCCESS,
+                event_batches[thread_index].get_error());
+            event_index += 1;
+        }
+        thread_index += 1;
+    }
+    thread_index = 0;
+    while (thread_index < 4)
+    {
         arguments[thread_index].scheduler_pointer = scheduler_instance;
+        arguments[thread_index].event_batch = &event_batches[thread_index];
         arguments[thread_index].thread_index = thread_index;
         arguments[thread_index].events_per_thread = events_per_thread;
         arguments[thread_index].result_code = FT_ERR_SUCCESS;

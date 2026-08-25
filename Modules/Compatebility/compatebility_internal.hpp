@@ -83,6 +83,7 @@ int32_t cmp_read(int32_t file_descriptor, void *buffer, ft_size_t count,
 int32_t cmp_write(int32_t file_descriptor, const void *buffer, ft_size_t count,
     int64_t *bytes_written_out);
 #endif
+int32_t cmp_get_last_open_error(void);
 off_t cmp_lseek(int32_t file_descriptor, off_t offset, int32_t whence);
 int32_t cmp_close(int32_t file_descriptor);
 void cmp_initialize_standard_file_descriptors();

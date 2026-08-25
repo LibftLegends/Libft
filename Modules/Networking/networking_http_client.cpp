@@ -4,6 +4,7 @@
 #include "networking.hpp"
 #include "ssl_wrapper.hpp"
 #include "openssl_support.hpp"
+#include "networking_ssl_compat.hpp"
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"

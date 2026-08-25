@@ -8,6 +8,7 @@
 #include "../Networking/ssl_wrapper.hpp"
 #include "../Networking/networking.hpp"
 #include "../Networking/openssl_support.hpp"
+#include "../Networking/networking_ssl_compat.hpp"
 #include "../Basic/basic.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Logger/logger.hpp"

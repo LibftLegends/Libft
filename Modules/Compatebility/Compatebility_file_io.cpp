@@ -18,6 +18,12 @@
 static HANDLE g_file_handles[1024];
 static pt_mutex g_file_mutex;
 static ft_bool g_file_mutex_ready = FT_FALSE;
+static thread_local int32_t g_last_open_error = 0;
+
+int32_t cmp_get_last_open_error(void)
+{
+    return (g_last_open_error);
+}
 
 static int32_t cmp_ensure_file_mutex_initialized(void)
 {
@@ -79,12 +85,19 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     HANDLE file_handle;
     int32_t file_descriptor;
 
+    g_last_open_error = 0;
     if (path_name == ft_nullptr)
+    {
+        g_last_open_error = ERROR_INVALID_PARAMETER;
         return (-1);
+    }
     native_path = ft_nullptr;
     translate_error = cmp_translate_path_to_native(path_name, &native_path);
     if (translate_error != FT_ERR_SUCCESS)
+    {
+        g_last_open_error = ERROR_INVALID_NAME;
         return (-1);
+    }
     lock_error = cmp_lock_file_mutex();
     if (lock_error != FT_ERR_SUCCESS)
     {
@@ -128,6 +141,7 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     cma_free(native_path);
     if (file_handle == INVALID_HANDLE_VALUE)
     {
+        g_last_open_error = static_cast<int32_t>(GetLastError());
         cmp_unlock_file_mutex();
         return (-1);
     }
@@ -143,6 +157,7 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     file_descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(file_handle), open_flags);
     if (file_descriptor < 0)
     {
+        g_last_open_error = static_cast<int32_t>(GetLastError());
         CloseHandle(file_handle);
         cmp_unlock_file_mutex();
         return (-1);
@@ -307,10 +322,18 @@ void cmp_initialize_standard_file_descriptors()
 # include <sys/stat.h>
 # include <cerrno>
 
+int32_t cmp_get_last_open_error(void)
+{
+    return (errno);
+}
+
 int32_t cmp_open(const char *path_name)
 {
     if (path_name == ft_nullptr)
+    {
+        errno = EINVAL;
         return (-1);
+    }
     int32_t file_descriptor = open(path_name, O_RDONLY);
     if (file_descriptor == -1)
     {
@@ -322,7 +345,10 @@ int32_t cmp_open(const char *path_name)
 int32_t cmp_open(const char *path_name, int32_t flags)
 {
     if (path_name == ft_nullptr)
+    {
+        errno = EINVAL;
         return (-1);
+    }
     int32_t file_descriptor = open(path_name, flags);
     if (file_descriptor == -1)
     {
@@ -334,7 +360,10 @@ int32_t cmp_open(const char *path_name, int32_t flags)
 int32_t cmp_open(const char *path_name, int32_t flags, mode_t mode)
 {
     if (path_name == ft_nullptr)
+    {
+        errno = EINVAL;
         return (-1);
+    }
     int32_t file_descriptor = open(path_name, flags, mode);
     if (file_descriptor == -1)
     {

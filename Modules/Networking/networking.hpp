@@ -3,7 +3,6 @@
 
 #include "../CPP_class/class_string.hpp"
 #include "../Template/vector.hpp"
-#include "openssl_support.hpp"
 #include "../Basic/basic.hpp"
 
 #ifdef _WIN32
@@ -75,10 +74,6 @@ void networking_dns_set_error(int32_t resolver_status) noexcept;
 
 #ifdef LIBFT_TEST_BUILD
 void networking_dns_destroy_cache_for_tests(void) noexcept;
-#endif
-
-#if NETWORKING_HAS_OPENSSL
-int32_t networking_check_ssl_after_send(SSL *ssl_connection);
 #endif
 
 struct event_loop

@@ -54,3 +54,51 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `quic_feature_configuration` - Feature flags/settings for experimental QUIC.
 - `quic_datagram_plaintext` - Plaintext datagram payload holder.
 - `quic_experimental_session` - Experimental lifecycle QUIC session abstraction.
+
+## Message Transport
+
+- `message_transport.hpp` - Message-oriented UDP transport with
+  reliable ordered, unreliable, and unreliable-sequenced delivery modes.
+  It also exposes listen/connect and explicit accept/reject for authenticated
+  incoming requests, per-connection lane weights, queue limits, explicit
+  flush, bulk receive, bounded polled events, close/abort reasons, wire-bound
+  key epochs, and externally driven or socket-readiness-backed worker-driven
+  operation.
+  Thread-safe operation is opt-in through the transport configuration.
+  Authenticated path challenge/response validates a new source before emitting
+  `PATH_CHANGED` and migrating the active endpoint.
+  `connect_peer` requires a caller-supplied ticket verifier; reliable sends are
+  bounded by peer-advertised receive credit. `export_observability()` emits one
+  aggregate bounded statistics sample through Libft's Networking Observability
+  exporter without invoking user code while the transport lock is held. While
+  the worker is running, mutating calls are copied into a bounded command queue
+  and complete synchronously with the worker's result. Statistics include
+  per-lane message/byte totals, queue pressure, weights/reservations, and the
+  current lane send rate.
+- `networking_udp_datagram_io` - Non-blocking production UDP adapter for the
+  transport layer.
+- `networking_crypto_backend.hpp` - Libft-owned cryptographic backend boundary;
+  it has no OpenSSL dependency and adapts the standalone `Modules/Crypto`
+  implementation to the transport. It does not contain the primitive algorithms;
+  it exposes directional session-key derivation, secure randomness, and wiping
+  for the handshake layer.
+- `networking_secure_channel.hpp` - Encrypted channel wrapper with packet
+  number-derived nonces, authenticated headers, and a replay window.
+  Applications must provide key material; the message transport enables
+  encryption by default and does not silently downgrade to plaintext.
+- `networking_handshake.hpp` - Canonical client/server hello exchange,
+  transcript-bound directional key derivation, Finished MAC verification,
+  address-bound retry cookies, stateless retry challenges, and bounded
+  retransmission. The connection API exposes the authenticated handshake's
+  ephemeral peer key for diagnostics; long-term identity verification remains
+  release-gated work.
+- `networking_simulator.hpp` - Seeded latency, jitter, loss, duplication,
+  corruption, reordering, MTU, and manual-clock simulation adapter.
+- `networking_nat_traversal.hpp` - Candidate-provider gathering, authenticated
+  ticket validation hooks, concurrent candidate-pair probing, direct-path
+  nomination, and relay-fallback state machine. Rendezvous/STUN/relay services
+  provide the network-side infrastructure and application ticket verifier.
+
+The detailed implementation contract, wire-format rules, resource limits,
+security requirements, and test gates are documented in
+`Docs/steam_style_networking_design.md` until implementation completion.

@@ -102,6 +102,10 @@ Every module that allocates through this layer inherits the same mechanisms for 
   CSV/ sits between raw text utilities and the heavier structured formats already present in the tree.
   The module is useful for imports, exports, spreadsheets, logs, and other simple table-shaped data.
 
+- `Crypto/`: Provides Libft-owned cryptographic primitives and session-key helpers in the deliberately lowercase-named `crypto` module.
+  It contains SHA-256, HMAC-SHA-256, HKDF-SHA-256, ChaCha20, Poly1305, ChaCha20-Poly1305, X25519, secure randomness, and directional key derivation.
+  Crypto/ is independent of Networking; transport code consumes it only through a narrow adapter, and the later Ed25519 implementation remains release-gated.
+
 - `Config/`: Loads and interprets configuration files, environment overrides, and runtime knobs that control FullLibft behavior.
   It understands different formats, merges defaults with overrides, and exposes typed accessors for modules to read settings safely.
   The module tracks modification timestamps and validation rules so configuration errors surface early in startup paths.

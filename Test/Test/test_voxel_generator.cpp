@@ -5,6 +5,7 @@
 
 #include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include <stdio.h>
 
 static int32_t test_terrain_surface_height(game_voxel_chunk &chunk,
@@ -1343,6 +1344,7 @@ FT_TEST(test_terrain_config_json_serialization_and_file_modes)
     terrain_generation_config generation;
     ft_string output;
     ft_string file_contents;
+    int32_t invalid_mode_value = 2;
 
     terrain_default_generation_config(generation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.biomes[0].serialize_json(output));
@@ -1364,6 +1366,11 @@ FT_TEST(test_terrain_config_json_serialization_and_file_modes)
     FT_ASSERT(ft_strstr(output.c_str(), "biome_size_min"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
     (void)file_delete(file_path);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, generation.save_json_file(".",
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT(generation.save_json_file(
+        "terrain_json_missing_parent_7f2e/config.json",
+        TERRAIN_JSON_FILE_CREATE_ONLY) != FT_ERR_ALREADY_EXISTS);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
         TERRAIN_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, generation.save_json_file(file_path,
@@ -1371,13 +1378,126 @@ FT_TEST(test_terrain_config_json_serialization_and_file_modes)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
     FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_APPEND));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
-    FT_ASSERT(file_contents.size() > output.size());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
         TERRAIN_JSON_FILE_REPLACE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
     FT_ASSERT_EQ(output.size(), file_contents.size());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, generation.save_json_file(file_path,
+        static_cast<terrain_json_file_mode>(invalid_mode_value)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    return (1);
+}
+
+FT_TEST(test_terrain_json_unsigned_boundaries_and_transaction)
+{
+    terrain_generation_config generation;
+    ft_string output;
+    uint32_t values[6] = {0U, 1U, 2147483647U, 2147483648U,
+        4294967294U, 4294967295U};
+    const char *expected_values[6] = {"0", "1", "2147483647",
+        "2147483648", "4294967294", "4294967295"};
+    uint32_t index;
+    int32_t error_code;
+
+    terrain_default_generation_config(generation);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize("sentinel"));
+    index = 0U;
+    while (index < 6U)
+    {
+        generation.biomes[0].surface_block_id = values[index];
+        error_code = generation.biomes[0].serialize_json(output);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
+        FT_ASSERT(ft_strstr(output.c_str(), expected_values[index])
+            != ft_nullptr);
+        FT_ASSERT(ft_strstr(output.c_str(), "\"surface_block_id\":-")
+            == ft_nullptr);
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.biomes[0].serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(static_cast<ft_size_t>(8U), output.size());
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.features[0].serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.ores[0].serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.underground_structures.serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.fluids.serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.layers.serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
+    cma_set_alloc_limit(1U);
+    error_code = generation.serialize_json(output);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(error_code != FT_ERR_SUCCESS);
+    FT_ASSERT(ft_strstr(output.c_str(), "sentinel") != ft_nullptr);
+    return (1);
+}
+
+FT_TEST(test_terrain_json_file_failure_hooks_are_transactional)
+{
+    const char *file_path = "terrain_config_file_failure_hooks.jsonl";
+    terrain_generation_config generation;
+    ft_string file_contents;
+    int32_t error_code;
+
+    terrain_default_generation_config(generation);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
+    (void)file_delete(file_path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
+        TERRAIN_JSON_TEST_FILE_OPEN_CREATE_ONLY, FT_ERR_PERMISSION_DENIED, 0U));
+    error_code = generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_CREATE_ONLY);
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, error_code);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config")
+        != ft_nullptr);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
+        TERRAIN_JSON_TEST_FILE_FIRST_WRITE, FT_ERR_DISK_FULL, 0U));
+    FT_ASSERT_EQ(FT_ERR_DISK_FULL, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
+        TERRAIN_JSON_TEST_FILE_PARTIAL_WRITE, FT_ERR_IO, 4U));
+    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
+        TERRAIN_JSON_TEST_FILE_INTERRUPTED_WRITE, FT_ERR_INVALID_STATE, 0U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
+        TERRAIN_JSON_TEST_FILE_CLOSE, FT_ERR_IO, 0U));
+    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
+        TERRAIN_JSON_FILE_REPLACE));
+    terrain_json_test_clear_file_failure();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
     return (1);
 }

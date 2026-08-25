@@ -6,6 +6,7 @@
 #include "../Networking/networking.hpp"
 #include "../Networking/http2_client.hpp"
 #include "../Networking/openssl_support.hpp"
+#include "../Networking/networking_ssl_compat.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Errno/errno.hpp"
