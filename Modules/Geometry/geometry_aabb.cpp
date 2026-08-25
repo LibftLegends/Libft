@@ -176,7 +176,15 @@ uint32_t aabb::move(aabb &other) noexcept
     uint32_t lock_error;
 
     if (this == &other)
+    {
+        if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        {
+            errno_abort_lifecycle(this->_initialised_state,
+                "aabb::move source", "called with uninitialised source object");
+            return (FT_ERR_INVALID_STATE);
+        }
         return (FT_ERR_SUCCESS);
+    }
     lock_error = this->lock_pair(other, lower, upper);
     if (lock_error != FT_ERR_SUCCESS)
     {

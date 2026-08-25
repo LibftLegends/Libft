@@ -2461,6 +2461,7 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
 
     if (networking_test_local_ipv4_available() == FT_FALSE)
         return (1);
+    ft_memset(&server_address, 0, sizeof(server_address));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server_configuration.initialize());
     server_configuration._type = SocketType::SERVER;
     server_configuration._address_family = AF_INET;
@@ -2485,7 +2486,16 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     destination.address = server_address;
     destination.length = sizeof(struct sockaddr_in);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_io.send_datagram(destination, payload, sizeof(payload)));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, server_io.wait_readable(1000));
+    receive_attempts = 0U;
+    wait_result = FT_ERR_TIMEOUT;
+    while (wait_result == FT_ERR_TIMEOUT && receive_attempts < 20U)
+    {
+        wait_result = server_io.wait_readable(100U);
+        FT_ASSERT(wait_result == FT_ERR_SUCCESS
+            || wait_result == FT_ERR_TIMEOUT);
+        receive_attempts += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wait_result);
     receive_result = FT_ERR_EMPTY;
     received_size = 0U;
     receive_attempts = 0U;

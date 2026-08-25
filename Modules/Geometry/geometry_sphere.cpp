@@ -3,6 +3,7 @@
 #include "../PThread/pthread.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../Errno/errno_internal.hpp"
+#include <functional>
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -96,23 +97,17 @@ uint32_t sphere::move(sphere &other) noexcept
 {
     const sphere *lower;
     const sphere *upper;
+    ft_bool source_uninitialised;
     uint32_t lock_error;
 
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state, "sphere::move source",
-            "called with uninitialised source object");
-        return (FT_ERR_INVALID_STATE);
-    }
     if (this == &other)
-        return (FT_ERR_SUCCESS);
-    this->_center_x = 0.0;
-    this->_center_y = 0.0;
-    this->_center_z = 0.0;
-    this->_radius = 0.0;
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        {
+            errno_abort_lifecycle(this->_initialised_state,
+                "sphere::move source", "called with uninitialised source object");
+            return (FT_ERR_INVALID_STATE);
+        }
         return (FT_ERR_SUCCESS);
     }
     lock_error = this->lock_pair(other, lower, upper);
@@ -120,6 +115,22 @@ uint32_t sphere::move(sphere &other) noexcept
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (lock_error);
+    }
+    source_uninitialised = FT_FALSE;
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        source_uninitialised = FT_TRUE;
+    if (source_uninitialised != FT_FALSE)
+    {
+        this->unlock_pair(lower, upper);
+        errno_abort_lifecycle(other._initialised_state, "sphere::move source",
+            "called with uninitialised source object");
+        return (FT_ERR_INVALID_STATE);
+    }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->unlock_pair(lower, upper);
+        return (FT_ERR_SUCCESS);
     }
     this->_center_x = other._center_x;
     this->_center_y = other._center_y;
@@ -298,6 +309,8 @@ uint32_t sphere::lock_pair(const sphere &other, const sphere *&lower,
     const sphere *ordered_second;
     uint32_t lower_error;
     uint32_t upper_error;
+    std::less<const sphere *> pointer_order;
+    std::less<const pt_recursive_mutex *> mutex_order;
 
     ordered_first = this;
     ordered_second = &other;
@@ -307,21 +320,47 @@ uint32_t sphere::lock_pair(const sphere &other, const sphere *&lower,
         upper = this;
         return (pt_recursive_mutex_lock_if_not_null(this->_mutex));
     }
-    if (ordered_first > ordered_second)
+    if (ordered_first->_mutex == ft_nullptr
+        && ordered_second->_mutex != ft_nullptr)
+    {
+        ordered_first = &other;
+        ordered_second = this;
+    }
+    else if (ordered_first->_mutex != ft_nullptr
+        && ordered_second->_mutex != ft_nullptr
+        && mutex_order(ordered_second->_mutex, ordered_first->_mutex))
+    {
+        ordered_first = &other;
+        ordered_second = this;
+    }
+    else if (ordered_first->_mutex == ft_nullptr
+        && ordered_second->_mutex == ft_nullptr
+        && pointer_order(ordered_second, ordered_first))
     {
         ordered_first = &other;
         ordered_second = this;
     }
     lower = ordered_first;
     upper = ordered_second;
-    lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
-    if (lower_error != FT_ERR_SUCCESS)
-        return (lower_error);
-    upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
-    if (upper_error == FT_ERR_SUCCESS)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
-    return (upper_error);
+    upper_error = FT_ERR_MUTEX_ALREADY_LOCKED;
+    while (true)
+    {
+        lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
+        if (lower_error != FT_ERR_SUCCESS)
+        {
+            if (lower_error != FT_ERR_MUTEX_ALREADY_LOCKED)
+                return (lower_error);
+            (void)pt_thread_yield();
+            continue ;
+        }
+        upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
+        if (upper_error == FT_ERR_SUCCESS)
+            return (FT_ERR_SUCCESS);
+        (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
+        if (upper_error != FT_ERR_MUTEX_ALREADY_LOCKED)
+            return (upper_error);
+        (void)pt_thread_yield();
+    }
 }
 
 void sphere::unlock_pair(const sphere *lower, const sphere *upper)
