@@ -67,6 +67,10 @@ COMPILE_FLAGS ?= -Wall -Werror -Wextra -std=c++17 -Wmissing-declarations \
                 -DLIBFT_INTERNAL_HEADERS \
                 $(OPT_FLAGS) $(SANITIZER_FLAGS)
 
+ifeq ($(LIBFT_DISABLE_OPENSSL),1)
+    COMPILE_FLAGS += -DNETWORKING_HAS_OPENSSL=0
+endif
+
 ifeq ($(UNAME_S),Darwin)
     COMPILE_FLAGS += -Wno-format-nonliteral -Wno-tautological-compare
 else

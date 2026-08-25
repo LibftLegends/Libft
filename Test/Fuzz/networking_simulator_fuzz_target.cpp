@@ -44,7 +44,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         return (0);
     ft_memset(&endpoint, 0, sizeof(endpoint));
     endpoint.address.ss_family = AF_INET;
-    endpoint.length = sizeof(struct sockaddr_in);
+    endpoint.length = static_cast<socklen_t>(sizeof(struct sockaddr_in));
     configuration.random_seed = 1U;
     configuration.maximum_datagram_size = 1500U;
     if (simulator.initialize(sink, configuration) != FT_ERR_SUCCESS)

@@ -55,7 +55,7 @@ static void networking_fuzz_run_transport(const uint8_t *data,
     configuration.enable_retry_cookies = FT_FALSE;
     ft_memset(&source, 0, sizeof(source));
     source.address.ss_family = AF_INET;
-    source.length = sizeof(struct sockaddr_in);
+    source.length = static_cast<socklen_t>(sizeof(struct sockaddr_in));
     if (transport.initialize(configuration, datagram_io) != FT_ERR_SUCCESS)
         return ;
     (void)transport.process_datagram(source, data, size);

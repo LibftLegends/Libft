@@ -352,6 +352,11 @@ jobs:
         env:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
+          # TSan replaces the global C++ allocation path.  Allocation-fault
+          # tests are executed by the regular and ASan/UBSan suites; exclude
+          # them here so this job measures thread races instead of testing a
+          # sanitizer-owned allocator interception detail.
+          FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit'
         run: |
           set +e
           make -j4 run-asan-ubsan-tests 2>&1 | tee sanitizer_full_output.log

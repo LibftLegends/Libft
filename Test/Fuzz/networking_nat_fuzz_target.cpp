@@ -53,7 +53,8 @@ class networking_nat_fuzz_provider : public networking_nat_candidate_provider
 
             ft_memset(&candidate.endpoint, 0, sizeof(candidate.endpoint));
             candidate.endpoint.address.ss_family = AF_INET;
-            candidate.endpoint.length = sizeof(struct sockaddr_in);
+            candidate.endpoint.length = static_cast<socklen_t>(
+                sizeof(struct sockaddr_in));
             candidate.type = networking_nat_candidate_type::HOST;
             candidate.priority = 1000U;
             candidate.component = 1U;
@@ -122,7 +123,7 @@ static void networking_nat_fuzz_run(const uint8_t *data, ft_size_t size) noexcep
     verifier.set_accept(accept);
     ft_memset(&endpoint, 0, sizeof(endpoint));
     endpoint.address.ss_family = AF_INET;
-    endpoint.length = sizeof(struct sockaddr_in);
+    endpoint.length = static_cast<socklen_t>(sizeof(struct sockaddr_in));
     remote_candidate.endpoint = endpoint;
     remote_candidate.type = networking_nat_candidate_type::RELAY;
     remote_candidate.priority = 800U;

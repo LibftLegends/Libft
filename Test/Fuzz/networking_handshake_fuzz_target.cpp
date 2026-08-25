@@ -9,7 +9,7 @@ static void networking_handshake_fuzz_endpoint(
 {
     ft_memset(&endpoint, 0, sizeof(endpoint));
     endpoint.address.ss_family = AF_INET;
-    endpoint.length = sizeof(struct sockaddr_in);
+    endpoint.length = static_cast<socklen_t>(sizeof(struct sockaddr_in));
     return ;
 }
 
