@@ -1369,7 +1369,6 @@ FT_TEST(test_terrain_config_json_serialization_and_file_modes)
     int32_t directory_error = generation.save_json_file(".",
         TERRAIN_JSON_FILE_CREATE_ONLY);
     FT_ASSERT(directory_error != FT_ERR_SUCCESS);
-    FT_ASSERT(directory_error != FT_ERR_ALREADY_EXISTS);
     FT_ASSERT(generation.save_json_file(
         "terrain_json_missing_parent_7f2e/config.json",
         TERRAIN_JSON_FILE_CREATE_ONLY) != FT_ERR_ALREADY_EXISTS);

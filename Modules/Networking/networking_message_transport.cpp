@@ -4728,6 +4728,7 @@ int32_t networking_message_transport::process_datagram(const networking_message_
     connection_record *connection;
     ft_vector<uint8_t> decrypted_packet;
 
+    channel = 0U;
     offset = 0U;
     if (data == ft_nullptr || size < 4U)
         return (FT_ERR_INVALID_ARGUMENT);

@@ -138,7 +138,7 @@ FUZZ_COMPILE_FLAGS := $(filter-out -Wuseless-cast -Wmaybe-uninitialized,$(LIBFT_
 FUZZ_TEST_HOOK_SOURCES := Test/Test/networking_test_hooks.cpp \
 	Test/Test/crypto_test_hooks.cpp
 ifeq ($(OS),Windows_NT)
-LIBFT_FUZZ_LINK_FLAGS := -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32
+LIBFT_FUZZ_LINK_FLAGS := $(LINK_OPT_FLAGS) -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32
 else
 LIBFT_FUZZ_LINK_FLAGS := $(LIBFT_GLOBAL_TEST_LINK_FLAGS)
 endif
@@ -216,7 +216,7 @@ crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
 	@$(MKDIR) "$(dir $(LIBFT_CRYPTO_X25519_MILLION_EXECUTABLE))"
 	@$(CXX) $(COMPILE_FLAGS) -I. -o $(LIBFT_CRYPTO_X25519_MILLION_EXECUTABLE) \
 		Test/Slow/crypto_x25519_million_runner.cpp \
-		Modules/Crypto/crypto.a Modules/Basic/Basic.a
+		Modules/Crypto/crypto.a Modules/Basic/Basic.a $(LINK_OPT_FLAGS)
 
 terrain-persistence-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 	@cd Test && FT_TEST_NAME_FILTER="test_terrain_json_unsigned_boundaries_and_transaction,test_terrain_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))

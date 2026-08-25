@@ -7,23 +7,30 @@ UNAME_S := $(shell uname -s 2>/dev/null)
 
 ifeq ($(OPT_LEVEL),0)
     OPT_FLAGS = -O0 -g
+    LINK_OPT_FLAGS =
 else ifeq ($(OPT_LEVEL),1)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O1 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O1 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O1 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O1 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else ifeq ($(OPT_LEVEL),2)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O2 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O2 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O2 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O2 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else ifeq ($(OPT_LEVEL),3)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O3 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O3 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O3 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O3 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else
     $(error Unsupported OPT_LEVEL=$(OPT_LEVEL))

@@ -39,17 +39,19 @@ In particular:
 
 ## 2. Scope and implementation order
 
-Implement in this order:
+Implement in these grouped slices:
 
-1. Correct unsigned terrain JSON serialization.
-2. Make terrain serialization transactional.
-3. Remove append mode and correct create-only error mapping.
-4. Add focused terrain persistence tests and tester-only file-I/O failure hooks.
-5. Add adversarial incremental-build regression tests.
-6. Expand Crypto unit, property, differential, failure, fuzz, and platform tests.
-7. Expand Networking protocol, model, failure, concurrency, fuzz, integration,
-   and soak tests.
-8. Add CI jobs and artifact retention for every new suite.
+1. Terrain persistence: unsigned JSON conversion, transactional serialization,
+   the two supported file modes, precise open/write/close errors, and tester-only
+   file-I/O failure hooks/tests.
+2. Build verification: adversarial incremental-build scenarios, archive checks,
+   and platform CI coverage.
+3. Crypto: primitive vectors, lifecycle/failure/property tests, differential and
+   fuzz tests, randomness/wiping checks, and review tooling.
+4. Networking: codec/state/reliability/security/NAT tests, semantic failure
+   injection, fuzzing, concurrency, integration, soak, and observability.
+5. CI handoff: expose the grouped suites through Make targets, retain evidence,
+   and keep production archives free of tester-only code.
 
 Do not combine behavior changes and broad test-framework rewrites into one
 unreviewable commit. Each numbered area should be independently buildable and
@@ -787,45 +789,31 @@ when fixtures use paths relative to that directory.
 
 ## 10. Reviewable implementation slices
 
-Recommended commit sequence:
-
-1. unsigned terrain JSON conversion + boundary round-trip tests;
-2. transactional terrain serialization + exhaustive allocation-failure tests;
-3. remove append mode + precise open-error mapping + file-I/O hooks/tests;
-4. incremental-build test harness and CI job;
-5. split/expand Crypto vectors and failure tests;
-6. Crypto differential/fuzz/constant-time review tooling;
-7. split/expand Networking model and failure tests;
-8. Networking fuzz, netem, TSan, soak, and CI integration;
-9. documentation and final acceptance audit.
+Recommended commit sequence follows the five grouped implementation slices in
+section 2. Keep each slice independently buildable and testable; documentation
+and the final acceptance audit are part of the CI handoff slice.
 
 Each slice must keep the full test binary buildable and must pass
 `git diff --check`.
 
 ## 11. Acceptance criteria
 
-The work is complete only when all of the following are evidenced:
+The work is complete only when the grouped gates below are evidenced:
 
-- every terrain `uint32_t` field round-trips exactly through JSON at full range;
-- serialization is transactional under every injected failure;
-- append mode and all append call sites/tests are removed;
-- create-only returns `FT_ERR_ALREADY_EXISTS` only for a genuine existing target;
-- open/write/close failures preserve specific mapped errors and leak no handles;
-- all incremental-build scenarios pass on Windows, Linux, and macOS;
-- module and aggregate archive integrity pass after every adversarial scenario;
-- all Crypto primitive vector, boundary, lifecycle, allocation, mutation,
-  differential, fuzz, random-provider, and wipe tests pass;
-- all Networking codec, state-machine, reliability, fragmentation, flow-control,
-  lane, security, NAT/relay, worker, failure, fuzz, integration, and resource-bound
-  tests pass;
-- ASan, UBSan, and TSan jobs report no findings;
-- checked-in fuzz corpora run cleanly and bounded fuzz jobs pass;
-- no OpenSSL dependency exists in the standalone Crypto module or new message
-  transport path;
-- production archives contain no tester hooks or deterministic random provider;
-- `make all`, `make tests`, `make archive-integrity`, and the full tester pass;
-- `git diff --check` and the `AGENTS.md` policy scan pass;
-- an independent cryptographic review is recorded before calling encrypted
-  Internet connections production-ready.
+- Terrain persistence is lossless and transactional; append mode is absent; the
+  two remaining file modes preserve precise mapped errors and never leak handles.
+- Every incremental-build scenario and archive-integrity check passes on
+  Windows, Linux, and macOS, including sanitizer/release separation.
+- Crypto vectors, boundaries, lifecycle/failure, mutation, differential, fuzz,
+  randomness, wiping, and review gates pass; the standalone path has no OpenSSL
+  dependency.
+- Networking codec, state, reliability, fragmentation, flow-control, lanes,
+  security, NAT/relay, worker, failure, fuzz, integration, and resource-bound
+  tests pass with no sanitizer findings.
+- Fuzz corpora and bounded fuzz jobs pass; production archives contain no tester
+  hooks or deterministic provider; `make all`, `make tests`, archive integrity,
+  the full tester, `git diff --check`, and the `AGENTS.md` scan pass.
+- An independent cryptographic review is recorded before encrypted Internet
+  connections are called production-ready.
 
 Only after this evidence exists may this design be moved to `Docs/old`.

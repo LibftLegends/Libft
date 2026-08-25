@@ -56,14 +56,14 @@ LIBFT_GLOBAL_TEST_DEBUG_OBJECTS := $(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_DEBUG_RO
 LIBFT_GLOBAL_TEST_DEBUG_DEPENDENCIES := $(LIBFT_GLOBAL_TEST_DEBUG_OBJECTS:.o=.d)
 
 ifeq ($(OS),Windows_NT)
-LIBFT_GLOBAL_TEST_LINK_FLAGS := -Wl,--allow-multiple-definition -lz -lws2_32 \
+LIBFT_GLOBAL_TEST_LINK_FLAGS := $(LINK_OPT_FLAGS) -Wl,--allow-multiple-definition -lz -lws2_32 \
 	-lgdi32 -lwinmm -ldbghelp -lopengl32 $(OPENSSL_LIBS) $(SQLITE_LIBS)
 else ifeq ($(UNAME_S),Darwin)
-LIBFT_GLOBAL_TEST_LINK_FLAGS := -lz -framework Cocoa -framework CoreGraphics \
+LIBFT_GLOBAL_TEST_LINK_FLAGS := $(LINK_OPT_FLAGS) -lz -framework Cocoa -framework CoreGraphics \
 	-framework QuartzCore -framework AudioToolbox -lobjc -lpthread \
 	$(OPENSSL_LIBS) $(SQLITE_LIBS)
 else
-LIBFT_GLOBAL_TEST_LINK_FLAGS := -Wl,--allow-multiple-definition -rdynamic \
+LIBFT_GLOBAL_TEST_LINK_FLAGS := $(LINK_OPT_FLAGS) -Wl,--allow-multiple-definition -rdynamic \
 	-rdynamic -lz -ldl $(OPENSSL_LIBS) $(SQLITE_LIBS) $(X11_LIBS) \
 	$(XEXT_LIBS) $(XI_LIBS) $(GL_LIBS) $(ASOUND_LIBS) -pthread
 endif
