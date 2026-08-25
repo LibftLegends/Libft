@@ -2484,6 +2484,7 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     destination.address = server_address;
     destination.length = sizeof(struct sockaddr_in);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_io.send_datagram(destination, payload, sizeof(payload)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server_io.wait_readable(1000));
     receive_result = FT_ERR_EMPTY;
     received_size = 0U;
     receive_attempts = 0U;
