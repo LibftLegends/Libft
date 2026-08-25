@@ -158,6 +158,8 @@ jobs:
             elif command -v lldb >/dev/null 2>&1; then
               (cd Test && lldb --batch \
                 -o 'settings set target.env-vars FT_TEST_HIDE_SUCCESSFUL=0' \
+                -o 'process handle SIGABRT -s false -n false -p true' \
+                -o 'process handle SIGIOT -s false -n false -p true' \
                 -k 'thread backtrace all' \
                 -o run \
                 -- ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
@@ -302,6 +304,7 @@ jobs:
             Test/ci_macos_sample.txt
             Test/ci_macos_hang_detected.txt
             Test/ci_macos_hang.core
+            Test/test_failures.log
             test_failures.log
           if-no-files-found: warn # CI_DIAGNOSTIC: Do not hide the original test failure if a log is unavailable.
 
