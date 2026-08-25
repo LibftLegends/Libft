@@ -196,12 +196,6 @@ manifest='mk/modules/Crypto.mk'
 cp "$manifest" "$manifest.incremental-backup"
 sed '/crypto_random\.cpp \\/d' "$manifest" >"$manifest.incremental-rewritten"
 mv "$manifest.incremental-rewritten" "$manifest"
-# Manifest edits can land in the same filesystem timestamp bucket as the
-# archive on macOS.  Refresh the manifest after a clock boundary so make must
-# reevaluate the object membership and rebuild the archive without the removed
-# source.
-sleep 1
-touch "$manifest"
 run_make manifest_removal_build global-all
 if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
     archive_has_member Full_Libft.a crypto_random.o; then
@@ -209,8 +203,6 @@ if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
     exit 1
 fi
 mv "$manifest.incremental-backup" "$manifest"
-sleep 1
-touch "$manifest"
 run_make manifest_restore_build global-all
 
 # A source rename must remove the old member and add the new one.
@@ -219,8 +211,6 @@ cp "$manifest" "$manifest.incremental-backup"
 sed 's/crypto_random\.cpp/crypto_random_renamed.cpp/' \
     "$manifest" >"$manifest.incremental-rewritten"
 mv "$manifest.incremental-rewritten" "$manifest"
-sleep 1
-touch "$manifest"
 run_make source_rename_build global-all
 if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
     ! archive_has_member Modules/Crypto/crypto.a crypto_random_renamed.o; then
@@ -229,8 +219,6 @@ if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
 fi
 mv Modules/Crypto/crypto_random_renamed.cpp Modules/Crypto/crypto_random.cpp
 mv "$manifest.incremental-backup" "$manifest"
-sleep 1
-touch "$manifest"
 run_make source_restore_build global-all
 
 # Configuration fingerprints must isolate compile-flag changes.
