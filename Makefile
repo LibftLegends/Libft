@@ -261,6 +261,9 @@ archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS)
 incremental-build-tests:
 	@LIBFT_INCREMENTAL_JOBS=$(if $(JOBS),$(JOBS),4) bash mk/test_incremental_build_graph.sh
 
+agents-policy-scan:
+	@sh mk/check_agents_policy.sh
+
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 

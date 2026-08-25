@@ -68,6 +68,10 @@ jobs:
         shell: bash
         run: sh mk/test_build_progress.sh make
 
+      - name: Validate AGENTS policy for hardened modules
+        shell: bash
+        run: make agents-policy-scan
+
       - name: Validate release archives
         shell: bash
         run: make -j4 archive-integrity
