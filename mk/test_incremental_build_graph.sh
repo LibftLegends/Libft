@@ -161,6 +161,7 @@ run_make private_header_build global-all
 
 # A common header must rebuild every dependent release object and nothing else.
 common_header='Modules/Basic/basic.hpp'
+sleep 1
 touch "$common_header"
 build_plan common_header_plan global-all
 assert_plan_matches_dependencies "$common_header" \
