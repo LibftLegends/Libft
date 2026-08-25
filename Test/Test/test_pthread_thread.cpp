@@ -42,14 +42,12 @@ FT_TEST(test_pt_thread_join_rejects_invalid_thread)
 
 FT_TEST(test_pt_thread_detach_updates_errno)
 {
-    pthread_t invalid_thread;
     pthread_t thread;
     int failure_result;
     int detach_result;
     int routine_started;
 
-    invalid_thread = 0;
-    failure_result = pt_thread_detach(invalid_thread);
+    failure_result = pt_thread_detach(static_cast<pthread_t>(0));
     FT_ASSERT(failure_result != 0);
     routine_started = 0;
     FT_ASSERT_EQ(0, pt_thread_create(&thread, ft_nullptr, pthread_test_routine, &routine_started));

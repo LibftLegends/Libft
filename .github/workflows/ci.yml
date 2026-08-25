@@ -140,6 +140,27 @@ jobs:
             (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
             test_status=${PIPESTATUS[0]}
           fi
+          if [ "$test_status" -ne 0 ] && [ "$RUNNER_OS" = "macOS" ] \
+            && [ ! -f Test/ci_macos_hang_detected.txt ]; then
+            failed_test_names=$(grep 'FAIL' Test/ci_unix_full_output.log \
+              | grep -o 'test_[A-Za-z0-9_]*' | sort -u)
+            if [ -n "$failed_test_names" ]; then
+              printf '%s\n' "$failed_test_names" | while IFS= read -r test_name; do
+                [ -n "$test_name" ] || continue
+                (cd Test && FT_TEST_NAME_FILTER="$test_name" \
+                  FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 \
+                  ./libft_tests > "ci_macos_${test_name}_output.log" 2>&1 || true)
+                if [ -f Test/test_failures.log ]; then
+                  cp Test/test_failures.log \
+                    "Test/ci_macos_${test_name}_failures.log"
+                fi
+                cat "Test/ci_macos_${test_name}_output.log"
+                if [ -f "Test/ci_macos_${test_name}_failures.log" ]; then
+                  cat "Test/ci_macos_${test_name}_failures.log"
+                fi
+              done
+            fi
+          fi
           if [ "$test_status" -ne 0 ]; then
             if [ "$RUNNER_OS" = "macOS" ] && [ -f Test/ci_macos_hang_detected.txt ]; then
               printf '%s\n' 'macOS hang diagnostics were already captured.'
@@ -320,6 +341,9 @@ jobs:
             Test/ci_macos_sample.txt
             Test/ci_macos_hang_detected.txt
             Test/ci_macos_hang.core
+            Test/test_failures.log
+            Test/ci_macos_*_output.log
+            Test/ci_macos_*_failures.log
             test_failures.log
           if-no-files-found: warn
 
@@ -371,6 +395,18 @@ jobs:
           set +e
           make -j4 run-asan-ubsan-tests 2>&1 | tee sanitizer_full_output.log
           test_status=${PIPESTATUS[0]}
+          if [ "$test_status" -ne 0 ]; then
+            printf '%s\n' "ASan/UBSan test command exit status: $test_status"
+            if [ -f Test/test_failures.log ]; then
+              printf '%s\n' 'Test failure details:'
+              cat Test/test_failures.log
+            fi
+            find . -maxdepth 2 -type f \( -name 'asan_report.*' \
+              -o -name 'ubsan_report.*' \) -print | while IFS= read -r report; do
+              printf '%s\n' "Sanitizer report: $report"
+              cat "$report"
+            done
+          fi
           exit "$test_status"
 
       - name: Upload sanitizer evidence
@@ -469,6 +505,18 @@ jobs:
           set +e
           make -j4 run-tsan-tests 2>&1 | tee tsan_full_output.log
           test_status=${PIPESTATUS[0]}
+          if [ "$test_status" -ne 0 ]; then
+            printf '%s\n' "TSan test command exit status: $test_status"
+            if [ -f Test/test_failures.log ]; then
+              printf '%s\n' 'Test failure details:'
+              cat Test/test_failures.log
+            fi
+            find . -maxdepth 2 -type f -name 'tsan_report.*' -print \
+              | while IFS= read -r report; do
+                printf '%s\n' "TSan report: $report"
+                cat "$report"
+              done
+          fi
           exit "$test_status"
 
       - name: Upload ThreadSanitizer evidence
