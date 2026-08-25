@@ -331,6 +331,12 @@ events emitted by `BUILD_PLAN_MODE=1`.
     assert each invalidates the intended targets.
 14. Run the stale-source/member scanner after every scenario.
 
+Manifest invalidation must be content-based rather than dependent solely on
+filesystem timestamp resolution. The global Make graph should derive a stable
+manifest fingerprint and use a fingerprinted stamp prerequisite for each
+module archive. An unchanged fingerprint must remain a no-op; a changed
+fingerprint must force the module and aggregate archives to be regenerated.
+
 ### 6.3 Assertions and diagnostics
 
 The script must fail on:
