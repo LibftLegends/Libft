@@ -114,8 +114,8 @@ static void networking_nat_fuzz_run(const uint8_t *data, ft_size_t size) noexcep
     networking_nat_candidate remote_candidate;
     networking_message_endpoint endpoint;
     uint32_t sent_probes;
-    int32_t result;
-    int32_t cleanup_result;
+    int32_t result = FT_ERR_SUCCESS;
+    int32_t cleanup_result = FT_ERR_SUCCESS;
 
     accept = FT_TRUE;
     if (size > 0U && (data[0U] & 2U) != 0U)

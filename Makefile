@@ -135,6 +135,8 @@ LIBFT_NETWORKING_SIMULATOR_FUZZ_EXECUTABLE := Test/networking_simulator_fuzz
 LIBFT_NETWORKING_NAT_FUZZ_EXECUTABLE := Test/networking_nat_fuzz
 LIBFT_NETWORKING_HANDSHAKE_FUZZ_EXECUTABLE := Test/networking_handshake_fuzz
 FUZZ_COMPILE_FLAGS := $(filter-out -Wuseless-cast -Wmaybe-uninitialized,$(LIBFT_GLOBAL_TEST_CXX_FLAGS))
+FUZZ_TEST_HOOK_SOURCES := Test/Test/networking_test_hooks.cpp \
+	Test/Test/crypto_test_hooks.cpp
 ifeq ($(OS),Windows_NT)
 LIBFT_FUZZ_LINK_FLAGS := -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32
 else
@@ -146,6 +148,7 @@ networking-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_fuzz_target.cp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_NETWORKING_FUZZ_EXECUTABLE) \
 		Test/Fuzz/networking_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 	@printf '\033[1;35m[LIBFT][Fuzz] Ready: %s\033[0m\n' \
 		"$(LIBFT_NETWORKING_FUZZ_EXECUTABLE)"
@@ -155,6 +158,7 @@ crypto-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_CRYPTO_FUZZ_EXECUTABLE) \
 		Test/Fuzz/crypto_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 	@printf '\033[1;35m[LIBFT][Fuzz] Ready: %s\033[0m\n' \
 		"$(LIBFT_CRYPTO_FUZZ_EXECUTABLE)"
@@ -162,28 +166,33 @@ crypto-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_fuzz_target.cpp
 crypto-sha-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_sha_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_CRYPTO_SHA_FUZZ_EXECUTABLE) Test/Fuzz/crypto_sha_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 crypto-aead-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_aead_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_CRYPTO_AEAD_FUZZ_EXECUTABLE) Test/Fuzz/crypto_aead_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 crypto-x25519-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_x25519_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_CRYPTO_X25519_FUZZ_EXECUTABLE) Test/Fuzz/crypto_x25519_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 crypto-hmac-hkdf-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_hmac_hkdf_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_CRYPTO_HMAC_HKDF_FUZZ_EXECUTABLE) \
 		Test/Fuzz/crypto_hmac_hkdf_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 networking-simulator-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_simulator_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_NETWORKING_SIMULATOR_FUZZ_EXECUTABLE) \
 		Test/Fuzz/networking_simulator_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 networking-nat-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_nat_fuzz_target.cpp
@@ -191,6 +200,7 @@ networking-nat-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_nat_fuzz_t
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_NETWORKING_NAT_FUZZ_EXECUTABLE) \
 		Test/Fuzz/networking_nat_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 networking-handshake-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_handshake_fuzz_target.cpp
@@ -198,6 +208,7 @@ networking-handshake-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_hand
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_NETWORKING_HANDSHAKE_FUZZ_EXECUTABLE) \
 		Test/Fuzz/networking_handshake_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
 crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
