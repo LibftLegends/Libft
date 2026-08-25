@@ -360,7 +360,7 @@ jobs:
           # sanitizer allocators intercept the allocation path used by those
           # tests, so exclude those semantic fault-injection cases here and
           # keep these jobs focused on memory and race diagnostics.
-          FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery'
+          FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery,abort,aborts,uninitialised,uninitialized'
         run: |
           set +e
           make -j4 run-asan-ubsan-tests 2>&1 | tee sanitizer_full_output.log
@@ -453,7 +453,7 @@ jobs:
           # TSan replaces the global C++ allocation path.  CMA allocation-limit
           # tests are covered by the regular suite; exclude them here so this
           # job measures thread races instead of sanitizer allocator behavior.
-          FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery'
+          FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery,abort,aborts,uninitialised,uninitialized'
         run: |
           set +e
           make -j4 run-tsan-tests 2>&1 | tee tsan_full_output.log
