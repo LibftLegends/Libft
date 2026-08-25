@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <errno.h>
 #include "pthread.hpp"
 #include "../Errno/errno.hpp"
 

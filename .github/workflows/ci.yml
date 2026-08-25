@@ -296,11 +296,11 @@ jobs:
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
           for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data test_thread_pool_cancellation_allows_execution; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
             (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
-            cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Preserve assertion file before the next targeted run resets it.
+            if [ -f Test/test_failures.log ]; then cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log"; fi # CI_DIAGNOSTIC: Preserve assertion file when the targeted test reaches the runner.
             if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
             if [ -f Test/secure_wipe_runtime.err ]; then cp Test/secure_wipe_runtime.err "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Preserve runtime compiler or execution errors.
             cat "Test/ci_ubuntu_${test_name}_output.log" # CI_DIAGNOSTIC: Print targeted output into the Actions log.
-            cat "Test/ci_ubuntu_${test_name}_failures.log" # CI_DIAGNOSTIC: Print exact assertion details into the Actions log.
+            if [ -f "Test/ci_ubuntu_${test_name}_failures.log" ]; then cat "Test/ci_ubuntu_${test_name}_failures.log"; fi # CI_DIAGNOSTIC: Print exact assertion details when available.
             if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Print runtime status into the Actions log.
             if [ -f "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err" ]; then cat "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.err"; fi # CI_DIAGNOSTIC: Print runtime compiler errors into the Actions log.
           done # CI_DIAGNOSTIC: Finish all targeted reruns.
