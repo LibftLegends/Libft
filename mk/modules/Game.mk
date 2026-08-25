@@ -21,6 +21,7 @@ Game_SOURCES := game_map3d.cpp \
         game_world.cpp \
         game_voxel_chunk.cpp \
         game_voxel_region.cpp \
+        game_block_edit_op.cpp \
         game_world_replay.cpp \
         game_server.cpp \
         game_item.cpp \
@@ -69,6 +70,7 @@ Game_HEADERS := game_map3d.hpp \
         game_world.hpp \
         game_voxel_chunk.hpp \
         game_voxel_region.hpp \
+        game_block_edit_op.hpp \
         game_region_backend.hpp \
         game_world_replay.hpp \
         game_server.hpp \
