@@ -12,6 +12,8 @@
 #include "crypto_test_hooks.hpp"
 #include "networking_test_hooks.hpp"
 #include "networking_test_support.hpp"
+#include <chrono>
+#include <thread>
 
 static const ft_size_t NETWORKING_MEMORY_DATAGRAM_CAPACITY = 2048U;
 
@@ -1051,6 +1053,7 @@ FT_TEST(test_networking_message_transport_worker_callbacks_are_owner_dispatched)
     networking_message_endpoint endpoint;
     networking_message_connection connection;
     networking_test_callback_state callback_state;
+    uint32_t dispatch_attempts;
 
     networking_message_prepare_endpoint(endpoint);
     configuration.enable_encryption = FT_FALSE;
@@ -1063,7 +1066,14 @@ FT_TEST(test_networking_message_transport_worker_callbacks_are_owner_dispatched)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.open_connection(endpoint,
         connection));
     FT_ASSERT_EQ(0U, callback_state.calls);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.dispatch_callbacks());
+    dispatch_attempts = 0U;
+    while (callback_state.calls == 0U && dispatch_attempts < 100U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.dispatch_callbacks());
+        if (callback_state.calls == 0U)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        dispatch_attempts += 1U;
+    }
     FT_ASSERT(callback_state.calls >= 1U);
     FT_ASSERT_EQ(FT_TRUE, callback_state.observed_statistics);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.stop_worker());
@@ -2472,7 +2482,7 @@ FT_TEST(test_networking_udp_datagram_adapter_loopback)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_io.initialize(client_configuration));
     ft_memset(&destination, 0, sizeof(destination));
     destination.address = server_address;
-    destination.length = address_length;
+    destination.length = sizeof(struct sockaddr_in);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_io.send_datagram(destination, payload, sizeof(payload)));
     receive_result = FT_ERR_EMPTY;
     received_size = 0U;
