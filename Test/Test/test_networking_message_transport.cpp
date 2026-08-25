@@ -2107,7 +2107,7 @@ FT_TEST(test_networking_deterministic_datagram_fuzz_corpus)
     iteration = 0U;
     while (iteration < 512U)
     {
-        size = (iteration * 193U) % (sizeof(corpus) + 1U);
+        size = (iteration * 193U) % static_cast<uint32_t>(sizeof(corpus) + 1U);
         index = 0U;
         while (index < size)
         {
