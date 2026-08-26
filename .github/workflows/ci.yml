@@ -94,6 +94,15 @@ jobs:
               printf '%s\n' "macOS main tester core dump limit: $(ulimit -c)" # CI_DIAGNOSTIC: Record the runner limit; expected-abort children disable it themselves.
               ./libft_tests > ci_unix_full_output.log 2>&1 &
               test_pid=$!
+              on_cancel()
+              {
+                printf '%s\n' "CI cancellation received; sending SIGABRT to test process ${test_pid}." >&2
+                kill -ABRT "$test_pid" 2>/dev/null || true
+                sleep 5
+                kill -0 "$test_pid" 2>/dev/null && kill -KILL "$test_pid" 2>/dev/null || true
+                exit 128
+              }
+              trap on_cancel TERM INT HUP
               tail -f ci_unix_full_output.log &
               tail_pid=$!
               last_output_size=-1
@@ -131,13 +140,15 @@ jobs:
               done
               wait "$test_pid"
               test_status=$?
+              trap - TERM INT HUP
               kill "$tail_pid" 2>/dev/null || true
               wait "$tail_pid" 2>/dev/null || true
               exit "$test_status"
             )
             test_status=$?
           else
-            (cd Test && ./libft_tests) 2>&1 | tee Test/ci_unix_full_output.log
+            sh mk/ci_run_test_with_abort_trap.sh sh -c 'cd Test && ./libft_tests' 2>&1 \
+              | tee Test/ci_unix_full_output.log
             test_status=${PIPESTATUS[0]}
           fi
           if [ "$test_status" -ne 0 ] && [ "$RUNNER_OS" = "macOS" ] \
@@ -403,7 +414,8 @@ jobs:
             printf '%s\n' "ASan/UBSan build exit status: $build_status"
             exit "$build_status"
           fi
-          (cd Test && ./libft_tests) 2>&1 | tee sanitizer_full_output.log
+          sh mk/ci_run_test_with_abort_trap.sh sh -c 'cd Test && ./libft_tests' 2>&1 \
+            | tee sanitizer_full_output.log
           test_status=${PIPESTATUS[0]}
           if [ "$test_status" -ne 0 ]; then
             printf '%s\n' "ASan/UBSan test command exit status: $test_status"
@@ -561,7 +573,8 @@ jobs:
           ulimit -c unlimited
           printf '%s\n' "TSan core limit: $(ulimit -c)"
           printf '%s\n' 'TSan tests starting.'
-          (cd Test && ./libft_tests) 2>&1 | tee tsan_full_output.log
+          sh mk/ci_run_test_with_abort_trap.sh sh -c 'cd Test && ./libft_tests' 2>&1 \
+            | tee tsan_full_output.log
           test_status=${PIPESTATUS[0]}
           if [ "$test_status" -ne 0 ]; then
             printf '%s\n' "TSan test command exit status: $test_status"
