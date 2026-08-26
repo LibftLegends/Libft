@@ -75,6 +75,7 @@ namespace
         int shm_fd;
         size_t total_size;
         pthread_mutex_t *shared_mutex;
+        pthread_mutexattr_t mutex_attributes;
         static size_t shared_memory_suffix_seed = 0;
         size_t shared_memory_suffix;
 
@@ -107,7 +108,20 @@ namespace
             return (-1);
         std::memset(mapping, 0, total_size);
         shared_mutex = reinterpret_cast<pthread_mutex_t *>(mapping);
-        if (pthread_mutex_init(shared_mutex, ft_nullptr) != 0)
+        if (pthread_mutexattr_init(&mutex_attributes) != 0)
+            return (-1);
+        if (pthread_mutexattr_setpshared(&mutex_attributes,
+                PTHREAD_PROCESS_SHARED) != 0)
+        {
+            (void)pthread_mutexattr_destroy(&mutex_attributes);
+            return (-1);
+        }
+        if (pthread_mutex_init(shared_mutex, &mutex_attributes) != 0)
+        {
+            (void)pthread_mutexattr_destroy(&mutex_attributes);
+            return (-1);
+        }
+        if (pthread_mutexattr_destroy(&mutex_attributes) != 0)
             return (-1);
         std::memcpy(mapping + data_offset, payload, payload_length);
         *reinterpret_cast<int *>(mapping + error_offset) = 123;

@@ -239,6 +239,13 @@ FT_TEST(test_path_step_thread_safety)
         failure_expression = "primary_step->initialize() == FT_ERR_SUCCESS";
         failure_line = __LINE__;
     }
+    if (test_failed == 0
+        && primary_step->enable_thread_safety() != FT_ERR_SUCCESS)
+    {
+        test_failed = 1;
+        failure_expression = "primary_step->enable_thread_safety() == FT_ERR_SUCCESS";
+        failure_line = __LINE__;
+    }
     if (copy_target.initialize() != FT_ERR_SUCCESS && test_failed == 0)
     {
         test_failed = 1;
