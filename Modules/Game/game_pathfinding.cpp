@@ -127,33 +127,47 @@ int32_t game_path_step::initialize() noexcept
 int32_t game_path_step::initialize(const game_path_step &other) noexcept
 {
     int32_t destroy_error;
+    int32_t lock_error;
+    ft_bool lock_acquired;
 
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    lock_error = other.lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
+        (void)other.unlock_internal(lock_acquired);
         errno_abort_lifecycle(other._initialised_state, "game_path_step::initialize(copy)", "source object is uninitialised");
         return (FT_ERR_INVALID_STATE);
     }
-    if (this == &other)
-        return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
+        {
+            (void)other.unlock_internal(lock_acquired);
             return (destroy_error);
+        }
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         this->set_error(static_cast<uint32_t>(other.get_error()));
+        (void)other.unlock_internal(lock_acquired);
         return (FT_ERR_SUCCESS);
     }
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
+        {
+            (void)other.unlock_internal(lock_acquired);
             return (destroy_error);
+        }
     }
     this->_x = other._x;
     this->_y = other._y;
     this->_z = other._z;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)other.unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);
 }
 
