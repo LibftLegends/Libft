@@ -468,12 +468,21 @@ static int32_t restore_baseline_descriptors(int32_t baseline_stdin_descriptor,
     return (1);
 }
 
+static int32_t diagnostic_output_enabled(void)
+{
+    const char *diagnostic_output;
+
+    diagnostic_output = std::getenv("FT_TEST_DIAGNOSTIC_OUTPUT");
+    return (env_value_is_enabled(diagnostic_output));
+}
+
 static int32_t execute_test_function(const s_test_case *test,
     int32_t baseline_stdin_descriptor, int32_t baseline_stdout_descriptor,
     int32_t baseline_stderr_descriptor, int32_t null_descriptor)
 {
     int32_t reset_error;
     int32_t result;
+    int32_t preserve_output;
 
     /*
      * Tests which exercise abort behaviour install temporary signal handlers.
@@ -514,9 +523,10 @@ static int32_t execute_test_function(const s_test_case *test,
     su_service_clear_signal_handlers();
     su_service_force_no_fork(FT_FALSE);
 
-    if (dup2(null_descriptor, STDOUT_FILENO) < 0)
+    preserve_output = diagnostic_output_enabled();
+    if (preserve_output == 0 && dup2(null_descriptor, STDOUT_FILENO) < 0)
         return (0);
-    if (dup2(null_descriptor, STDERR_FILENO) < 0)
+    if (preserve_output == 0 && dup2(null_descriptor, STDERR_FILENO) < 0)
     {
         if (restore_baseline_descriptors(baseline_stdin_descriptor,
                 baseline_stdout_descriptor, baseline_stderr_descriptor) == 0)

@@ -420,6 +420,7 @@ jobs:
                 printf '%s\n' "Rerunning last started test: $last_test_name"
                 (cd Test && FT_TEST_NAME_FILTER="$last_test_name" \
                   FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 \
+                  FT_TEST_DIAGNOSTIC_OUTPUT=1 \
                   ./libft_tests) >"Test/asan_last_test_output.log" 2>&1
                 rerun_status=$?
                 printf '%s\n' "Last-test rerun exit status: $rerun_status"
@@ -562,6 +563,7 @@ jobs:
                 printf '%s\n' "Rerunning last started test: $last_test_name"
                 (cd Test && FT_TEST_NAME_FILTER="$last_test_name" \
                   FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 \
+                  FT_TEST_DIAGNOSTIC_OUTPUT=1 \
                   ./libft_tests) >"Test/tsan_last_test_output.log" 2>&1
                 rerun_status=$?
                 printf '%s\n' "Last-test rerun exit status: $rerun_status"
