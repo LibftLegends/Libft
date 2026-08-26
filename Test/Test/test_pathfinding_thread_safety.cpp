@@ -422,6 +422,7 @@ FT_TEST(test_pathfinding_thread_safety)
     primary_finder = new game_pathfinding();
     FT_ASSERT(primary_finder != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_finder->initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_finder->enable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, seed_path.initialize());
     recalc_arguments = new pathfinding_recalc_args();
     read_arguments = new pathfinding_read_args();
