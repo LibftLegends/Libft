@@ -537,6 +537,8 @@ jobs:
           FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery,abort,aborts,uninitialised,uninitialized'
         run: |
           set +e
+          ulimit -c unlimited
+          printf '%s\n' "TSan core limit: $(ulimit -c)"
           make -j4 tsan-tests 2>&1 | tee tsan_build_output.log
           build_status=${PIPESTATUS[0]}
           if [ "$build_status" -ne 0 ]; then
@@ -580,6 +582,7 @@ jobs:
                 printf '%s\n' "TSan report: $report"
                 cat "$report"
               done
+            find . -maxdepth 3 -type f \( -name 'core' -o -name 'core.*' \) -print
           fi
           exit "$test_status"
 
@@ -592,6 +595,10 @@ jobs:
             tsan_full_output.log
             tsan_build_output.log
             tsan_report.*
+            core
+            core.*
+            Test/core
+            Test/core.*
             Test/tsan_report.*
             Test/test_failures.log
             Test/test_current.log
