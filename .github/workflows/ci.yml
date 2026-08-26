@@ -548,6 +548,7 @@ jobs:
         env:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
+          FT_TEST_TRACE_CURRENT_TEST: '1'
           TSAN_OPTIONS: 'log_path=../tsan_report:halt_on_error=1:second_deadlock_stack=1'
           FT_TEST_TIMEOUT_SECONDS: '120'
           # TSan replaces the global C++ allocation path.  CMA allocation-limit

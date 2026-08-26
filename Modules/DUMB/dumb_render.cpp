@@ -136,6 +136,10 @@ ft_render_screen_size ft_render_get_primary_screen_size(void)
 }
 
 ft_render_window::ft_render_window(void)
+    : _mutex(ft_nullptr),
+      _initialised_state(FT_CLASS_STATE_UNINITIALISED),
+      _framebuffer(), _depth_buffer(), _is_initialised(FT_FALSE),
+      _should_close(FT_FALSE), _platform_state(ft_nullptr)
 {
     this->reset_render_window_runtime();
     return ;
