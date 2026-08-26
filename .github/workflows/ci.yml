@@ -384,6 +384,7 @@ jobs:
         env:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
+          FT_TEST_TRACE_CURRENT_TEST: '1'
           ASAN_OPTIONS: 'log_path=../asan_report:abort_on_error=1'
           UBSAN_OPTIONS: 'log_path=../ubsan_report:halt_on_error=1:print_stacktrace=1'
           # CMA allocation-limit tests are covered by the regular suite.  The
@@ -400,6 +401,12 @@ jobs:
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+            fi
+            if [ -f Test/test_current.log ]; then
+              printf '%s\n' 'Last started test:'
+              cat Test/test_current.log
+            else
+              printf '%s\n' 'No current-test trace was produced.'
             fi
             find . -maxdepth 2 -type f \( -name 'asan_report.*' \
               -o -name 'ubsan_report.*' \) -print | while IFS= read -r report; do
@@ -421,6 +428,7 @@ jobs:
             Test/asan_report.*
             Test/ubsan_report.*
             Test/test_failures.log
+            Test/test_current.log
             Test/ci_unix_full_output.log
           if-no-files-found: warn
 

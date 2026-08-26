@@ -80,6 +80,24 @@ struct s_test_case
     const char *name;
 };
 
+#ifdef LIBFT_TEST_BUILD
+static void write_test_trace(int32_t test_number, const s_test_case *test)
+{
+    FILE *trace_file;
+
+    if (std::getenv("FT_TEST_TRACE_CURRENT_TEST") == NULL || test == NULL)
+        return ;
+    trace_file = std::fopen("test_current.log", "w");
+    if (trace_file == NULL)
+        return ;
+    std::fprintf(trace_file, "started %d %s/%s\n", test_number,
+        test->module, test->name);
+    std::fflush(trace_file);
+    std::fclose(trace_file);
+    return ;
+}
+#endif
+
 static int32_t *get_test_count(void)
 {
     static int32_t test_count = 0;
@@ -729,6 +747,9 @@ int32_t ft_run_registered_tests(void)
             print_running_test_line(selected_tests, current_test.description,
                 terminal_width);
         }
+#ifdef LIBFT_TEST_BUILD
+        write_test_trace(selected_tests, &current_test);
+#endif
         if (execute_test_function(&current_test, baseline_stdin_descriptor,
                 baseline_stdout_descriptor, baseline_stderr_descriptor,
                 null_descriptor))

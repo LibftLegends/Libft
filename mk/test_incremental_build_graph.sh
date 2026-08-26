@@ -198,12 +198,24 @@ fi
 # archives.  Restore the manifest before continuing with the next scenario.
 manifest='mk/modules/Crypto.mk'
 cp "$manifest" "$manifest.incremental-backup"
-sed '/crypto_random\.cpp \\/d' "$manifest" >"$manifest.incremental-rewritten"
+awk '$0 !~ /crypto_random[.]cpp/ { print }' "$manifest" \
+    >"$manifest.incremental-rewritten"
 mv "$manifest.incremental-rewritten" "$manifest"
+if grep -F 'crypto_random.cpp' "$manifest" >/dev/null 2>&1; then
+    printf '%s\n' 'manifest rewrite did not remove crypto_random.cpp' >&2
+    diff -u "$manifest.incremental-backup" "$manifest" >&2 || true
+    exit 1
+fi
 run_make manifest_removal_build global-all
 if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
     archive_has_member Full_Libft.a crypto_random.o; then
     printf '%s\n' 'stale member survived manifest removal' >&2
+    printf '%s\n' 'Crypto archive members:' >&2
+    ar t Modules/Crypto/crypto.a >&2 || true
+    printf '%s\n' 'Full archive members matching crypto_random:' >&2
+    ar t Full_Libft.a | grep -F 'crypto_random' >&2 || true
+    printf '%s\n' 'Manifest-removal build log:' >&2
+    cat "$log_directory/manifest_removal_build.log" >&2
     exit 1
 fi
 mv "$manifest.incremental-backup" "$manifest"
