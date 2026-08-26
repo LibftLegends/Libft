@@ -256,6 +256,11 @@ FT_TEST(test_networking_http_server_short_write_sets_error)
     request_string = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     client_socket.send_all(request_string, ft_strlen(request_string), 0);
     client_socket.close_socket();
+    if (thread_started == FT_TRUE)
+    {
+        server_thread.join();
+        thread_started = FT_FALSE;
+    }
     FT_TEST_REQUIRE(context.result != FT_ERR_SUCCESS);
     error_code = context.result;
     FT_TEST_REQUIRE(error_code != FT_ERR_SUCCESS);

@@ -759,4 +759,6 @@ jobs:
 
       - name: Run adversarial incremental-build graph suite
         shell: bash
-        run: sh mk/ci_run_with_timeout.sh 13800 make JOBS=8 incremental-build-tests
+        run: >-
+          LIBFT_INCREMENTAL_TIMEOUT_SECONDS=1800
+          sh mk/ci_run_with_timeout.sh 13800 make JOBS=16 incremental-build-tests
