@@ -46,7 +46,9 @@ FT_TEST(test_dumb_render_shader_runs_cpu_side_for_each_pixel)
 {
     ft_render_window render_window_instance;
     uint32_t pixels[6];
-    uint8_t depth_values[6];
+    uint8_t *depth_values;
+
+    depth_values = new uint8_t[6];
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, render_window_instance.initialize());
     pixels[0] = 0U;
@@ -91,9 +93,10 @@ FT_TEST(test_dumb_render_shader_uses_user_data_and_keeps_depth_when_requested)
 {
     ft_render_window render_window_instance;
     uint32_t pixels[2];
-    uint8_t depth_values[2];
+    uint8_t *depth_values;
     uint32_t tint_color;
 
+    depth_values = new uint8_t[2];
     FT_ASSERT_EQ(FT_ERR_SUCCESS, render_window_instance.initialize());
     pixels[0] = 0x00FF00FFU;
     pixels[1] = 0x0000FFFFU;
@@ -122,8 +125,9 @@ FT_TEST(test_dumb_render_shader_reports_invalid_inputs)
 {
     ft_render_window render_window_instance;
     uint32_t pixels[1];
-    uint8_t depth_values[1];
+    uint8_t *depth_values;
 
+    depth_values = new uint8_t[1];
     FT_ASSERT_EQ(FT_ERR_SUCCESS, render_window_instance.initialize());
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
         render_window_instance.shade(ft_nullptr, ft_nullptr));
@@ -142,6 +146,8 @@ FT_TEST(test_dumb_render_shader_reports_invalid_inputs)
         render_window_instance.shade(test_dumb_failing_shader, ft_nullptr));
     FT_ASSERT_EQ(0x12345678U, pixels[0]);
     FT_ASSERT_EQ(7U, depth_values[0]);
+    delete[] depth_values;
+    depth_values = ft_nullptr;
     render_window_instance._depth_buffer.values = ft_nullptr;
     FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
         render_window_instance.shade(test_dumb_gradient_shader, ft_nullptr));
