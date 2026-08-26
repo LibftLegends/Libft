@@ -1257,7 +1257,7 @@ int32_t networking_datagram_io::wait_readable(int32_t timeout_milliseconds) noex
 }
 
 networking_udp_datagram_io::networking_udp_datagram_io() noexcept
-    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _socket()
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _connected(FT_FALSE), _socket()
 {
     return ;
 }
@@ -1288,6 +1288,9 @@ int32_t networking_udp_datagram_io::initialize(const SocketConfig &configuration
         (void)this->_socket.destroy();
         return (error_code);
     }
+    this->_connected = FT_FALSE;
+    if (local_configuration._type == SocketType::CLIENT)
+        this->_connected = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -1298,6 +1301,7 @@ int32_t networking_udp_datagram_io::destroy() noexcept
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
     (void)this->_socket.destroy();
+    this->_connected = FT_FALSE;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -1311,6 +1315,7 @@ int32_t networking_udp_datagram_io::move(networking_udp_datagram_io &other) noex
     (void)this->destroy();
     if (this->_socket.move(other._socket) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
+    this->_connected = other._connected;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     (void)other.destroy();
     return (FT_ERR_SUCCESS);
@@ -1326,8 +1331,12 @@ int32_t networking_udp_datagram_io::send_datagram(
         return (FT_ERR_NOT_INITIALISED);
     if (destination.length == 0U || (data == ft_nullptr && size != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
-    result = this->_socket.send_to(data, size, 0, reinterpret_cast<const struct sockaddr *>(
-        &destination.address), destination.length);
+    if (this->_connected != FT_FALSE)
+        result = this->_socket.send_to(data, size, 0, ft_nullptr, 0);
+    else
+        result = this->_socket.send_to(data, size, 0,
+            reinterpret_cast<const struct sockaddr *>(&destination.address),
+            destination.length);
     if (result < 0 || static_cast<ft_size_t>(result) != size)
         return (FT_ERR_SOCKET_SEND_FAILED);
     return (FT_ERR_SUCCESS);

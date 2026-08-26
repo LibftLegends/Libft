@@ -363,7 +363,6 @@ ssize_t ft_socket::send_all(const void *data, ft_size_t size, int32_t flags)
 
 ssize_t ft_socket::receive_data(void *buffer, ft_size_t size, int32_t flags)
 {
-    int32_t socket_fd;
     ssize_t result;
     int32_t lock_error;
 
@@ -371,18 +370,8 @@ ssize_t ft_socket::receive_data(void *buffer, ft_size_t size, int32_t flags)
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (-1);
-    if (this->_socket_file_descriptor < 0)
-    {
-        (void)(FT_ERR_INVALID_ARGUMENT);
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (-1);
-    }
-    socket_fd = this->_socket_file_descriptor;
+    result = this->receive_data_locked(buffer, size, flags);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    result = nw_recv(socket_fd, buffer, size, flags);
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (result);
 }
 
@@ -403,17 +392,16 @@ ft_bool ft_socket::close_socket()
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_TRUE);
     }
-    socket_fd = this->_socket_file_descriptor;
     shutdown_success = FT_TRUE;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
 #ifdef _WIN32
-    if (nw_shutdown(socket_fd, SD_BOTH) != 0)
+    if (nw_shutdown(this->_socket_file_descriptor, SD_BOTH) != 0)
 #else
-    if (nw_shutdown(socket_fd, SHUT_RDWR) != 0)
+    if (nw_shutdown(this->_socket_file_descriptor, SHUT_RDWR) != 0)
 #endif
     {
         shutdown_success = FT_FALSE;
     }
+    socket_fd = this->_socket_file_descriptor;
     if (nw_close(socket_fd) == 0)
     {
         closed = FT_TRUE;
@@ -424,14 +412,8 @@ ft_bool ft_socket::close_socket()
         closed = FT_FALSE;
         networking_consume_last_error();
     }
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (closed);
     if (closed)
-    {
-        if (this->_socket_file_descriptor == socket_fd)
-            this->_socket_file_descriptor = -1;
-    }
+        this->_socket_file_descriptor = -1;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     if (closed && shutdown_success)
         return (FT_TRUE);

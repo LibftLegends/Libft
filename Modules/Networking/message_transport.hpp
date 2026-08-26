@@ -248,6 +248,7 @@ class networking_udp_datagram_io : public networking_datagram_io
 {
     private:
         uint8_t _initialised_state;
+        ft_bool _connected;
         udp_socket _socket;
 
     public:

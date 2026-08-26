@@ -91,7 +91,7 @@ static void networking_socket_configure_client(SocketConfig &config, uint16_t po
     config._ip[sizeof(config._ip) - 1] = '\0';
     config._port = port;
     config._address_family = AF_INET;
-    config._non_blocking = false;
+    config._non_blocking = true;
     config._recv_timeout = 200;
     config._send_timeout = 200;
     return ;
