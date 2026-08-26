@@ -394,10 +394,19 @@ jobs:
           FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery,abort,aborts,uninitialised,uninitialized'
         run: |
           set +e
-          make -j4 run-asan-ubsan-tests 2>&1 | tee sanitizer_full_output.log
+          make -j4 asan-ubsan-tests 2>&1 | tee sanitizer_build_output.log
+          build_status=${PIPESTATUS[0]}
+          if [ "$build_status" -ne 0 ]; then
+            printf '%s\n' "ASan/UBSan build exit status: $build_status"
+            exit "$build_status"
+          fi
+          (cd Test && ./libft_tests) 2>&1 | tee sanitizer_full_output.log
           test_status=${PIPESTATUS[0]}
           if [ "$test_status" -ne 0 ]; then
             printf '%s\n' "ASan/UBSan test command exit status: $test_status"
+            if [ "$test_status" -ge 128 ]; then
+              printf '%s\n' "ASan/UBSan process signal: $((test_status - 128))"
+            fi
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
@@ -405,6 +414,20 @@ jobs:
             if [ -f Test/test_current.log ]; then
               printf '%s\n' 'Last started test:'
               cat Test/test_current.log
+              last_test_name=$(awk '{ name = $3; sub(/^.*\//, "", name); print name }' \
+                Test/test_current.log)
+              if [ -n "$last_test_name" ]; then
+                printf '%s\n' "Rerunning last started test: $last_test_name"
+                (cd Test && FT_TEST_NAME_FILTER="$last_test_name" \
+                  FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 \
+                  ./libft_tests) >"Test/asan_last_test_output.log" 2>&1
+                rerun_status=$?
+                printf '%s\n' "Last-test rerun exit status: $rerun_status"
+                cat Test/asan_last_test_output.log
+                if [ -f Test/test_failures.log ]; then
+                  cat Test/test_failures.log
+                fi
+              fi
             else
               printf '%s\n' 'No current-test trace was produced.'
             fi
@@ -423,12 +446,14 @@ jobs:
           name: sanitizer-evidence-${{ github.run_id }}
           path: |
             sanitizer_full_output.log
+            sanitizer_build_output.log
             asan_report.*
             ubsan_report.*
             Test/asan_report.*
             Test/ubsan_report.*
             Test/test_failures.log
             Test/test_current.log
+            Test/asan_last_test_output.log
             Test/ci_unix_full_output.log
           if-no-files-found: warn
 
@@ -511,13 +536,42 @@ jobs:
           FT_TEST_SKIP_NAME_FILTER: 'allocation_failure,alloc_failure,alloc_limit,failure_then_recovery,abort,aborts,uninitialised,uninitialized'
         run: |
           set +e
-          make -j4 run-tsan-tests 2>&1 | tee tsan_full_output.log
+          make -j4 tsan-tests 2>&1 | tee tsan_build_output.log
+          build_status=${PIPESTATUS[0]}
+          if [ "$build_status" -ne 0 ]; then
+            printf '%s\n' "TSan build exit status: $build_status"
+            exit "$build_status"
+          fi
+          (cd Test && ./libft_tests) 2>&1 | tee tsan_full_output.log
           test_status=${PIPESTATUS[0]}
           if [ "$test_status" -ne 0 ]; then
             printf '%s\n' "TSan test command exit status: $test_status"
+            if [ "$test_status" -ge 128 ]; then
+              printf '%s\n' "TSan process signal: $((test_status - 128))"
+            fi
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+            fi
+            if [ -f Test/test_current.log ]; then
+              printf '%s\n' 'Last started test:'
+              cat Test/test_current.log
+              last_test_name=$(awk '{ name = $3; sub(/^.*\//, "", name); print name }' \
+                Test/test_current.log)
+              if [ -n "$last_test_name" ]; then
+                printf '%s\n' "Rerunning last started test: $last_test_name"
+                (cd Test && FT_TEST_NAME_FILTER="$last_test_name" \
+                  FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 \
+                  ./libft_tests) >"Test/tsan_last_test_output.log" 2>&1
+                rerun_status=$?
+                printf '%s\n' "Last-test rerun exit status: $rerun_status"
+                cat Test/tsan_last_test_output.log
+                if [ -f Test/test_failures.log ]; then
+                  cat Test/test_failures.log
+                fi
+              fi
+            else
+              printf '%s\n' 'No current-test trace was produced.'
             fi
             find . -maxdepth 2 -type f -name 'tsan_report.*' -print \
               | while IFS= read -r report; do
@@ -534,9 +588,12 @@ jobs:
           name: tsan-evidence-${{ github.run_id }}
           path: |
             tsan_full_output.log
+            tsan_build_output.log
             tsan_report.*
             Test/tsan_report.*
             Test/test_failures.log
+            Test/test_current.log
+            Test/tsan_last_test_output.log
           if-no-files-found: warn
 
   crypto-fuzz:
