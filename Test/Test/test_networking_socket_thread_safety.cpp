@@ -321,6 +321,7 @@ FT_TEST(test_networking_socket_receive_close_thread_safety)
         return ;
     });
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_socket.initialize(client_config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_socket.enable_thread_safety());
     accept_thread.join();
     FT_ASSERT(networking_socket_is_valid_file_descriptor(accepted_fd) == FT_TRUE);
     received_once.store(false);
