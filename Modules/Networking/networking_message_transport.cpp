@@ -1813,11 +1813,11 @@ void networking_message_transport::process_command_queue() noexcept
             return ;
         result = this->execute_command(*command);
         command->result = result;
-        command->completed.store(FT_TRUE, std::memory_order_release);
         completion_epoch = command->completion_epoch.fetch_add(
             1U, std::memory_order_release) + 1U;
         (void)completion_epoch;
         (void)pt_thread_wake_all_uint32(&command->completion_epoch);
+        command->completed.store(FT_TRUE, std::memory_order_release);
     }
 }
 

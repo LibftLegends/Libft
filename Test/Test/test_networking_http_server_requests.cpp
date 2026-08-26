@@ -10,6 +10,11 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstddef>
+#if defined(_WIN32) || defined(_WIN64)
+# include <winsock2.h>
+#else
+# include <sys/socket.h>
+#endif
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
@@ -254,7 +259,16 @@ FT_TEST(test_networking_http_server_short_write_sets_error)
     FT_TEST_REQUIRE(client_socket.initialize(client_configuration) == FT_ERR_SUCCESS);
     client_initialized = FT_TRUE;
     request_string = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    client_socket.send_all(request_string, ft_strlen(request_string), 0);
+    struct linger linger_option;
+
+    linger_option.l_onoff = 1;
+    linger_option.l_linger = 0;
+    FT_TEST_REQUIRE(setsockopt(client_socket.get_file_descriptor(), SOL_SOCKET,
+        SO_LINGER, reinterpret_cast<const char *>(&linger_option),
+        static_cast<socklen_t>(sizeof(linger_option))) == 0);
+    FT_TEST_REQUIRE(client_socket.send_all(request_string,
+        ft_strlen(request_string), 0)
+        == static_cast<ssize_t>(ft_strlen(request_string)));
     client_socket.close_socket();
     if (thread_started == FT_TRUE)
     {
