@@ -181,6 +181,9 @@ jobs:
                 -o 'settings set target.env-vars FT_TEST_HIDE_SUCCESSFUL=0' \
                 -o 'process handle SIGABRT -s false -n false -p true' \
                 -o 'process handle SIGIOT -s false -n false -p true' \
+                -o 'process handle SIGTERM -s false -n false -p true' \
+                -o 'process handle SIGINT -s false -n false -p true' \
+                -o 'process handle SIGHUP -s false -n false -p true' \
                 -k 'thread backtrace all' \
                 -o run \
                 -- ./libft_tests) 2>&1 | tee Test/ci_unix_stack_trace.log
@@ -385,7 +388,7 @@ jobs:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
           FT_TEST_TRACE_CURRENT_TEST: '1'
-          ASAN_OPTIONS: 'log_path=../asan_report:abort_on_error=1'
+          ASAN_OPTIONS: 'log_path=../asan_report:abort_on_error=1:halt_on_error=1:fast_unwind_on_fatal=0:malloc_context_size=50:print_summary=1'
           UBSAN_OPTIONS: 'log_path=../ubsan_report:halt_on_error=1:print_stacktrace=1'
           # CMA allocation-limit tests are covered by the regular suite.  The
           # sanitizer allocators intercept the allocation path used by those
