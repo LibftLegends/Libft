@@ -375,6 +375,7 @@ namespace
     static int32_t test_cleanup_runtime_artifacts(void)
     {
         const char *preserve_failure_log;
+        const char *preserve_test_trace;
         std::wstring root_path;
         std::wstring artifact_path;
         int32_t cleanup_status;
@@ -387,9 +388,16 @@ namespace
         }
         cleanup_status = 1;
         preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG");
+        preserve_test_trace = std::getenv("FT_TEST_TRACE_CURRENT_TEST");
         if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1")
         {
             artifact_path = root_path + L"\\test_failures.log";
+            if (test_remove_windows_path(artifact_path, root_path) == 0)
+                cleanup_status = 0;
+        }
+        if (preserve_test_trace == NULL || std::string(preserve_test_trace) != "1")
+        {
+            artifact_path = root_path + L"\\Test\\test_current.log";
             if (test_remove_windows_path(artifact_path, root_path) == 0)
                 cleanup_status = 0;
         }
@@ -480,12 +488,16 @@ namespace
     static void test_cleanup_runtime_artifacts(const test_path &root_path)
     {
         const char *preserve_failure_log; // CI_DIAGNOSTIC: Hold the optional failure-log preservation flag.
+        const char *preserve_test_trace; // CI_DIAGNOSTIC: Keep the last-test marker for sanitizer diagnosis.
 
         if (root_path.empty())
             return ;
         preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG"); // CI_DIAGNOSTIC: Preserve failure details for CI diagnosis.
+        preserve_test_trace = std::getenv("FT_TEST_TRACE_CURRENT_TEST"); // CI_DIAGNOSTIC: Preserve the last started test marker.
         if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
             test_remove_path(root_path / "test_failures.log"); // CI_DIAGNOSTIC: Remove the diagnostic log outside CI diagnosis.
+        if (preserve_test_trace == NULL || std::string(preserve_test_trace) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
+            test_remove_path(root_path / "Test" / "test_current.log"); // CI_DIAGNOSTIC: Remove the trace outside CI diagnosis.
         test_remove_path(root_path / "test_file_io.txt");
         test_remove_path(root_path / "test_cmp_system_io.txt");
         test_remove_path(root_path / "test_su_file_stream.txt");
