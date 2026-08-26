@@ -23,6 +23,7 @@
 #include <exception>
 #include <csignal>
 #include <chrono>
+#include <condition_variable>
 #include <fcntl.h>
 #include <mutex>
 #include <thread>
@@ -112,11 +113,13 @@ class test_timeout_watchdog
 {
     private:
         std::atomic<ft_bool> _finished;
+        std::condition_variable _condition;
+        std::mutex _mutex;
         std::thread _thread;
 
     public:
         test_timeout_watchdog(const s_test_case *test) noexcept
-            : _finished(FT_FALSE), _thread()
+            : _finished(FT_FALSE), _condition(), _mutex(), _thread()
         {
             uint32_t timeout;
 
@@ -127,19 +130,16 @@ class test_timeout_watchdog
             {
                 this->_thread = std::thread([this, test, timeout]()
                 {
-                    uint32_t elapsed;
-
-                    elapsed = 0U;
-                    while (this->_finished.load(std::memory_order_acquire)
-                        == FT_FALSE && elapsed < timeout)
+                    std::unique_lock<std::mutex> lock(this->_mutex);
+                    if (!this->_condition.wait_for(lock,
+                            std::chrono::seconds(timeout), [this]()
+                            {
+                                return (this->_finished.load(
+                                    std::memory_order_acquire) != FT_FALSE);
+                            }))
                     {
-                        std::this_thread::sleep_for(
-                            std::chrono::seconds(1));
-                        elapsed += 1U;
-                    }
-                    if (this->_finished.load(std::memory_order_acquire)
-                        == FT_FALSE)
                         test_abort_for_timeout(test);
+                    }
                 });
             }
             catch (...)
@@ -151,6 +151,7 @@ class test_timeout_watchdog
         ~test_timeout_watchdog() noexcept
         {
             this->_finished.store(FT_TRUE, std::memory_order_release);
+            this->_condition.notify_all();
             if (this->_thread.joinable())
                 this->_thread.join();
         }
