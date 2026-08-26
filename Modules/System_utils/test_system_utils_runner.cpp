@@ -22,8 +22,10 @@
 #include <cstdlib>
 #include <exception>
 #include <csignal>
+#include <chrono>
 #include <fcntl.h>
 #include <mutex>
+#include <thread>
 #if !defined(_WIN32) && !defined(_WIN64)
 # include <sys/ioctl.h>
 #endif
@@ -79,6 +81,84 @@ struct s_test_case
     const char *module;
     const char *name;
 };
+
+#ifdef LIBFT_TEST_BUILD
+static uint32_t test_timeout_seconds(void)
+{
+    const char *value;
+    char *end_pointer;
+    unsigned long parsed_value;
+
+    value = std::getenv("FT_TEST_TIMEOUT_SECONDS");
+    if (value == NULL || value[0] == '\0')
+        return (0U);
+    parsed_value = std::strtoul(value, &end_pointer, 10);
+    if (end_pointer == value || *end_pointer != '\0'
+        || parsed_value > UINT32_MAX)
+        return (0U);
+    return (static_cast<uint32_t>(parsed_value));
+}
+
+static void test_abort_for_timeout(const s_test_case *test)
+{
+    std::fprintf(stderr, "[LIBFT][Test] timeout: %s/%s exceeded %s seconds\n",
+        test->module, test->name, std::getenv("FT_TEST_TIMEOUT_SECONDS"));
+    std::fflush(stderr);
+    std::raise(SIGABRT);
+    std::abort();
+}
+
+class test_timeout_watchdog
+{
+    private:
+        std::atomic<ft_bool> _finished;
+        std::thread _thread;
+
+    public:
+        test_timeout_watchdog(const s_test_case *test) noexcept
+            : _finished(FT_FALSE), _thread()
+        {
+            uint32_t timeout;
+
+            timeout = test_timeout_seconds();
+            if (timeout == 0U)
+                return ;
+            try
+            {
+                this->_thread = std::thread([this, test, timeout]()
+                {
+                    uint32_t elapsed;
+
+                    elapsed = 0U;
+                    while (this->_finished.load(std::memory_order_acquire)
+                        == FT_FALSE && elapsed < timeout)
+                    {
+                        std::this_thread::sleep_for(
+                            std::chrono::seconds(1));
+                        elapsed += 1U;
+                    }
+                    if (this->_finished.load(std::memory_order_acquire)
+                        == FT_FALSE)
+                        test_abort_for_timeout(test);
+                });
+            }
+            catch (...)
+            {
+                return ;
+            }
+        }
+
+        ~test_timeout_watchdog() noexcept
+        {
+            this->_finished.store(FT_TRUE, std::memory_order_release);
+            if (this->_thread.joinable())
+                this->_thread.join();
+        }
+
+        test_timeout_watchdog(const test_timeout_watchdog &other) noexcept = delete;
+        test_timeout_watchdog &operator=(const test_timeout_watchdog &other) noexcept = delete;
+};
+#endif
 
 #ifdef LIBFT_TEST_BUILD
 static void write_test_trace(int32_t test_number, const s_test_case *test)
@@ -546,6 +626,7 @@ static int32_t execute_test_function(const s_test_case *test,
     clear_last_failure_message();
 #ifdef LIBFT_TEST_BUILD
     ft_test_runner_set_current_test_name(test->name);
+    test_timeout_watchdog timeout_watchdog(test);
 #endif
     try
     {

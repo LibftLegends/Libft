@@ -377,7 +377,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang cmake gdb pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build and run AddressSanitizer plus UBSan suite
         shell: bash
@@ -531,6 +531,7 @@ jobs:
           FT_TEST_HIDE_SUCCESSFUL: '1'
           FT_TEST_PRESERVE_FAILURE_LOG: '1'
           TSAN_OPTIONS: 'log_path=../tsan_report:halt_on_error=1:second_deadlock_stack=1'
+          FT_TEST_TIMEOUT_SECONDS: '120'
           # TSan replaces the global C++ allocation path.  CMA allocation-limit
           # tests are covered by the regular suite; exclude them here so this
           # job measures thread races instead of sanitizer allocator behavior.
@@ -583,6 +584,13 @@ jobs:
                 cat "$report"
               done
             find . -maxdepth 3 -type f \( -name 'core' -o -name 'core.*' \) -print
+            for core_file in $(find . -maxdepth 3 -type f \( -name 'core' -o -name 'core.*' \)); do
+              printf '%s\n' "Core backtrace: $core_file"
+              gdb -batch -ex 'set pagination off' \
+                -ex 'thread apply all bt full' ./Test/libft_tests "$core_file" \
+                >"tsan_core_backtrace.log" 2>&1 || true
+              cat tsan_core_backtrace.log
+            done
           fi
           exit "$test_status"
 
@@ -597,6 +605,7 @@ jobs:
             tsan_report.*
             core
             core.*
+            tsan_core_backtrace.log
             Test/core
             Test/core.*
             Test/tsan_report.*
