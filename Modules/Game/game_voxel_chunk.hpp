@@ -14,7 +14,8 @@
 #define GAME_VOXEL_SECTION_BLOCKS 4096
 #define GAME_VOXEL_CHUNK_SECTION_COUNT 16
 #define GAME_VOXEL_AIR_BLOCK 0U
-#define GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS 256U
+#define GAME_VOXEL_CHUNK_INITIAL_DIRTY_EDIT_CAPACITY 16U
+#define GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS 1048576U
 
 struct game_voxel_generation_metadata
 {
@@ -115,10 +116,13 @@ class game_voxel_chunk
             uint32_t *block_id) const noexcept;
         int32_t write_block(int32_t local_x, int32_t local_y, int32_t local_z,
             uint32_t block_id) noexcept;
+        int32_t apply_block_edit(int32_t local_x, int32_t local_y,
+            int32_t local_z, const game_block_edit_op &edit) noexcept;
         int32_t write_generated_block(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t block_id) noexcept;
         ft_bool is_dirty() const noexcept;
         void clear_dirty() noexcept;
+        void clear_persistence_dirty() noexcept;
         void clear_generation_metadata() noexcept;
         ft_bool is_generation_protected() const noexcept;
         int32_t set_generation_metadata(
@@ -139,6 +143,7 @@ class game_voxel_chunk
         int32_t get_dirty_edit(uint32_t index,
             game_block_edit_op *edit_out) const noexcept;
         void clear_dirty_edits() noexcept;
+        void acknowledge_dirty_edits() noexcept;
         int32_t serialize(ft_byte_buffer &buffer) const noexcept;
         int32_t deserialize(ft_byte_buffer &buffer) noexcept;
         int32_t get_error() const noexcept;

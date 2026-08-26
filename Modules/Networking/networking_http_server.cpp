@@ -1,4 +1,9 @@
 #include "http_server.hpp"
+#ifdef LIBFT_TEST_BUILD
+# include "../../Test/Test/networking_test_hooks.hpp"
+#else
+# define NETWORKING_TEST_SHOULD_FAIL(point) FT_FALSE
+#endif
 #include "networking.hpp"
 #include "../Basic/basic.hpp"
 #include "../Time/time.hpp"
@@ -665,7 +670,12 @@ int32_t ft_http_server::run_once_locked()
         remote_closed_during_send = FT_FALSE;
         while (total_sent < response.size())
         {
-            send_result = nw_send(client_socket, response_data + total_sent, response.size() - total_sent, 0);
+            if (NETWORKING_TEST_SHOULD_FAIL(
+                    NETWORKING_TEST_HTTP_SERVER_SEND) != FT_FALSE)
+                send_result = -1;
+            else
+                send_result = nw_send(client_socket, response_data + total_sent,
+                    response.size() - total_sent, 0);
             if (send_result <= 0)
             {
 #ifdef _WIN32

@@ -24,7 +24,8 @@ enum networking_test_failure_point : uint8_t
     NETWORKING_TEST_CALLBACK_COPY = 15U,
     NETWORKING_TEST_WORKER_CREATE = 16U,
     NETWORKING_TEST_WORKER_WAKEUP = 17U,
-    NETWORKING_TEST_FAILURE_POINT_COUNT = 18U
+    NETWORKING_TEST_HTTP_SERVER_SEND = 18U,
+    NETWORKING_TEST_FAILURE_POINT_COUNT = 19U
 };
 
 int32_t networking_test_failure_initialize() noexcept;

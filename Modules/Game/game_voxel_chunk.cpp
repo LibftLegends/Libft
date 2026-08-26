@@ -402,12 +402,25 @@ int32_t game_voxel_chunk::grow_dirty_edits(uint32_t minimum_capacity) noexcept
     if (minimum_capacity <= this->_dirty_edit_capacity)
         return (FT_ERR_SUCCESS);
     if (minimum_capacity > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
-        minimum_capacity = GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS;
-    new_capacity = this->_dirty_edit_capacity == 0U ? 16U : this->_dirty_edit_capacity * 2U;
+        return (FT_ERR_FULL);
+    if (this->_dirty_edit_capacity == 0U)
+        new_capacity = GAME_VOXEL_CHUNK_INITIAL_DIRTY_EDIT_CAPACITY;
+    else
+        new_capacity = this->_dirty_edit_capacity;
+    if (new_capacity < minimum_capacity)
+    {
+        while (new_capacity < minimum_capacity)
+        {
+            if (new_capacity > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS / 2U)
+            {
+                new_capacity = GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS;
+                break ;
+            }
+            new_capacity *= 2U;
+        }
+    }
     if (new_capacity < minimum_capacity)
         new_capacity = minimum_capacity;
-    if (new_capacity > GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
-        new_capacity = GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS;
     new_buffer = static_cast<game_block_edit_op *>(cma_realloc(this->_dirty_edits,
         sizeof(game_block_edit_op) * new_capacity));
     if (new_buffer == ft_nullptr)
@@ -573,21 +586,46 @@ int32_t game_voxel_chunk::read_block(int32_t local_x, int32_t local_y,
 int32_t game_voxel_chunk::write_block(int32_t local_x, int32_t local_y,
     int32_t local_z, uint32_t block_id) noexcept
 {
-    uint8_t section_index;
-    int32_t error_code;
+    game_block_edit_op edit;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::write_block");
+    edit.world_x = local_x;
+    edit.world_y = local_y;
+    edit.world_z = local_z;
+    edit.block_type = block_id;
+    edit.tick = 0U;
+    return (this->apply_block_edit(local_x, local_y, local_z, edit));
+}
+
+int32_t game_voxel_chunk::apply_block_edit(int32_t local_x, int32_t local_y,
+    int32_t local_z, const game_block_edit_op &edit) noexcept
+{
+    uint8_t section_index;
+    uint16_t block_index;
+    uint32_t previous_block_id;
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::apply_block_edit");
     if (local_x < 0 || local_x >= GAME_VOXEL_CHUNK_WIDTH || local_y < 0
         || local_y >= GAME_VOXEL_CHUNK_HEIGHT || local_z < 0
         || local_z >= GAME_VOXEL_CHUNK_DEPTH)
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
     section_index = static_cast<uint8_t>(local_y >> 4);
-    error_code = this->_sections[section_index].set_block(
-        game_voxel_chunk::local_index(local_x, local_y, local_z),
-        block_id);
+    block_index = game_voxel_chunk::local_index(local_x, local_y, local_z);
+    previous_block_id = this->_sections[section_index].get_block(block_index);
+    error_code = this->_sections[section_index].set_block(block_index,
+        edit.block_type);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
+    error_code = this->record_dirty_edit(edit);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)this->_sections[section_index].set_block(block_index,
+            previous_block_id);
+        return (this->set_error(error_code));
+    }
     this->_dirty = FT_TRUE;
     this->_generation_protected = FT_TRUE;
     this->clear_generation_metadata();
@@ -621,6 +659,12 @@ ft_bool game_voxel_chunk::is_dirty() const noexcept
 }
 
 void game_voxel_chunk::clear_dirty() noexcept
+{
+    this->clear_persistence_dirty();
+    return ;
+}
+
+void game_voxel_chunk::clear_persistence_dirty() noexcept
 {
     this->_dirty = FT_FALSE;
     return ;
@@ -731,22 +775,10 @@ void game_voxel_chunk::set_biome_id(uint32_t biome_id) noexcept
 int32_t game_voxel_chunk::record_dirty_edit(
     const game_block_edit_op &edit) noexcept
 {
-    uint32_t index;
     int32_t error_code;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::record_dirty_edit");
-    if (this->_dirty_edit_count >= GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS)
-    {
-        index = 0U;
-        while (index < GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS - 1U)
-        {
-            this->_dirty_edits[index] = this->_dirty_edits[index + 1U];
-            index += 1U;
-        }
-        this->_dirty_edits[GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS - 1U] = edit;
-        return (this->set_error(FT_ERR_SUCCESS));
-    }
     error_code = this->grow_dirty_edits(this->_dirty_edit_count + 1U);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
@@ -777,8 +809,14 @@ int32_t game_voxel_chunk::get_dirty_edit(uint32_t index,
 
 void game_voxel_chunk::clear_dirty_edits() noexcept
 {
+    this->acknowledge_dirty_edits();
+    return ;
+}
+
+void game_voxel_chunk::acknowledge_dirty_edits() noexcept
+{
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
-        "game_voxel_chunk::clear_dirty_edits");
+        "game_voxel_chunk::acknowledge_dirty_edits");
     this->_dirty_edit_count = 0U;
     return ;
 }

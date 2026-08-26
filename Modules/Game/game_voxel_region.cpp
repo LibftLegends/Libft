@@ -911,6 +911,7 @@ int32_t game_voxel_region::write_block(int32_t world_x, int32_t world_y,
     int32_t chunk_z;
     uint16_t slot;
     game_voxel_chunk *chunk;
+    game_block_edit_op edit;
     int32_t error_code;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
@@ -930,8 +931,13 @@ int32_t game_voxel_region::write_block(int32_t world_x, int32_t world_y,
     error_code = this->ensure_chunk(slot, &chunk);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = chunk->write_block(local_x & 15, world_y, local_z & 15,
-        block_id);
+    edit.world_x = world_x;
+    edit.world_y = world_y;
+    edit.world_z = world_z;
+    edit.block_type = block_id;
+    edit.tick = 0U;
+    error_code = chunk->apply_block_edit(local_x & 15, world_y,
+        local_z & 15, edit);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
     this->_dirty = FT_TRUE;
