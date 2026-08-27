@@ -86,11 +86,16 @@ FT_TEST(test_game_equipment_destroyed_destructor_after_cleanup_is_safe_again)
 FT_TEST(test_game_equipment_destroyed_empty_slots_remain_empty)
 {
     game_equipment value;
+    ft_sharedptr<game_item> *head_item;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
-    FT_ASSERT_EQ(ft_nullptr, value.get_item(EQUIP_HEAD)->get());
+    head_item = value.get_item(EQUIP_HEAD);
+    FT_ASSERT(head_item != ft_nullptr);
+    FT_ASSERT_EQ(ft_nullptr, head_item->get());
+    (void)head_item->destroy();
+    delete head_item;
     return (1);
 }
 

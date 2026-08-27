@@ -535,6 +535,9 @@ static int32_t runtime_compile_and_run_helper(void)
     if (compile_command.find(' ') != std::string::npos)
         compile_command = runtime_shell_quote(compile_command);
     compile_command += " -x c++ -O3 -Wall -Wextra -Wno-error -std=c++17 -pthread";
+#if defined(__SANITIZE_ADDRESS__)
+    compile_command += " -fsanitize=address,undefined";
+#endif
     compile_command += " -Wno-missing-declarations -DLIBFT_TEST_BUILD";
     compile_command += " -DLIBFT_INTERNAL_HEADERS -I";
     compile_command += runtime_shell_quote(project_root);
