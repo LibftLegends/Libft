@@ -2139,12 +2139,31 @@ FT_TEST(test_api_request_async_missing_callback_sets_errno)
 
 FT_TEST(test_api_request_async_success_resets_errno)
 {
+    std::atomic<bool> callback_completed(false);
+    std::atomic<int> callback_status(0);
+    std::atomic<char *> callback_body(ft_nullptr);
+    api_request_async_test_callback_data callback_data;
     bool result;
+    unsigned int wait_iterations;
 
-    result = api_request_string_async("127.0.0.1", 59999, "GET", "/", api_request_noop_callback,
-                                      ft_nullptr, ft_nullptr, ft_nullptr, 100);
+    callback_data.completed = &callback_completed;
+    callback_data.status = &callback_status;
+    callback_data.body = &callback_body;
+    result = api_request_string_async("127.0.0.1", 59999, "GET", "/",
+        api_request_test_async_callback, &callback_data, ft_nullptr,
+        ft_nullptr, 100);
     if (!result)
         return (0);
+    wait_iterations = 0;
+    while (!callback_completed.load(std::memory_order_acquire)
+        && wait_iterations < 300U)
+    {
+        api_request_small_delay();
+        wait_iterations++;
+    }
+    FT_ASSERT(callback_completed.load(std::memory_order_acquire));
+    if (callback_body.load(std::memory_order_acquire) != ft_nullptr)
+        cma_free(callback_body.load(std::memory_order_acquire));
     return (1);
 }
 

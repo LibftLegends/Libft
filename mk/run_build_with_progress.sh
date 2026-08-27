@@ -23,7 +23,12 @@ sh "$script_directory/print_build_plan.sh" \
 # GNU Make otherwise forwards output from parallel recipes in separate chunks.
 # Target-level synchronization keeps a progress record from being merged with
 # the beginning or end of a different recipe in CI log collectors.
-"$make_command" --no-print-directory --output-sync=target -s \
+make_output_sync=''
+if "$make_command" --help 2>/dev/null | grep -F 'output-sync' >/dev/null
+then
+    make_output_sync='--output-sync=target'
+fi
+"$make_command" --no-print-directory $make_output_sync -s \
     BUILD_PROGRESS_ACTIVE=1 \
     BUILD_PROGRESS_SESSION_DIR="$progress_session_directory" \
     "$build_target"
