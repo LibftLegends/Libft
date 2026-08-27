@@ -88,12 +88,14 @@ FT_TEST(test_thread_pool_cancellation_allows_execution)
     {
         const ft_cancellation_token cancellation_token(cancellation_source.get_token());
 
+        FT_ASSERT_EQ(FT_FALSE, cancellation_token.is_cancellation_requested());
         pool_instance.submit([&execution_count, cancellation_token]()
         {
             if (!cancellation_token.is_cancellation_requested())
                 execution_count.fetch_add(1);
             return ;
         }, cancellation_token);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, pool_instance.get_error());
     }
     pool_instance.wait();
     FT_ASSERT_EQ(1, execution_count.load());

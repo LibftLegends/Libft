@@ -358,9 +358,15 @@ static void sort_tests(void)
     tests = get_tests();
     test_count = get_test_count();
     std::sort(tests, tests + *test_count,
-        [](const s_test_case &left_test, const s_test_case &right_test) -> int32_t
+        [](const s_test_case &left_test, const s_test_case &right_test) -> bool
         {
-            return (std::strcmp(left_test.module, right_test.module) < 0);
+            int module_comparison;
+
+            module_comparison = std::strcmp(left_test.module,
+                right_test.module);
+            if (module_comparison != 0)
+                return (module_comparison < 0);
+            return (std::strcmp(left_test.name, right_test.name) < 0);
         });
     return ;
 }
