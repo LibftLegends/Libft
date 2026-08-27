@@ -9,7 +9,10 @@ static void game_achievement_move(game_achievement &value)
 }
 static void game_achievement_initialize_copy(game_achievement &value)
 {
+    if (value.initialize() != FT_ERR_SUCCESS)
+        return ;
     (void)value.initialize(value);
+    (void)value.destroy();
     return ;
 }
 static void game_achievement_destroy(game_achievement &value)
@@ -61,7 +64,7 @@ FT_TEST(test_game_achievement_move_self_is_safe)
 }
 FT_TEST(test_game_achievement_initialize_copy_self_is_safe)
 {
-    FT_ASSERT_EQ(1, expect_game_lifecycle_sigabrt<game_achievement>(
+    FT_ASSERT_EQ(0, expect_game_lifecycle_sigabrt<game_achievement>(
                         game_achievement_initialize_copy));
     return (1);
 }

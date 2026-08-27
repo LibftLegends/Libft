@@ -50,7 +50,7 @@ FT_TEST(test_cma_global_new_alignment_failure_sets_errno)
     cma_set_alloc_limit(15);
     instance = ::operator new(static_cast<std::size_t>(1),
             static_cast<std::align_val_t>(16), std::nothrow);
-    FT_ASSERT_EQ(instance, ft_nullptr);
+    FT_ASSERT_EQ(ft_nullptr, instance);
     cma_clear_backend();
     cma_set_alloc_limit(0);
     return (1);
