@@ -505,7 +505,7 @@ void game_event_scheduler::update_events(ft_sharedptr<game_world> &world,
         this->set_error(ready_events.get_error());
         return ;
     }
-    this->_ready_cache.clear();
+    game_event_clear_handle_vector(this->_ready_cache);
     while (!this->_events.empty())
     {
         current_event = this->_events.pop();
