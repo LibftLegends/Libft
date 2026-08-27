@@ -20,7 +20,10 @@ trap 'exit 143' TERM
 sh "$script_directory/print_build_plan.sh" \
     "$make_command" "$build_target" "$progress_session_directory"
 
-"$make_command" --no-print-directory -s \
+# GNU Make otherwise forwards output from parallel recipes in separate chunks.
+# Target-level synchronization keeps a progress record from being merged with
+# the beginning or end of a different recipe in CI log collectors.
+"$make_command" --no-print-directory --output-sync=target -s \
     BUILD_PROGRESS_ACTIVE=1 \
     BUILD_PROGRESS_SESSION_DIR="$progress_session_directory" \
     "$build_target"
