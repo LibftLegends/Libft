@@ -20,11 +20,15 @@ FT_TEST(test_game_equipment_destroyed_get_item_const_aborts)
 FT_TEST(test_game_equipment_destroyed_state_can_reinitialize_again)
 {
     game_equipment value;
+    ft_sharedptr<game_item> *head_item;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
-    FT_ASSERT_NEQ(ft_nullptr, value.get_item(EQUIP_HEAD));
+    head_item = value.get_item(EQUIP_HEAD);
+    FT_ASSERT_NEQ(ft_nullptr, head_item);
+    (void)head_item->destroy();
+    delete head_item;
     return (1);
 }
 
