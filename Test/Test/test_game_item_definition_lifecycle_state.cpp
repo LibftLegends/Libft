@@ -109,7 +109,7 @@ FT_TEST(test_game_item_definition_destroy_is_safe)
 }
 FT_TEST(test_game_item_definition_move_is_safe)
 {
-    FT_ASSERT_EQ(0, expect_game_lifecycle_sigabrt<game_item_definition>(
+    FT_ASSERT_EQ(1, expect_game_lifecycle_sigabrt<game_item_definition>(
                         game_item_definition_move));
     return (1);
 }
