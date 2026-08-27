@@ -86,6 +86,31 @@ General rules for these orchestration classes:
 - `game_path_step` and `game_pathfinding` - Path step record and pathfinding system. `game_path_step_test_helper` exposes test-oriented construction/access.
 - `game_voxel_chunk_section`, `game_voxel_chunk`, and `game_voxel_region` - Voxel storage for chunks, sections, and regions when the voxel backend is enabled.
 - `game_voxel_chunk::write_generated_block(...)` - Writes generator-owned blocks without marking the chunk as player-protected.
+- `game_voxel_region::write_generated_block(...)` - Routes generator-owned
+  writes to the appropriate loaded region chunk without creating player
+  provenance.
+- `game_voxel_chunk::apply_authoritative_block_change(...)` - Validates a
+  client request against the current revision and block value, then returns a
+  revisioned server delta.
+- `game_voxel_chunk::apply_authoritative_block_delta(...)` - Applies one
+  accepted server delta and rejects stale, duplicate, or skipped revisions.
+- `game_voxel_chunk::get_player_override(...)` and
+  `get_player_override_count()` - Expose the compact current-state overrides
+  used to preserve the generated baseline while synchronizing player changes.
+- `game_voxel_chunk::get_revision()` - Returns the monotonically increasing
+  player-edit revision for the chunk.
+- `game_block_change_request` and `game_block_delta` - Separate client-intent
+  and server-accepted wire records containing world/chunk identity, local
+  coordinates, revisions, and provenance.
+- `game_world_delta_history` - Bounded recent-delta retention for recovery;
+  an evicted revision returns `FT_ERR_OUT_OF_RANGE` so the caller can send a
+  full snapshot instead of silently losing synchronization.
+- `game_world_delta_channel` - Transport-neutral per-chunk authority
+  coordinator combining request validation, revision history, snapshot
+  handoff, live-client collection, and snapshot serialization.
+- `game_world_delta_snapshot_serialize(...)` and
+  `game_world_delta_snapshot_deserialize(...)` - Length-bounded, checksummed
+  full-snapshot envelope helpers.
 - `game_voxel_chunk::is_generation_protected()` - Reports whether a manual block edit protects the chunk from automatic regeneration.
 - `game_voxel_generation_metadata` - Persisted seed, world origin, generator
   version, configuration signature, and completed-stage mask for validating
@@ -124,6 +149,12 @@ General rules for these orchestration classes:
 ## Serialization and Persistence
 
 Several classes provide save/load or serialization helpers in their `.hpp` surface and corresponding `.cpp` implementations. These methods serialize gameplay state, restore records, and report errors through the module's lifecycle/error conventions.
+
+Voxel chunk serialization is transactional: a failed serialization or
+deserialization does not replace the caller's existing buffer or chunk state.
+Version-4 chunk data is accepted through the compatibility reader, with its
+legacy edit history consumed and discarded before the chunk is represented in
+the current format.
 
 ## Common Method Groups
 

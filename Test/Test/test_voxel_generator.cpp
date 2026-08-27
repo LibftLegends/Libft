@@ -418,7 +418,7 @@ FT_TEST(test_terrain_generation_metadata_identifies_cached_chunk)
         64, configuration_signature));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
         GAME_VOXEL_AIR_BLOCK));
-    FT_ASSERT_EQ(FT_FALSE, chunk.has_generation_metadata());
+    FT_ASSERT_EQ(FT_TRUE, chunk.has_generation_metadata());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
@@ -560,6 +560,7 @@ FT_TEST(test_terrain_generation_routes_edge_features_into_neighbor_chunks)
     terrain_default_generation_config(config);
     const terrain_tree_template &tree_template =
         terrain_small_oak_tree_template();
+    game_voxel_chunk *generated_chunk;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
@@ -576,6 +577,10 @@ FT_TEST(test_terrain_generation_routes_edge_features_into_neighbor_chunks)
         GAME_VOXEL_CHUNK_WIDTH - 1, 43,
         GAME_VOXEL_CHUNK_DEPTH - 1, &block_id));
     FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, region.load_chunk(0, 0,
+        &generated_chunk));
+    FT_ASSERT(!generated_chunk->is_block_player_modified(
+        GAME_VOXEL_CHUNK_WIDTH - 1, 43, GAME_VOXEL_CHUNK_DEPTH - 1));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.destroy());
     return (1);
 }

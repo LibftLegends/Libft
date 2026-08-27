@@ -5,6 +5,7 @@
 #include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
 #include "game_block_edit_op.hpp"
+#include "game_world_delta.hpp"
 #include <stdint.h>
 
 #define GAME_VOXEL_CHUNK_WIDTH 16
@@ -14,8 +15,6 @@
 #define GAME_VOXEL_SECTION_BLOCKS 4096
 #define GAME_VOXEL_CHUNK_SECTION_COUNT 16
 #define GAME_VOXEL_AIR_BLOCK 0U
-#define GAME_VOXEL_CHUNK_INITIAL_DIRTY_EDIT_CAPACITY 16U
-#define GAME_VOXEL_CHUNK_MAX_DIRTY_EDITS 1048576U
 
 struct game_voxel_generation_metadata
 {
@@ -26,6 +25,13 @@ struct game_voxel_generation_metadata
     uint32_t completed_stage_mask;
     uint32_t generator_version;
     ft_bool valid;
+};
+
+struct game_voxel_block_override
+{
+    uint16_t local_index;
+    uint32_t generated_block_id;
+    uint32_t current_block_id;
 };
 
 class game_voxel_chunk_section
@@ -89,16 +95,25 @@ class game_voxel_chunk
         ft_bool     _generation_protected;
         game_voxel_generation_metadata _generation_metadata;
         uint32_t    _biome_id;
-        game_block_edit_op *_dirty_edits;
-        uint32_t    _dirty_edit_count;
-        uint32_t    _dirty_edit_capacity;
+        game_voxel_block_override *_player_overrides;
+        uint32_t    _player_override_count;
+        uint32_t    _player_override_capacity;
+        uint64_t    _revision;
+        ft_bool     _last_request_valid;
+        game_block_change_request _last_request;
+        game_block_delta _last_delta;
         uint8_t     _initialised_state;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
         static uint16_t local_index(int32_t local_x, int32_t local_y,
             int32_t local_z) noexcept;
-        int32_t grow_dirty_edits(uint32_t minimum_capacity) noexcept;
+        int32_t grow_player_overrides(uint32_t minimum_capacity) noexcept;
+        int32_t find_player_override(uint16_t local_index,
+            uint32_t *override_index) const noexcept;
+        void remove_player_override(uint32_t override_index) noexcept;
+        int32_t serialize_internal(ft_byte_buffer &buffer) const noexcept;
+        int32_t deserialize_internal(ft_byte_buffer &buffer) noexcept;
 
     public:
         game_voxel_chunk() noexcept;
@@ -118,6 +133,11 @@ class game_voxel_chunk
             uint32_t block_id) noexcept;
         int32_t apply_block_edit(int32_t local_x, int32_t local_y,
             int32_t local_z, const game_block_edit_op &edit) noexcept;
+        int32_t apply_authoritative_block_change(
+            const game_block_change_request &request,
+            game_block_delta *delta_out) noexcept;
+        int32_t apply_authoritative_block_delta(
+            const game_block_delta &delta) noexcept;
         int32_t write_generated_block(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t block_id) noexcept;
         ft_bool is_dirty() const noexcept;
@@ -138,12 +158,14 @@ class game_voxel_chunk
             uint8_t section_index) const noexcept;
         uint32_t get_biome_id() const noexcept;
         void set_biome_id(uint32_t biome_id) noexcept;
-        int32_t record_dirty_edit(const game_block_edit_op &edit) noexcept;
-        uint32_t get_dirty_edit_count() const noexcept;
-        int32_t get_dirty_edit(uint32_t index,
-            game_block_edit_op *edit_out) const noexcept;
-        void clear_dirty_edits() noexcept;
-        void acknowledge_dirty_edits() noexcept;
+        ft_bool is_block_player_modified(int32_t local_x, int32_t local_y,
+            int32_t local_z) const noexcept;
+        int32_t get_generated_block(int32_t local_x, int32_t local_y,
+            int32_t local_z, uint32_t *block_id) const noexcept;
+        uint32_t get_player_override_count() const noexcept;
+        int32_t get_player_override(uint32_t index,
+            game_voxel_block_override *override_out) const noexcept;
+        uint64_t get_revision() const noexcept;
         int32_t serialize(ft_byte_buffer &buffer) const noexcept;
         int32_t deserialize(ft_byte_buffer &buffer) noexcept;
         int32_t get_error() const noexcept;

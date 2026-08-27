@@ -5,10 +5,10 @@
 #include <stdint.h>
 
 /*
- * M0 shared contract: the block-edit op format `{x, y, z, block_type, tick}`.
- * Reused verbatim by the chunk dirty-edit list (persistence/network wire
- * format), by the network edit-broadcast message, and by undo/redo in
- * src/edits/. Plain POD by design: it owns no resources, so it does not
+ * Compatibility record for local block mutations: `{x, y, z, block_type,
+ * tick}`. It is used as an internal mutation shape and for compatibility with
+ * existing callers; authoritative network deltas use game_block_delta instead.
+ * Plain POD by design: it owns no resources, so it does not
  * follow the heavier Libft _initialised_state lifecycle used by classes
  * that manage memory (matches game_voxel_generation_metadata's precedent).
  */

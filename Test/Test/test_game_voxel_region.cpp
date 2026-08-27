@@ -216,13 +216,13 @@ FT_TEST(test_game_voxel_chunk_rejects_bad_serialized_data)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated_buffer.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated_buffer.append_u32_le(0));
     FT_ASSERT_EQ(FT_ERR_IO, loaded_chunk.deserialize(truncated_buffer));
-    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, loaded_chunk._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, loaded_chunk._initialised_state);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bad_section_buffer.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.serialize(bad_section_buffer));
     bad_section_buffer._data[8] = 99;
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
         loaded_chunk.deserialize(bad_section_buffer));
-    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, loaded_chunk._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, loaded_chunk._initialised_state);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bad_section_buffer.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated_buffer.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, loaded_chunk.destroy());
