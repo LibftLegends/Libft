@@ -186,7 +186,6 @@ FT_TEST(test_pt_rwlock_strategy_writer_closes_reader_gate)
     std::atomic<int> release(0);
     std::atomic<int> sequence(0);
     std::atomic<int> blocked_reader_sequence(0);
-    std::atomic<int> writer_sequence(0);
     s_rwlock_reader_state reader_state;
     s_rwlock_writer_state writer_state;
     pthread_t reader_thread;

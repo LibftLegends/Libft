@@ -126,15 +126,15 @@ static void pt_rwlock_strategy_wake_writer_after_reader_exit(
 
     if (rwlock->fast_active_readers.load(std::memory_order_acquire) != 0U)
         return ;
-    if (rwlock->reader_fast_path_open.load(std::memory_order_acquire)
-        == FT_TRUE)
-        return ;
     error_code = pt_rwlock_strategy_lock_mutex(rwlock);
     if (error_code == FT_ERR_SUCCESS)
     {
         if (rwlock->fast_active_readers.load(std::memory_order_acquire) == 0U
             && rwlock->waiting_writers != 0)
+        {
+            pt_rwlock_strategy_close_reader_fast_path(rwlock);
             (void)pt_rwlock_strategy_broadcast(&rwlock->writer_condition);
+        }
         (void)pt_rwlock_strategy_unlock_mutex(rwlock);
     }
     return ;

@@ -13,14 +13,71 @@
 #include <cerrno>
 #include <climits>
 #include <unistd.h>
-#if defined(_WIN32) || defined(_WIN64)
-# include <winsock2.h>
-# include <ws2tcpip.h>
-#else
-# include <arpa/inet.h>
-# include <netinet/in.h>
-# include <sys/socket.h>
-#endif
+
+static int make_test_socket_pair(int descriptors[2])
+{
+    int listener;
+    int client;
+    int server;
+    struct sockaddr_in address;
+    socklen_t address_length;
+
+    listener = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0)
+        return (-1);
+    ft_bzero(&address, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (nw_bind(listener, reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address)) != 0 || nw_listen(listener, 1) != 0)
+    {
+        nw_close(listener);
+        return (-1);
+    }
+    address_length = sizeof(address);
+    if (getsockname(listener, reinterpret_cast<sockaddr *>(&address),
+            &address_length) != 0)
+    {
+        nw_close(listener);
+        return (-1);
+    }
+    client = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0 || nw_connect(client,
+            reinterpret_cast<const sockaddr *>(&address), sizeof(address)) != 0)
+    {
+        if (client >= 0)
+            nw_close(client);
+        nw_close(listener);
+        return (-1);
+    }
+    server = nw_accept(listener, ft_nullptr, ft_nullptr);
+    nw_close(listener);
+    if (server < 0)
+    {
+        nw_close(client);
+        return (-1);
+    }
+    descriptors[0] = static_cast<int>(server);
+    descriptors[1] = static_cast<int>(client);
+    return (0);
+}
+
+static ssize_t test_socket_write(int descriptor, const void *buffer,
+    size_t size)
+{
+    return (nw_send(descriptor, buffer, size, 0));
+}
+
+static ssize_t test_socket_read(int descriptor, void *buffer, size_t size)
+{
+    return (nw_recv(descriptor, buffer, size, 0));
+}
+
+static void close_test_socket(int descriptor)
+{
+    (void)nw_close(descriptor);
+}
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -737,28 +794,28 @@ FT_TEST(test_nw_poll_merges_read_and_write_interest)
     ssize_t write_result;
     char value;
 
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_descriptors) != 0)
+    if (make_test_socket_pair(socket_descriptors) != 0)
         return (0);
     read_descriptors[0] = socket_descriptors[0];
     write_descriptors[0] = socket_descriptors[0];
-    write_result = write(socket_descriptors[1], "x", 1);
+    write_result = test_socket_write(socket_descriptors[1], "x", 1);
     poll_result = nw_poll(read_descriptors, 1, write_descriptors, 1, 100);
     if (write_result != 1 || poll_result != 1
         || read_descriptors[0] != socket_descriptors[0]
         || write_descriptors[0] != socket_descriptors[0])
     {
-        close(socket_descriptors[0]);
-        close(socket_descriptors[1]);
+        close_test_socket(socket_descriptors[0]);
+        close_test_socket(socket_descriptors[1]);
         return (0);
     }
-    if (read(socket_descriptors[0], &value, 1) != 1)
+    if (test_socket_read(socket_descriptors[0], &value, 1) != 1)
     {
-        close(socket_descriptors[0]);
-        close(socket_descriptors[1]);
+        close_test_socket(socket_descriptors[0]);
+        close_test_socket(socket_descriptors[1]);
         return (0);
     }
-    close(socket_descriptors[0]);
-    close(socket_descriptors[1]);
+    close_test_socket(socket_descriptors[0]);
+    close_test_socket(socket_descriptors[1]);
     return (1);
 }
 

@@ -8,11 +8,60 @@
 #include <chrono>
 #include <cstdint>
 #include <thread>
-#include <unistd.h>
+
+static int make_socket_pair(int descriptors[2])
+{
+    int listener;
+    int client;
+    int server;
+    struct sockaddr_in address;
+    socklen_t address_length;
+
+    listener = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0)
+        return (-1);
+    ft_bzero(&address, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (nw_bind(listener, reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address)) != 0 || nw_listen(listener, 1) != 0)
+    {
+        nw_close(listener);
+        return (-1);
+    }
+    address_length = sizeof(address);
+    if (getsockname(listener, reinterpret_cast<sockaddr *>(&address),
+            &address_length) != 0)
+    {
+        nw_close(listener);
+        return (-1);
+    }
+    client = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0 || nw_connect(client,
+            reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address)) != 0)
+    {
+        if (client >= 0)
+            nw_close(client);
+        nw_close(listener);
+        return (-1);
+    }
+    server = nw_accept(listener, ft_nullptr, ft_nullptr);
+    nw_close(listener);
+    if (server < 0)
+    {
+        nw_close(client);
+        return (-1);
+    }
+    descriptors[0] = server;
+    descriptors[1] = client;
+    return (0);
+}
 
 static int make_pipe(int descriptors[2])
 {
-    return (pipe(descriptors));
+    return (make_socket_pair(descriptors));
 }
 
 static ft_bool wait_for_descriptor(event_loop *loop, int32_t file_descriptor,
@@ -40,20 +89,32 @@ static ft_bool wait_for_descriptor(event_loop *loop, int32_t file_descriptor,
 
 static void close_pipe(int descriptors[2])
 {
-    close(descriptors[0]);
-    close(descriptors[1]);
+    nw_close(descriptors[0]);
+    nw_close(descriptors[1]);
 }
 
 static int32_t consume_one_byte(int32_t file_descriptor)
 {
     char value;
 
-    return (static_cast<int32_t>(read(file_descriptor, &value, 1U)));
+    return (static_cast<int32_t>(nw_recv(file_descriptor, &value, 1U, 0)));
 }
 
-static int make_socket_pair(int descriptors[2])
+static int write_test_descriptor(int descriptor, const char *value,
+    size_t size)
 {
-    return (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors));
+    return (static_cast<int>(nw_send(descriptor, value, size, 0)));
+}
+
+static void close_socket_pair(int descriptors[2])
+{
+    close_pipe(descriptors);
+}
+
+static void close_one_socket(int descriptor)
+{
+    if (descriptor >= 0)
+        (void)nw_close(descriptor);
 }
 
 FT_TEST(test_networking_event_loop_add_socket_reports_allocation_failure)
@@ -193,7 +254,7 @@ FT_TEST(test_networking_event_loop_merges_read_write_interest)
         != FT_ERR_SUCCESS)
     {
         event_loop_clear(&loop);
-        close_pipe(descriptors);
+        close_socket_pair(descriptors);
         return (0);
     }
     if (event_loop_add_interest(&loop, descriptors[1],
@@ -201,7 +262,7 @@ FT_TEST(test_networking_event_loop_merges_read_write_interest)
         != FT_ERR_SUCCESS)
     {
         event_loop_clear(&loop);
-        close_pipe(descriptors);
+        close_socket_pair(descriptors);
         return (0);
     }
     event_count = 0U;
@@ -211,11 +272,11 @@ FT_TEST(test_networking_event_loop_merges_read_write_interest)
         || (event.ready_mask & EVENT_LOOP_READY_WRITE) == 0U)
     {
         event_loop_clear(&loop);
-        close_pipe(descriptors);
+        close_socket_pair(descriptors);
         return (0);
     }
     event_loop_clear(&loop);
-    close_pipe(descriptors);
+    close_socket_pair(descriptors);
     return (1);
 }
 
@@ -419,7 +480,7 @@ FT_TEST(test_networking_event_loop_repeated_waits_keep_registration)
         close_pipe(descriptors);
         return (0);
     }
-    if (write(descriptors[1], "a", 1U) != 1
+    if (write_test_descriptor(descriptors[1], "a", 1U) != 1
         || wait_for_descriptor(&loop, descriptors[0], EVENT_LOOP_READY_READ,
             10U) == FT_FALSE)
     {
@@ -429,7 +490,7 @@ FT_TEST(test_networking_event_loop_repeated_waits_keep_registration)
     }
     (void)value;
     (void)consume_one_byte(descriptors[0]);
-    if (write(descriptors[1], "b", 1U) != 1
+    if (write_test_descriptor(descriptors[1], "b", 1U) != 1
         || wait_for_descriptor(&loop, descriptors[0], EVENT_LOOP_READY_READ,
             10U) == FT_FALSE)
     {
@@ -536,7 +597,7 @@ FT_TEST(test_networking_event_loop_peer_close_reports_error_or_hangup)
         close_pipe(descriptors);
         return (0);
     }
-    close(descriptors[1]);
+    close_one_socket(descriptors[1]);
     descriptors[1] = -1;
     event_count = 0U;
     if (event_loop_wait(&loop, &event, 1U, &event_count, 100)
@@ -546,10 +607,10 @@ FT_TEST(test_networking_event_loop_peer_close_reports_error_or_hangup)
             | EVENT_LOOP_READY_HANGUP)) == 0U)
     {
         event_loop_clear(&loop);
-        close(descriptors[0]);
+        close_one_socket(descriptors[0]);
         return (0);
     }
     event_loop_clear(&loop);
-    close(descriptors[0]);
+    close_one_socket(descriptors[0]);
     return (1);
 }

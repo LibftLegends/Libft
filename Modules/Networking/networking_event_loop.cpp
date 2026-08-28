@@ -689,7 +689,8 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
 #endif
             loop->registrations = new_registrations;
             loop->ready_events = new_ready_events;
-            loop->backend_events = new_backend_events;
+            if (loop->wait_active == FT_FALSE)
+                loop->backend_events = new_backend_events;
         }
         if (loop->registrations == ft_nullptr || loop->ready_events == ft_nullptr)
         {
