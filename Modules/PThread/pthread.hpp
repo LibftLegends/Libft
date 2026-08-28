@@ -86,11 +86,12 @@ typedef struct s_pt_rwlock
     ft_bool                  writer_active;
     ft_bool                  active_writer_has_ticket;
     ft_bool                  reader_phase_open;
-    pt_buffer<pt_thread_id_type> active_reader_threads;
     pt_buffer<uint64_t>      cancelled_writer_tickets;
     t_pt_rwlock_strategy     strategy;
     std::atomic<uint8_t>     initialised_state;
     std::atomic<int32_t>     error_code;
+    std::atomic<size_t>      fast_active_readers;
+    std::atomic<ft_bool>     reader_fast_path_open;
 
     s_pt_rwlock() noexcept
         : active_readers(0), waiting_readers(0), waiting_writers(0),
@@ -98,12 +99,12 @@ typedef struct s_pt_rwlock
           next_reader_ticket(0U), reader_phase_cutoff(0U),
           active_writer_thread(), writer_active(FT_FALSE),
           active_writer_has_ticket(FT_FALSE), reader_phase_open(FT_FALSE),
-          active_reader_threads(), cancelled_writer_tickets(),
+          cancelled_writer_tickets(),
           strategy(PT_RWLOCK_STRATEGY_READER_PRIORITY),
           initialised_state(FT_CLASS_STATE_UNINITIALISED),
-          error_code(FT_ERR_SUCCESS)
+          error_code(FT_ERR_SUCCESS), fast_active_readers(0U),
+          reader_fast_path_open(FT_FALSE)
     {
-        pt_buffer_init(this->active_reader_threads);
         pt_buffer_init(this->cancelled_writer_tickets);
     }
 }   t_pt_rwlock;

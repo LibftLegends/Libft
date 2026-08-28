@@ -8,7 +8,9 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `nw_send`, `nw_recv`, `nw_sendto`, and `nw_recvfrom` - Portable send/receive wrappers.
 - `nw_inet_pton` - Parses textual IP addresses into network byte order.
 - `nw_set_nonblocking` - Enables non-blocking mode.
-- `nw_poll` - Waits on read/write descriptor sets.
+- `nw_poll` - One-shot wait on read/write descriptor sets; readiness is
+  reported by filtering the supplied arrays in place. Do not pass persistent
+  event-loop registration storage to it.
 - `t_nw_socket_hook` and `nw_set_socket_hook` - Test hook for socket creation.
 - `networking_check_socket_after_send(...)` and `networking_check_ssl_after_send(...)` - Convert send/SSL state into project error codes.
 
@@ -20,8 +22,15 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `networking_resolved_address_to_string(...)` - Converts a resolved address into a printable IP string.
 - `networking_dns_enable_thread_safety()`, `networking_dns_disable_thread_safety()`, and `networking_dns_is_thread_safe()` - Manage resolver synchronization.
 - `networking_dns_clear_cache()` and `networking_dns_set_error(...)` - Clear cache or set resolver error state.
-- `event_loop` - Descriptor-set event loop with read/write arrays and optional mutex.
-- `event_loop_init`, `clear`, `add_socket`, `remove_socket`, `run`, thread-safety helpers, `lock`, and `unlock` - Manage event loop state.
+- `event_loop` - Persistent, thread-safe readiness loop with separate
+  registration and readiness state.
+- `event_loop_init`, `event_loop_clear`, `event_loop_add_interest`,
+  `event_loop_remove_interest`, `event_loop_wait`, and `event_loop_interrupt`
+  - Manage persistent registrations and explicit readiness events. A single
+  descriptor may register read and write interest together.
+- `event_loop_add_socket`, `event_loop_remove_socket`, and `event_loop_run`
+  remain compatibility wrappers. `event_loop_run` no longer mutates its
+  registrations.
 - UDP event-loop helpers wait for read/write readiness or perform timed receive/send through an `udp_socket`.
 
 ## Socket Configuration and Classes

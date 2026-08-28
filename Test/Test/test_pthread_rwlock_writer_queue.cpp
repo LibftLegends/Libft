@@ -162,6 +162,22 @@ FT_TEST(test_pt_rwlock_strategy_readers_enter_together)
     return (1);
 }
 
+FT_TEST(test_pt_rwlock_strategy_uncontended_readers_use_fast_path)
+{
+    t_pt_rwlock lock;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rwlock_initialize(&lock));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, pt_rwlock_strategy_rdlock(&lock));
+    FT_ASSERT_EQ(1U, lock.fast_active_readers.load());
+    FT_ASSERT_EQ(0U, lock.active_readers);
+    FT_ASSERT_EQ(FT_ERR_MUTEX_ALREADY_LOCKED,
+        pt_rwlock_strategy_try_rdlock(&lock));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, pt_rwlock_strategy_unlock(&lock));
+    FT_ASSERT_EQ(0U, lock.fast_active_readers.load());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, pt_rwlock_strategy_destroy(&lock));
+    return (1);
+}
+
 FT_TEST(test_pt_rwlock_strategy_writer_closes_reader_gate)
 {
     t_pt_rwlock lock;
