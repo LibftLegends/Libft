@@ -179,6 +179,7 @@ class game_voxel_chunk
             uint8_t section_index) const noexcept;
         uint32_t get_biome_id() const noexcept;
         void set_biome_id(uint32_t biome_id) noexcept;
+        int32_t record_dirty_edit(const game_block_edit_op &edit) noexcept;
         ft_bool is_block_player_modified(int32_t local_x, int32_t local_y,
             int32_t local_z) const noexcept;
         int32_t get_generated_block(int32_t local_x, int32_t local_y,

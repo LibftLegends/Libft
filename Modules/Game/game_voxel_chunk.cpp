@@ -1326,6 +1326,22 @@ void game_voxel_chunk::set_biome_id(uint32_t biome_id) noexcept
     return ;
 }
 
+int32_t game_voxel_chunk::record_dirty_edit(
+    const game_block_edit_op &edit) noexcept
+{
+    int32_t error_code;
+
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    (void)edit;
+    this->_dirty = FT_TRUE;
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
 ft_bool game_voxel_chunk::is_block_player_modified_locked(int32_t local_x,
     int32_t local_y, int32_t local_z) const noexcept
 {
