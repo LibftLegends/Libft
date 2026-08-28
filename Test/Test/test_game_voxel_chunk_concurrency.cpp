@@ -155,6 +155,39 @@ FT_TEST(test_game_voxel_chunk_move_uses_ordered_write_locks)
     return (1);
 }
 
+FT_TEST(test_game_voxel_chunk_bulk_copy_uses_one_read_snapshot)
+{
+    game_voxel_chunk chunk;
+    uint32_t blocks[GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH
+        * GAME_VOXEL_CHUNK_HEIGHT];
+    uint32_t x_border[GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_DEPTH];
+    uint32_t z_border[GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_WIDTH];
+    uint32_t first_index;
+    uint32_t second_index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(2, 17, 3, 41U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(15, 255, 15, 99U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, chunk.copy_blocks(blocks, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_blocks(blocks,
+        GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH
+            * GAME_VOXEL_CHUNK_HEIGHT));
+    first_index = (3U * GAME_VOXEL_CHUNK_HEIGHT + 17U)
+        * GAME_VOXEL_CHUNK_WIDTH + 2U;
+    second_index = (15U * GAME_VOXEL_CHUNK_HEIGHT + 255U)
+        * GAME_VOXEL_CHUNK_WIDTH + 15U;
+    FT_ASSERT_EQ(41U, blocks[first_index]);
+    FT_ASSERT_EQ(99U, blocks[second_index]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_x_border(x_border,
+        GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_DEPTH, 2U));
+    FT_ASSERT_EQ(41U, x_border[17U * GAME_VOXEL_CHUNK_DEPTH + 3U]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_z_border(z_border,
+        GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_WIDTH, 3U));
+    FT_ASSERT_EQ(41U, z_border[17U * GAME_VOXEL_CHUNK_WIDTH + 2U]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
 FT_TEST(test_game_voxel_chunk_snapshots_are_detached_and_consistent)
 {
     game_voxel_chunk chunk;

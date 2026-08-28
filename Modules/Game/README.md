@@ -99,6 +99,9 @@ General rules for these orchestration classes:
   used to preserve the generated baseline while synchronizing player changes.
 - `game_voxel_chunk::get_revision()` - Returns the monotonically increasing
   player-edit revision for the chunk.
+- `game_voxel_chunk::copy_blocks(...)` - Copies a complete chunk snapshot in
+  one read-locked operation using the same `z, y, x` ordering as the terrain
+  snapshot pipeline.
 - `game_block_change_request` and `game_block_delta` - Separate client-intent
   and server-accepted wire records containing world/chunk identity, local
   coordinates, revisions, and provenance.

@@ -118,6 +118,12 @@ class game_voxel_chunk
         int32_t deserialize_internal(ft_byte_buffer &buffer) noexcept;
         int32_t read_block_locked(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t *block_id) const noexcept;
+        int32_t copy_blocks_locked(uint32_t *blocks_out,
+            uint32_t block_count) const noexcept;
+        int32_t copy_x_border_locked(uint32_t *blocks_out,
+            uint32_t block_count, uint32_t local_x) const noexcept;
+        int32_t copy_z_border_locked(uint32_t *blocks_out,
+            uint32_t block_count, uint32_t local_z) const noexcept;
         int32_t apply_block_edit_locked(int32_t local_x, int32_t local_y,
             int32_t local_z, const game_block_edit_op &edit) noexcept;
         int32_t apply_authoritative_block_change_locked(
@@ -150,6 +156,12 @@ class game_voxel_chunk
         int32_t move(game_voxel_chunk &other) noexcept;
         int32_t read_block(int32_t local_x, int32_t local_y, int32_t local_z,
             uint32_t *block_id) const noexcept;
+        int32_t copy_blocks(uint32_t *blocks_out,
+            uint32_t block_count) const noexcept;
+        int32_t copy_x_border(uint32_t *blocks_out,
+            uint32_t block_count, uint32_t local_x) const noexcept;
+        int32_t copy_z_border(uint32_t *blocks_out,
+            uint32_t block_count, uint32_t local_z) const noexcept;
         int32_t write_block(int32_t local_x, int32_t local_y, int32_t local_z,
             uint32_t block_id) noexcept;
         int32_t apply_block_edit(int32_t local_x, int32_t local_y,

@@ -1412,6 +1412,111 @@ int32_t game_voxel_chunk::get_generated_block_locked(int32_t local_x,
     return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
 }
 
+int32_t game_voxel_chunk::copy_blocks_locked(uint32_t *blocks_out,
+    uint32_t block_count) const noexcept
+{
+    uint32_t expected_block_count;
+    uint32_t local_z;
+    uint32_t local_y;
+    uint32_t local_x;
+    uint32_t output_index;
+    uint8_t section_index;
+
+    expected_block_count = GAME_VOXEL_CHUNK_WIDTH
+        * GAME_VOXEL_CHUNK_DEPTH * GAME_VOXEL_CHUNK_HEIGHT;
+    if (blocks_out == ft_nullptr || block_count != expected_block_count)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    output_index = 0U;
+    local_z = 0U;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_y = 0U;
+        while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+        {
+            section_index = static_cast<uint8_t>(local_y >> 4U);
+            local_x = 0U;
+            while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+            {
+                blocks_out[output_index] = this->_sections[section_index]
+                    .get_block(static_cast<uint16_t>(local_x
+                        + ((local_z & 15U) << 4U)
+                        + ((local_y & 15U) << 8U)));
+                output_index += 1U;
+                local_x += 1U;
+            }
+            local_y += 1U;
+        }
+        local_z += 1U;
+    }
+    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_voxel_chunk::copy_x_border_locked(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t local_x) const noexcept
+{
+    const uint32_t expected_block_count = GAME_VOXEL_CHUNK_HEIGHT
+        * GAME_VOXEL_CHUNK_DEPTH;
+    uint32_t local_y;
+    uint32_t local_z;
+    uint32_t output_index;
+    uint8_t section_index;
+
+    if (blocks_out == ft_nullptr || block_count != expected_block_count
+        || local_x >= GAME_VOXEL_CHUNK_WIDTH)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    output_index = 0U;
+    local_y = 0U;
+    while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+    {
+        section_index = static_cast<uint8_t>(local_y >> 4U);
+        local_z = 0U;
+        while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            blocks_out[output_index] = this->_sections[section_index]
+                .get_block(static_cast<uint16_t>(local_x
+                    + ((local_z & 15U) << 4U)
+                    + ((local_y & 15U) << 8U)));
+            output_index += 1U;
+            local_z += 1U;
+        }
+        local_y += 1U;
+    }
+    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_voxel_chunk::copy_z_border_locked(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t local_z) const noexcept
+{
+    const uint32_t expected_block_count = GAME_VOXEL_CHUNK_HEIGHT
+        * GAME_VOXEL_CHUNK_WIDTH;
+    uint32_t local_y;
+    uint32_t local_x;
+    uint32_t output_index;
+    uint8_t section_index;
+
+    if (blocks_out == ft_nullptr || block_count != expected_block_count
+        || local_z >= GAME_VOXEL_CHUNK_DEPTH)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    output_index = 0U;
+    local_y = 0U;
+    while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+    {
+        section_index = static_cast<uint8_t>(local_y >> 4U);
+        local_x = 0U;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            blocks_out[output_index] = this->_sections[section_index]
+                .get_block(static_cast<uint16_t>(local_x
+                    + ((local_z & 15U) << 4U)
+                    + ((local_y & 15U) << 8U)));
+            output_index += 1U;
+            local_x += 1U;
+        }
+        local_y += 1U;
+    }
+    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+}
+
 int32_t game_voxel_chunk::get_generated_block(int32_t local_x,
     int32_t local_y, int32_t local_z, uint32_t *block_id) const noexcept
 {
@@ -1443,6 +1548,57 @@ int32_t game_voxel_chunk::read_block(int32_t local_x, int32_t local_y,
     if (error_code != FT_ERR_SUCCESS)
         return (game_voxel_chunk::set_error(error_code));
     error_code = this->read_block_locked(local_x, local_y, local_z, block_id);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::copy_blocks(uint32_t *blocks_out,
+    uint32_t block_count) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::copy_blocks");
+    if (this->_access_lock == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (game_voxel_chunk::set_error(error_code));
+    error_code = this->copy_blocks_locked(blocks_out, block_count);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::copy_x_border(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t local_x) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::copy_x_border");
+    if (this->_access_lock == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (game_voxel_chunk::set_error(error_code));
+    error_code = this->copy_x_border_locked(blocks_out, block_count, local_x);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::copy_z_border(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t local_z) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::copy_z_border");
+    if (this->_access_lock == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (game_voxel_chunk::set_error(error_code));
+    error_code = this->copy_z_border_locked(blocks_out, block_count, local_z);
     (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
     return (error_code);
 }
