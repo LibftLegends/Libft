@@ -24,7 +24,8 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `networking_dns_clear_cache()` and `networking_dns_set_error(...)` - Clear cache or set resolver error state.
 - `event_loop` - Persistent, thread-safe readiness loop with separate
   registration and readiness state.
-- `event_loop_init`, `event_loop_clear`, `event_loop_add_interest`,
+- `event_loop_initialize`, `event_loop_destroy`, `event_loop_init`,
+  `event_loop_clear`, `event_loop_add_interest`,
   `event_loop_remove_interest`, `event_loop_wait`, and `event_loop_interrupt`
   - Manage persistent registrations and explicit readiness events. A single
   descriptor may register read and write interest together.

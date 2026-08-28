@@ -125,6 +125,8 @@ class udp_socket;
 
 void event_loop_init(event_loop *loop);
 void event_loop_clear(event_loop *loop);
+int32_t event_loop_initialize(event_loop *loop) noexcept;
+int32_t event_loop_destroy(event_loop *loop) noexcept;
 int32_t event_loop_add_socket(event_loop *loop, int32_t socket_fd, ft_bool is_write);
 int32_t event_loop_remove_socket(event_loop *loop, int32_t socket_fd, ft_bool is_write);
 int32_t event_loop_run(event_loop *loop, int32_t timeout_milliseconds);

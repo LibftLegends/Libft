@@ -728,6 +728,40 @@ FT_TEST(test_nw_poll_skips_negative_descriptors)
     return (1);
 }
 
+FT_TEST(test_nw_poll_merges_read_and_write_interest)
+{
+    int socket_descriptors[2];
+    int read_descriptors[1];
+    int write_descriptors[1];
+    int poll_result;
+    ssize_t write_result;
+    char value;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_descriptors) != 0)
+        return (0);
+    read_descriptors[0] = socket_descriptors[0];
+    write_descriptors[0] = socket_descriptors[0];
+    write_result = write(socket_descriptors[1], "x", 1);
+    poll_result = nw_poll(read_descriptors, 1, write_descriptors, 1, 100);
+    if (write_result != 1 || poll_result != 1
+        || read_descriptors[0] != socket_descriptors[0]
+        || write_descriptors[0] != socket_descriptors[0])
+    {
+        close(socket_descriptors[0]);
+        close(socket_descriptors[1]);
+        return (0);
+    }
+    if (read(socket_descriptors[0], &value, 1) != 1)
+    {
+        close(socket_descriptors[0]);
+        close(socket_descriptors[1]);
+        return (0);
+    }
+    close(socket_descriptors[0]);
+    close(socket_descriptors[1]);
+    return (1);
+}
+
 FT_TEST(test_nw_poll_negative_timeout_is_infinite)
 {
     int pipe_descriptors[2];

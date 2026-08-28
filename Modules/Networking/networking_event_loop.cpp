@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 
 #include "networking.hpp"
@@ -10,6 +11,11 @@
 #ifdef NETWORKING_USE_EPOLL
 # include <sys/epoll.h>
 # include <sys/eventfd.h>
+# include <unistd.h>
+#elif defined(NETWORKING_USE_KQUEUE)
+# include <fcntl.h>
+# include <sys/event.h>
+# include <sys/time.h>
 # include <unistd.h>
 #else
 # include <fcntl.h>
@@ -30,65 +36,59 @@ static int32_t find_registration(const event_loop *loop, int32_t file_descriptor
     return (-1);
 }
 
-static void sync_legacy_arrays(event_loop *loop)
+static int32_t build_legacy_arrays(const event_loop_registration *registrations,
+    uint32_t registration_count, int32_t **read_descriptors,
+    uint32_t *read_count, int32_t **write_descriptors,
+    uint32_t *write_count)
 {
-    uint32_t read_count;
-    uint32_t write_count;
-    int32_t *read_descriptors;
-    int32_t *write_descriptors;
     uint32_t index;
 
-    read_count = 0U;
-    write_count = 0U;
+    *read_count = 0U;
+    *write_count = 0U;
     index = 0U;
-    while (index < loop->registration_count)
+    while (index < registration_count)
     {
-        if ((loop->registrations[index].interest_mask
+        if ((registrations[index].interest_mask
                 & EVENT_LOOP_INTEREST_READ) != 0U)
-            read_count += 1U;
-        if ((loop->registrations[index].interest_mask
+            *read_count += 1U;
+        if ((registrations[index].interest_mask
                 & EVENT_LOOP_INTEREST_WRITE) != 0U)
-            write_count += 1U;
+            *write_count += 1U;
         index += 1U;
     }
-    if (read_count == 0U)
-        read_count = 1U;
-    if (write_count == 0U)
-        write_count = 1U;
-    read_descriptors = static_cast<int32_t *>(cma_malloc(
-        sizeof(int32_t) * read_count));
-    write_descriptors = static_cast<int32_t *>(cma_malloc(
-        sizeof(int32_t) * write_count));
-    if (read_descriptors == ft_nullptr || write_descriptors == ft_nullptr)
+    *read_descriptors = ft_nullptr;
+    *write_descriptors = ft_nullptr;
+    if (*read_count > 0U)
+        *read_descriptors = static_cast<int32_t *>(cma_malloc(
+            sizeof(int32_t) * *read_count));
+    if (*write_count > 0U)
+        *write_descriptors = static_cast<int32_t *>(cma_malloc(
+            sizeof(int32_t) * *write_count));
+    if ((*read_count > 0U && *read_descriptors == ft_nullptr)
+        || (*write_count > 0U && *write_descriptors == ft_nullptr))
     {
-        if (read_descriptors != ft_nullptr)
-            cma_free(read_descriptors);
-        if (write_descriptors != ft_nullptr)
-            cma_free(write_descriptors);
-        return ;
+        if (*read_descriptors != ft_nullptr)
+            cma_free(*read_descriptors);
+        if (*write_descriptors != ft_nullptr)
+            cma_free(*write_descriptors);
+        *read_descriptors = ft_nullptr;
+        *write_descriptors = ft_nullptr;
+        return (FT_ERR_NO_MEMORY);
     }
-    read_count = 0U;
-    write_count = 0U;
+    *read_count = 0U;
+    *write_count = 0U;
     index = 0U;
-    while (index < loop->registration_count)
+    while (index < registration_count)
     {
-        if ((loop->registrations[index].interest_mask
+        if ((registrations[index].interest_mask
                 & EVENT_LOOP_INTEREST_READ) != 0U)
-            read_descriptors[read_count++] = loop->registrations[index].file_descriptor;
-        if ((loop->registrations[index].interest_mask
+            (*read_descriptors)[(*read_count)++] = registrations[index].file_descriptor;
+        if ((registrations[index].interest_mask
                 & EVENT_LOOP_INTEREST_WRITE) != 0U)
-            write_descriptors[write_count++] = loop->registrations[index].file_descriptor;
+            (*write_descriptors)[(*write_count)++] = registrations[index].file_descriptor;
         index += 1U;
     }
-    if (loop->read_file_descriptors != ft_nullptr)
-        cma_free(loop->read_file_descriptors);
-    if (loop->write_file_descriptors != ft_nullptr)
-        cma_free(loop->write_file_descriptors);
-    loop->read_file_descriptors = read_descriptors;
-    loop->write_file_descriptors = write_descriptors;
-    loop->read_count = static_cast<int32_t>(read_count);
-    loop->write_count = static_cast<int32_t>(write_count);
-    return ;
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t make_mutex(pt_mutex **mutex_pointer)
@@ -120,6 +120,35 @@ static void free_mutex(pt_mutex **mutex_pointer)
     return ;
 }
 
+static void release_event_loop_wait(event_loop *loop)
+{
+    if (loop == ft_nullptr)
+        return ;
+    if (loop->mutex != ft_nullptr
+        && pt_mutex_lock_if_not_null(loop->mutex) == FT_ERR_SUCCESS)
+    {
+        loop->wait_active = FT_FALSE;
+        (void)pt_mutex_unlock_if_not_null(loop->mutex);
+    }
+    if (loop->wait_mutex != ft_nullptr)
+        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+    return ;
+}
+
+static int32_t event_loop_remaining_timeout(
+    const std::chrono::steady_clock::time_point &deadline)
+{
+    int64_t remaining_milliseconds;
+
+    remaining_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now()).count();
+    if (remaining_milliseconds <= 0)
+        return (0);
+    if (remaining_milliseconds > static_cast<int64_t>(INT32_MAX))
+        return (INT32_MAX);
+    return (static_cast<int32_t>(remaining_milliseconds));
+}
+
 #ifdef NETWORKING_USE_EPOLL
 static uint32_t epoll_interest(uint32_t interest_mask)
 {
@@ -134,6 +163,23 @@ static uint32_t epoll_interest(uint32_t interest_mask)
     events |= EPOLLRDHUP;
 # endif
     return (events);
+}
+#elif defined(NETWORKING_USE_KQUEUE)
+static int32_t kqueue_change(event_loop *loop, int32_t file_descriptor,
+    int16_t filter, uint16_t flags, uint64_t token)
+{
+    struct kevent change_event;
+
+    EV_SET(&change_event, file_descriptor, filter, flags, 0U, 0,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(token)));
+    if (kevent(loop->backend_descriptor, &change_event, 1, ft_nullptr, 0,
+            ft_nullptr) != 0)
+    {
+        if ((flags & EV_DELETE) != 0U && errno == ENOENT)
+            return (FT_ERR_SUCCESS);
+        return (FT_ERR_INVALID_ARGUMENT);
+    }
+    return (FT_ERR_SUCCESS);
 }
 #endif
 
@@ -156,6 +202,31 @@ static int32_t backend_add_or_modify(event_loop *loop, int32_t file_descriptor,
     if (epoll_ctl(loop->backend_descriptor, operation, file_descriptor,
             &event) != 0)
         return (FT_ERR_INVALID_ARGUMENT);
+#elif defined(NETWORKING_USE_KQUEUE)
+    uint64_t token;
+    int32_t error_code;
+
+    token = (generation << 32U) | static_cast<uint32_t>(file_descriptor);
+    if ((interest_mask & EVENT_LOOP_INTEREST_READ) != 0U)
+        error_code = kqueue_change(loop, file_descriptor, EVFILT_READ,
+            static_cast<uint16_t>(EV_ADD | EV_ENABLE), token);
+    else if (existing != FT_FALSE)
+        error_code = kqueue_change(loop, file_descriptor, EVFILT_READ,
+            EV_DELETE, token);
+    else
+        error_code = FT_ERR_SUCCESS;
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if ((interest_mask & EVENT_LOOP_INTEREST_WRITE) != 0U)
+        error_code = kqueue_change(loop, file_descriptor, EVFILT_WRITE,
+            static_cast<uint16_t>(EV_ADD | EV_ENABLE), token);
+    else if (existing != FT_FALSE)
+        error_code = kqueue_change(loop, file_descriptor, EVFILT_WRITE,
+            EV_DELETE, token);
+    else
+        error_code = FT_ERR_SUCCESS;
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
 #else
     (void)loop;
     (void)file_descriptor;
@@ -171,6 +242,13 @@ static int32_t backend_remove(event_loop *loop, int32_t file_descriptor)
 #ifdef NETWORKING_USE_EPOLL
     if (epoll_ctl(loop->backend_descriptor, EPOLL_CTL_DEL, file_descriptor,
             ft_nullptr) != 0 && errno != ENOENT)
+        return (FT_ERR_INVALID_ARGUMENT);
+#elif defined(NETWORKING_USE_KQUEUE)
+    if (kqueue_change(loop, file_descriptor, EVFILT_READ, EV_DELETE, 0U)
+        != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (kqueue_change(loop, file_descriptor, EVFILT_WRITE, EV_DELETE, 0U)
+        != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
 #else
     (void)loop;
@@ -254,6 +332,7 @@ void event_loop_init(event_loop *loop)
     loop->backend_descriptor = -1;
     loop->wakeup_read_descriptor = -1;
     loop->wakeup_write_descriptor = -1;
+    loop->wait_active = FT_FALSE;
     error_code = make_mutex(&loop->mutex);
     if (error_code != FT_ERR_SUCCESS)
         return ;
@@ -291,6 +370,49 @@ void event_loop_init(event_loop *loop)
                 loop->wakeup_read_descriptor, &event) != 0)
         {
             close(loop->wakeup_read_descriptor);
+            close(loop->backend_descriptor);
+            loop->wakeup_read_descriptor = -1;
+            loop->wakeup_write_descriptor = -1;
+            loop->backend_descriptor = -1;
+            free_mutex(&loop->wait_mutex);
+            free_mutex(&loop->mutex);
+            return ;
+        }
+    }
+#elif defined(NETWORKING_USE_KQUEUE)
+    loop->backend_descriptor = kqueue();
+    if (loop->backend_descriptor < 0)
+    {
+        free_mutex(&loop->wait_mutex);
+        free_mutex(&loop->mutex);
+        return ;
+    }
+    {
+        int32_t descriptors[2];
+
+        if (pipe(descriptors) != 0)
+        {
+            close(loop->backend_descriptor);
+            loop->backend_descriptor = -1;
+            free_mutex(&loop->wait_mutex);
+            free_mutex(&loop->mutex);
+            return ;
+        }
+        loop->wakeup_read_descriptor = descriptors[0];
+        loop->wakeup_write_descriptor = descriptors[1];
+        (void)fcntl(loop->wakeup_read_descriptor, F_SETFL, O_NONBLOCK);
+        (void)fcntl(loop->wakeup_write_descriptor, F_SETFL, O_NONBLOCK);
+    }
+    {
+        struct kevent event;
+
+        EV_SET(&event, loop->wakeup_read_descriptor, EVFILT_READ,
+            EV_ADD | EV_ENABLE, 0U, 0, ft_nullptr);
+        if (kevent(loop->backend_descriptor, &event, 1, ft_nullptr, 0,
+                ft_nullptr) != 0)
+        {
+            close(loop->wakeup_read_descriptor);
+            close(loop->wakeup_write_descriptor);
             close(loop->backend_descriptor);
             loop->wakeup_read_descriptor = -1;
             loop->wakeup_write_descriptor = -1;
@@ -380,6 +502,26 @@ void event_loop_clear(event_loop *loop)
     return ;
 }
 
+int32_t event_loop_initialize(event_loop *loop) noexcept
+{
+    if (loop == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    event_loop_init(loop);
+    if (loop->mutex == ft_nullptr || loop->wait_mutex == ft_nullptr
+        || loop->wakeup_read_descriptor < 0
+        || loop->wakeup_write_descriptor < 0)
+        return (FT_ERR_NO_MEMORY);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t event_loop_destroy(event_loop *loop) noexcept
+{
+    if (loop == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    event_loop_clear(loop);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
     uint32_t interest_mask) noexcept
 {
@@ -403,6 +545,12 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
     registration_index = find_registration(loop, file_descriptor);
     if (registration_index >= 0)
     {
+        uint32_t previous_mask;
+        int32_t *new_read_descriptors;
+        int32_t *new_write_descriptors;
+        uint32_t new_read_count;
+        uint32_t new_write_count;
+
         merged_mask = loop->registrations[registration_index].interest_mask
             | interest_mask;
         if (merged_mask == loop->registrations[registration_index].interest_mask)
@@ -410,12 +558,35 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
             event_loop_unlock(loop, FT_TRUE);
             return (FT_ERR_SUCCESS);
         }
+        previous_mask = loop->registrations[registration_index].interest_mask;
+        loop->registrations[registration_index].interest_mask = merged_mask;
+        error_code = build_legacy_arrays(loop->registrations,
+            loop->registration_count, &new_read_descriptors, &new_read_count,
+            &new_write_descriptors, &new_write_count);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            loop->registrations[registration_index].interest_mask = previous_mask;
+            event_loop_unlock(loop, FT_TRUE);
+            return (error_code);
+        }
         error_code = backend_add_or_modify(loop, file_descriptor, merged_mask,
             loop->registrations[registration_index].generation, FT_TRUE);
-        if (error_code == FT_ERR_SUCCESS)
+        if (error_code != FT_ERR_SUCCESS)
         {
-            loop->registrations[registration_index].interest_mask = merged_mask;
-            sync_legacy_arrays(loop);
+            loop->registrations[registration_index].interest_mask = previous_mask;
+            cma_free(new_read_descriptors);
+            cma_free(new_write_descriptors);
+        }
+        else
+        {
+            if (loop->read_file_descriptors != ft_nullptr)
+                cma_free(loop->read_file_descriptors);
+            if (loop->write_file_descriptors != ft_nullptr)
+                cma_free(loop->write_file_descriptors);
+            loop->read_file_descriptors = new_read_descriptors;
+            loop->write_file_descriptors = new_write_descriptors;
+            loop->read_count = static_cast<int32_t>(new_read_count);
+            loop->write_count = static_cast<int32_t>(new_write_count);
         }
     }
     else
@@ -434,24 +605,37 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
                 event_loop_unlock(loop, FT_TRUE);
                 return (FT_ERR_NO_MEMORY);
             }
-            new_ready_events = static_cast<event_loop_ready_event *>(
-                cma_realloc(loop->ready_events,
-                    sizeof(event_loop_ready_event) * new_count));
-            if (new_ready_events == ft_nullptr)
+            new_ready_events = loop->ready_events;
+            if (loop->wait_active == FT_FALSE || loop->ready_events == ft_nullptr)
             {
-                loop->registrations = new_registrations;
-                event_loop_unlock(loop, FT_TRUE);
-                return (FT_ERR_NO_MEMORY);
+                new_ready_events = static_cast<event_loop_ready_event *>(
+                    cma_realloc(loop->ready_events,
+                        sizeof(event_loop_ready_event) * new_count));
+                if (new_ready_events == ft_nullptr)
+                {
+                    loop->registrations = new_registrations;
+                    event_loop_unlock(loop, FT_TRUE);
+                    return (FT_ERR_NO_MEMORY);
+                }
             }
-#ifdef NETWORKING_USE_EPOLL
-            new_backend_events = cma_realloc(loop->backend_events,
-                sizeof(struct epoll_event) * new_count);
-            if (new_backend_events == ft_nullptr)
+#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
+            new_backend_events = loop->backend_events;
+            if (loop->wait_active == FT_FALSE)
             {
-                loop->registrations = new_registrations;
-                loop->ready_events = new_ready_events;
-                event_loop_unlock(loop, FT_TRUE);
-                return (FT_ERR_NO_MEMORY);
+# ifdef NETWORKING_USE_EPOLL
+                new_backend_events = cma_realloc(loop->backend_events,
+                    sizeof(struct epoll_event) * new_count);
+# else
+                new_backend_events = cma_realloc(loop->backend_events,
+                    sizeof(struct kevent) * new_count);
+# endif
+                if (new_backend_events == ft_nullptr)
+                {
+                    loop->registrations = new_registrations;
+                    loop->ready_events = new_ready_events;
+                    event_loop_unlock(loop, FT_TRUE);
+                    return (FT_ERR_NO_MEMORY);
+                }
             }
 #else
             new_backend_events = loop->backend_events;
@@ -466,22 +650,46 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
             return (FT_ERR_NO_MEMORY);
         }
         generation = loop->next_generation + 1U;
-        loop->next_generation = generation;
         error_code = backend_add_or_modify(loop, file_descriptor,
             interest_mask, generation, FT_FALSE);
         if (error_code == FT_ERR_SUCCESS)
         {
+            int32_t *new_read_descriptors;
+            int32_t *new_write_descriptors;
+            uint32_t new_read_count;
+            uint32_t new_write_count;
+
             loop->registrations[loop->registration_count].file_descriptor
                 = file_descriptor;
             loop->registrations[loop->registration_count].interest_mask
                 = interest_mask;
             loop->registrations[loop->registration_count].generation
                 = generation;
+            error_code = build_legacy_arrays(loop->registrations, new_count,
+                &new_read_descriptors, &new_read_count,
+                &new_write_descriptors, &new_write_count);
+            if (error_code != FT_ERR_SUCCESS)
+            {
+                (void)backend_remove(loop, file_descriptor);
+                event_loop_unlock(loop, FT_TRUE);
+                return (error_code);
+            }
             loop->registration_count = new_count;
             loop->registration_capacity = new_count;
-            loop->ready_capacity = new_count;
-            loop->backend_event_capacity = new_count;
-            sync_legacy_arrays(loop);
+            loop->next_generation = generation;
+            if (loop->wait_active == FT_FALSE)
+            {
+                loop->ready_capacity = new_count;
+                loop->backend_event_capacity = new_count;
+            }
+            if (loop->read_file_descriptors != ft_nullptr)
+                cma_free(loop->read_file_descriptors);
+            if (loop->write_file_descriptors != ft_nullptr)
+                cma_free(loop->write_file_descriptors);
+            loop->read_file_descriptors = new_read_descriptors;
+            loop->write_file_descriptors = new_write_descriptors;
+            loop->read_count = static_cast<int32_t>(new_read_count);
+            loop->write_count = static_cast<int32_t>(new_write_count);
         }
     }
     event_loop_unlock(loop, FT_TRUE);
@@ -511,30 +719,116 @@ int32_t event_loop_remove_interest(event_loop *loop, int32_t file_descriptor,
     }
     remaining_mask = loop->registrations[registration_index].interest_mask
         & ~interest_mask;
-    if (remaining_mask == 0U)
-        error_code = backend_remove(loop, file_descriptor);
-    else
+    if (remaining_mask != 0U)
+    {
+        uint32_t previous_mask;
+        int32_t *new_read_descriptors;
+        int32_t *new_write_descriptors;
+        uint32_t new_read_count;
+        uint32_t new_write_count;
+
+        previous_mask = loop->registrations[registration_index].interest_mask;
+        loop->registrations[registration_index].interest_mask = remaining_mask;
+        error_code = build_legacy_arrays(loop->registrations,
+            loop->registration_count, &new_read_descriptors, &new_read_count,
+            &new_write_descriptors, &new_write_count);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            loop->registrations[registration_index].interest_mask = previous_mask;
+            event_loop_unlock(loop, FT_TRUE);
+            return (error_code);
+        }
         error_code = backend_add_or_modify(loop, file_descriptor, remaining_mask,
             loop->registrations[registration_index].generation, FT_TRUE);
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        if (remaining_mask != 0U)
-            loop->registrations[registration_index].interest_mask = remaining_mask;
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            loop->registrations[registration_index].interest_mask = previous_mask;
+            cma_free(new_read_descriptors);
+            cma_free(new_write_descriptors);
+        }
         else
         {
-            while (static_cast<uint32_t>(registration_index) + 1U
-                < loop->registration_count)
-            {
-                loop->registrations[registration_index]
-                    = loop->registrations[registration_index + 1];
-                registration_index += 1;
-            }
-            loop->registration_count -= 1U;
-            sync_legacy_arrays(loop);
+            if (loop->read_file_descriptors != ft_nullptr)
+                cma_free(loop->read_file_descriptors);
+            if (loop->write_file_descriptors != ft_nullptr)
+                cma_free(loop->write_file_descriptors);
+            loop->read_file_descriptors = new_read_descriptors;
+            loop->write_file_descriptors = new_write_descriptors;
+            loop->read_count = static_cast<int32_t>(new_read_count);
+            loop->write_count = static_cast<int32_t>(new_write_count);
         }
-        signal_loop(loop);
+    }
+    else
+    {
+        event_loop_registration *new_registrations;
+        int32_t *new_read_descriptors;
+        int32_t *new_write_descriptors;
+        uint32_t new_read_count;
+        uint32_t new_write_count;
+        uint32_t new_count;
+        uint32_t source_index;
+        uint32_t destination_index;
+
+        new_count = loop->registration_count - 1U;
+        new_registrations = ft_nullptr;
+        if (new_count > 0U)
+        {
+            new_registrations = static_cast<event_loop_registration *>(
+                cma_malloc(sizeof(event_loop_registration) * new_count));
+            if (new_registrations == ft_nullptr)
+            {
+                event_loop_unlock(loop, FT_TRUE);
+                return (FT_ERR_NO_MEMORY);
+            }
+        }
+        source_index = 0U;
+        destination_index = 0U;
+        while (source_index < loop->registration_count)
+        {
+            if (source_index != static_cast<uint32_t>(registration_index))
+            {
+                new_registrations[destination_index] =
+                    loop->registrations[source_index];
+                destination_index += 1U;
+            }
+            source_index += 1U;
+        }
+        error_code = build_legacy_arrays(new_registrations, new_count,
+            &new_read_descriptors, &new_read_count,
+            &new_write_descriptors, &new_write_count);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            if (new_registrations != ft_nullptr)
+                cma_free(new_registrations);
+            event_loop_unlock(loop, FT_TRUE);
+            return (error_code);
+        }
+        error_code = backend_remove(loop, file_descriptor);
+        if (error_code == FT_ERR_SUCCESS)
+        {
+            cma_free(loop->registrations);
+            loop->registrations = new_registrations;
+            loop->registration_count = new_count;
+            if (loop->read_file_descriptors != ft_nullptr)
+                cma_free(loop->read_file_descriptors);
+            if (loop->write_file_descriptors != ft_nullptr)
+                cma_free(loop->write_file_descriptors);
+            loop->read_file_descriptors = new_read_descriptors;
+            loop->write_file_descriptors = new_write_descriptors;
+            loop->read_count = static_cast<int32_t>(new_read_count);
+            loop->write_count = static_cast<int32_t>(new_write_count);
+        }
+        else
+        {
+            if (new_registrations != ft_nullptr)
+                cma_free(new_registrations);
+            cma_free(new_read_descriptors);
+            cma_free(new_write_descriptors);
+        }
     }
     event_loop_unlock(loop, FT_TRUE);
+    if (error_code == FT_ERR_SUCCESS)
+        signal_loop(loop);
     return (error_code);
 }
 
@@ -545,15 +839,29 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     uint32_t registration_count;
     uint32_t local_count;
     uint32_t index;
+    ft_bool has_registrations;
 #ifdef NETWORKING_USE_EPOLL
     struct epoll_event *backend_events;
     int32_t ready_count;
+    int32_t wait_timeout;
     uint64_t token;
     int32_t file_descriptor;
     uint32_t backend_mask;
     uint64_t generation;
     int32_t registration_index;
     struct epoll_event empty_backend_event;
+    std::chrono::steady_clock::time_point deadline;
+#elif defined(NETWORKING_USE_KQUEUE)
+    struct kevent *backend_events;
+    int32_t ready_count;
+    struct timespec timeout;
+    struct timespec *timeout_pointer;
+    uint64_t token;
+    int32_t file_descriptor;
+    uint64_t generation;
+    int32_t registration_index;
+    struct kevent empty_backend_event;
+    std::chrono::steady_clock::time_point deadline;
 #else
     int32_t *read_snapshot;
     int32_t *write_snapshot;
@@ -584,6 +892,32 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         return (FT_ERR_INVALID_STATE);
     }
     registration_count = loop->registration_count;
+    has_registrations = FT_FALSE;
+    if (registration_count > 0U)
+        has_registrations = FT_TRUE;
+    if (registration_count > loop->backend_event_capacity)
+    {
+#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
+        void *new_backend_events;
+
+# ifdef NETWORKING_USE_EPOLL
+        new_backend_events = cma_realloc(loop->backend_events,
+            sizeof(struct epoll_event) * registration_count);
+# else
+        new_backend_events = cma_realloc(loop->backend_events,
+            sizeof(struct kevent) * registration_count);
+# endif
+        if (new_backend_events == ft_nullptr)
+        {
+            event_loop_unlock(loop, FT_TRUE);
+            (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+            return (FT_ERR_NO_MEMORY);
+        }
+        loop->backend_events = new_backend_events;
+        loop->backend_event_capacity = registration_count;
+#endif
+    }
+    loop->wait_active = FT_TRUE;
     event_loop_unlock(loop, FT_TRUE);
     local_count = 0U;
 #ifdef NETWORKING_USE_EPOLL
@@ -591,7 +925,7 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         registration_count = 1U;
     drain_loop_signal(loop);
     backend_events = static_cast<struct epoll_event *>(loop->backend_events);
-    if (loop->registration_count == 0U)
+    if (has_registrations == FT_FALSE)
     {
         ft_memset(&empty_backend_event, 0, sizeof(empty_backend_event));
         backend_events = &empty_backend_event;
@@ -599,14 +933,34 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     else if (backend_events == ft_nullptr
         || loop->backend_event_capacity < registration_count)
     {
-        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        release_event_loop_wait(loop);
         return (FT_ERR_NO_MEMORY);
     }
+    wait_timeout = timeout_milliseconds;
+    if (timeout_milliseconds >= 0)
+        deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(timeout_milliseconds);
     ready_count = epoll_wait(loop->backend_descriptor, backend_events,
-        static_cast<int32_t>(registration_count), timeout_milliseconds);
+        static_cast<int32_t>(registration_count), wait_timeout);
+    while (ready_count < 0 && errno == EINTR)
+    {
+        if (timeout_milliseconds < 0)
+            wait_timeout = -1;
+        else
+        {
+            wait_timeout = event_loop_remaining_timeout(deadline);
+            if (wait_timeout == 0)
+            {
+                ready_count = 0;
+                break ;
+            }
+        }
+        ready_count = epoll_wait(loop->backend_descriptor, backend_events,
+            static_cast<int32_t>(registration_count), wait_timeout);
+    }
     if (ready_count < 0 && errno != EINTR)
     {
-        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
     index = 0U;
@@ -614,16 +968,15 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         ready_count = 0;
     if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
     {
-        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        release_event_loop_wait(loop);
         return (FT_ERR_THREAD_BUSY);
     }
     if (loop->stopping != FT_FALSE)
     {
         event_loop_unlock(loop, FT_TRUE);
-        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
-    event_loop_unlock(loop, FT_TRUE);
     while (index < static_cast<uint32_t>(ready_count))
     {
         token = backend_events[index].data.u64;
@@ -633,16 +986,13 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         {
             generation = token >> 32U;
             file_descriptor = static_cast<int32_t>(token & UINT32_MAX);
-            if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
-                continue;
             registration_index = find_registration(loop, file_descriptor);
             if (registration_index < 0
                 || loop->registrations[registration_index].generation != generation)
             {
-                event_loop_unlock(loop, FT_TRUE);
+                index += 1U;
                 continue;
             }
-            event_loop_unlock(loop, FT_TRUE);
             backend_mask = backend_events[index].events;
             if ((backend_mask & EPOLLIN) != 0U)
             {
@@ -650,7 +1000,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                         file_descriptor, EVENT_LOOP_READY_READ,
                         FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
                 {
-                    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
                     return (FT_ERR_NO_MEMORY);
                 }
             }
@@ -660,7 +1011,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                         file_descriptor, EVENT_LOOP_READY_WRITE,
                         FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
                 {
-                    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
                     return (FT_ERR_NO_MEMORY);
                 }
             }
@@ -670,7 +1022,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                         file_descriptor, EVENT_LOOP_READY_ERROR,
                         FT_ERR_INVALID_STATE) != FT_ERR_SUCCESS)
                 {
-                    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
                     return (FT_ERR_NO_MEMORY);
                 }
             }
@@ -681,7 +1034,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                         file_descriptor, EVENT_LOOP_READY_HANGUP,
                         FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
                 {
-                    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
                     return (FT_ERR_NO_MEMORY);
                 }
             }
@@ -689,6 +1043,139 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         }
         index += 1U;
     }
+    event_loop_unlock(loop, FT_TRUE);
+#elif defined(NETWORKING_USE_KQUEUE)
+    if (registration_count == 0U)
+        registration_count = 1U;
+    drain_loop_signal(loop);
+    backend_events = static_cast<struct kevent *>(loop->backend_events);
+    if (has_registrations == FT_FALSE)
+    {
+        ft_memset(&empty_backend_event, 0, sizeof(empty_backend_event));
+        backend_events = &empty_backend_event;
+    }
+    else if (backend_events == ft_nullptr
+        || loop->backend_event_capacity < registration_count)
+    {
+        release_event_loop_wait(loop);
+        return (FT_ERR_NO_MEMORY);
+    }
+    timeout_pointer = ft_nullptr;
+    if (timeout_milliseconds >= 0)
+    {
+        timeout.tv_sec = timeout_milliseconds / 1000;
+        timeout.tv_nsec = (timeout_milliseconds % 1000) * 1000000;
+        timeout_pointer = &timeout;
+        deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(timeout_milliseconds);
+    }
+    ready_count = kevent(loop->backend_descriptor, ft_nullptr, 0,
+        backend_events, static_cast<int32_t>(registration_count),
+        timeout_pointer);
+    while (ready_count < 0 && errno == EINTR)
+    {
+        if (timeout_milliseconds < 0)
+            timeout_pointer = ft_nullptr;
+        else
+        {
+            int32_t remaining_milliseconds;
+
+            remaining_milliseconds = event_loop_remaining_timeout(deadline);
+            if (remaining_milliseconds == 0)
+            {
+                ready_count = 0;
+                break ;
+            }
+            timeout.tv_sec = remaining_milliseconds / 1000;
+            timeout.tv_nsec = (remaining_milliseconds % 1000) * 1000000;
+            timeout_pointer = &timeout;
+        }
+        ready_count = kevent(loop->backend_descriptor, ft_nullptr, 0,
+            backend_events, static_cast<int32_t>(registration_count),
+            timeout_pointer);
+    }
+    if (ready_count < 0)
+    {
+        release_event_loop_wait(loop);
+        return (FT_ERR_INVALID_STATE);
+    }
+    index = 0U;
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        release_event_loop_wait(loop);
+        return (FT_ERR_THREAD_BUSY);
+    }
+    if (loop->stopping != FT_FALSE)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        release_event_loop_wait(loop);
+        return (FT_ERR_INVALID_STATE);
+    }
+    while (index < static_cast<uint32_t>(ready_count))
+    {
+        if (backend_events[index].udata == ft_nullptr)
+            drain_loop_signal(loop);
+        else
+        {
+            token = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                backend_events[index].udata));
+            generation = token >> 32U;
+            file_descriptor = static_cast<int32_t>(token & UINT32_MAX);
+            registration_index = find_registration(loop, file_descriptor);
+            if (registration_index < 0
+                || loop->registrations[registration_index].generation != generation)
+            {
+                index += 1U;
+                continue;
+            }
+            if (backend_events[index].filter == EVFILT_READ)
+            {
+                if (append_event(events, &local_count, event_capacity,
+                        file_descriptor, EVENT_LOOP_READY_READ,
+                        FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
+                {
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
+                    return (FT_ERR_NO_MEMORY);
+                }
+            }
+            if (backend_events[index].filter == EVFILT_WRITE)
+            {
+                if (append_event(events, &local_count, event_capacity,
+                        file_descriptor, EVENT_LOOP_READY_WRITE,
+                        FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
+                {
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
+                    return (FT_ERR_NO_MEMORY);
+                }
+            }
+            if ((backend_events[index].flags & EV_EOF) != 0U)
+            {
+                if (append_event(events, &local_count, event_capacity,
+                        file_descriptor, EVENT_LOOP_READY_HANGUP,
+                        FT_ERR_SUCCESS) != FT_ERR_SUCCESS)
+                {
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
+                    return (FT_ERR_NO_MEMORY);
+                }
+            }
+            if ((backend_events[index].flags & EV_ERROR) != 0U)
+            {
+                if (append_event(events, &local_count, event_capacity,
+                        file_descriptor, EVENT_LOOP_READY_ERROR,
+                        FT_ERR_INVALID_STATE) != FT_ERR_SUCCESS)
+                {
+                    event_loop_unlock(loop, FT_TRUE);
+                    release_event_loop_wait(loop);
+                    return (FT_ERR_NO_MEMORY);
+                }
+            }
+        }
+        index += 1U;
+    }
+    event_loop_unlock(loop, FT_TRUE);
 #else
     if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
     {
@@ -726,7 +1213,14 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     }
     event_loop_unlock(loop, FT_TRUE);
     if (read_snapshot == ft_nullptr || write_snapshot == ft_nullptr)
-        poll_result = -1;
+    {
+        if (read_snapshot != ft_nullptr)
+            cma_free(read_snapshot);
+        if (write_snapshot != ft_nullptr)
+            cma_free(write_snapshot);
+        release_event_loop_wait(loop);
+        return (FT_ERR_NO_MEMORY);
+    }
     else
         poll_result = nw_poll(read_snapshot, static_cast<int32_t>(poll_read_count),
             write_snapshot, static_cast<int32_t>(write_count),
@@ -760,7 +1254,7 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         cma_free(write_snapshot);
 #endif
     *event_count = local_count;
-    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+    release_event_loop_wait(loop);
     return (FT_ERR_SUCCESS);
 }
 
@@ -794,18 +1288,27 @@ int32_t event_loop_remove_socket(event_loop *loop, int32_t socket_fd,
 
 int32_t event_loop_run(event_loop *loop, int32_t timeout_milliseconds)
 {
+    event_loop_ready_event *events;
     uint32_t event_count;
     uint32_t capacity;
+    int32_t result_code;
 
     if (loop == ft_nullptr)
         return (-1);
-    if (loop->ready_events == ft_nullptr && loop->registration_count == 0U)
-        return (0);
-    capacity = loop->ready_capacity;
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+        return (-1);
+    capacity = loop->registration_count;
+    event_loop_unlock(loop, FT_TRUE);
     if (capacity == 0U)
         capacity = 1U;
-    if (event_loop_wait(loop, loop->ready_events, capacity, &event_count,
-            timeout_milliseconds) != FT_ERR_SUCCESS)
+    events = static_cast<event_loop_ready_event *>(cma_malloc(
+        sizeof(event_loop_ready_event) * capacity));
+    if (events == ft_nullptr)
+        return (-1);
+    result_code = event_loop_wait(loop, events, capacity, &event_count,
+        timeout_milliseconds);
+    cma_free(events);
+    if (result_code != FT_ERR_SUCCESS)
         return (-1);
     return (static_cast<int32_t>(event_count));
 }

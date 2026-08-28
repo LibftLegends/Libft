@@ -1,6 +1,6 @@
 # Persistent Networking Event Loop Design
 
-Status: implemented on the current branch; retained as an implementation record
+Status: implemented on the current branch; retained as an archived implementation record
 
 Scope: `Modules/Networking` event-loop registration, polling, wakeup,
 thread-safety, platform backends, tests, and performance validation.
@@ -164,20 +164,26 @@ struct event_loop_registration
 
 struct event_loop
 {
+    int32_t *read_file_descriptors;
+    int32_t read_count;
+    int32_t *write_file_descriptors;
+    int32_t write_count;
+    pt_mutex *mutex;
+    ft_bool thread_safe_enabled;
     event_loop_registration *registrations;
     uint32_t registration_count;
     uint32_t registration_capacity;
     event_loop_ready_event *ready_events;
     uint32_t ready_capacity;
+    void *backend_events;
+    uint32_t backend_event_capacity;
     int32_t backend_descriptor;
     int32_t wakeup_read_descriptor;
     int32_t wakeup_write_descriptor;
-    pt_mutex *registry_mutex;
     pt_mutex *wait_mutex;
+    ft_bool wait_active;
     uint64_t next_generation;
-    uint32_t active_waiters;
     ft_bool stopping;
-    uint8_t initialised_state;
 };
 ```
 
@@ -188,7 +194,7 @@ Exact names may be adapted to repository conventions. Important invariants:
 - Generations increase whenever a descriptor is newly registered.
 - Backend state and registration state are committed together while locked.
 - The wait mutex serializes backend waits but is not held by add/remove.
-- The registry mutex is never held across `epoll_wait()`, `kevent()`, or
+- The registry mutex (`mutex`) is never held across `epoll_wait()`, `kevent()`, or
   `poll()`.
 - Wakeup descriptors are internal and never returned to callers.
 
@@ -266,9 +272,10 @@ ready, return success with zero events. The caller may immediately wait again.
 
 ### 8.1 kqueue
 
-Keep one kqueue descriptor. Add/delete `EVFILT_READ` and `EVFILT_WRITE`
-filters as interests change. Use `EVFILT_USER` or a pipe for wakeup. Merge read
-and write filters for the same descriptor into one public readiness event.
+The implementation keeps one kqueue descriptor. It adds, updates, and deletes
+`EVFILT_READ` and `EVFILT_WRITE` filters as interests change, and uses a
+nonblocking pipe for wakeup. Generation tokens are carried through `udata`, and
+read/write filters are merged into one public readiness event.
 
 ### 8.2 poll/select fallback
 
@@ -277,9 +284,10 @@ descriptor/mask snapshot into temporary `pollfd` storage while holding the
 registry mutex, then release the mutex before `poll()`. A wakeup pipe must be
 part of the snapshot so add/remove interrupts the wait.
 
-After return, validate readiness against current generations. Reuse allocated
-snapshot buffers to avoid per-tick allocation. This backend remains O(N), but
-must preserve correctness and nonblocking modification semantics.
+After return, validate readiness against the current registration state. The
+fallback uses temporary snapshots and remains O(N), but preserves
+non-destructive registrations and wakeup-driven modification semantics. Native
+epoll and kqueue paths are the zero-allocation steady-state implementations.
 
 ### 8.3 Windows
 
@@ -297,10 +305,12 @@ The lock order is always:
 Add/remove take only the registry mutex. They must never attempt to acquire the
 wait mutex. This prevents add/remove from waiting behind network inactivity.
 
-No allocation, callback, socket I/O, or blocking wait occurs while the registry
-mutex is held, except that capacity allocation may be prepared before locking
-or performed with a carefully bounded retry/commit sequence. Prefer allocating
-a replacement table first, then locking to verify state and commit.
+No callback, socket I/O, or blocking wait occurs while the registry mutex is
+held. Registration changes may allocate the canonical table and the legacy
+compatibility mirrors while holding this short-lived mutex; these allocations
+are bounded by the requested registration count and never occur on the native
+persistent wait hot path. High-frequency registration churn should preallocate
+where possible.
 
 `event_loop_destroy()` sets `stopping`, signals wakeup, synchronizes with the
 wait mutex, unregisters/closes backend descriptors, frees registrations and
@@ -328,42 +338,24 @@ requires exclusive ownership.
 - No public operation exposes raw `errno` as its only diagnostic; map it to the
   Libft error contract while preserving platform detail where supported.
 
-## 11. Implementation sequence
+## 11. Implementation record
 
-### Stage 1: lock in current behavior with regression tests
+The implementation completed the following work:
 
-- Add a test proving the current persistent-registration failure.
-- Add same-descriptor read+write test.
-- Add blocked-wait concurrent modification test.
-- Add timeout and interruption tests.
+- Added persistent-registration, read/write merge, blocked-wait modification,
+  destruction, timeout, interruption, hangup, busy-waiter, and repeated-wait
+  regression tests.
+- Added a direct `nw_poll()` regression test for one descriptor requested in
+  both read and write arrays.
 
-These tests should fail before implementation for the expected reason.
+### Caller migration
 
-### Stage 2: introduce registration and readiness types
-
-- Add interest/readiness masks and explicit wait API.
-- Keep old wrappers compiling.
-- Document `nw_poll()` as destructive one-shot compatibility behavior.
-
-### Stage 3: persistent Linux backend
-
-- Add epoll and wakeup ownership.
-- Implement ADD/MOD/DEL with merged interests.
-- Separate registration from readiness.
-- Remove registry lock from the wait interval.
-- Migrate `udp_event_loop_wait_internal()` in the same commit to consume
-  explicit readiness and delete its descriptor-index restoration workaround.
-
-### Stage 4: platform parity
-
-- Implement persistent kqueue behavior.
-- Implement snapshot-based poll/select/Windows behavior.
-- Run platform-specific tests in CI.
-
-### Stage 5: migrate callers
-
-- Evaluate message transport and server loops for migration.
-- Keep one-shot operations on `nw_poll()` where persistence has no benefit.
+- Migrated the UDP event-loop helper to explicit readiness events; it no longer
+  restores descriptors mutated by `nw_poll()`.
+- Kept one-shot HTTP and other isolated waits on `nw_poll()` where persistent
+  state has no benefit.
+- The message transport continues to own callback dispatch and its existing
+  wait abstraction; the event loop never invokes transport callbacks.
 
 ### Checked-out branch integration constraints
 
@@ -390,17 +382,22 @@ work. The event-loop implementation must preserve these established contracts:
 - One-shot HTTP connection waits may continue using `nw_poll()`; they must not
   be mechanically moved into shared persistent state.
 
-Before implementation, record the branch tip and inspect the diff for every
+For integration verification, record the branch tip and inspect the diff for every
 touched Networking file. During rebase/conflict resolution, preserve branch
 behavior explicitly and rerun message-transport, secure-channel, simulator,
 UDP close/send, callback-owner-thread, and command-lifetime tests. A clean
 event-loop test run alone is insufficient acceptance on this branch.
 
-### Stage 6: remove obsolete internals
+### Remaining cleanup scope
 
-- Remove legacy read/write arrays from `event_loop` after all callers migrate.
-- Deprecate lazy thread-safety preparation.
-- Archive this document after implementation and acceptance tests pass.
+The legacy read/write arrays and `event_loop_run()` wrapper remain for source
+compatibility. `event_loop_run()` uses a temporary readiness buffer because it
+does not expose readiness events; new code should use `event_loop_wait()`.
+`event_loop_prepare_thread_safety()` remains an initialization-state check and
+does not lazily construct synchronization.
+
+This document is intentionally stored under `Docs/old/` now that the design
+has been implemented.
 
 ## 12. Correctness tests
 

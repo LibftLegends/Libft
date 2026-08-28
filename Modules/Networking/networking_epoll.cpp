@@ -7,6 +7,21 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+static ft_bool descriptor_is_present(const int32_t *descriptors,
+    int32_t descriptor_count, int32_t file_descriptor)
+{
+    int32_t index;
+
+    index = 0;
+    while (descriptors != ft_nullptr && index < descriptor_count)
+    {
+        if (descriptors[index] == file_descriptor)
+            return (FT_TRUE);
+        index += 1;
+    }
+    return (FT_FALSE);
+}
+
 int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
             int32_t *write_file_descriptors, int32_t write_count,
             int32_t timeout_milliseconds)
@@ -36,6 +51,12 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     {
         if (read_file_descriptors[index] >= 0)
         {
+            if (descriptor_is_present(read_file_descriptors, index,
+                    read_file_descriptors[index]) == FT_TRUE)
+            {
+                index++;
+                continue ;
+            }
             event.events = EPOLLIN;
             event.data.fd = read_file_descriptors[index];
             if (epoll_ctl(epoll_descriptor, EPOLL_CTL_ADD, read_file_descriptors[index], &event) == -1)
@@ -53,9 +74,27 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     {
         if (write_file_descriptors[index] >= 0)
         {
+            if (descriptor_is_present(write_file_descriptors, index,
+                    write_file_descriptors[index]) == FT_TRUE)
+            {
+                index++;
+                continue ;
+            }
             event.events = EPOLLOUT;
             event.data.fd = write_file_descriptors[index];
-            if (epoll_ctl(epoll_descriptor, EPOLL_CTL_ADD, write_file_descriptors[index], &event) == -1)
+            if (descriptor_is_present(read_file_descriptors, read_count,
+                    write_file_descriptors[index]) == FT_TRUE)
+            {
+                event.events |= EPOLLIN;
+                if (epoll_ctl(epoll_descriptor, EPOLL_CTL_MOD,
+                        write_file_descriptors[index], &event) == -1)
+                {
+                    close(epoll_descriptor);
+                    return (-1);
+                }
+            }
+            else if (epoll_ctl(epoll_descriptor, EPOLL_CTL_ADD,
+                    write_file_descriptors[index], &event) == -1)
             {
                 close(epoll_descriptor);
                 return (-1);
