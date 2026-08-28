@@ -119,6 +119,11 @@ General rules for these orchestration classes:
   `get_generation_metadata()`, `has_generation_metadata()`, and
   `generation_metadata_matches(...)` - Manage and query generation cache
   identity.
+- `game_voxel_chunk` uses a heap-owned writer-priority, non-recursive RW lock
+  for public block, metadata, override, revision, serialization, and lifecycle
+  operations. `get_generation_metadata()` returns a thread-local snapshot;
+  `get_section()` remains a borrowed reference for lifecycle-exclusive or
+  caller-synchronized code and must not be retained across concurrent writes.
 - `game_voxel_region::is_chunk_visible(...)` - Tests whether a loaded voxel chunk intersects a camera frustum.
 
 ## Hooks, Scripting, and Catalogs

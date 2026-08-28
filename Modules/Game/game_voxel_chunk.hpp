@@ -6,6 +6,7 @@
 #include "../Errno/errno.hpp"
 #include "game_block_edit_op.hpp"
 #include "game_world_delta.hpp"
+#include "../PThread/pthread.hpp"
 #include <stdint.h>
 
 #define GAME_VOXEL_CHUNK_WIDTH 16
@@ -103,6 +104,7 @@ class game_voxel_chunk
         game_block_change_request _last_request;
         game_block_delta _last_delta;
         uint8_t     _initialised_state;
+        mutable t_pt_rwlock *_access_lock;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
@@ -114,6 +116,25 @@ class game_voxel_chunk
         void remove_player_override(uint32_t override_index) noexcept;
         int32_t serialize_internal(ft_byte_buffer &buffer) const noexcept;
         int32_t deserialize_internal(ft_byte_buffer &buffer) noexcept;
+        int32_t read_block_locked(int32_t local_x, int32_t local_y,
+            int32_t local_z, uint32_t *block_id) const noexcept;
+        int32_t apply_block_edit_locked(int32_t local_x, int32_t local_y,
+            int32_t local_z, const game_block_edit_op &edit) noexcept;
+        int32_t apply_authoritative_block_change_locked(
+            const game_block_change_request &request,
+            game_block_delta *delta_out) noexcept;
+        int32_t apply_authoritative_block_delta_locked(
+            const game_block_delta &delta) noexcept;
+        int32_t write_generated_block_locked(int32_t local_x,
+            int32_t local_y, int32_t local_z, uint32_t block_id) noexcept;
+        int32_t get_generated_block_locked(int32_t local_x, int32_t local_y,
+            int32_t local_z, uint32_t *block_id) const noexcept;
+        ft_bool is_block_player_modified_locked(int32_t local_x,
+            int32_t local_y, int32_t local_z) const noexcept;
+        void clear_dirty_locked() noexcept;
+        void clear_generation_metadata_locked() noexcept;
+        int32_t destroy_locked() noexcept;
+        int32_t move_payload_locked(game_voxel_chunk &other) noexcept;
 
     public:
         game_voxel_chunk() noexcept;

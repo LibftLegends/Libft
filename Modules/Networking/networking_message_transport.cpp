@@ -5677,8 +5677,8 @@ int32_t networking_message_transport::export_observability() const noexcept
     sample.labels.target = "aggregate";
     sample.labels.resource = "connections";
     sample.duration_ms = static_cast<int64_t>(aggregate.smoothed_rtt_milliseconds);
-    sample.request_bytes = static_cast<ft_size_t>(aggregate.bytes_sent);
-    sample.response_bytes = static_cast<ft_size_t>(aggregate.bytes_received);
+    sample.request_bytes = aggregate.bytes_sent;
+    sample.response_bytes = aggregate.bytes_received;
     sample.status_code = static_cast<int32_t>(connection_count);
     sample.error_code = FT_ERR_SUCCESS;
     sample.error_tag = "ok";

@@ -11,6 +11,7 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#include <functional>
 #define GAME_VOXEL_CHUNK_MAGIC 0x474D4348U
 #define GAME_VOXEL_CHUNK_VERSION 5U
 #define GAME_VOXEL_CHUNK_LEGACY_VERSION 4U
@@ -392,7 +393,7 @@ game_voxel_chunk::game_voxel_chunk() noexcept
     _generation_metadata(), _biome_id(0U), _player_overrides(ft_nullptr),
     _player_override_count(0U), _player_override_capacity(0U), _revision(0U),
     _last_request_valid(FT_FALSE), _last_request(), _last_delta(),
-    _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    _initialised_state(FT_CLASS_STATE_UNINITIALISED), _access_lock(ft_nullptr)
 {
     this->set_error(FT_ERR_SUCCESS);
     return ;
@@ -479,6 +480,13 @@ game_voxel_chunk::~game_voxel_chunk() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         (void)this->destroy();
+    if (this->_access_lock != ft_nullptr)
+    {
+        (void)pt_rwlock_strategy_destroy(this->_access_lock);
+        this->_access_lock->~t_pt_rwlock();
+        cma_free(this->_access_lock);
+        this->_access_lock = ft_nullptr;
+    }
     return ;
 }
 
@@ -493,6 +501,7 @@ int32_t game_voxel_chunk::initialize() noexcept
 {
     uint8_t section_index;
     int32_t error_code;
+    t_pt_rwlock *new_lock;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
@@ -501,12 +510,38 @@ int32_t game_voxel_chunk::initialize() noexcept
             "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
+    new_lock = static_cast<t_pt_rwlock *>(cma_malloc(sizeof(t_pt_rwlock)));
+    if (new_lock == ft_nullptr)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    }
+    new (new_lock) t_pt_rwlock();
+    error_code = pt_rwlock_strategy_init(new_lock,
+        PT_RWLOCK_STRATEGY_WRITER_PRIORITY);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        new_lock->~t_pt_rwlock();
+        cma_free(new_lock);
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(error_code));
+    }
+    this->_access_lock = new_lock;
     section_index = 0;
     while (section_index < GAME_VOXEL_CHUNK_SECTION_COUNT)
     {
         error_code = this->_sections[section_index].initialize();
         if (error_code != FT_ERR_SUCCESS)
         {
+            while (section_index > 0)
+            {
+                section_index -= 1;
+                (void)this->_sections[section_index].destroy();
+            }
+            (void)pt_rwlock_strategy_destroy(this->_access_lock);
+            this->_access_lock->~t_pt_rwlock();
+            cma_free(this->_access_lock);
+            this->_access_lock = ft_nullptr;
             this->_initialised_state = FT_CLASS_STATE_DESTROYED;
             return (this->set_error(error_code));
         }
@@ -514,7 +549,7 @@ int32_t game_voxel_chunk::initialize() noexcept
     }
     this->_dirty = FT_FALSE;
     this->_generation_protected = FT_FALSE;
-    this->clear_generation_metadata();
+    this->clear_generation_metadata_locked();
     this->_biome_id = 0U;
     this->_player_overrides = ft_nullptr;
     this->_player_override_count = 0U;
@@ -525,7 +560,7 @@ int32_t game_voxel_chunk::initialize() noexcept
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::destroy() noexcept
+int32_t game_voxel_chunk::destroy_locked() noexcept
 {
     uint8_t section_index;
 
@@ -542,7 +577,7 @@ int32_t game_voxel_chunk::destroy() noexcept
     }
     this->_dirty = FT_FALSE;
     this->_generation_protected = FT_FALSE;
-    this->clear_generation_metadata();
+    this->clear_generation_metadata_locked();
     this->_biome_id = 0U;
     if (this->_player_overrides != ft_nullptr)
         cma_free(this->_player_overrides);
@@ -555,44 +590,40 @@ int32_t game_voxel_chunk::destroy() noexcept
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
+int32_t game_voxel_chunk::destroy() noexcept
+{
+    int32_t error_code;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->destroy_locked();
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    if (error_code == FT_ERR_SUCCESS)
+    {
+        (void)pt_rwlock_strategy_destroy(this->_access_lock);
+        this->_access_lock->~t_pt_rwlock();
+        cma_free(this->_access_lock);
+        this->_access_lock = ft_nullptr;
+    }
+    return (this->set_error(error_code));
+}
+
+int32_t game_voxel_chunk::move_payload_locked(game_voxel_chunk &other) noexcept
 {
     uint8_t section_index;
     int32_t error_code;
 
-    if (&other == this)
-        return (this->set_error(FT_ERR_SUCCESS));
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state,
-            "game_voxel_chunk::move", "source object is uninitialised");
+    if (other._initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
         return (this->set_error(FT_ERR_INVALID_STATE));
-    }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-            (void)this->destroy();
-        this->_dirty = FT_FALSE;
-        this->_generation_protected = FT_FALSE;
-        this->clear_generation_metadata();
-        this->_biome_id = 0U;
-        this->_player_override_count = 0U;
-        this->_player_override_capacity = 0U;
-        this->_player_overrides = ft_nullptr;
-        this->_revision = 0U;
-        this->_last_request_valid = FT_FALSE;
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (this->set_error(FT_ERR_SUCCESS));
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)this->destroy();
-    error_code = this->initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
     section_index = 0;
     while (section_index < GAME_VOXEL_CHUNK_SECTION_COUNT)
     {
-        (void)this->_sections[section_index].destroy();
         error_code = this->_sections[section_index].move(
             other._sections[section_index]);
         if (error_code != FT_ERR_SUCCESS)
@@ -610,7 +641,7 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
     this->_last_request_valid = other._last_request_valid;
     this->_last_request = other._last_request;
     this->_last_delta = other._last_delta;
-    other.clear_generation_metadata();
+    other.clear_generation_metadata_locked();
     other._generation_protected = FT_FALSE;
     other._dirty = FT_FALSE;
     other._biome_id = 0U;
@@ -620,10 +651,102 @@ int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
     other._revision = 0U;
     other._last_request_valid = FT_FALSE;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::read_block(int32_t local_x, int32_t local_y,
+int32_t game_voxel_chunk::move(game_voxel_chunk &other) noexcept
+{
+    int32_t error_code;
+    ft_bool destination_was_initialised;
+    t_pt_rwlock *first_lock;
+    t_pt_rwlock *second_lock;
+
+    if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state,
+            "game_voxel_chunk::move", "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        {
+            error_code = this->destroy();
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+        }
+        this->_dirty = FT_FALSE;
+        this->_generation_protected = FT_FALSE;
+        this->clear_generation_metadata_locked();
+        this->_biome_id = 0U;
+        this->_player_override_count = 0U;
+        this->_player_override_capacity = 0U;
+        this->_player_overrides = ft_nullptr;
+        this->_revision = 0U;
+        this->_last_request_valid = FT_FALSE;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_SUCCESS));
+    }
+    destination_was_initialised = FT_FALSE;
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        destination_was_initialised = FT_TRUE;
+    else
+    {
+        error_code = this->initialize();
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    if (this->_access_lock == ft_nullptr || other._access_lock == ft_nullptr)
+    {
+        if (destination_was_initialised == FT_FALSE)
+            (void)this->destroy();
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    if (std::less<t_pt_rwlock *>()(this->_access_lock,
+            other._access_lock) == true)
+    {
+        first_lock = this->_access_lock;
+        second_lock = other._access_lock;
+    }
+    else
+    {
+        first_lock = other._access_lock;
+        second_lock = this->_access_lock;
+    }
+    error_code = pt_rwlock_strategy_wrlock(first_lock);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        if (destination_was_initialised == FT_FALSE)
+            (void)this->destroy();
+        return (this->set_error(error_code));
+    }
+    error_code = pt_rwlock_strategy_wrlock(second_lock);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)pt_rwlock_strategy_wrunlock(first_lock);
+        if (destination_was_initialised == FT_FALSE)
+            (void)this->destroy();
+        return (this->set_error(error_code));
+    }
+    if (other._access_lock->waiting_readers != 0
+        || other._access_lock->waiting_writers != 0)
+    {
+        (void)pt_rwlock_strategy_wrunlock(second_lock);
+        (void)pt_rwlock_strategy_wrunlock(first_lock);
+        if (destination_was_initialised == FT_FALSE)
+            (void)this->destroy();
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    }
+    error_code = this->move_payload_locked(other);
+    (void)pt_rwlock_strategy_wrunlock(second_lock);
+    (void)pt_rwlock_strategy_wrunlock(first_lock);
+    return (this->set_error(error_code));
+}
+
+int32_t game_voxel_chunk::read_block_locked(int32_t local_x, int32_t local_y,
     int32_t local_z, uint32_t *block_id) const noexcept
 {
     uint8_t section_index;
@@ -646,6 +769,7 @@ int32_t game_voxel_chunk::write_block(int32_t local_x, int32_t local_y,
     int32_t local_z, uint32_t block_id) noexcept
 {
     game_block_edit_op edit;
+    int32_t error_code;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::write_block");
@@ -654,10 +778,18 @@ int32_t game_voxel_chunk::write_block(int32_t local_x, int32_t local_y,
     edit.world_z = local_z;
     edit.block_type = block_id;
     edit.tick = 0U;
-    return (this->apply_block_edit(local_x, local_y, local_z, edit));
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->apply_block_edit_locked(local_x, local_y, local_z,
+        edit);
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (error_code);
 }
 
-int32_t game_voxel_chunk::apply_block_edit(int32_t local_x, int32_t local_y,
+int32_t game_voxel_chunk::apply_block_edit_locked(int32_t local_x, int32_t local_y,
     int32_t local_z, const game_block_edit_op &edit) noexcept
 {
     uint8_t section_index;
@@ -741,7 +873,25 @@ int32_t game_voxel_chunk::apply_block_edit(int32_t local_x, int32_t local_y,
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::apply_authoritative_block_change(
+int32_t game_voxel_chunk::apply_block_edit(int32_t local_x, int32_t local_y,
+    int32_t local_z, const game_block_edit_op &edit) noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::apply_block_edit");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->apply_block_edit_locked(local_x, local_y, local_z,
+        edit);
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::apply_authoritative_block_change_locked(
     const game_block_change_request &request,
     game_block_delta *delta_out) noexcept
 {
@@ -776,7 +926,7 @@ int32_t game_voxel_chunk::apply_authoritative_block_change(
         *delta_out = this->_last_delta;
         return (this->set_error(FT_ERR_SUCCESS));
     }
-    error_code = this->read_block(request.local_x, request.local_y,
+    error_code = this->read_block_locked(request.local_x, request.local_y,
         request.local_z, &current_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
@@ -792,7 +942,7 @@ int32_t game_voxel_chunk::apply_authoritative_block_change(
     edit.world_z = request.local_z;
     edit.block_type = request.requested_block_id;
     edit.tick = 0U;
-    error_code = this->apply_block_edit(request.local_x, request.local_y,
+    error_code = this->apply_block_edit_locked(request.local_x, request.local_y,
         request.local_z, edit);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
@@ -805,7 +955,7 @@ int32_t game_voxel_chunk::apply_authoritative_block_change(
     delta_out->previous_revision = previous_revision;
     delta_out->revision = this->_revision;
     delta_out->current_block_id = request.requested_block_id;
-    delta_out->player_modified = this->is_block_player_modified(
+    delta_out->player_modified = this->is_block_player_modified_locked(
         request.local_x, request.local_y, request.local_z);
     delta_out->server_tick = 0U;
     delta_out->local_x = request.local_x;
@@ -817,7 +967,26 @@ int32_t game_voxel_chunk::apply_authoritative_block_change(
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::apply_authoritative_block_delta(
+int32_t game_voxel_chunk::apply_authoritative_block_change(
+    const game_block_change_request &request,
+    game_block_delta *delta_out) noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::apply_authoritative_block_change");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->apply_authoritative_block_change_locked(request,
+        delta_out);
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::apply_authoritative_block_delta_locked(
     const game_block_delta &delta) noexcept
 {
     game_block_edit_op edit;
@@ -836,11 +1005,11 @@ int32_t game_voxel_chunk::apply_authoritative_block_delta(
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (delta.previous_revision != this->_revision)
         return (this->set_error(FT_ERR_INVALID_STATE));
-    error_code = this->read_block(delta.local_x, delta.local_y,
+    error_code = this->read_block_locked(delta.local_x, delta.local_y,
         delta.local_z, &current_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
-    error_code = this->get_generated_block(delta.local_x, delta.local_y,
+    error_code = this->get_generated_block_locked(delta.local_x, delta.local_y,
         delta.local_z, &generated_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
@@ -858,7 +1027,7 @@ int32_t game_voxel_chunk::apply_authoritative_block_delta(
     edit.world_z = delta.local_z;
     edit.block_type = delta.current_block_id;
     edit.tick = 0U;
-    error_code = this->apply_block_edit(delta.local_x, delta.local_y,
+    error_code = this->apply_block_edit_locked(delta.local_x, delta.local_y,
         delta.local_z, edit);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
@@ -868,7 +1037,24 @@ int32_t game_voxel_chunk::apply_authoritative_block_delta(
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
-int32_t game_voxel_chunk::write_generated_block(int32_t local_x,
+int32_t game_voxel_chunk::apply_authoritative_block_delta(
+    const game_block_delta &delta) noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::apply_authoritative_block_delta");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->apply_authoritative_block_delta_locked(delta);
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::write_generated_block_locked(int32_t local_x,
     int32_t local_y, int32_t local_z, uint32_t block_id) noexcept
 {
     uint8_t section_index;
@@ -914,24 +1100,63 @@ int32_t game_voxel_chunk::write_generated_block(int32_t local_x,
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
+int32_t game_voxel_chunk::write_generated_block(int32_t local_x,
+    int32_t local_y, int32_t local_z, uint32_t block_id) noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::write_generated_block");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->write_generated_block_locked(local_x, local_y,
+        local_z, block_id);
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return (error_code);
+}
+
 ft_bool game_voxel_chunk::is_dirty() const noexcept
 {
-    return (this->_dirty);
+    ft_bool value;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
+        return (FT_FALSE);
+    if (pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    value = this->_dirty;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
 }
 
-void game_voxel_chunk::clear_dirty() noexcept
-{
-    this->clear_persistence_dirty();
-    return ;
-}
-
-void game_voxel_chunk::clear_persistence_dirty() noexcept
+void game_voxel_chunk::clear_dirty_locked() noexcept
 {
     this->_dirty = FT_FALSE;
     return ;
 }
 
-void game_voxel_chunk::clear_generation_metadata() noexcept
+void game_voxel_chunk::clear_dirty() noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
+        return ;
+    if (pt_rwlock_strategy_wrlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return ;
+    this->clear_dirty_locked();
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return ;
+}
+
+void game_voxel_chunk::clear_persistence_dirty() noexcept
+{
+    this->clear_dirty();
+    return ;
+}
+
+void game_voxel_chunk::clear_generation_metadata_locked() noexcept
 {
     this->_generation_metadata.seed_value = 0U;
     this->_generation_metadata.world_block_origin_x = 0;
@@ -943,49 +1168,102 @@ void game_voxel_chunk::clear_generation_metadata() noexcept
     return ;
 }
 
-ft_bool game_voxel_chunk::is_generation_protected() const noexcept
+void game_voxel_chunk::clear_generation_metadata() noexcept
 {
-    return (this->_generation_protected);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
+        return ;
+    if (pt_rwlock_strategy_wrlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return ;
+    this->clear_generation_metadata_locked();
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+    return ;
 }
 
-int32_t game_voxel_chunk::set_generation_metadata(
+ft_bool game_voxel_chunk::is_generation_protected() const noexcept
+{
+    ft_bool value;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
+        return (FT_FALSE);
+    if (pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    value = this->_generation_protected;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
+}
+
+    int32_t game_voxel_chunk::set_generation_metadata(
     const game_voxel_generation_metadata &metadata) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::set_generation_metadata");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    int32_t error_code;
+
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
     this->_generation_metadata = metadata;
     this->_generation_metadata.valid = FT_TRUE;
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
     return (this->set_error(FT_ERR_SUCCESS));
 }
 
 const game_voxel_generation_metadata &game_voxel_chunk::get_generation_metadata()
     const noexcept
 {
+    static thread_local game_voxel_generation_metadata snapshot;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::get_generation_metadata");
-    return (this->_generation_metadata);
+    snapshot = game_voxel_generation_metadata();
+    if (this->_access_lock != ft_nullptr
+        && pt_rwlock_strategy_rdlock(this->_access_lock) == FT_ERR_SUCCESS)
+    {
+        snapshot = this->_generation_metadata;
+        (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    }
+    return (snapshot);
 }
 
 ft_bool game_voxel_chunk::has_generation_metadata() const noexcept
 {
-    return (this->_generation_metadata.valid);
+    ft_bool value;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
+        return (FT_FALSE);
+    if (pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    value = this->_generation_metadata.valid;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
 }
 
 ft_bool game_voxel_chunk::generation_metadata_matches(uint64_t seed_value,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     uint32_t configuration_signature) const noexcept
 {
-    if (this->_generation_metadata.valid == FT_FALSE)
+    ft_bool matches;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_access_lock == ft_nullptr)
         return (FT_FALSE);
-    if (this->_generation_metadata.seed_value != seed_value
-        || this->_generation_metadata.world_block_origin_x
-            != world_block_origin_x
-        || this->_generation_metadata.world_block_origin_z
-            != world_block_origin_z
-        || this->_generation_metadata.configuration_signature
-            != configuration_signature)
+    if (pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    return (FT_TRUE);
+    matches = (this->_generation_metadata.valid != FT_FALSE
+        && this->_generation_metadata.seed_value == seed_value
+        && this->_generation_metadata.world_block_origin_x
+            == world_block_origin_x
+        && this->_generation_metadata.world_block_origin_z
+            == world_block_origin_z
+        && this->_generation_metadata.configuration_signature
+            == configuration_signature);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (matches);
 }
 
 game_voxel_chunk_section &game_voxel_chunk::get_section(
@@ -1020,20 +1298,35 @@ const game_voxel_chunk_section &game_voxel_chunk::get_section(
 
 uint32_t game_voxel_chunk::get_biome_id() const noexcept
 {
+    uint32_t value;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::get_biome_id");
-    return (this->_biome_id);
+    if (this->_access_lock == ft_nullptr
+        || pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (0U);
+    value = this->_biome_id;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
 }
 
 void game_voxel_chunk::set_biome_id(uint32_t biome_id) noexcept
 {
+    int32_t error_code;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::set_biome_id");
+    if (this->_access_lock == ft_nullptr)
+        return ;
+    error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return ;
     this->_biome_id = biome_id;
+    (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
     return ;
 }
 
-ft_bool game_voxel_chunk::is_block_player_modified(int32_t local_x,
+ft_bool game_voxel_chunk::is_block_player_modified_locked(int32_t local_x,
     int32_t local_y, int32_t local_z) const noexcept
 {
     uint16_t block_index;
@@ -1054,7 +1347,22 @@ ft_bool game_voxel_chunk::is_block_player_modified(int32_t local_x,
     return (FT_FALSE);
 }
 
-int32_t game_voxel_chunk::get_generated_block(int32_t local_x,
+ft_bool game_voxel_chunk::is_block_player_modified(int32_t local_x,
+    int32_t local_y, int32_t local_z) const noexcept
+{
+    ft_bool value;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::is_block_player_modified");
+    if (this->_access_lock == ft_nullptr
+        || pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    value = this->is_block_player_modified_locked(local_x, local_y, local_z);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
+}
+
+int32_t game_voxel_chunk::get_generated_block_locked(int32_t local_x,
     int32_t local_y, int32_t local_z, uint32_t *block_id) const noexcept
 {
     uint16_t block_index;
@@ -1088,31 +1396,92 @@ int32_t game_voxel_chunk::get_generated_block(int32_t local_x,
     return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
 }
 
+int32_t game_voxel_chunk::get_generated_block(int32_t local_x,
+    int32_t local_y, int32_t local_z, uint32_t *block_id) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::get_generated_block");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    error_code = this->get_generated_block_locked(local_x, local_y, local_z,
+        block_id);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::read_block(int32_t local_x, int32_t local_y,
+    int32_t local_z, uint32_t *block_id) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::read_block");
+    if (this->_access_lock == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (game_voxel_chunk::set_error(error_code));
+    error_code = this->read_block_locked(local_x, local_y, local_z, block_id);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
 uint32_t game_voxel_chunk::get_player_override_count() const noexcept
 {
+    uint32_t value;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::get_player_override_count");
-    return (this->_player_override_count);
+    if (this->_access_lock == ft_nullptr
+        || pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (0U);
+    value = this->_player_override_count;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
 }
 
 int32_t game_voxel_chunk::get_player_override(uint32_t index,
     game_voxel_block_override *override_out) const noexcept
 {
+    int32_t error_code;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::get_player_override");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
     if (override_out == ft_nullptr)
         return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
     if (index >= this->_player_override_count)
-        return (game_voxel_chunk::set_error(FT_ERR_OUT_OF_RANGE));
-    *override_out = this->_player_overrides[index];
-    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+        error_code = FT_ERR_OUT_OF_RANGE;
+    else
+    {
+        *override_out = this->_player_overrides[index];
+        error_code = FT_ERR_SUCCESS;
+    }
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (this->set_error(error_code));
 }
 
 uint64_t game_voxel_chunk::get_revision() const noexcept
 {
+    uint64_t value;
+
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::get_revision");
-    return (this->_revision);
+    if (this->_access_lock == ft_nullptr
+        || pt_rwlock_strategy_rdlock(this->_access_lock) != FT_ERR_SUCCESS)
+        return (0U);
+    value = this->_revision;
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (value);
 }
 
 int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
@@ -1120,10 +1489,21 @@ int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
     ft_byte_buffer temporary_buffer;
     int32_t error_code;
 
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::serialize");
+    if (this->_access_lock == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_STATE));
     error_code = temporary_buffer.initialize(buffer);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)temporary_buffer.destroy();
+        return (error_code);
+    }
     error_code = this->serialize_internal(temporary_buffer);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)temporary_buffer.destroy();
@@ -1223,9 +1603,20 @@ int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
         return (this->set_error(error_code));
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        error_code = this->destroy();
+        if (this->_access_lock == ft_nullptr)
+            return (this->set_error(FT_ERR_INVALID_STATE));
+        error_code = pt_rwlock_strategy_wrlock(this->_access_lock);
         if (error_code != FT_ERR_SUCCESS)
             return (this->set_error(error_code));
+        error_code = this->destroy_locked();
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+            return (this->set_error(error_code));
+        }
+        error_code = this->move_payload_locked(temporary_chunk);
+        (void)pt_rwlock_strategy_wrunlock(this->_access_lock);
+        return (this->set_error(error_code));
     }
     error_code = this->move(temporary_chunk);
     return (this->set_error(error_code));

@@ -12,6 +12,7 @@
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/basic.hpp"
 #include "../Basic/limits.hpp"
+#include "pt_buffer.hpp"
 #include <atomic>
 #include <cstddef>
 #ifdef _WIN32
@@ -59,6 +60,16 @@ typedef enum e_pt_rwlock_strategy
     PT_RWLOCK_STRATEGY_WRITER_PRIORITY
 }   t_pt_rwlock_strategy;
 
+#ifdef LIBFT_TEST_BUILD
+# define PT_RWLOCK_TEST_FAIL_MUTEX_INIT 1U
+# define PT_RWLOCK_TEST_FAIL_READER_CONDITION_INIT 2U
+# define PT_RWLOCK_TEST_FAIL_WRITER_CONDITION_INIT 3U
+# define PT_RWLOCK_TEST_FAIL_READER_BOOKKEEPING 4U
+# define PT_RWLOCK_TEST_FAIL_CONDITION_WAIT 5U
+# define PT_RWLOCK_TEST_FAIL_CONDITION_WAKE 6U
+extern std::atomic<uint32_t> pt_rwlock_test_failure_stage;
+#endif
+
 typedef struct s_pt_rwlock
 {
     pthread_mutex_t          mutex;
@@ -66,18 +77,47 @@ typedef struct s_pt_rwlock
     pthread_cond_t           writer_condition;
     size_t                   active_readers;
     size_t                   waiting_readers;
-    size_t                   active_writers;
     size_t                   waiting_writers;
+    uint64_t                 next_writer_ticket;
+    uint64_t                 serving_writer_ticket;
+    uint64_t                 next_reader_ticket;
+    uint64_t                 reader_phase_cutoff;
+    pt_thread_id_type        active_writer_thread;
+    ft_bool                  writer_active;
+    ft_bool                  active_writer_has_ticket;
+    ft_bool                  reader_phase_open;
+    pt_buffer<pt_thread_id_type> active_reader_threads;
+    pt_buffer<uint64_t>      cancelled_writer_tickets;
     t_pt_rwlock_strategy     strategy;
-    int                      error_code;
+    std::atomic<uint8_t>     initialised_state;
+    std::atomic<int32_t>     error_code;
+
+    s_pt_rwlock() noexcept
+        : active_readers(0), waiting_readers(0), waiting_writers(0),
+          next_writer_ticket(0U), serving_writer_ticket(0U),
+          next_reader_ticket(0U), reader_phase_cutoff(0U),
+          active_writer_thread(), writer_active(FT_FALSE),
+          active_writer_has_ticket(FT_FALSE), reader_phase_open(FT_FALSE),
+          active_reader_threads(), cancelled_writer_tickets(),
+          strategy(PT_RWLOCK_STRATEGY_READER_PRIORITY),
+          initialised_state(FT_CLASS_STATE_UNINITIALISED),
+          error_code(FT_ERR_SUCCESS)
+    {
+        pt_buffer_init(this->active_reader_threads);
+        pt_buffer_init(this->cancelled_writer_tickets);
+    }
 }   t_pt_rwlock;
 
-int pt_rwlock_strategy_init(t_pt_rwlock *rwlock, t_pt_rwlock_strategy strategy);
-int pt_rwlock_strategy_rdlock(t_pt_rwlock *rwlock);
-int pt_rwlock_strategy_wrlock(t_pt_rwlock *rwlock);
-int pt_rwlock_strategy_unlock(t_pt_rwlock *rwlock);
-int pt_rwlock_strategy_destroy(t_pt_rwlock *rwlock);
-int pt_rwlock_strategy_get_error(const t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_init(t_pt_rwlock *rwlock, t_pt_rwlock_strategy strategy);
+int32_t pt_rwlock_strategy_rdlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_try_rdlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_rdunlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_wrlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_try_wrlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_wrunlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_unlock(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_destroy(t_pt_rwlock *rwlock);
+int32_t pt_rwlock_strategy_get_error(const t_pt_rwlock *rwlock);
 const char *pt_rwlock_strategy_get_error_str(const t_pt_rwlock *rwlock);
 
 #define SLEEP_TIME 100
