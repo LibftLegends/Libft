@@ -8,6 +8,11 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 
+#ifdef _WIN32
+# include <fcntl.h>
+# include <io.h>
+#endif
+
 #ifdef NETWORKING_USE_EPOLL
 # include <sys/epoll.h>
 # include <sys/eventfd.h>
@@ -17,10 +22,20 @@
 # include <sys/event.h>
 # include <sys/time.h>
 # include <unistd.h>
-#else
+#elif !defined(_WIN32)
 # include <fcntl.h>
 # include <unistd.h>
 #endif
+
+static void event_loop_close_descriptor(int32_t file_descriptor)
+{
+#ifdef _WIN32
+    (void)_close(file_descriptor);
+#else
+    (void)close(file_descriptor);
+#endif
+    return ;
+}
 
 static int32_t find_registration(const event_loop *loop, int32_t file_descriptor)
 {
@@ -135,6 +150,7 @@ static void release_event_loop_wait(event_loop *loop)
     return ;
 }
 
+#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
 static int32_t event_loop_remaining_timeout(
     const std::chrono::steady_clock::time_point &deadline)
 {
@@ -148,6 +164,7 @@ static int32_t event_loop_remaining_timeout(
         return (INT32_MAX);
     return (static_cast<int32_t>(remaining_milliseconds));
 }
+#endif
 
 #ifdef NETWORKING_USE_EPOLL
 static uint32_t epoll_interest(uint32_t interest_mask)
@@ -259,6 +276,14 @@ static int32_t backend_remove(event_loop *loop, int32_t file_descriptor)
 
 static void signal_loop(event_loop *loop)
 {
+#ifdef _WIN32
+    uint8_t value;
+
+    value = 1U;
+    if (loop->wakeup_write_descriptor >= 0)
+        (void)_write(loop->wakeup_write_descriptor, &value, 1U);
+    return ;
+#else
 #ifdef NETWORKING_USE_EPOLL
     uint64_t value;
 
@@ -277,10 +302,18 @@ static void signal_loop(event_loop *loop)
         return ;
 #endif
     return ;
+#endif
 }
 
 static void drain_loop_signal(event_loop *loop)
 {
+#ifdef _WIN32
+    uint8_t value;
+
+    if (loop->wakeup_read_descriptor >= 0)
+        (void)_read(loop->wakeup_read_descriptor, &value, 1U);
+    return ;
+#else
 #ifdef NETWORKING_USE_EPOLL
     uint64_t value;
 
@@ -293,6 +326,7 @@ static void drain_loop_signal(event_loop *loop)
         ;
 #endif
     return ;
+#endif
 }
 
 static int32_t append_event(event_loop_ready_event *events,
@@ -354,7 +388,7 @@ void event_loop_init(event_loop *loop)
     loop->wakeup_write_descriptor = loop->wakeup_read_descriptor;
     if (loop->wakeup_read_descriptor < 0)
     {
-        close(loop->backend_descriptor);
+        event_loop_close_descriptor(loop->backend_descriptor);
         loop->backend_descriptor = -1;
         free_mutex(&loop->wait_mutex);
         free_mutex(&loop->mutex);
@@ -369,8 +403,8 @@ void event_loop_init(event_loop *loop)
         if (epoll_ctl(loop->backend_descriptor, EPOLL_CTL_ADD,
                 loop->wakeup_read_descriptor, &event) != 0)
         {
-            close(loop->wakeup_read_descriptor);
-            close(loop->backend_descriptor);
+            event_loop_close_descriptor(loop->wakeup_read_descriptor);
+            event_loop_close_descriptor(loop->backend_descriptor);
             loop->wakeup_read_descriptor = -1;
             loop->wakeup_write_descriptor = -1;
             loop->backend_descriptor = -1;
@@ -392,7 +426,7 @@ void event_loop_init(event_loop *loop)
 
         if (pipe(descriptors) != 0)
         {
-            close(loop->backend_descriptor);
+            event_loop_close_descriptor(loop->backend_descriptor);
             loop->backend_descriptor = -1;
             free_mutex(&loop->wait_mutex);
             free_mutex(&loop->mutex);
@@ -411,9 +445,9 @@ void event_loop_init(event_loop *loop)
         if (kevent(loop->backend_descriptor, &event, 1, ft_nullptr, 0,
                 ft_nullptr) != 0)
         {
-            close(loop->wakeup_read_descriptor);
-            close(loop->wakeup_write_descriptor);
-            close(loop->backend_descriptor);
+            event_loop_close_descriptor(loop->wakeup_read_descriptor);
+            event_loop_close_descriptor(loop->wakeup_write_descriptor);
+            event_loop_close_descriptor(loop->backend_descriptor);
             loop->wakeup_read_descriptor = -1;
             loop->wakeup_write_descriptor = -1;
             loop->backend_descriptor = -1;
@@ -421,6 +455,19 @@ void event_loop_init(event_loop *loop)
             free_mutex(&loop->mutex);
             return ;
         }
+    }
+#elif defined(_WIN32)
+    {
+        int32_t descriptors[2];
+
+        if (_pipe(descriptors, 512, _O_BINARY | _O_NOINHERIT) != 0)
+        {
+            free_mutex(&loop->wait_mutex);
+            free_mutex(&loop->mutex);
+            return ;
+        }
+        loop->wakeup_read_descriptor = descriptors[0];
+        loop->wakeup_write_descriptor = descriptors[1];
     }
 #else
     {
@@ -467,13 +514,13 @@ void event_loop_clear(event_loop *loop)
         index += 1U;
     }
     if (loop->wakeup_read_descriptor >= 0)
-        close(loop->wakeup_read_descriptor);
+        event_loop_close_descriptor(loop->wakeup_read_descriptor);
 #ifndef NETWORKING_USE_EPOLL
     if (loop->wakeup_write_descriptor >= 0)
-        close(loop->wakeup_write_descriptor);
+        event_loop_close_descriptor(loop->wakeup_write_descriptor);
 #endif
     if (loop->backend_descriptor >= 0)
-        close(loop->backend_descriptor);
+        event_loop_close_descriptor(loop->backend_descriptor);
     if (loop->registrations != ft_nullptr)
         cma_free(loop->registrations);
     if (loop->ready_events != ft_nullptr)
@@ -871,6 +918,9 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     uint32_t write_alloc_count;
     uint32_t poll_read_count;
     int32_t poll_result;
+#endif
+#if !defined(NETWORKING_USE_EPOLL) && !defined(NETWORKING_USE_KQUEUE)
+    (void)has_registrations;
 #endif
 
     if (loop == ft_nullptr || events == ft_nullptr || event_count == ft_nullptr
