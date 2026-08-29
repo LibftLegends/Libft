@@ -20,7 +20,14 @@ static ft_bool nw_windows_descriptor_is_pipe(int32_t file_descriptor)
 {
     HANDLE file_handle;
     DWORD file_type;
+    int32_t socket_type;
+    int32_t socket_type_length;
 
+    socket_type = 0;
+    socket_type_length = sizeof(socket_type);
+    if (getsockopt(static_cast<SOCKET>(file_descriptor), SOL_SOCKET, SO_TYPE,
+        reinterpret_cast<char *>(&socket_type), &socket_type_length) == 0)
+        return (FT_FALSE);
     file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(file_descriptor));
     if (file_handle == INVALID_HANDLE_VALUE)
         return (FT_FALSE);
