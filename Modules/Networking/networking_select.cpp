@@ -42,6 +42,7 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     int32_t max_descriptor;
     int32_t ready_descriptors;
     int32_t total_ready;
+    int32_t unique_ready;
     timeval timeout;
     timeval *timeout_pointer;
     ft_bool use_pipe_fallback;
@@ -259,7 +260,38 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         index++;
     }
     (void)(FT_ERR_SUCCESS);
-    return (total_ready);
+    unique_ready = 0;
+    index = 0;
+    while (read_file_descriptors && index < read_count)
+    {
+        if (read_file_descriptors[index] >= 0)
+            unique_ready++;
+        index++;
+    }
+    index = 0;
+    while (write_file_descriptors && index < write_count)
+    {
+        int32_t search_index;
+        ft_bool already_counted;
+
+        already_counted = FT_FALSE;
+        search_index = 0;
+        while (read_file_descriptors && search_index < read_count)
+        {
+            if (read_file_descriptors[search_index]
+                == write_file_descriptors[index])
+            {
+                already_counted = FT_TRUE;
+                break ;
+            }
+            search_index++;
+        }
+        if (write_file_descriptors[index] >= 0
+            && already_counted == FT_FALSE)
+            unique_ready++;
+        index++;
+    }
+    return (unique_ready);
 #else
     struct pollfd *poll_descriptors;
     int32_t *poll_index_to_read_index;
@@ -492,6 +524,7 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         cma_free(read_ready_flags);
     if (write_ready_flags)
         cma_free(write_ready_flags);
-    return (total_ready);
+    /* poll() reports each unique descriptor, even with both interests set. */
+    return (ready_descriptors);
 #endif
 }

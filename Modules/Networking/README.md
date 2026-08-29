@@ -10,7 +10,8 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `nw_set_nonblocking` - Enables non-blocking mode.
 - `nw_poll` - One-shot wait on read/write descriptor sets; readiness is
   reported by filtering the supplied arrays in place. Do not pass persistent
-  event-loop registration storage to it.
+  event-loop registration storage to it. Its return value counts unique ready
+  descriptors, even when a descriptor is registered for both read and write.
 - `t_nw_socket_hook` and `nw_set_socket_hook` - Test hook for socket creation.
 - `networking_check_socket_after_send(...)` and `networking_check_ssl_after_send(...)` - Convert send/SSL state into project error codes.
 

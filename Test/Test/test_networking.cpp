@@ -799,6 +799,16 @@ FT_TEST(test_nw_poll_merges_read_and_write_interest)
     read_descriptors[0] = socket_descriptors[0];
     write_descriptors[0] = socket_descriptors[0];
     write_result = test_socket_write(socket_descriptors[1], "x", 1);
+    /* TCP delivery may complete after send() returns on some platforms. */
+    poll_result = nw_poll(read_descriptors, 1, ft_nullptr, 0, 100);
+    if (write_result != 1 || poll_result != 1)
+    {
+        close_test_socket(socket_descriptors[0]);
+        close_test_socket(socket_descriptors[1]);
+        return (0);
+    }
+    read_descriptors[0] = socket_descriptors[0];
+    write_descriptors[0] = socket_descriptors[0];
     poll_result = nw_poll(read_descriptors, 1, write_descriptors, 1, 100);
     if (write_result != 1 || poll_result != 1
         || read_descriptors[0] != socket_descriptors[0]
