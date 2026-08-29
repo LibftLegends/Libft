@@ -1319,8 +1319,29 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     while (poll_result > 0 && index < read_count)
     {
         if (read_snapshot[index] >= 0)
+#ifdef _WIN32
+        {
+            u_long available_bytes;
+
+            available_bytes = 0U;
+            if (ioctlsocket(static_cast<SOCKET>(read_snapshot[index]),
+                FIONREAD, &available_bytes) != 0)
+                (void)append_event(events, &local_count, event_capacity,
+                    read_snapshot[index], EVENT_LOOP_READY_ERROR,
+                    FT_ERR_INVALID_STATE);
+            else if (available_bytes == 0U)
+                (void)append_event(events, &local_count, event_capacity,
+                    read_snapshot[index], EVENT_LOOP_READY_HANGUP,
+                    FT_ERR_SUCCESS);
+            else
+                (void)append_event(events, &local_count, event_capacity,
+                    read_snapshot[index], EVENT_LOOP_READY_READ,
+                    FT_ERR_SUCCESS);
+        }
+#else
             (void)append_event(events, &local_count, event_capacity,
                 read_snapshot[index], EVENT_LOOP_READY_READ, FT_ERR_SUCCESS);
+#endif
         index += 1U;
     }
     index = 0U;
