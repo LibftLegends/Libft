@@ -220,7 +220,7 @@ jobs:
           try {
             Push-Location Test
             $test_directory_pushed = $true
-            & .\libft_tests.exe *> ci_windows_full_output.log # CI_DIAGNOSTIC: Run from Test so relative fixtures resolve correctly.
+            & .\libft_tests.exe 2>&1 | Tee-Object -FilePath ci_windows_full_output.log # CI_DIAGNOSTIC: Stream test output while preserving the complete log.
             $test_status = $LASTEXITCODE # CI_DIAGNOSTIC: Preserve the executable exit status.
           }
           catch {

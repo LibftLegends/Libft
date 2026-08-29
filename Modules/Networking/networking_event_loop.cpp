@@ -305,6 +305,7 @@ static void signal_loop(event_loop *loop)
 #endif
 }
 
+#ifndef _WIN32
 static void drain_loop_signal(event_loop *loop)
 {
 #ifdef _WIN32
@@ -328,6 +329,7 @@ static void drain_loop_signal(event_loop *loop)
     return ;
 #endif
 }
+#endif
 
 static int32_t append_event(event_loop_ready_event *events,
     uint32_t *event_count, uint32_t event_capacity, int32_t file_descriptor,
@@ -919,6 +921,7 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     uint32_t write_alloc_count;
     uint32_t poll_read_count;
     int32_t poll_result;
+    int32_t poll_timeout;
 #endif
 #if !defined(NETWORKING_USE_EPOLL) && !defined(NETWORKING_USE_KQUEUE)
     (void)has_registrations;
@@ -1235,9 +1238,12 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     }
     read_count = static_cast<uint32_t>(loop->read_count);
     write_count = static_cast<uint32_t>(loop->write_count);
-    read_alloc_count = read_count;
+    read_alloc_count = read_count + 1U;
     write_alloc_count = write_count;
+    poll_read_count = read_count;
+#ifndef _WIN32
     poll_read_count = read_count + 1U;
+#endif
     if (read_alloc_count == 0U)
         read_alloc_count = 1U;
     if (write_alloc_count == 0U)
@@ -1260,7 +1266,9 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
             write_snapshot[index] = loop->write_file_descriptors[index];
             index += 1U;
         }
+#ifndef _WIN32
         read_snapshot[read_count] = loop->wakeup_read_descriptor;
+#endif
     }
     event_loop_unlock(loop, FT_TRUE);
     if (read_snapshot == ft_nullptr || write_snapshot == ft_nullptr)
@@ -1273,15 +1281,40 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         return (FT_ERR_NO_MEMORY);
     }
     else
-        poll_result = nw_poll(read_snapshot, static_cast<int32_t>(poll_read_count),
-            write_snapshot, static_cast<int32_t>(write_count),
-            timeout_milliseconds);
+    {
+        poll_timeout = timeout_milliseconds;
+#ifdef _WIN32
+        if (poll_timeout < 0)
+            poll_timeout = 50;
+#endif
+        poll_result = nw_poll(read_snapshot,
+            static_cast<int32_t>(poll_read_count), write_snapshot,
+            static_cast<int32_t>(write_count), poll_timeout);
+    }
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        cma_free(read_snapshot);
+        cma_free(write_snapshot);
+        release_event_loop_wait(loop);
+        return (FT_ERR_THREAD_BUSY);
+    }
+    if (loop->stopping != FT_FALSE)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        cma_free(read_snapshot);
+        cma_free(write_snapshot);
+        release_event_loop_wait(loop);
+        return (FT_ERR_INVALID_STATE);
+    }
+    event_loop_unlock(loop, FT_TRUE);
+#ifndef _WIN32
     if (poll_result > 0 && read_snapshot != ft_nullptr
         && read_snapshot[read_count] >= 0)
     {
         if (read_snapshot[read_count] == loop->wakeup_read_descriptor)
             drain_loop_signal(loop);
     }
+#endif
     index = 0U;
     while (poll_result > 0 && index < read_count)
     {

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <thread>
 
 static int make_socket_pair(int descriptors[2])
@@ -168,7 +169,8 @@ FT_TEST(test_networking_event_loop_init_sets_up_thread_safety)
 
     event_loop_init(&loop);
     if (!loop.thread_safe_enabled || loop.mutex == ft_nullptr
-        || loop.wait_mutex == ft_nullptr || loop.backend_descriptor < 0)
+        || loop.wait_mutex == ft_nullptr || loop.wakeup_read_descriptor < 0
+        || loop.wakeup_write_descriptor < 0)
     {
         event_loop_clear(&loop);
         return (0);
@@ -217,7 +219,7 @@ FT_TEST(test_networking_event_loop_keeps_non_ready_registration)
     if (event_loop_wait(&loop, &event, 1U, &event_count, 0) != FT_ERR_SUCCESS
         || event_count != 0U || loop.read_count != 1
         || loop.read_file_descriptors[0] != descriptors[0]
-        || write(descriptors[1], "x", 1U) != 1)
+        || write_test_descriptor(descriptors[1], "x", 1U) != 1)
     {
         event_loop_clear(&loop);
         close_pipe(descriptors);
@@ -349,8 +351,10 @@ FT_TEST(test_networking_event_loop_add_while_waiting_wakes_and_reports)
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     if (event_loop_add_interest(&loop, descriptors[0],
         EVENT_LOOP_INTEREST_READ) != FT_ERR_SUCCESS
-        || write(descriptors[1], "x", 1U) != 1)
+        || write_test_descriptor(descriptors[1], "x", 1U) != 1)
     {
+        std::fprintf(stderr, "event-loop add/write failed: read=%d write=%d\\n",
+            loop.read_count, loop.write_count);
         (void)event_loop_interrupt(&loop);
         waiter.join();
         event_loop_clear(&loop);
@@ -370,6 +374,9 @@ FT_TEST(test_networking_event_loop_add_while_waiting_wakes_and_reports)
         || event.file_descriptor != descriptors[0]
         || (event.ready_mask & EVENT_LOOP_READY_READ) == 0U)
     {
+        std::fprintf(stderr, "event-loop wake result=%d count=%u fd=%d expected=%d mask=%u\\n",
+            wait_result.load(), observed_count.load(), event.file_descriptor,
+            descriptors[0], event.ready_mask);
         event_loop_clear(&loop);
         close_pipe(descriptors);
         return (0);
