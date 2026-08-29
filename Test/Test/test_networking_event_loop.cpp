@@ -76,7 +76,7 @@ static ft_bool wait_for_descriptor(event_loop *loop, int32_t file_descriptor,
     while (attempt_index < attempts)
     {
         event_count = 0U;
-        if (event_loop_wait(loop, &event, 1U, &event_count, 0)
+        if (event_loop_wait(loop, &event, 1U, &event_count, 100)
             != FT_ERR_SUCCESS)
             return (FT_FALSE);
         if (event_count == 1U && event.file_descriptor == file_descriptor
@@ -207,10 +207,15 @@ FT_TEST(test_networking_event_loop_keeps_non_ready_registration)
     char value;
 
     if (make_pipe(descriptors) != 0)
+    {
+        std::fprintf(stderr, "event-loop non-ready: socket pair creation failed\n");
         return (0);
+    }
     event_loop_init(&loop);
     if (event_loop_add_socket(&loop, descriptors[0], FT_FALSE) != FT_ERR_SUCCESS)
     {
+        std::fprintf(stderr, "event-loop non-ready: registration failed fd=%d\n",
+            descriptors[0]);
         event_loop_clear(&loop);
         close_pipe(descriptors);
         return (0);
@@ -221,15 +226,24 @@ FT_TEST(test_networking_event_loop_keeps_non_ready_registration)
         || loop.read_file_descriptors[0] != descriptors[0]
         || write_test_descriptor(descriptors[1], "x", 1U) != 1)
     {
+        std::fprintf(stderr, "event-loop non-ready: first wait/setup failed "
+            "count=%u read_count=%d registered=%d\n", event_count,
+            loop.read_count, descriptors[0]);
         event_loop_clear(&loop);
         close_pipe(descriptors);
         return (0);
     }
     event_count = 0U;
-    if (event_loop_wait(&loop, &event, 1U, &event_count, 0) != FT_ERR_SUCCESS
+    /* TCP delivery can be reported by the platform backend one scheduler
+     * turn after send() returns.  Keep the assertion about the registration,
+     * but give the backend a bounded opportunity to observe the payload. */
+    if (event_loop_wait(&loop, &event, 1U, &event_count, 100) != FT_ERR_SUCCESS
         || event_count != 1U || event.file_descriptor != descriptors[0]
         || (event.ready_mask & EVENT_LOOP_READY_READ) == 0U)
     {
+        std::fprintf(stderr, "event-loop non-ready: second wait failed count=%u "
+            "fd=%d expected=%d mask=%u\n", event_count, event.file_descriptor,
+            descriptors[0], event.ready_mask);
         event_loop_clear(&loop);
         close_pipe(descriptors);
         return (0);
