@@ -52,3 +52,9 @@ discarded.
 started match. It checks the configured rules hash and state hash before every
 command, routes execution through `submit_command()`, and checks the recorded
 post-command hash. A mismatch stops replay with `FT_ERR_INVALID_STATE`.
+
+`card_game_ordered_zone` provides bounded ordered storage for decks and other
+piles. It supports top/bottom/index insertion, peeking, removal, duplicate
+policy, capacity enforcement, and deterministic seeded Fisher-Yates shuffles.
+The container stores stable card-instance IDs rather than pointers and returns
+without mutation when an operation is rejected.
