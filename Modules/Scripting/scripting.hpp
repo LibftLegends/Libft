@@ -123,6 +123,8 @@ class scripting_engine
         int32_t get_last_diagnostic(scripting_diagnostic *diagnostic) const noexcept;
         int32_t find_native(const char *name, uint32_t name_length,
             uint32_t *native_id) const noexcept;
+        int32_t get_native_name(uint32_t native_id,
+            const char **name) const noexcept;
         uint32_t get_operation_limit() const noexcept;
         int32_t invoke_native_id(uint32_t native_id,
             const scripting_value *arguments, uint32_t argument_count,

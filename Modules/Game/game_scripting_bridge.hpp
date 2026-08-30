@@ -3,6 +3,7 @@
 
 #include "game_state.hpp"
 #include "game_world.hpp"
+#include "../Scripting/scripting.hpp"
 #include "../Template/function.hpp"
 #include "../Template/map.hpp"
 #include "../Template/vector.hpp"
@@ -88,6 +89,8 @@ class game_script_bridge
         ft_size_t _lua_memory_used;
         lua_State *_lua_state;
         game_script_context *_lua_context;
+        scripting_engine _custom_engine;
+        game_script_context *_custom_context;
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;
         mutable pt_recursive_mutex *_mutex;
@@ -112,6 +115,12 @@ class game_script_bridge
         static void lua_instruction_hook(lua_State *lua_state,
             lua_Debug *debug_record) noexcept;
         static int32_t lua_callback_dispatch(lua_State *lua_state) noexcept;
+        static int32_t custom_callback_dispatch(
+            const scripting_call_context *call_context,
+            const scripting_value *arguments, uint32_t argument_count,
+            scripting_value *result, void *user_data) noexcept;
+        int32_t execute_custom_with_user_data(const ft_string &script,
+            game_state *state, void *user_data) noexcept;
 
     public:
         game_script_bridge() noexcept;

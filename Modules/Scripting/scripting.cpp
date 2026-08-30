@@ -800,6 +800,16 @@ int32_t scripting_engine::find_native(const char *name, uint32_t name_length,
     return (FT_ERR_NOT_FOUND);
 }
 
+int32_t scripting_engine::get_native_name(uint32_t native_id,
+    const char **name) const noexcept
+{
+    if (name == ft_nullptr || native_id >= this->_native_count
+        || this->_natives[native_id].registered == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *name = this->_natives[native_id].name;
+    return (FT_ERR_SUCCESS);
+}
+
 uint32_t scripting_engine::get_operation_limit() const noexcept
 {
     return (this->_operation_limit);
