@@ -535,6 +535,70 @@ Libft owns:
 - snapshots, deltas, replay records, and state hashes;
 - safe callback registration and invocation.
 
+## Terrain-style external configuration
+
+CardGame must use the same configuration model as terrain generation. The
+engine is a generic interpreter of a validated configuration, while the game
+supplies the authored data that describes what the rules mean. No card,
+effect, phase, zone, deck, or resolution policy should require a new Libft
+code change merely because a game designer wants a different value or
+combination.
+
+The configuration pipeline is:
+
+```text
+game config files
+    -> format parser (JSON/YAML/other host adapter)
+    -> schema and range validation
+    -> name/reference resolution
+    -> callback capability validation
+    -> canonical ruleset ordering and hash
+    -> immutable resolved ruleset
+    -> match instances consuming that ruleset
+```
+
+Configuration must be loaded transactionally, just like terrain
+configuration. Parse and validate into a temporary definition set; resolve all
+references and callback names; calculate the canonical configuration hash; and
+only then replace the active ruleset. A malformed file, missing callback,
+duplicate ID, invalid reference, capacity overflow, unsupported stack policy,
+or allocation failure must leave the previously active ruleset untouched.
+
+The authored configuration should be able to define and modify, at minimum:
+
+- card names, stable IDs, types, tags, costs, stats, visibility, and copies;
+- effect IDs, arguments, callback names, capability requirements, and emitted
+  operations;
+- zones, decks, hands, discard piles, capacities, ordering, ownership, and
+  visibility;
+- board spaces, adjacency, placement constraints, and movement policies;
+- resources, stats, bounds, modifiers, and reset rules;
+- phases, turn order, priority windows, automatic events, and allowed commands;
+- conditions, selectors, target cardinality, and legality filters;
+- trigger subscriptions, priorities, expiration, and once-only behavior;
+- resolution-stack ordering, admission, deferred work, and failure policy;
+- deterministic random-stream seed/version and replay limits;
+- serialization visibility, snapshot/delta policy, and network authority rules.
+
+The engine should expose typed configuration APIs for tests and embedders, with
+file adapters layered above them. Runtime matches receive an immutable
+resolved ruleset handle or copy; mutable match state must not mutate the
+authored configuration. If hot reload is supported, it creates a new resolved
+ruleset for future matches or an explicitly migrated match. It must never
+silently reinterpret an active match using a partially reloaded definition.
+
+Configuration values and callback names are part of the canonical ruleset
+hash. Numeric IDs are used internally after resolution, but authored names
+remain available for diagnostics. Function pointers are registered by the
+host and referenced by stable callback names/capability IDs in configuration;
+pointer addresses never enter configuration files, hashes, snapshots, network
+messages, or replays.
+
+This separation is intentional: terrain configuration describes how a world
+generator behaves, while CardGame configuration describes how a match behaves.
+Both use the same pattern of data-driven definitions, validation, deterministic
+resolution, and immutable runtime consumption.
+
 ## Core principle: understand the rule model, not the rules
 
 The engine should not contain logic such as “creatures heal at end of turn.” It
