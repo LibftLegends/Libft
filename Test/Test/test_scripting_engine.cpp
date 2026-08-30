@@ -102,6 +102,7 @@ FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
 {
     scripting_engine engine;
     scripting_program program;
+    scripting_program malformed_program;
     scripting_value result;
     uint32_t native_id;
 
@@ -116,6 +117,20 @@ FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
     FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
+    malformed_program = {};
+    malformed_program.format_version = FT_SCRIPTING_BYTECODE_VERSION;
+    malformed_program.instruction_count = 5U;
+    malformed_program.instructions[0].opcode = SCRIPTING_OP_PUSH_BOOLEAN;
+    malformed_program.instructions[0].operand = 1;
+    malformed_program.instructions[1].opcode = SCRIPTING_OP_JUMP_IF_FALSE;
+    malformed_program.instructions[1].operand = 4;
+    malformed_program.instructions[2].opcode = SCRIPTING_OP_PUSH_INTEGER;
+    malformed_program.instructions[2].operand = 1;
+    malformed_program.instructions[3].opcode = SCRIPTING_OP_JUMP;
+    malformed_program.instructions[3].operand = 4;
+    malformed_program.instructions[4].opcode = SCRIPTING_OP_RETURN;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        engine.verify_program(malformed_program));
     program.instructions[0].opcode = static_cast<scripting_opcode>(255U);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.verify_program(program));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());

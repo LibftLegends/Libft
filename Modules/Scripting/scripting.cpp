@@ -812,6 +812,22 @@ static ft_bool scripting_value_is_true(const scripting_value &value) noexcept
     return (FT_FALSE);
 }
 
+static int32_t scripting_verify_enqueue(uint32_t *stack_depths,
+    uint32_t *work_queue, uint32_t *queue_tail, uint32_t instruction_index,
+    uint32_t stack_depth) noexcept
+{
+    if (stack_depths[instruction_index] == UINT32_MAX)
+    {
+        stack_depths[instruction_index] = stack_depth;
+        work_queue[*queue_tail] = instruction_index;
+        *queue_tail += 1U;
+        return (FT_ERR_SUCCESS);
+    }
+    if (stack_depths[instruction_index] != stack_depth)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (FT_ERR_SUCCESS);
+}
+
 static int32_t scripting_parse_primary(scripting_parser *parser,
     scripting_value *result) noexcept
 {
@@ -1610,8 +1626,14 @@ int32_t scripting_engine::compile(const char *source,
 int32_t scripting_engine::verify_program(
     const scripting_program &program) const noexcept
 {
+    uint32_t stack_depths[FT_SCRIPTING_MAX_INSTRUCTIONS];
+    uint32_t work_queue[FT_SCRIPTING_MAX_INSTRUCTIONS];
     uint32_t instruction_index;
+    uint32_t queue_head;
+    uint32_t queue_tail;
     uint32_t stack_depth;
+    uint32_t stack_after;
+    uint32_t target_index;
     const scripting_instruction *instruction;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -1621,10 +1643,23 @@ int32_t scripting_engine::verify_program(
         || program.instruction_count > FT_SCRIPTING_MAX_INSTRUCTIONS
         || program.string_data_size > FT_SCRIPTING_MAX_STRING_BYTES)
         return (FT_ERR_INVALID_ARGUMENT);
-    stack_depth = 0U;
     instruction_index = 0U;
-    while (instruction_index < program.instruction_count)
+    while (instruction_index < FT_SCRIPTING_MAX_INSTRUCTIONS)
     {
+        stack_depths[instruction_index] = UINT32_MAX;
+        instruction_index += 1U;
+    }
+    queue_head = 0U;
+    queue_tail = 0U;
+    if (scripting_verify_enqueue(stack_depths, work_queue, &queue_tail,
+        0U, 0U) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    while (queue_head < queue_tail)
+    {
+        instruction_index = work_queue[queue_head];
+        queue_head += 1U;
+        stack_depth = stack_depths[instruction_index];
+        stack_after = stack_depth;
         instruction = &program.instructions[instruction_index];
         if (instruction->opcode == SCRIPTING_OP_PUSH_NULL
             || instruction->opcode == SCRIPTING_OP_PUSH_INTEGER
@@ -1638,7 +1673,7 @@ int32_t scripting_engine::verify_program(
                 && (instruction->operand < 0
                     || instruction->operand >= FT_SCRIPTING_MAX_LOCALS))
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth += 1U;
+            stack_after += 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_PUSH_STRING)
         {
@@ -1649,7 +1684,7 @@ int32_t scripting_engine::verify_program(
                 || static_cast<uint64_t>(instruction->operand)
                     + instruction->auxiliary > program.string_data_size)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth += 1U;
+            stack_after += 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL
             || instruction->opcode == SCRIPTING_OP_NEGATE
@@ -1662,13 +1697,13 @@ int32_t scripting_engine::verify_program(
             if (stack_depth == 0U)
                 return (FT_ERR_INVALID_ARGUMENT);
             if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL)
-                stack_depth -= 1U;
+                stack_after -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_POP)
         {
             if (stack_depth == 0U)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= 1U;
+            stack_after -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_ADD
             || instruction->opcode == SCRIPTING_OP_SUBTRACT
@@ -1677,7 +1712,7 @@ int32_t scripting_engine::verify_program(
         {
             if (stack_depth < 2U)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= 1U;
+            stack_after -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_EQUAL
             || instruction->opcode == SCRIPTING_OP_NOT_EQUAL
@@ -1688,22 +1723,26 @@ int32_t scripting_engine::verify_program(
         {
             if (stack_depth < 2U)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= 1U;
+            stack_after -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_LOGICAL_AND
             || instruction->opcode == SCRIPTING_OP_LOGICAL_OR)
         {
             if (stack_depth < 2U)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= 1U;
+            stack_after -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_CALL_NATIVE)
         {
-            if (instruction->auxiliary > FT_SCRIPTING_MAX_ARGUMENTS
+            if (instruction->operand < 0
+                || static_cast<uint64_t>(instruction->operand)
+                    >= this->_native_count
+                || this->_natives[instruction->operand].registered == FT_FALSE
+                || instruction->auxiliary > FT_SCRIPTING_MAX_ARGUMENTS
                 || stack_depth < instruction->auxiliary)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= instruction->auxiliary;
-            stack_depth += 1U;
+            stack_after -= instruction->auxiliary;
+            stack_after += 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_JUMP_IF_FALSE)
         {
@@ -1712,7 +1751,11 @@ int32_t scripting_engine::verify_program(
                 || static_cast<uint64_t>(instruction->operand)
                     >= program.instruction_count)
                 return (FT_ERR_INVALID_ARGUMENT);
-            stack_depth -= 1U;
+            stack_after -= 1U;
+            target_index = static_cast<uint32_t>(instruction->operand);
+            if (scripting_verify_enqueue(stack_depths, work_queue,
+                &queue_tail, target_index, stack_after) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_ARGUMENT);
         }
         else if (instruction->opcode == SCRIPTING_OP_JUMP)
         {
@@ -1720,18 +1763,30 @@ int32_t scripting_engine::verify_program(
                 || static_cast<uint64_t>(instruction->operand)
                     >= program.instruction_count)
                 return (FT_ERR_INVALID_ARGUMENT);
+            target_index = static_cast<uint32_t>(instruction->operand);
+            if (scripting_verify_enqueue(stack_depths, work_queue,
+                &queue_tail, target_index, stack_after) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_ARGUMENT);
         }
         else if (instruction->opcode == SCRIPTING_OP_RETURN)
         {
-            if (stack_depth == 0U
-                || instruction_index + 1U != program.instruction_count)
+            if (stack_depth != 1U)
                 return (FT_ERR_INVALID_ARGUMENT);
+            continue ;
         }
         else
             return (FT_ERR_INVALID_ARGUMENT);
-        if (stack_depth > FT_SCRIPTING_MAX_OPERATIONS)
+        if (stack_after > FT_SCRIPTING_MAX_OPERATIONS)
             return (FT_ERR_FULL);
-        instruction_index += 1U;
+        if (instruction->opcode != SCRIPTING_OP_JUMP)
+        {
+            if (instruction_index + 1U >= program.instruction_count)
+                return (FT_ERR_INVALID_ARGUMENT);
+            if (scripting_verify_enqueue(stack_depths, work_queue,
+                &queue_tail, instruction_index + 1U,
+                stack_after) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_ARGUMENT);
+        }
     }
     if (program.instructions[program.instruction_count - 1U].opcode
         != SCRIPTING_OP_RETURN)
