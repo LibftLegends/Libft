@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
+#include <mutex>
 #include "../CPP_class/class_string.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
@@ -40,6 +42,8 @@ class t_compress_stream_options
         int                                     _memory_level;
         int                                     _strategy;
         mutable pt_recursive_mutex              *_mutex;
+        std::atomic<ft_bool>                    _thread_safety_enabled;
+        mutable std::mutex                      _thread_safety_transition_mutex;
         uint8_t                                 _initialised_state;
         static const uint8_t                    _state_uninitialised = 0;
         static const uint8_t                    _state_destroyed = 1;

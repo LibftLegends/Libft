@@ -9,6 +9,7 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <unistd.h>
 #include <cstdint>
+#include <zlib.h>
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -749,6 +750,91 @@ FT_TEST(test_ft_compress_stream_uses_finish_flush_after_partial_read)
     FT_ASSERT_EQ(0, result);
     FT_ASSERT_EQ(Z_NO_FLUSH, g_compress_flush_first_non_finish);
     FT_ASSERT(g_compress_flush_finish_count > 0);
+    return (1);
+}
+
+static const char *g_fragmented_input;
+static std::size_t g_fragmented_input_offset;
+static std::size_t g_fragmented_input_size;
+
+static int64_t compression_stream_fragmented_read(int file_descriptor,
+    void *buffer, ft_size_t count)
+{
+    std::size_t remaining_size;
+    std::size_t read_size;
+
+    (void)file_descriptor;
+    if (g_fragmented_input_offset >= g_fragmented_input_size)
+        return (0);
+    remaining_size = g_fragmented_input_size - g_fragmented_input_offset;
+    read_size = remaining_size;
+    if (read_size > count)
+        read_size = count;
+    if (read_size > 4U)
+        read_size = 4U;
+    ft_memcpy(buffer, g_fragmented_input + g_fragmented_input_offset,
+        read_size);
+    g_fragmented_input_offset += read_size;
+    return (static_cast<int64_t>(read_size));
+}
+
+FT_TEST(test_ft_compress_stream_preserves_fragmented_producer_input)
+{
+    int input_pipe[2];
+    int compressed_file_descriptor;
+    char compressed_path[] = "/tmp/libft_compression_streamXXXXXX";
+    const char *first_fragment;
+    const char *second_fragment;
+    unsigned char compressed_buffer[1024];
+    unsigned char decompressed_buffer[128];
+    std::size_t first_size;
+    std::size_t second_size;
+    std::size_t compressed_size;
+    uLongf decompressed_size;
+    ssize_t read_bytes;
+    int compression_result;
+
+    first_fragment = "fragment-one-";
+    second_fragment = "fragment-two";
+    first_size = ft_strlen_size_t(first_fragment);
+    second_size = ft_strlen_size_t(second_fragment);
+    FT_ASSERT_EQ(0, pipe(input_pipe));
+    compressed_file_descriptor = test_create_temp_file_from_template(
+        compressed_path, sizeof(compressed_path), compressed_path);
+    FT_ASSERT(compressed_file_descriptor >= 0);
+    unlink(compressed_path);
+    close(input_pipe[1]);
+    g_fragmented_input = "fragment-one-fragment-two";
+    g_fragmented_input_offset = 0U;
+    g_fragmented_input_size = first_size + second_size;
+    ft_compress_stream_set_read_hook(compression_stream_fragmented_read);
+    compression_result = ft_compress_stream(input_pipe[0],
+        compressed_file_descriptor);
+    ft_compress_stream_set_read_hook(ft_nullptr);
+    close(input_pipe[0]);
+    FT_ASSERT_EQ(0, compression_result);
+    FT_ASSERT(lseek(compressed_file_descriptor, 0, SEEK_SET) >= 0);
+    compressed_size = 0;
+    while (compressed_size < sizeof(compressed_buffer))
+    {
+        read_bytes = su_read(compressed_file_descriptor,
+            compressed_buffer + compressed_size,
+            sizeof(compressed_buffer) - compressed_size);
+        FT_ASSERT(read_bytes >= 0);
+        if (read_bytes == 0)
+            break ;
+        compressed_size += static_cast<std::size_t>(read_bytes);
+    }
+    close(compressed_file_descriptor);
+    FT_ASSERT(compressed_size > 0);
+    decompressed_size = sizeof(decompressed_buffer);
+    FT_ASSERT_EQ(Z_OK, uncompress(decompressed_buffer, &decompressed_size,
+        compressed_buffer, static_cast<uLong>(compressed_size)));
+    FT_ASSERT_EQ(static_cast<uLongf>(first_size + second_size),
+        decompressed_size);
+    FT_ASSERT_EQ(0, ft_memcmp(decompressed_buffer, first_fragment, first_size));
+    FT_ASSERT_EQ(0, ft_memcmp(decompressed_buffer + first_size,
+        second_fragment, second_size));
     return (1);
 }
 

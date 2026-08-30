@@ -997,6 +997,8 @@ Each stage must pass:
 - failure-injection tests;
 - API and format documentation review.
 
-The Analytics and CardGame modules should not be added to `FullLibft.hpp` until
-their public headers are stable. Direct consumers should include only the
-specific headers they use.
+Analytics and CardGame are now exposed through stable module headers and are
+included by `FullLibft.hpp` for compatibility. New direct consumers should
+prefer the specific headers they use. The instrumentation surface remains
+controlled by the `LIBFT_ENABLE_ANALYTICS` build definition; release builds
+must leave it disabled unless profiling is explicitly requested.
