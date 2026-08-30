@@ -15,10 +15,13 @@ FT_TEST(test_card_game_resolution_stack_applies_lifo_and_fifo_order)
         CARD_GAME_RESOLUTION_FIFO, CARD_GAME_RESOLUTION_CLOSED));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.push(1U, 10U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.push(2U, 11U, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.push(3U, 12U, 1U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fifo.push(1U, 10U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fifo.push(2U, 11U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.begin_resolution());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fifo.begin_resolution());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.pop_next(&entry));
+    FT_ASSERT_EQ(3U, entry.entry_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, lifo.pop_next(&entry));
     FT_ASSERT_EQ(2U, entry.entry_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fifo.pop_next(&entry));
@@ -40,6 +43,7 @@ FT_TEST(test_card_game_resolution_stack_enforces_admission_and_capacity)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, closed.initialize(2U,
         CARD_GAME_RESOLUTION_LIFO, CARD_GAME_RESOLUTION_CLOSED));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, closed.push(1U, 1U, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, closed.push(1U, 2U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, closed.begin_resolution());
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, closed.push(2U, 2U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, closed.end_resolution());

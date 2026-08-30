@@ -49,6 +49,7 @@ class card_game_resolution_stack
 
         int32_t append_entry(card_game_resolution_entry *entries,
             uint32_t *count, const card_game_resolution_entry &entry) noexcept;
+        ft_bool contains_entry(uint64_t entry_id) const noexcept;
         int32_t remove_entry(uint32_t index,
             card_game_resolution_entry *entry) noexcept;
 

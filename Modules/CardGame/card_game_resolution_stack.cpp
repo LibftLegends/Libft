@@ -104,6 +104,27 @@ int32_t card_game_resolution_stack::append_entry(
     return (FT_ERR_SUCCESS);
 }
 
+ft_bool card_game_resolution_stack::contains_entry(uint64_t entry_id) const noexcept
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < this->_count)
+    {
+        if (this->_entries[index].entry_id == entry_id)
+            return (FT_TRUE);
+        index += 1U;
+    }
+    index = 0U;
+    while (index < this->_deferred_count)
+    {
+        if (this->_deferred[index].entry_id == entry_id)
+            return (FT_TRUE);
+        index += 1U;
+    }
+    return (FT_FALSE);
+}
+
 int32_t card_game_resolution_stack::push(uint64_t entry_id,
     uint32_t effect_id, uint32_t priority, uint64_t argument_data) noexcept
 {
@@ -114,6 +135,8 @@ int32_t card_game_resolution_stack::push(uint64_t entry_id,
         return (FT_ERR_NOT_INITIALISED);
     if (entry_id == 0U || effect_id == UINT32_MAX)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (this->contains_entry(entry_id) != FT_FALSE)
+        return (FT_ERR_ALREADY_EXISTS);
     if (this->_resolving != FT_FALSE
         && this->_admission == CARD_GAME_RESOLUTION_CLOSED)
         return (FT_ERR_PERMISSION_DENIED);
