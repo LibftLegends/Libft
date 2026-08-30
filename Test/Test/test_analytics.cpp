@@ -161,6 +161,7 @@ FT_TEST(test_analytics_session_retains_latest_frame_and_rolling_statistics)
     first_frame.mean_duration_nanoseconds = 0U;
     first_frame.percentile_95_nanoseconds = 0U;
     first_frame.percentile_99_nanoseconds = 0U;
+    first_frame.uninstrumented_nanoseconds = 0U;
     first_frame.completed_scope_count = 0U;
     first_frame.dropped_scope_count = 0U;
     second_frame = first_frame;
@@ -175,6 +176,29 @@ FT_TEST(test_analytics_session_retains_latest_frame_and_rolling_statistics)
     FT_ASSERT_EQ(20U, latest_frame.mean_duration_nanoseconds);
     FT_ASSERT_EQ(10U, latest_frame.percentile_95_nanoseconds);
     FT_ASSERT_EQ(10U, latest_frame.percentile_99_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_frame_reports_uninstrumented_gap)
+{
+    analytics_session session;
+    analytics_frame_statistics latest_frame;
+    uint32_t region_id;
+
+    region_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("instrumented",
+        "test", &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 88U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&latest_frame));
+    FT_ASSERT(latest_frame.duration_nanoseconds > 0U);
+    FT_ASSERT(latest_frame.uninstrumented_nanoseconds > 0U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }

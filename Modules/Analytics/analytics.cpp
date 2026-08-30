@@ -90,6 +90,7 @@ struct analytics_thread_state
     analytics_session *session;
     uint64_t frame_number;
     uint64_t frame_start_nanoseconds;
+    uint64_t instrumented_top_level_nanoseconds;
     uint64_t completed_scope_count;
     uint32_t scope_depth;
     analytics_scope_frame scopes[FT_ANALYTICS_MAX_SCOPE_DEPTH];
@@ -99,7 +100,7 @@ struct analytics_thread_state
 
 static thread_local analytics_thread_state g_analytics_thread_state =
 {
-    ft_nullptr, 0U, 0U, 0U, 0U, {}, 0U, {}
+    ft_nullptr, 0U, 0U, 0U, 0U, 0U, {}, 0U, {}
 };
 
 static uint32_t analytics_thread_id(void) noexcept
@@ -420,6 +421,7 @@ int32_t analytics_begin_frame(analytics_session *session,
     g_analytics_thread_state.session = session;
     g_analytics_thread_state.frame_number = frame_number;
     g_analytics_thread_state.frame_start_nanoseconds = analytics_clock_now();
+    g_analytics_thread_state.instrumented_top_level_nanoseconds = 0U;
     g_analytics_thread_state.completed_scope_count = 0U;
     g_analytics_thread_state.scope_depth = 0U;
     g_analytics_thread_state.pending_event_count = 0U;
@@ -458,6 +460,12 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     frame.frame_number = g_analytics_thread_state.frame_number;
     frame.duration_nanoseconds = end_nanoseconds
         - g_analytics_thread_state.frame_start_nanoseconds;
+    if (g_analytics_thread_state.instrumented_top_level_nanoseconds
+        >= frame.duration_nanoseconds)
+        frame.uninstrumented_nanoseconds = 0U;
+    else
+        frame.uninstrumented_nanoseconds = frame.duration_nanoseconds
+            - g_analytics_thread_state.instrumented_top_level_nanoseconds;
     frame.completed_scope_count = g_analytics_thread_state.completed_scope_count;
     frame.dropped_scope_count = session->get_dropped_scope_count();
     g_analytics_thread_state.session = ft_nullptr;
@@ -537,6 +545,9 @@ int32_t analytics_end_scope(analytics_session *session) noexcept
     if (g_analytics_thread_state.scope_depth != 0U)
         g_analytics_thread_state.scopes[
             g_analytics_thread_state.scope_depth - 1U].child_nanoseconds
+            += inclusive_nanoseconds;
+    else
+        g_analytics_thread_state.instrumented_top_level_nanoseconds
             += inclusive_nanoseconds;
     if (g_analytics_thread_state.pending_event_count
         >= FT_ANALYTICS_MAX_THREAD_EVENTS)

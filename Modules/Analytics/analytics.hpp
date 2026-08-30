@@ -33,6 +33,7 @@ struct analytics_frame_statistics
     uint64_t mean_duration_nanoseconds;
     uint64_t percentile_95_nanoseconds;
     uint64_t percentile_99_nanoseconds;
+    uint64_t uninstrumented_nanoseconds;
     uint64_t completed_scope_count;
     uint64_t dropped_scope_count;
 };
