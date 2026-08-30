@@ -12,6 +12,9 @@ static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
+static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
+static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
+static const uint32_t CARD_GAME_COMMAND_ADVANCE_PHASE = 1U << 2U;
 
 enum card_game_card_type : uint8_t
 {
@@ -194,6 +197,7 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        ft_bool is_command_allowed(uint32_t command_mask) const noexcept;
         int32_t apply_operation(const card_game_operation &operation) noexcept;
 
     public:

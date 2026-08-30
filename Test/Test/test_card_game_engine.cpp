@@ -140,6 +140,32 @@ FT_TEST(test_card_game_engine_resolves_configured_phase_event)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_enforces_phase_command_mask)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_phase_definition phase;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 2U;
+    rules.starting_health = 10U;
+    rules.starting_mana = 1U;
+    rules.max_mana = 3U;
+    rules.max_turns = 10U;
+    phase.phase_id = 1U;
+    phase.next_phase_id = 1U;
+    phase.entry_event_type = 0U;
+    phase.exit_event_type = 0U;
+    phase.allowed_command_mask = CARD_GAME_COMMAND_PLAY_CARD;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_phase(phase));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.advance_phase());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_engine_creates_and_applies_authoritative_delta)
 {
     card_game_engine source_engine;

@@ -164,6 +164,28 @@ int32_t card_game_engine::register_card(
     return (FT_ERR_SUCCESS);
 }
 
+ft_bool card_game_engine::is_command_allowed(uint32_t command_mask) const noexcept
+{
+    uint32_t index;
+
+    if (this->_phase_count == 0U)
+        return (FT_TRUE);
+    index = 0U;
+    while (index < this->_phase_count)
+    {
+        if (this->_phases[index].phase_id == this->_current_phase_id)
+        {
+            if (this->_phases[index].allowed_command_mask == 0U
+                || (this->_phases[index].allowed_command_mask & command_mask)
+                    != 0U)
+                return (FT_TRUE);
+            return (FT_FALSE);
+        }
+        index += 1U;
+    }
+    return (FT_FALSE);
+}
+
 int32_t card_game_engine::register_effect(card_game_effect_function effect,
     uint32_t *effect_id) noexcept
 {
@@ -290,7 +312,8 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     int32_t restore_error;
     int32_t effect_error;
 
-    if (this->_initialised_state != 2U || player_id != this->_active_player)
+    if (this->_initialised_state != 2U || player_id != this->_active_player
+        || this->is_command_allowed(CARD_GAME_COMMAND_PLAY_CARD) == FT_FALSE)
         return (FT_ERR_PERMISSION_DENIED);
     if (player_id >= FT_CARD_GAME_MAX_PLAYERS
         || this->_board_count[player_id] >= this->_rules.max_board_spaces)
@@ -384,6 +407,8 @@ int32_t card_game_engine::end_turn() noexcept
         return (FT_ERR_NOT_INITIALISED);
     if (this->_player_count == 0U)
         return (FT_ERR_INVALID_STATE);
+    if (this->is_command_allowed(CARD_GAME_COMMAND_END_TURN) == FT_FALSE)
+        return (FT_ERR_PERMISSION_DENIED);
     snapshot_error = this->get_snapshot(&before_state);
     if (snapshot_error != FT_ERR_SUCCESS)
         return (snapshot_error);
@@ -529,6 +554,9 @@ int32_t card_game_engine::advance_phase() noexcept
 
     if (this->_initialised_state != 2U || this->_phase_count == 0U)
         return (FT_ERR_INVALID_STATE);
+    if (this->is_command_allowed(CARD_GAME_COMMAND_ADVANCE_PHASE)
+        == FT_FALSE)
+        return (FT_ERR_PERMISSION_DENIED);
     snapshot_error = this->get_snapshot(&before_state);
     if (snapshot_error != FT_ERR_SUCCESS)
         return (snapshot_error);
