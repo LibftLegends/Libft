@@ -44,6 +44,8 @@ isolated by caller-owned instances. Production code should include
 The Voxel terrain bridge executes terrain configuration scripts through this
 custom runtime, including legacy line-oriented files after normalizing line
 boundaries to statement separators. This keeps existing configuration assets
-usable while removing Lua from terrain execution. The Game bridge still has an
-explicit Lua compatibility path during migration; new production integrations
-must use the custom runtime directly.
+usable while removing Lua from terrain execution. The Game bridge defaults to
+the custom runtime and temporarily retains its legacy line-command adapter
+(`set`, `unset`, and `call`) for existing scripts. Explicit Lua entry points
+remain only for migration fixtures; new production integrations must use the
+custom runtime directly.

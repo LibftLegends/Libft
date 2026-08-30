@@ -129,7 +129,7 @@ class game_script_bridge
 
         int32_t initialize() noexcept;
         int32_t initialize(const ft_sharedptr<game_world> &world,
-            const char *language = "lua") noexcept;
+            const char *language = "custom") noexcept;
         int32_t destroy() noexcept;
         int32_t move(game_script_bridge &other) noexcept;
 

@@ -138,18 +138,25 @@ General rules for these orchestration classes:
 - `game_script_context` - Script execution context with game state, world,
   variables, and an opaque extension pointer for module-specific bindings.
 - `game_script_bridge` - Bridge for registering and invoking script callbacks.
-  `execute_with_user_data(...)` lets another module expose a typed API without
-  adding that module as a dependency of `Game`. `execute_lua(...)` and
-  `execute_lua_with_user_data(...)` run real Lua 5.4 source through the
-  statically embedded runtime. Registered callbacks are exposed as Lua global
-  functions. `get_lua_global_string(...)`,
-  `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` allow a
-  host to read explicitly exported primitive values from the Lua state.
-- Registered Lua callbacks may return one integer through
-  `game_script_context::set_result_integer(...)`; the Lua wrapper returns that
-  integer to the script. This is used by the Voxel bridge for runtime block ids.
-- `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound Lua
-  execution. The default limits are 100,000 VM instructions and 16 MiB.
+  It defaults to Libft's custom `Scripting` runtime. New code should use
+  `execute_with_user_data(...)` or `execute_custom_with_user_data(...)`; typed
+  callbacks are resolved through stable native IDs. A temporary line-command
+  adapter preserves existing `set`, `unset`, and `call` scripts while they are
+  migrated to the custom language.
+- Explicit `execute_lua(...)` and `execute_lua_with_user_data(...)` entry
+  points remain only for migration fixtures and initialize the legacy Lua
+  runtime on demand. They are not the default execution path and must not be
+  used by new production code. `get_lua_global_string(...)`,
+  `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` likewise
+  belong only to that compatibility path.
+- Registered callbacks may return one integer through
+  `game_script_context::set_result_integer(...)`; the custom and Lua adapters
+  expose that result to the script. This is used by the Voxel bridge for
+  runtime block ids.
+- `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound the
+  explicit legacy Lua compatibility path. The default Lua limits are 100,000
+  VM instructions and 16 MiB; custom-runtime execution is bounded by its
+  configured deterministic operation and resource limits.
   Filesystem, operating-system, package-loading, debug, and dynamic-code
   libraries are not exposed to scripts.
 - `game_data_catalog` - Registry for item definitions, recipes, loadouts, and other static catalog records.

@@ -78,6 +78,29 @@ static void game_script_delete_string(ft_string *string) noexcept
 thread_local int32_t game_script_context::_last_error = FT_ERR_SUCCESS;
 thread_local int32_t game_script_bridge::_last_error = FT_ERR_SUCCESS;
 
+static ft_bool game_script_uses_legacy_commands(const ft_string &script)
+    noexcept
+{
+    const char *data;
+
+    data = script.c_str();
+    if (data == ft_nullptr)
+        return (FT_FALSE);
+    if (script.size() == 0U)
+        return (FT_FALSE);
+    if (ft_strstr(data, "set ") != ft_nullptr
+        || ft_strstr(data, "unset ") != ft_nullptr
+        || ft_strstr(data, "call ") != ft_nullptr)
+        return (FT_TRUE);
+    if (ft_strstr(data, "\n") != ft_nullptr
+        || ft_strstr(data, "\r") != ft_nullptr)
+        return (FT_TRUE);
+    if (ft_strstr(data, "(") == ft_nullptr
+        && ft_strstr(data, ";") == ft_nullptr)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
 int32_t game_script_context::set_error(int32_t error_code) noexcept
 {
     game_script_context::_last_error = error_code;
@@ -495,7 +518,7 @@ int32_t game_script_bridge::initialize() noexcept
         this->set_error(world_error);
         return (world_error);
     }
-    return (this->initialize(world, "lua"));
+    return (this->initialize(world, "custom"));
 }
 
 int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
@@ -540,7 +563,7 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
     if (language)
         this->_language = language;
     else
-        this->_language = "lua";
+        this->_language = "custom";
     ft_to_lower(this->_language.data());
     if (game_script_bridge::is_supported_language(this->_language) == FT_FALSE)
     {
@@ -1138,6 +1161,11 @@ int32_t game_script_bridge::execute_custom_with_user_data(
         this->unlock_internal(lock_acquired);
         return (this->set_error(FT_ERR_NOT_INITIALISED));
     }
+    if (script.empty())
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_SUCCESS));
+    }
     error_code = context.initialize(state, this->_world);
     if (error_code != FT_ERR_SUCCESS)
     {
@@ -1174,7 +1202,8 @@ int32_t game_script_bridge::execute_with_user_data(const ft_string &script,
     ft_size_t start;
     int32_t operations;
 
-    if (this->_language == "custom")
+    if (this->_language == "custom"
+        && game_script_uses_legacy_commands(script) == FT_FALSE)
         return (this->execute_custom_with_user_data(script, state, user_data));
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);

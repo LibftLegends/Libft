@@ -263,11 +263,19 @@ int32_t game_script_bridge::execute_lua_with_user_data(const ft_string &script,
     error_code = this->lock_internal(&lock_acquired);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
-        || this->_lua_state == ft_nullptr)
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
     {
         this->unlock_internal(lock_acquired);
         return (this->set_error(FT_ERR_NOT_INITIALISED));
+    }
+    if (this->_lua_state == ft_nullptr)
+    {
+        error_code = this->initialize_lua_runtime();
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            this->unlock_internal(lock_acquired);
+            return (this->set_error(error_code));
+        }
     }
     error_code = context.initialize(state, this->_world);
     if (error_code != FT_ERR_SUCCESS)
