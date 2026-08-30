@@ -66,6 +66,23 @@ static ft_bool scripting_equal_identifier(const char *source,
     return (FT_TRUE);
 }
 
+static ft_bool scripting_keyword_at(const scripting_parser *parser,
+    const char *keyword, uint32_t keyword_length) noexcept
+{
+    uint32_t next_offset;
+
+    if (parser->source_length - parser->offset < keyword_length
+        || scripting_equal_identifier(parser->source, parser->offset,
+            keyword_length, keyword) == FT_FALSE)
+        return (FT_FALSE);
+    next_offset = parser->offset + keyword_length;
+    if (next_offset < parser->source_length
+        && scripting_is_identifier_part(parser->source[next_offset])
+            != FT_FALSE)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 static int32_t scripting_fail(scripting_parser *parser, int32_t error_code,
     uint32_t source_offset, uint32_t source_length) noexcept
 {
@@ -606,6 +623,14 @@ int32_t scripting_engine::execute(const char *source,
             this->_last_diagnostic = parser.diagnostic;
             return (parse_error);
         }
+        if (scripting_find_local(&parser, parser.source + declaration_start,
+            declaration_name_length, &declaration_value) == FT_ERR_SUCCESS)
+        {
+            parse_error = scripting_fail(&parser, FT_ERR_ALREADY_EXISTS,
+                declaration_start, declaration_name_length);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
         scripting_skip_space(&parser);
         if (parser.offset >= parser.source_length
             || parser.source[parser.offset] != '=')
@@ -639,9 +664,7 @@ int32_t scripting_engine::execute(const char *source,
         parser.offset += 1U;
         scripting_skip_space(&parser);
     }
-    if (parser.source_length - parser.offset >= 6U
-        && scripting_equal_identifier(parser.source, parser.offset, 6U,
-            "return") != FT_FALSE)
+    if (scripting_keyword_at(&parser, "return", 6U) != FT_FALSE)
         parser.offset += 6U;
     parse_error = scripting_parse_expression(&parser, result);
     scripting_skip_space(&parser);

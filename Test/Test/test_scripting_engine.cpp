@@ -37,6 +37,8 @@ FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
         "let base = 9; return base * 2;", &result));
     FT_ASSERT_EQ(static_cast<int64_t>(18), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.execute(
+        "let base = 1; let base = 2; return base;", &result));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
@@ -73,6 +75,7 @@ FT_TEST(test_scripting_engine_reports_bounded_and_malformed_execution)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_last_diagnostic(&diagnostic));
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, diagnostic.error_code);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("(1 +", &result));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.execute("returnx", &result));
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, engine.execute("9223372036854775807 + 1",
         &result));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
