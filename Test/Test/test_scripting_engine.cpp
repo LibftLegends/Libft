@@ -144,6 +144,16 @@ FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (5 > 2) 11 else 22;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(11), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (1 == 0) 11 else if (2 == 2) 22 else 33;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(22), result.integer_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

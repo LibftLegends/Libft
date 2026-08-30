@@ -262,6 +262,55 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
     if (parser->offset >= parser->source_length)
         return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
             parser->offset, 1U));
+    if (scripting_compile_keyword_at(parser, "if", 2U) != FT_FALSE)
+    {
+        uint32_t jump_false_index;
+        uint32_t jump_end_index;
+        int32_t branch_error;
+
+        parser->offset += 2U;
+        scripting_compile_skip_space(parser);
+        if (parser->offset >= parser->source_length
+            || parser->source[parser->offset] != '(')
+            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+                parser->offset, 1U));
+        parser->offset += 1U;
+        branch_error = scripting_compile_condition(parser);
+        if (branch_error != FT_ERR_SUCCESS)
+            return (branch_error);
+        scripting_compile_skip_space(parser);
+        if (parser->offset >= parser->source_length
+            || parser->source[parser->offset] != ')')
+            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+                parser->offset, 1U));
+        parser->offset += 1U;
+        jump_false_index = parser->program.instruction_count;
+        branch_error = scripting_compile_emit(parser,
+            SCRIPTING_OP_JUMP_IF_FALSE, 0, 0U);
+        if (branch_error != FT_ERR_SUCCESS)
+            return (branch_error);
+        branch_error = scripting_compile_condition(parser);
+        if (branch_error != FT_ERR_SUCCESS)
+            return (branch_error);
+        jump_end_index = parser->program.instruction_count;
+        branch_error = scripting_compile_emit(parser, SCRIPTING_OP_JUMP,
+            0, 0U);
+        if (branch_error != FT_ERR_SUCCESS)
+            return (branch_error);
+        scripting_compile_skip_space(parser);
+        if (scripting_compile_keyword_at(parser, "else", 4U) == FT_FALSE)
+            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+                parser->offset, 4U));
+        parser->program.instructions[jump_false_index].operand =
+            static_cast<int64_t>(parser->program.instruction_count);
+        parser->offset += 4U;
+        branch_error = scripting_compile_condition(parser);
+        if (branch_error != FT_ERR_SUCCESS)
+            return (branch_error);
+        parser->program.instructions[jump_end_index].operand =
+            static_cast<int64_t>(parser->program.instruction_count);
+        return (FT_ERR_SUCCESS);
+    }
     if (parser->source[parser->offset] == '(')
     {
         parser->offset += 1U;
@@ -683,6 +732,24 @@ static int32_t scripting_compare_values(const scripting_value &left_value,
     else
         return (FT_ERR_INVALID_ARGUMENT);
     return (FT_ERR_SUCCESS);
+}
+
+static ft_bool scripting_value_is_true(const scripting_value &value) noexcept
+{
+    if (value.type == SCRIPTING_VALUE_BOOLEAN)
+        return (value.boolean_value);
+    if (value.type == SCRIPTING_VALUE_INTEGER)
+    {
+        if (value.integer_value != 0)
+            return (FT_TRUE);
+        return (FT_FALSE);
+    }
+    if (value.type == SCRIPTING_VALUE_STRING)
+    {
+        if (value.string_length != 0U)
+            return (FT_TRUE);
+    }
+    return (FT_FALSE);
 }
 
 static int32_t scripting_parse_primary(scripting_parser *parser,
@@ -1554,6 +1621,22 @@ int32_t scripting_engine::verify_program(
             stack_depth -= instruction->auxiliary;
             stack_depth += 1U;
         }
+        else if (instruction->opcode == SCRIPTING_OP_JUMP_IF_FALSE)
+        {
+            if (stack_depth == 0U
+                || instruction->operand < 0
+                || static_cast<uint64_t>(instruction->operand)
+                    >= program.instruction_count)
+                return (FT_ERR_INVALID_ARGUMENT);
+            stack_depth -= 1U;
+        }
+        else if (instruction->opcode == SCRIPTING_OP_JUMP)
+        {
+            if (instruction->operand < 0
+                || static_cast<uint64_t>(instruction->operand)
+                    >= program.instruction_count)
+                return (FT_ERR_INVALID_ARGUMENT);
+        }
         else if (instruction->opcode == SCRIPTING_OP_RETURN)
         {
             if (stack_depth == 0U
@@ -1584,8 +1667,10 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
     uint32_t local_index;
     uint32_t argument_index;
     uint32_t operation_count;
+    uint32_t jump_target;
     int64_t calculated_value;
     ft_bool comparison_result;
+    ft_bool jumped;
     int32_t execution_error;
 
     if (result == ft_nullptr)
@@ -1608,6 +1693,7 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
         operation_count += 1U;
         if (operation_count > this->_operation_limit)
             return (FT_ERR_FULL);
+        jumped = FT_FALSE;
         if (instruction->opcode == SCRIPTING_OP_PUSH_NULL)
             scripting_value_set_null(&stack[stack_count++]);
         else if (instruction->opcode == SCRIPTING_OP_PUSH_INTEGER)
@@ -1659,6 +1745,23 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
                 return (execution_error);
             stack_count -= instruction->auxiliary;
             stack_count += 1U;
+        }
+        else if (instruction->opcode == SCRIPTING_OP_JUMP_IF_FALSE)
+        {
+            if (scripting_value_is_true(stack[stack_count - 1U])
+                == FT_FALSE)
+            {
+                jump_target = static_cast<uint32_t>(instruction->operand);
+                instruction_index = jump_target;
+                jumped = FT_TRUE;
+            }
+            stack_count -= 1U;
+        }
+        else if (instruction->opcode == SCRIPTING_OP_JUMP)
+        {
+            jump_target = static_cast<uint32_t>(instruction->operand);
+            instruction_index = jump_target;
+            jumped = FT_TRUE;
         }
         else if (instruction->opcode == SCRIPTING_OP_RETURN)
         {
@@ -1715,7 +1818,8 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
             stack_count -= 2U;
             scripting_value_set_integer(&stack[stack_count++], calculated_value);
         }
-        instruction_index += 1U;
+        if (jumped == FT_FALSE)
+            instruction_index += 1U;
     }
     return (FT_ERR_INVALID_STATE);
 }
