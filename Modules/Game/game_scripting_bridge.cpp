@@ -1075,16 +1075,26 @@ int32_t game_script_bridge::custom_callback_dispatch(
     argument_index = 0U;
     while (argument_index < argument_count)
     {
-        if (arguments[argument_index].type != SCRIPTING_VALUE_INTEGER)
-            return (FT_ERR_INVALID_ARGUMENT);
-        if (pf_snprintf(number_buffer, sizeof(number_buffer),
-            FT_INT64_DECIMAL_FORMAT,
-            arguments[argument_index].integer_value)
-                < 0)
-            return (FT_ERR_INVALID_ARGUMENT);
         ft_string argument;
 
-        error_code = argument.initialize(number_buffer);
+        if (arguments[argument_index].type == SCRIPTING_VALUE_INTEGER)
+        {
+            if (pf_snprintf(number_buffer, sizeof(number_buffer),
+                FT_INT64_DECIMAL_FORMAT,
+                arguments[argument_index].integer_value) < 0)
+                return (FT_ERR_INVALID_ARGUMENT);
+            error_code = argument.initialize(number_buffer);
+        }
+        else if (arguments[argument_index].type == SCRIPTING_VALUE_STRING)
+        {
+            error_code = argument.initialize();
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = argument.assign(
+                    arguments[argument_index].string_value,
+                    arguments[argument_index].string_length);
+        }
+        else
+            return (FT_ERR_INVALID_ARGUMENT);
         if (error_code == FT_ERR_SUCCESS)
             error_code = callback_arguments.push_back(ft_move(argument));
         if (error_code != FT_ERR_SUCCESS)
