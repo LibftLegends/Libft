@@ -387,6 +387,42 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     return (session->publish_frame(frame));
 }
 
+int32_t analytics_end_thread_frame(analytics_session *session) noexcept
+{
+    uint32_t event_index;
+    analytics_pending_event *pending_event;
+    analytics_trace_event trace_event;
+    int32_t record_error;
+
+    if (session == ft_nullptr || g_analytics_thread_state.session != session
+        || g_analytics_thread_state.scope_depth != 0U)
+        return (FT_ERR_INVALID_STATE);
+    event_index = 0U;
+    while (event_index < g_analytics_thread_state.pending_event_count)
+    {
+        pending_event = &g_analytics_thread_state.pending_events[event_index];
+        record_error = session->record_scope(pending_event->region_id,
+            pending_event->inclusive_nanoseconds,
+            pending_event->exclusive_nanoseconds);
+        if (record_error != FT_ERR_SUCCESS)
+            return (record_error);
+        trace_event.frame_number = g_analytics_thread_state.frame_number;
+        trace_event.flow_id = 0U;
+        trace_event.region_id = pending_event->region_id;
+        trace_event.start_nanoseconds = pending_event->start_nanoseconds;
+        trace_event.duration_nanoseconds = pending_event->inclusive_nanoseconds;
+        trace_event.exclusive_nanoseconds = pending_event->exclusive_nanoseconds;
+        trace_event.thread_id = analytics_thread_id();
+        if (session->publish_trace(trace_event) != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        event_index += 1U;
+    }
+    g_analytics_thread_state.session = ft_nullptr;
+    g_analytics_thread_state.pending_event_count = 0U;
+    g_analytics_thread_state.completed_scope_count = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t analytics_begin_scope(analytics_session *session,
     uint32_t region_id) noexcept
 {

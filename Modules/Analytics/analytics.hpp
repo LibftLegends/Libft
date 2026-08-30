@@ -120,6 +120,7 @@ int32_t analytics_now_nanoseconds(uint64_t *timestamp) noexcept;
 int32_t analytics_begin_frame(analytics_session *session,
     uint64_t frame_number) noexcept;
 int32_t analytics_end_frame(analytics_session *session) noexcept;
+int32_t analytics_end_thread_frame(analytics_session *session) noexcept;
 int32_t analytics_begin_scope(analytics_session *session, uint32_t region_id)
     noexcept;
 int32_t analytics_end_scope(analytics_session *session) noexcept;

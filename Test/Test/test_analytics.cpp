@@ -119,3 +119,32 @@ FT_TEST(test_analytics_cross_thread_flow_exports_trace_event)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
+
+FT_TEST(test_analytics_worker_frame_flushes_to_shared_session)
+{
+    analytics_session session;
+    uint32_t region_id;
+    uint64_t timestamp;
+    analytics_region_statistics statistics;
+
+    region_id = 0U;
+    timestamp = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("worker.scope",
+        "worker", &region_id));
+    std::thread worker([&session, region_id, &timestamp]() -> int32_t
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 77U));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_now_nanoseconds(&timestamp));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_thread_frame(&session));
+        return (1);
+    });
+    worker.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
+        &statistics));
+    FT_ASSERT_EQ(1U, statistics.invocation_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
