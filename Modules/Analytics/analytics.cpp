@@ -4,6 +4,47 @@
 
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/limits.hpp"
+#include "../Printf/printf.hpp"
+
+static int32_t analytics_append_text(ft_string &output,
+    const char *text) noexcept
+{
+    if (text == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (output.append(text));
+}
+
+static int32_t analytics_append_u64(ft_string &output, uint64_t value) noexcept
+{
+    char buffer[64];
+    int32_t length;
+
+    length = pf_snprintf(buffer, sizeof(buffer), FT_UINT64_DECIMAL_FORMAT,
+        value);
+    if (length < 0 || static_cast<ft_size_t>(length) >= sizeof(buffer))
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (output.append(buffer, static_cast<ft_size_t>(length)));
+}
+
+static int32_t analytics_append_u32(ft_string &output, uint32_t value) noexcept
+{
+    char buffer[32];
+    int32_t length;
+
+    length = pf_snprintf(buffer, sizeof(buffer), "%u", value);
+    if (length < 0 || static_cast<ft_size_t>(length) >= sizeof(buffer))
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (output.append(buffer, static_cast<ft_size_t>(length)));
+}
+
+static int32_t analytics_commit_output(ft_string *output,
+    ft_string &temporary) noexcept
+{
+    if (output == ft_nullptr || output->is_initialised() == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (output->move(temporary));
+}
 
 static uint64_t analytics_percentile_value(const uint64_t *samples,
     uint32_t sample_count, uint32_t percentile) noexcept
@@ -371,6 +412,19 @@ int32_t analytics_session::get_region_statistics(uint32_t region_id,
             this->_regions[region_id].samples,
             this->_regions[region_id].sample_count, 99U);
     }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_session::get_region_name(uint32_t region_id,
+    const char **name) const noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+
+    if (this->_initialised_state != 2U || name == ft_nullptr
+        || region_id >= this->_region_count
+        || this->_regions[region_id].registered == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *name = this->_regions[region_id].name;
     return (FT_ERR_SUCCESS);
 }
 
@@ -758,4 +812,222 @@ int32_t analytics_end_flow(const analytics_flow_token &token) noexcept
     event.exclusive_nanoseconds = event.duration_nanoseconds;
     event.thread_id = analytics_thread_id();
     return (token.session->publish_trace(event));
+}
+
+int32_t analytics_export_frame_json(const analytics_session &session,
+    const analytics_frame_statistics &frame, ft_string *output) noexcept
+{
+    ft_string temporary;
+    int32_t error_code;
+    uint32_t index;
+    const char *region_name;
+
+    if (output == ft_nullptr || frame.breakdown_count
+        > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = temporary.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = analytics_append_text(temporary, "{\"frame\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary, frame.frame_number);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, ",\"duration_ns\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary,
+            frame.duration_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary,
+            ",\"mean_duration_ns\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary,
+            frame.mean_duration_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary,
+            ",\"p95_duration_ns\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary,
+            frame.percentile_95_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary,
+            ",\"p99_duration_ns\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary,
+            frame.percentile_99_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary,
+            ",\"uninstrumented_ns\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary,
+            frame.uninstrumented_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, ",\"breakdown\":[");
+    index = 0U;
+    while (error_code == FT_ERR_SUCCESS && index < frame.breakdown_count)
+    {
+        region_name = ft_nullptr;
+        error_code = session.get_region_name(
+            frame.breakdown[index].region_id, &region_name);
+        if (error_code == FT_ERR_SUCCESS && index != 0U)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                "{\"region_id\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u32(temporary,
+                frame.breakdown[index].region_id);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                ",\"invocations\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].invocation_count);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                ",\"inclusive_ns\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].inclusive_nanoseconds);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                ",\"exclusive_ns\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].exclusive_nanoseconds);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, "}");
+        index += 1U;
+    }
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, "]}");
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)temporary.destroy();
+        return (error_code);
+    }
+    error_code = analytics_commit_output(output, temporary);
+    if (error_code != FT_ERR_SUCCESS)
+        (void)temporary.destroy();
+    return (error_code);
+}
+
+int32_t analytics_export_trace_json(const analytics_session &session,
+    const analytics_trace_event *events, uint32_t event_count,
+    ft_string *output) noexcept
+{
+    ft_string temporary;
+    int32_t error_code;
+    uint32_t index;
+    const char *region_name;
+
+    if (events == ft_nullptr && event_count != 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = temporary.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = analytics_append_text(temporary, "[");
+    index = 0U;
+    while (error_code == FT_ERR_SUCCESS && index < event_count)
+    {
+        region_name = ft_nullptr;
+        error_code = session.get_region_name(events[index].region_id,
+            &region_name);
+        if (error_code == FT_ERR_SUCCESS && index != 0U)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                "{\"name\":\"region-");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u32(temporary,
+                events[index].region_id);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                "\",\"cat\":\"analytics\",\"ph\":\"X\",\"ts\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                events[index].start_nanoseconds / 1000U);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, ",\"dur\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                events[index].duration_nanoseconds / 1000U);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary,
+                ",\"pid\":1,\"tid\":");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u32(temporary,
+                events[index].thread_id);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, "}");
+        index += 1U;
+    }
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, "]");
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)temporary.destroy();
+        return (error_code);
+    }
+    error_code = analytics_commit_output(output, temporary);
+    if (error_code != FT_ERR_SUCCESS)
+        (void)temporary.destroy();
+    return (error_code);
+}
+
+int32_t analytics_export_frame_csv(const analytics_session &session,
+    const analytics_frame_statistics &frame, ft_string *output) noexcept
+{
+    ft_string temporary;
+    int32_t error_code;
+    uint32_t index;
+    const char *region_name;
+
+    if (frame.breakdown_count > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = temporary.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = analytics_append_text(temporary,
+        "frame,region_id,invocations,inclusive_ns,exclusive_ns\n");
+    index = 0U;
+    while (error_code == FT_ERR_SUCCESS && index < frame.breakdown_count)
+    {
+        region_name = ft_nullptr;
+        error_code = session.get_region_name(
+            frame.breakdown[index].region_id, &region_name);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary, frame.frame_number);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u32(temporary,
+                frame.breakdown[index].region_id);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].invocation_count);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].inclusive_nanoseconds);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, ",");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_u64(temporary,
+                frame.breakdown[index].exclusive_nanoseconds);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = analytics_append_text(temporary, "\n");
+        index += 1U;
+    }
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)temporary.destroy();
+        return (error_code);
+    }
+    error_code = analytics_commit_output(output, temporary);
+    if (error_code != FT_ERR_SUCCESS)
+        (void)temporary.destroy();
+    return (error_code);
 }

@@ -239,3 +239,51 @@ FT_TEST(test_analytics_frame_reports_uninstrumented_gap)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
+
+FT_TEST(test_analytics_exporters_are_transactional_and_valid)
+{
+    analytics_session session;
+    analytics_frame_statistics frame;
+    analytics_trace_event event;
+    ft_string output;
+    uint32_t region_id;
+    char preserved[256];
+
+    region_id = 0U;
+    frame = {};
+    event = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("render", "frame",
+        &region_id));
+    frame.frame_number = 12U;
+    frame.duration_nanoseconds = 16000000U;
+    frame.breakdown_count = 1U;
+    frame.breakdown[0].region_id = region_id;
+    frame.breakdown[0].invocation_count = 2U;
+    frame.breakdown[0].inclusive_nanoseconds = 800U;
+    frame.breakdown[0].exclusive_nanoseconds = 500U;
+    event.region_id = region_id;
+    event.start_nanoseconds = 1000U;
+    event.duration_nanoseconds = 2000U;
+    event.thread_id = 7U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize("preserved"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_export_frame_json(session, frame,
+        &output));
+    FT_ASSERT(ft_str_contains(output.c_str(), "\"frame\":12"));
+    FT_ASSERT(ft_str_contains(output.c_str(), "\"region_id\":0"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_export_trace_json(session, &event,
+        1U, &output));
+    FT_ASSERT(ft_str_contains(output.c_str(), "\"ph\":\"X\""));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_export_frame_csv(session, frame,
+        &output));
+    FT_ASSERT(ft_str_contains(output.c_str(),
+        "frame,region_id,invocations,inclusive_ns,exclusive_ns"));
+    ft_strlcpy(preserved, output.c_str(), sizeof(preserved));
+    frame.breakdown[0].region_id = 99U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, analytics_export_frame_json(session,
+        frame, &output));
+    FT_ASSERT_EQ(FT_TRUE, output == preserved);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.destroy());
+    return (1);
+}

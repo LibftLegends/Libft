@@ -7,6 +7,7 @@
 
 # include "../Basic/basic.hpp"
 # include "../Errno/errno.hpp"
+# include "../CPP_class/class_string.hpp"
 
 static const uint32_t FT_ANALYTICS_MAX_REGIONS = 1024U;
 static const uint32_t FT_ANALYTICS_MAX_SCOPE_DEPTH = 64U;
@@ -139,6 +140,8 @@ class analytics_session
         int32_t note_dropped_scope() noexcept;
         int32_t get_region_statistics(uint32_t region_id,
             analytics_region_statistics *statistics) const noexcept;
+        int32_t get_region_name(uint32_t region_id,
+            const char **name) const noexcept;
         int32_t get_region_percentile(uint32_t region_id, uint32_t percentile,
             uint64_t *nanoseconds) const noexcept;
         int32_t publish_frame(const analytics_frame_statistics &frame) noexcept;
@@ -149,6 +152,14 @@ class analytics_session
         uint64_t get_dropped_trace_count() const noexcept;
         uint64_t get_dropped_frame_export_count() const noexcept;
 };
+
+int32_t analytics_export_frame_json(const analytics_session &session,
+    const analytics_frame_statistics &frame, ft_string *output) noexcept;
+int32_t analytics_export_trace_json(const analytics_session &session,
+    const analytics_trace_event *events, uint32_t event_count,
+    ft_string *output) noexcept;
+int32_t analytics_export_frame_csv(const analytics_session &session,
+    const analytics_frame_statistics &frame, ft_string *output) noexcept;
 
 int32_t analytics_now_nanoseconds(uint64_t *timestamp) noexcept;
 int32_t analytics_begin_frame(analytics_session *session,
