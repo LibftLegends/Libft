@@ -77,7 +77,7 @@ card_game_engine::card_game_engine() noexcept
       _event_count(0U), _event_sequence(0U), _card_count(0U),
       _effect_count(0U), _board(), _instances(), _board_count(), _health(),
       _mana(), _turn_number(0U), _active_player(0U), _player_count(0U),
-      _state_sequence(0U)
+      _state_sequence(0U), _last_command_sequence(0U)
 {
     return ;
 }
@@ -107,6 +107,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_turn_number = 0U;
     this->_active_player = 0U;
     this->_state_sequence = 1U;
+    this->_last_command_sequence = 0U;
     this->_initialised_state = 2U;
     return (FT_ERR_SUCCESS);
 }
@@ -154,6 +155,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_active_player = other._active_player;
     this->_player_count = other._player_count;
     this->_state_sequence = other._state_sequence;
+    this->_last_command_sequence = other._last_command_sequence;
     this->_phase_count = other._phase_count;
     this->_zone_count = other._zone_count;
     this->_current_phase_id = other._current_phase_id;
@@ -1249,5 +1251,35 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
         player_id += 1U;
     }
     this->_state_sequence = delta.target_state_sequence;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::submit_command(
+    const card_game_command &command, void *context) noexcept
+{
+    int32_t command_error;
+
+    if (this->_initialised_state != 2U
+        || command.command_sequence == 0U
+        || command.command_sequence <= this->_last_command_sequence)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (command.expected_state_sequence != 0U
+        && command.expected_state_sequence != this->_state_sequence)
+        return (FT_ERR_INVALID_STATE);
+    if (command.player_id >= this->_player_count
+        || command.player_id != this->_active_player)
+        return (FT_ERR_PERMISSION_DENIED);
+    if (command.type == CARD_GAME_INTENT_PLAY_CARD)
+        command_error = this->play_card(command.player_id, command.card_id,
+            command.target_instance, context);
+    else if (command.type == CARD_GAME_INTENT_END_TURN)
+        command_error = this->end_turn();
+    else if (command.type == CARD_GAME_INTENT_ADVANCE_PHASE)
+        command_error = this->advance_phase();
+    else
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (command_error != FT_ERR_SUCCESS)
+        return (command_error);
+    this->_last_command_sequence = command.command_sequence;
     return (FT_ERR_SUCCESS);
 }

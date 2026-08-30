@@ -20,6 +20,23 @@ static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
 static const uint32_t CARD_GAME_COMMAND_ADVANCE_PHASE = 1U << 2U;
 static const uint32_t CARD_GAME_NO_EFFECT = UINT32_MAX;
 
+enum card_game_command_type : uint8_t
+{
+    CARD_GAME_INTENT_PLAY_CARD = 1U,
+    CARD_GAME_INTENT_END_TURN = 2U,
+    CARD_GAME_INTENT_ADVANCE_PHASE = 3U
+};
+
+struct card_game_command
+{
+    uint64_t command_sequence;
+    uint64_t expected_state_sequence;
+    uint32_t player_id;
+    card_game_command_type type;
+    uint32_t card_id;
+    uint32_t target_instance;
+};
+
 enum card_game_card_type : uint8_t
 {
     CARD_GAME_CREATURE = 0U,
@@ -213,6 +230,7 @@ class card_game_engine
         uint32_t _active_player;
         uint32_t _player_count;
         uint64_t _state_sequence;
+        uint64_t _last_command_sequence;
 
         card_game_engine(const card_game_engine &other) = delete;
         card_game_engine(card_game_engine &&other) = delete;
@@ -274,6 +292,8 @@ class card_game_engine
         int32_t create_delta(const card_game_snapshot &baseline,
             card_game_delta *delta) const noexcept;
         int32_t apply_delta(const card_game_delta &delta) noexcept;
+        int32_t submit_command(const card_game_command &command,
+            void *context) noexcept;
 };
 
 #endif

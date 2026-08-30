@@ -36,3 +36,8 @@ When a card is played, the engine enforces the configured board-zone capacity,
 the zone's allowed type mask, and the type's per-player copy limit before
 charging mana or invoking an effect. Rejected placements leave match state
 unchanged.
+
+Network-facing callers should use `submit_command()` with a monotonically
+increasing command sequence. The optional expected state sequence rejects
+stale client intents before dispatch; accepted commands then enter the same
+transactional play, turn, and phase paths used internally.

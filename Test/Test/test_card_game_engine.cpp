@@ -423,3 +423,48 @@ FT_TEST(test_card_game_engine_registers_custom_card_types)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_validates_authoritative_command_envelopes)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    card_game_command command;
+    card_game_snapshot snapshot;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    definition.card_id = 210U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 1U;
+    definition.attack = 2;
+    definition.health = 3;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    command.command_sequence = 1U;
+    command.expected_state_sequence = 0U;
+    command.player_id = 0U;
+    command.type = CARD_GAME_INTENT_PLAY_CARD;
+    command.card_id = 210U;
+    command.target_instance = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.submit_command(command, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.submit_command(command,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&snapshot));
+    command.command_sequence = 2U;
+    command.expected_state_sequence = snapshot.state_sequence - 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, engine.submit_command(command,
+        ft_nullptr));
+    command.expected_state_sequence = 0U;
+    command.player_id = 1U;
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.submit_command(command,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
