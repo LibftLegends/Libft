@@ -26,3 +26,8 @@ platform byte order do not affect the result.
 Zones are registered as data with a stable ID, capacity, owner-scope flag, and
 allowed card-type mask. The engine does not assign game-specific meanings to
 those IDs; the consuming game decides how its zones are used.
+
+Built-in card types use IDs `0` through `3`. Games may register custom type
+IDs from `4` through `31` and register cards against them with
+`register_card_with_type()`; custom type definitions include their allowed
+zones and per-player copy limit.

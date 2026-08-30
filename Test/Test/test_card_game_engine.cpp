@@ -363,3 +363,39 @@ FT_TEST(test_card_game_engine_registers_configurable_zones)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_registers_custom_card_types)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_type_definition type;
+    card_game_card_type_definition loaded_type;
+    card_game_card_definition definition;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    type.type_id = 4U;
+    type.allowed_zone_mask = 1U << 4U;
+    type.max_copies_per_player = 2U;
+    definition.card_id = 200U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 1U;
+    definition.attack = 2;
+    definition.health = 2;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_type(type));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_card_type(4U, &loaded_type));
+    FT_ASSERT_EQ(type.type_id, loaded_type.type_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.register_card_with_type(
+        definition, 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_with_type(
+        definition, 4U));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.register_card_type(type));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

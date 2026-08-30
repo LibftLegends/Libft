@@ -69,7 +69,8 @@ int32_t card_game_operation_buffer::get(uint32_t index,
 }
 
 card_game_engine::card_game_engine() noexcept
-    : _initialised_state(0U), _rules(), _cards(), _effects(),
+    : _initialised_state(0U), _rules(), _cards(), _card_type_ids(),
+      _card_types(), _card_type_count(0U), _effects(),
       _effect_callbacks(), _effect_user_data(), _effect_event_types(),
       _phases(), _phase_count(0U), _zones(), _zone_count(0U),
       _current_phase_id(0U), _events(),
@@ -97,6 +98,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         return (FT_ERR_INVALID_ARGUMENT);
     this->_rules = rules;
     this->_card_count = 0U;
+    this->_card_type_count = 0U;
     this->_effect_count = 0U;
     this->_phase_count = 0U;
     this->_zone_count = 0U;
@@ -126,6 +128,10 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     (void)this->destroy();
     this->_rules = other._rules;
     ft_memcpy(this->_cards, other._cards, sizeof(this->_cards));
+    ft_memcpy(this->_card_type_ids, other._card_type_ids,
+        sizeof(this->_card_type_ids));
+    ft_memcpy(this->_card_types, other._card_types,
+        sizeof(this->_card_types));
     ft_memcpy(this->_effects, other._effects, sizeof(this->_effects));
     ft_memcpy(this->_effect_callbacks, other._effect_callbacks,
         sizeof(this->_effect_callbacks));
@@ -142,6 +148,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     ft_memcpy(this->_health, other._health, sizeof(this->_health));
     ft_memcpy(this->_mana, other._mana, sizeof(this->_mana));
     this->_card_count = other._card_count;
+    this->_card_type_count = other._card_type_count;
     this->_effect_count = other._effect_count;
     this->_turn_number = other._turn_number;
     this->_active_player = other._active_player;
@@ -177,12 +184,13 @@ int32_t card_game_engine::find_card(uint32_t card_id,
     return (FT_ERR_NOT_FOUND);
 }
 
-int32_t card_game_engine::register_card(
-    const card_game_card_definition &definition) noexcept
+int32_t card_game_engine::register_card_internal(
+    const card_game_card_definition &definition, uint32_t type_id) noexcept
 {
     card_game_card_definition *existing;
 
     if (this->_initialised_state != 2U || definition.card_id == 0U
+        || type_id >= FT_CARD_GAME_MAX_CARD_TYPES
         || (definition.effect_id != CARD_GAME_NO_EFFECT
             && definition.effect_id >= this->_effect_count)
         || this->_card_count >= FT_CARD_GAME_MAX_CARDS)
@@ -190,8 +198,72 @@ int32_t card_game_engine::register_card(
     if (this->find_card(definition.card_id, &existing) == FT_ERR_SUCCESS)
         return (FT_ERR_ALREADY_EXISTS);
     this->_cards[this->_card_count] = definition;
+    this->_card_type_ids[this->_card_count] = type_id;
     this->_card_count += 1U;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::register_card(
+    const card_game_card_definition &definition) noexcept
+{
+    return (this->register_card_internal(definition,
+        static_cast<uint32_t>(definition.type)));
+}
+
+int32_t card_game_engine::register_card_with_type(
+    const card_game_card_definition &definition, uint32_t type_id) noexcept
+{
+    card_game_card_type_definition loaded_type;
+
+    if (type_id < 4U || type_id >= FT_CARD_GAME_MAX_CARD_TYPES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->get_card_type(type_id, &loaded_type) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_FOUND);
+    return (this->register_card_internal(definition, type_id));
+}
+
+int32_t card_game_engine::register_card_type(
+    const card_game_card_type_definition &type) noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || type.type_id < 4U
+        || type.type_id >= FT_CARD_GAME_MAX_CARD_TYPES
+        || type.allowed_zone_mask == 0U
+        || type.max_copies_per_player == 0U
+        || this->_card_type_count >= FT_CARD_GAME_MAX_CARD_TYPES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_card_type_count)
+    {
+        if (this->_card_types[index].type_id == type.type_id)
+            return (FT_ERR_ALREADY_EXISTS);
+        index += 1U;
+    }
+    this->_card_types[this->_card_type_count] = type;
+    this->_card_type_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_card_type(uint32_t type_id,
+    card_game_card_type_definition *type) const noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || type == ft_nullptr
+        || type_id < 4U || type_id >= FT_CARD_GAME_MAX_CARD_TYPES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_card_type_count)
+    {
+        if (this->_card_types[index].type_id == type_id)
+        {
+            *type = this->_card_types[index];
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
 }
 
 ft_bool card_game_engine::is_command_allowed(uint32_t command_mask) const noexcept
@@ -817,14 +889,25 @@ int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
     while (index < this->_card_count)
     {
         card_game_hash_u32(&calculated_hash, this->_cards[index].card_id);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(this->_cards[index].type));
+        card_game_hash_u32(&calculated_hash, this->_card_type_ids[index]);
         card_game_hash_u32(&calculated_hash, this->_cards[index].cost);
         card_game_hash_u32(&calculated_hash,
             static_cast<uint32_t>(this->_cards[index].attack));
         card_game_hash_u32(&calculated_hash,
             static_cast<uint32_t>(this->_cards[index].health));
         card_game_hash_u32(&calculated_hash, this->_cards[index].effect_id);
+        index += 1U;
+    }
+    card_game_hash_u32(&calculated_hash, this->_card_type_count);
+    index = 0U;
+    while (index < this->_card_type_count)
+    {
+        card_game_hash_u32(&calculated_hash,
+            this->_card_types[index].type_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_card_types[index].allowed_zone_mask);
+        card_game_hash_u32(&calculated_hash,
+            this->_card_types[index].max_copies_per_player);
         index += 1U;
     }
     card_game_hash_u32(&calculated_hash, this->_phase_count);

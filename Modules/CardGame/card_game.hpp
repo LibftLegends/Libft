@@ -10,6 +10,7 @@ static const uint32_t FT_CARD_GAME_MAX_EFFECTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
 static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
 static const uint32_t FT_CARD_GAME_MAX_ZONES = 32U;
+static const uint32_t FT_CARD_GAME_MAX_CARD_TYPES = 32U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
@@ -24,6 +25,13 @@ enum card_game_card_type : uint8_t
     CARD_GAME_SPELL = 1U,
     CARD_GAME_ARTIFACT = 2U,
     CARD_GAME_ENCHANTMENT = 3U
+};
+
+struct card_game_card_type_definition
+{
+    uint32_t type_id;
+    uint32_t allowed_zone_mask;
+    uint32_t max_copies_per_player;
 };
 
 struct card_game_zone_definition
@@ -178,6 +186,9 @@ class card_game_engine
         uint8_t _initialised_state;
         card_game_rules _rules;
         card_game_card_definition _cards[FT_CARD_GAME_MAX_CARDS];
+        uint32_t _card_type_ids[FT_CARD_GAME_MAX_CARDS];
+        card_game_card_type_definition _card_types[FT_CARD_GAME_MAX_CARD_TYPES];
+        uint32_t _card_type_count;
         card_game_effect_function _effects[FT_CARD_GAME_MAX_EFFECTS];
         card_game_effect_callback _effect_callbacks[FT_CARD_GAME_MAX_EFFECTS];
         void *_effect_user_data[FT_CARD_GAME_MAX_EFFECTS];
@@ -209,6 +220,9 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        int32_t register_card_internal(
+            const card_game_card_definition &definition,
+            uint32_t type_id) noexcept;
         ft_bool is_command_allowed(uint32_t command_mask) const noexcept;
         int32_t apply_operation(const card_game_operation &operation) noexcept;
 
@@ -219,6 +233,13 @@ class card_game_engine
         int32_t destroy() noexcept;
         int32_t move(card_game_engine &other) noexcept;
         int32_t register_card(const card_game_card_definition &definition) noexcept;
+        int32_t register_card_with_type(
+            const card_game_card_definition &definition,
+            uint32_t type_id) noexcept;
+        int32_t register_card_type(
+            const card_game_card_type_definition &type) noexcept;
+        int32_t get_card_type(uint32_t type_id,
+            card_game_card_type_definition *type) const noexcept;
         int32_t register_effect(card_game_effect_function effect,
             uint32_t *effect_id) noexcept;
         int32_t register_effect_callback(card_game_effect_callback callback,
