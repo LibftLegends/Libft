@@ -88,6 +88,8 @@ FT_TEST(test_terrain_script_execute_uses_custom_runtime_when_selected)
     terrain_generation_config config;
     game_voxel_chunk chunk;
     ft_string script;
+    int32_t script_error;
+    uint32_t block_id;
 
     terrain_runtime_reset_for_tests();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer.initialize(new game_world()));
@@ -99,12 +101,24 @@ FT_TEST(test_terrain_script_execute_uses_custom_runtime_when_selected)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize(
         "terrain_set_sea_level(41);"
-        "terrain_set_biome_transitions(true, 23, 55);"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script, chunk,
-        0, 0, "custom-world", config));
+        "terrain_set_noise_scales(40, 10, 65);"
+        "terrain_set_biome_height(0, 40, 0, 3);"
+        "terrain_set_biome_blocks(0, 10, 2, 3);"
+        "terrain_set_biome_transitions(true, 23, 55);"
+        "terrain_generate_chunk();"
+        "terrain_write_generated_block(0, 255, 0, 13);"));
+    script_error = terrain_script_execute(bridge, script, chunk, 0, 0,
+        "custom-world", config);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script_error);
     FT_ASSERT_EQ(41, config.sea_level);
+    FT_ASSERT_EQ(40, config.large_noise_scale);
+    FT_ASSERT_EQ(10, config.detail_noise_scale);
+    FT_ASSERT_EQ(65, config.detail_noise_percent);
     FT_ASSERT_EQ(FT_TRUE, config.enable_biome_transitions);
     FT_ASSERT_EQ(23, config.biome_transition_noise_scale);
+    FT_ASSERT_EQ(FT_TRUE, chunk.has_generation_metadata());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 255, 0, &block_id));
+    FT_ASSERT_EQ(13U, block_id);
     terrain_runtime_reset_for_tests();
     return (1);
 }

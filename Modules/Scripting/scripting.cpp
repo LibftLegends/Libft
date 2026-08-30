@@ -790,7 +790,7 @@ int32_t scripting_engine::initialize() noexcept
     index = 0U;
     while (index < FT_SCRIPTING_MAX_NATIVES)
     {
-        this->_natives[index].name = ft_nullptr;
+        this->_natives[index].name[0] = '\0';
         this->_natives[index].callback = ft_nullptr;
         this->_natives[index].user_data = ft_nullptr;
         this->_natives[index].registered = FT_FALSE;
@@ -901,11 +901,14 @@ int32_t scripting_engine::register_native(const char *name,
     name_length = 0U;
     while (name[name_length] != '\0')
         name_length += 1U;
+    if (name_length >= FT_SCRIPTING_MAX_NATIVE_NAME_BYTES)
+        return (FT_ERR_OUT_OF_RANGE);
     if (this->find_native(name, name_length, &existing_id) == FT_ERR_SUCCESS)
         return (FT_ERR_ALREADY_EXISTS);
     if (this->_native_count >= FT_SCRIPTING_MAX_NATIVES)
         return (FT_ERR_FULL);
-    this->_natives[this->_native_count].name = name;
+    ft_memcpy(this->_natives[this->_native_count].name, name, name_length);
+    this->_natives[this->_native_count].name[name_length] = '\0';
     this->_natives[this->_native_count].callback = callback;
     this->_natives[this->_native_count].user_data = user_data;
     this->_natives[this->_native_count].registered = FT_TRUE;

@@ -14,6 +14,7 @@ static const uint32_t FT_SCRIPTING_MAX_OPERATIONS = 4096U;
 static const uint32_t FT_SCRIPTING_BYTECODE_VERSION = 1U;
 static const uint32_t FT_SCRIPTING_MAX_INSTRUCTIONS = 4096U;
 static const uint32_t FT_SCRIPTING_MAX_STRING_BYTES = 16384U;
+static const uint32_t FT_SCRIPTING_MAX_NATIVE_NAME_BYTES = 128U;
 
 enum scripting_value_type : uint8_t
 {
@@ -98,7 +99,7 @@ class scripting_engine
 #endif
         struct scripting_native_entry
         {
-            const char *name;
+            char name[FT_SCRIPTING_MAX_NATIVE_NAME_BYTES];
             scripting_native_callback callback;
             void *user_data;
             ft_bool registered;
