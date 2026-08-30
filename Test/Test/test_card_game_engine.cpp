@@ -128,3 +128,36 @@ FT_TEST(test_card_game_engine_resolves_configured_phase_event)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_creates_and_applies_authoritative_delta)
+{
+    card_game_engine source_engine;
+    card_game_engine destination_engine;
+    card_game_rules rules;
+    card_game_snapshot baseline;
+    card_game_delta delta;
+    uint32_t health;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 3U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 4U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.get_snapshot(&baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.modify_player_health(0U, -6));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.set_player_mana(0U, 9U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.create_delta(baseline, &delta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.apply_snapshot(baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.apply_delta(delta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.get_player_health(0U,
+        &health));
+    FT_ASSERT_EQ(14U, health);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, destination_engine.apply_delta(delta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.destroy());
+    return (1);
+}

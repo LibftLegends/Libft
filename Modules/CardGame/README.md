@@ -9,3 +9,11 @@ Register effects before registering cards. A card's `effect_id` selects the
 callback dispatched by `play_card`. Match state is queried through explicit
 status-returning methods and can be reconstructed from the rules and input
 commands by the game/network layer.
+
+`get_snapshot()` captures the authoritative mutable match state using fixed-
+width fields. `create_delta()` compares a previously captured snapshot with
+the current state and emits a player-scoped change mask plus base and target
+state sequences. A receiver must first apply the matching snapshot and then
+call `apply_delta()`; stale or mismatched deltas are rejected before any state
+is changed. Snapshots and deltas contain state only and never serialize effect
+function pointers or callback-owned data.

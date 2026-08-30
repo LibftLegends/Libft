@@ -49,7 +49,8 @@ card_game_engine::card_game_engine() noexcept
       _phases(), _phase_count(0U), _current_phase_id(0U), _events(),
       _event_count(0U), _event_sequence(0U), _card_count(0U),
       _effect_count(0U), _board(), _instances(), _board_count(), _health(),
-      _mana(), _turn_number(0U), _active_player(0U), _player_count(0U)
+      _mana(), _turn_number(0U), _active_player(0U), _player_count(0U),
+      _state_sequence(0U)
 {
     return ;
 }
@@ -76,6 +77,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_event_sequence = 0U;
     this->_turn_number = 0U;
     this->_active_player = 0U;
+    this->_state_sequence = 1U;
     this->_initialised_state = 2U;
     return (FT_ERR_SUCCESS);
 }
@@ -116,6 +118,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_turn_number = other._turn_number;
     this->_active_player = other._active_player;
     this->_player_count = other._player_count;
+    this->_state_sequence = other._state_sequence;
     this->_phase_count = other._phase_count;
     this->_current_phase_id = other._current_phase_id;
     this->_event_count = other._event_count;
@@ -232,6 +235,7 @@ int32_t card_game_engine::start_match(uint32_t player_count) noexcept
     this->_turn_number = 1U;
     this->_active_player = 0U;
     this->_player_count = player_count;
+    this->_state_sequence += 1U;
     this->_current_phase_id = 0U;
     if (this->_phase_count != 0U)
     {
@@ -249,6 +253,7 @@ int32_t card_game_engine::set_player_mana(uint32_t player_id,
         || mana > this->_rules.max_mana)
         return (FT_ERR_INVALID_ARGUMENT);
     this->_mana[player_id] = mana;
+    this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -265,6 +270,7 @@ int32_t card_game_engine::modify_player_health(uint32_t player_id,
     if (health > static_cast<int64_t>(UINT32_MAX))
         health = static_cast<int64_t>(UINT32_MAX);
     this->_health[player_id] = static_cast<uint32_t>(health);
+    this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -292,6 +298,7 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     this->_instances[player_id][instance_index].health = definition->health;
     this->_instances[player_id][instance_index].on_board = FT_TRUE;
     this->_board_count[player_id] += 1U;
+    this->_state_sequence += 1U;
     if (definition->effect_id < this->_effect_count
         && this->_effect_callbacks[definition->effect_id] != ft_nullptr)
     {
@@ -333,12 +340,17 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
 
 int32_t card_game_engine::end_turn() noexcept
 {
+    int32_t resolve_error;
+
     if (this->_initialised_state != 2U)
         return (FT_ERR_NOT_INITIALISED);
     this->_active_player = (this->_active_player + 1U)
         % this->_player_count;
     this->_turn_number += 1U;
-    return (this->resolve_events());
+    resolve_error = this->resolve_events();
+    if (resolve_error == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (resolve_error);
 }
 
 int32_t card_game_engine::emit_event(uint32_t event_type,
@@ -353,6 +365,7 @@ int32_t card_game_engine::emit_event(uint32_t event_type,
     this->_events[this->_event_count].target_instance = target_instance;
     this->_event_count += 1U;
     this->_event_sequence += 1U;
+    this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -504,5 +517,225 @@ int32_t card_game_engine::get_instance(uint32_t player_id, uint32_t index,
         || index >= this->_board_count[player_id])
         return (FT_ERR_INVALID_ARGUMENT);
     *instance = this->_instances[player_id][index];
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t card_game_validate_player_snapshot(
+    const card_game_player_snapshot &player, uint32_t player_id,
+    uint32_t max_board_spaces) noexcept
+{
+    uint32_t index;
+
+    if (player.board_count > max_board_spaces
+        || player.board_count > FT_CARD_GAME_MAX_CARDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < player.board_count)
+    {
+        if (player.board[index] >= player.board_count
+            || player.instances[index].on_board == FT_FALSE
+            || player.instances[index].owner_id != player_id)
+            return (FT_ERR_INVALID_ARGUMENT);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static void card_game_copy_player_snapshot(
+    card_game_player_snapshot *destination, const uint32_t *board,
+    const card_game_card_instance *instances, uint32_t board_count,
+    uint32_t health, uint32_t mana) noexcept
+{
+    ft_memcpy(destination->board, board,
+        sizeof(destination->board));
+    ft_memcpy(destination->instances, instances,
+        sizeof(destination->instances));
+    destination->board_count = board_count;
+    destination->health = health;
+    destination->mana = mana;
+    return ;
+}
+
+int32_t card_game_engine::get_snapshot(
+    card_game_snapshot *snapshot) const noexcept
+{
+    uint32_t player_id;
+
+    if (this->_initialised_state != 2U || snapshot == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_bzero(snapshot, sizeof(*snapshot));
+    snapshot->format_version = FT_CARD_GAME_STATE_FORMAT_VERSION;
+    snapshot->state_sequence = this->_state_sequence;
+    snapshot->player_count = this->_player_count;
+    snapshot->turn_number = this->_turn_number;
+    snapshot->active_player = this->_active_player;
+    snapshot->current_phase_id = this->_current_phase_id;
+    player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        card_game_copy_player_snapshot(&snapshot->players[player_id],
+            this->_board[player_id], this->_instances[player_id],
+            this->_board_count[player_id], this->_health[player_id],
+            this->_mana[player_id]);
+        player_id += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::apply_snapshot(
+    const card_game_snapshot &snapshot) noexcept
+{
+    uint32_t player_id;
+    uint32_t phase_index;
+    ft_bool phase_found;
+
+    if (this->_initialised_state != 2U
+        || snapshot.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
+        || snapshot.player_count > FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.player_count == 0U)
+    {
+        if (snapshot.turn_number != 0U || snapshot.active_player != 0U)
+            return (FT_ERR_INVALID_ARGUMENT);
+    }
+    else if (snapshot.active_player >= snapshot.player_count
+        || snapshot.turn_number == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.current_phase_id != 0U)
+    {
+        phase_found = FT_FALSE;
+        phase_index = 0U;
+        while (phase_index < this->_phase_count)
+        {
+            if (this->_phases[phase_index].phase_id
+                == snapshot.current_phase_id)
+                phase_found = FT_TRUE;
+            phase_index += 1U;
+        }
+        if (phase_found == FT_FALSE)
+            return (FT_ERR_NOT_FOUND);
+    }
+    player_id = 0U;
+    while (player_id < snapshot.player_count)
+    {
+        if (snapshot.players[player_id].mana > this->_rules.max_mana
+            || card_game_validate_player_snapshot(snapshot.players[player_id],
+                player_id, this->_rules.max_board_spaces) != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_ARGUMENT);
+        player_id += 1U;
+    }
+    this->_player_count = snapshot.player_count;
+    this->_turn_number = snapshot.turn_number;
+    this->_active_player = snapshot.active_player;
+    this->_current_phase_id = snapshot.current_phase_id;
+    player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        ft_memcpy(this->_board[player_id], snapshot.players[player_id].board,
+            sizeof(this->_board[player_id]));
+        ft_memcpy(this->_instances[player_id],
+            snapshot.players[player_id].instances,
+            sizeof(this->_instances[player_id]));
+        this->_board_count[player_id] = snapshot.players[player_id].board_count;
+        this->_health[player_id] = snapshot.players[player_id].health;
+        this->_mana[player_id] = snapshot.players[player_id].mana;
+        player_id += 1U;
+    }
+    this->_state_sequence = snapshot.state_sequence;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
+    card_game_delta *delta) const noexcept
+{
+    card_game_snapshot current_snapshot;
+    uint32_t player_id;
+
+    if (this->_initialised_state != 2U || delta == ft_nullptr
+        || baseline.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
+        || baseline.player_count != this->_player_count)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->get_snapshot(&current_snapshot) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    ft_bzero(delta, sizeof(*delta));
+    delta->format_version = FT_CARD_GAME_STATE_FORMAT_VERSION;
+    delta->base_state_sequence = baseline.state_sequence;
+    delta->target_state_sequence = current_snapshot.state_sequence;
+    delta->player_count = current_snapshot.player_count;
+    if (baseline.turn_number != current_snapshot.turn_number
+        || baseline.active_player != current_snapshot.active_player
+        || baseline.current_phase_id != current_snapshot.current_phase_id)
+        delta->global_state_changed = FT_TRUE;
+    delta->turn_number = current_snapshot.turn_number;
+    delta->active_player = current_snapshot.active_player;
+    delta->current_phase_id = current_snapshot.current_phase_id;
+    player_id = 0U;
+    while (player_id < current_snapshot.player_count)
+    {
+        if (ft_memcmp(&baseline.players[player_id],
+            &current_snapshot.players[player_id],
+            sizeof(card_game_player_snapshot)) != 0)
+        {
+            delta->changed_player_mask |= (static_cast<uint64_t>(1U)
+                << player_id);
+            delta->players[player_id] = current_snapshot.players[player_id];
+        }
+        player_id += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
+{
+    uint32_t player_id;
+
+    if (this->_initialised_state != 2U
+        || delta.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
+        || delta.base_state_sequence != this->_state_sequence
+        || delta.player_count != this->_player_count
+        || (delta.changed_player_mask >> FT_CARD_GAME_MAX_PLAYERS) != 0U
+        || (delta.global_state_changed != FT_FALSE
+            && delta.global_state_changed != FT_TRUE))
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.player_count != 0U
+        && (delta.active_player >= delta.player_count
+            || delta.turn_number == 0U))
+        return (FT_ERR_INVALID_ARGUMENT);
+    player_id = 0U;
+    while (player_id < delta.player_count)
+    {
+        if ((delta.changed_player_mask & (static_cast<uint64_t>(1U)
+                << player_id)) != 0U
+            && (delta.players[player_id].mana > this->_rules.max_mana
+                || card_game_validate_player_snapshot(delta.players[player_id],
+                    player_id, this->_rules.max_board_spaces)
+                    != FT_ERR_SUCCESS))
+            return (FT_ERR_INVALID_ARGUMENT);
+        player_id += 1U;
+    }
+    if (delta.global_state_changed != FT_FALSE)
+    {
+        this->_turn_number = delta.turn_number;
+        this->_active_player = delta.active_player;
+        this->_current_phase_id = delta.current_phase_id;
+    }
+    player_id = 0U;
+    while (player_id < delta.player_count)
+    {
+        if ((delta.changed_player_mask & (static_cast<uint64_t>(1U)
+                << player_id)) != 0U)
+        {
+            ft_memcpy(this->_board[player_id], delta.players[player_id].board,
+                sizeof(this->_board[player_id]));
+            ft_memcpy(this->_instances[player_id],
+                delta.players[player_id].instances,
+                sizeof(this->_instances[player_id]));
+            this->_board_count[player_id] = delta.players[player_id].board_count;
+            this->_health[player_id] = delta.players[player_id].health;
+            this->_mana[player_id] = delta.players[player_id].mana;
+        }
+        player_id += 1U;
+    }
+    this->_state_sequence = delta.target_state_sequence;
     return (FT_ERR_SUCCESS);
 }

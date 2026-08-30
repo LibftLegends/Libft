@@ -11,6 +11,7 @@ static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
 static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
+static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 
 enum card_game_card_type : uint8_t
 {
@@ -92,6 +93,40 @@ struct card_game_effect_context
     uint32_t turn_number;
 };
 
+struct card_game_player_snapshot
+{
+    uint32_t board_count;
+    uint32_t health;
+    uint32_t mana;
+    uint32_t board[FT_CARD_GAME_MAX_CARDS];
+    card_game_card_instance instances[FT_CARD_GAME_MAX_CARDS];
+};
+
+struct card_game_snapshot
+{
+    uint32_t format_version;
+    uint64_t state_sequence;
+    uint32_t player_count;
+    uint32_t turn_number;
+    uint32_t active_player;
+    uint32_t current_phase_id;
+    card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
+};
+
+struct card_game_delta
+{
+    uint32_t format_version;
+    uint64_t base_state_sequence;
+    uint64_t target_state_sequence;
+    uint64_t changed_player_mask;
+    ft_bool global_state_changed;
+    uint32_t player_count;
+    uint32_t turn_number;
+    uint32_t active_player;
+    uint32_t current_phase_id;
+    card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
+};
+
 class card_game_operation_buffer
 {
     private:
@@ -144,6 +179,7 @@ class card_game_engine
         uint32_t _turn_number;
         uint32_t _active_player;
         uint32_t _player_count;
+        uint64_t _state_sequence;
 
         card_game_engine(const card_game_engine &other) = delete;
         card_game_engine(card_game_engine &&other) = delete;
@@ -181,6 +217,11 @@ class card_game_engine
         int32_t get_turn(uint32_t *turn_number, uint32_t *active_player) const noexcept;
         int32_t get_instance(uint32_t player_id, uint32_t index,
             card_game_card_instance *instance) const noexcept;
+        int32_t get_snapshot(card_game_snapshot *snapshot) const noexcept;
+        int32_t apply_snapshot(const card_game_snapshot &snapshot) noexcept;
+        int32_t create_delta(const card_game_snapshot &baseline,
+            card_game_delta *delta) const noexcept;
+        int32_t apply_delta(const card_game_delta &delta) noexcept;
 };
 
 #endif
