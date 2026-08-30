@@ -279,6 +279,10 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
 {
     card_game_card_definition *definition;
     uint32_t instance_index;
+    card_game_snapshot before_state;
+    int32_t snapshot_error;
+    int32_t restore_error;
+    int32_t effect_error;
 
     if (this->_initialised_state != 2U || player_id != this->_active_player)
         return (FT_ERR_PERMISSION_DENIED);
@@ -289,6 +293,9 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         return (FT_ERR_NOT_FOUND);
     if (this->_mana[player_id] < definition->cost)
         return (FT_ERR_OUT_OF_RANGE);
+    snapshot_error = this->get_snapshot(&before_state);
+    if (snapshot_error != FT_ERR_SUCCESS)
+        return (snapshot_error);
     this->_mana[player_id] -= definition->cost;
     instance_index = this->_board_count[player_id];
     this->_board[player_id][instance_index] = instance_index;
@@ -306,8 +313,6 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         card_game_effect_context effect_context;
         card_game_operation operation;
         uint32_t operation_index;
-        int32_t effect_error;
-
         effect_context.event_type = 0U;
         effect_context.source_instance = instance_index;
         effect_context.target_instance = target_instance;
@@ -317,24 +322,48 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
             effect_context, operations,
             this->_effect_user_data[definition->effect_id]);
         if (effect_error != FT_ERR_SUCCESS)
+        {
+            restore_error = this->apply_snapshot(before_state);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
             return (effect_error);
+        }
         operation_index = 0U;
         while (operation_index < operations.size())
         {
             if (operations.get(operation_index, &operation)
                 != FT_ERR_SUCCESS)
+            {
+                restore_error = this->apply_snapshot(before_state);
+                if (restore_error != FT_ERR_SUCCESS)
+                    return (restore_error);
                 return (FT_ERR_INVALID_STATE);
+            }
             effect_error = this->apply_operation(operation);
             if (effect_error != FT_ERR_SUCCESS)
+            {
+                restore_error = this->apply_snapshot(before_state);
+                if (restore_error != FT_ERR_SUCCESS)
+                    return (restore_error);
                 return (effect_error);
+            }
             operation_index += 1U;
         }
         return (FT_ERR_SUCCESS);
     }
     if (definition->effect_id < this->_effect_count
         && this->_effects[definition->effect_id] != ft_nullptr)
-        return (this->_effects[definition->effect_id](*this, instance_index,
-            target_instance, context));
+    {
+        effect_error = this->_effects[definition->effect_id](*this,
+            instance_index, target_instance, context);
+        if (effect_error != FT_ERR_SUCCESS)
+        {
+            restore_error = this->apply_snapshot(before_state);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (effect_error);
+        }
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -404,7 +433,14 @@ int32_t card_game_engine::resolve_events() noexcept
     card_game_effect_context context;
     card_game_operation operation;
     int32_t error_code;
+    int32_t snapshot_error;
+    int32_t restore_error;
+    card_game_snapshot before_state;
+    uint32_t operation_index;
 
+    snapshot_error = this->get_snapshot(&before_state);
+    if (snapshot_error != FT_ERR_SUCCESS)
+        return (snapshot_error);
     event_index = 0U;
     while (event_index < this->_event_count)
     {
@@ -419,20 +455,37 @@ int32_t card_game_engine::resolve_events() noexcept
             if (this->_effect_callbacks[effect_index] != ft_nullptr
                 && this->_effect_event_types[effect_index] == context.event_type)
             {
-                (void)operations.clear();
+                error_code = operations.clear();
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
                 error_code = this->_effect_callbacks[effect_index](*this,
                     context, operations, this->_effect_user_data[effect_index]);
                 if (error_code != FT_ERR_SUCCESS)
+                {
+                    restore_error = this->apply_snapshot(before_state);
+                    if (restore_error != FT_ERR_SUCCESS)
+                        return (restore_error);
                     return (error_code);
-                uint32_t operation_index = 0U;
+                }
+                operation_index = 0U;
                 while (operation_index < operations.size())
                 {
                     if (operations.get(operation_index, &operation)
                         != FT_ERR_SUCCESS)
+                    {
+                        restore_error = this->apply_snapshot(before_state);
+                        if (restore_error != FT_ERR_SUCCESS)
+                            return (restore_error);
                         return (FT_ERR_INVALID_STATE);
+                    }
                     error_code = this->apply_operation(operation);
                     if (error_code != FT_ERR_SUCCESS)
+                    {
+                        restore_error = this->apply_snapshot(before_state);
+                        if (restore_error != FT_ERR_SUCCESS)
+                            return (restore_error);
                         return (error_code);
+                    }
                     operation_index += 1U;
                 }
             }
@@ -570,6 +623,9 @@ int32_t card_game_engine::get_snapshot(
     snapshot->turn_number = this->_turn_number;
     snapshot->active_player = this->_active_player;
     snapshot->current_phase_id = this->_current_phase_id;
+    snapshot->event_count = this->_event_count;
+    snapshot->event_sequence = this->_event_sequence;
+    ft_memcpy(snapshot->events, this->_events, sizeof(snapshot->events));
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
@@ -592,6 +648,8 @@ int32_t card_game_engine::apply_snapshot(
     if (this->_initialised_state != 2U
         || snapshot.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
         || snapshot.player_count > FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.event_count > FT_CARD_GAME_MAX_EVENTS)
         return (FT_ERR_INVALID_ARGUMENT);
     if (snapshot.player_count == 0U)
     {
@@ -628,6 +686,9 @@ int32_t card_game_engine::apply_snapshot(
     this->_turn_number = snapshot.turn_number;
     this->_active_player = snapshot.active_player;
     this->_current_phase_id = snapshot.current_phase_id;
+    this->_event_count = snapshot.event_count;
+    this->_event_sequence = snapshot.event_sequence;
+    ft_memcpy(this->_events, snapshot.events, sizeof(this->_events));
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
@@ -669,6 +730,14 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     delta->turn_number = current_snapshot.turn_number;
     delta->active_player = current_snapshot.active_player;
     delta->current_phase_id = current_snapshot.current_phase_id;
+    delta->event_count = current_snapshot.event_count;
+    delta->event_sequence = current_snapshot.event_sequence;
+    ft_memcpy(delta->events, current_snapshot.events, sizeof(delta->events));
+    if (baseline.event_count != current_snapshot.event_count
+        || baseline.event_sequence != current_snapshot.event_sequence
+        || ft_memcmp(baseline.events, current_snapshot.events,
+            sizeof(baseline.events)) != 0)
+        delta->global_state_changed = FT_TRUE;
     player_id = 0U;
     while (player_id < current_snapshot.player_count)
     {
@@ -693,6 +762,7 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
         || delta.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
         || delta.base_state_sequence != this->_state_sequence
         || delta.player_count != this->_player_count
+        || delta.event_count > FT_CARD_GAME_MAX_EVENTS
         || (delta.changed_player_mask >> FT_CARD_GAME_MAX_PLAYERS) != 0U
         || (delta.global_state_changed != FT_FALSE
             && delta.global_state_changed != FT_TRUE))
@@ -718,6 +788,9 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
         this->_turn_number = delta.turn_number;
         this->_active_player = delta.active_player;
         this->_current_phase_id = delta.current_phase_id;
+        this->_event_count = delta.event_count;
+        this->_event_sequence = delta.event_sequence;
+        ft_memcpy(this->_events, delta.events, sizeof(this->_events));
     }
     player_id = 0U;
     while (player_id < delta.player_count)

@@ -110,6 +110,9 @@ struct card_game_snapshot
     uint32_t turn_number;
     uint32_t active_player;
     uint32_t current_phase_id;
+    uint32_t event_count;
+    uint64_t event_sequence;
+    card_game_event events[FT_CARD_GAME_MAX_EVENTS];
     card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
 };
 
@@ -124,6 +127,9 @@ struct card_game_delta
     uint32_t turn_number;
     uint32_t active_player;
     uint32_t current_phase_id;
+    uint32_t event_count;
+    uint64_t event_sequence;
+    card_game_event events[FT_CARD_GAME_MAX_EVENTS];
     card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
 };
 

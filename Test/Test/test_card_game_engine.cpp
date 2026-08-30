@@ -28,6 +28,17 @@ static int32_t card_game_test_event_effect(const card_game_engine &engine,
     return (operations.append(operation));
 }
 
+static int32_t card_game_test_failing_effect(const card_game_engine &engine,
+    const card_game_effect_context &context,
+    card_game_operation_buffer &operations, void *user_data) noexcept
+{
+    (void)engine;
+    (void)context;
+    (void)operations;
+    (void)user_data;
+    return (FT_ERR_PERMISSION_DENIED);
+}
+
 FT_TEST(test_card_game_engine_dispatches_configured_effect)
 {
     card_game_engine engine;
@@ -159,5 +170,41 @@ FT_TEST(test_card_game_engine_creates_and_applies_authoritative_delta)
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, destination_engine.apply_delta(delta));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_rolls_back_card_when_effect_fails)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    uint32_t effect_id;
+    uint32_t board_count;
+    uint32_t health;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 2U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 10U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_effect_callback(
+        card_game_test_failing_effect, ft_nullptr, 0U, &effect_id));
+    definition.card_id = 91U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 2U;
+    definition.attack = 3;
+    definition.health = 4;
+    definition.effect_id = effect_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.play_card(0U, 91U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(0U, &board_count));
+    FT_ASSERT_EQ(0U, board_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(0U, &health));
+    FT_ASSERT_EQ(20U, health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
