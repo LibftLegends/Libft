@@ -37,6 +37,38 @@ static uint64_t analytics_percentile_value(const uint64_t *samples,
     return (sorted_samples[target_index]);
 }
 
+static uint64_t analytics_frame_percentile_value(const uint64_t *samples,
+    uint32_t sample_count, uint32_t percentile) noexcept
+{
+    uint64_t sorted_samples[FT_ANALYTICS_MAX_FRAME_SAMPLES];
+    uint32_t index;
+    uint32_t target_index;
+    uint64_t value;
+
+    index = 0U;
+    while (index < sample_count)
+    {
+        sorted_samples[index] = samples[index];
+        index += 1U;
+    }
+    index = 1U;
+    while (index < sample_count)
+    {
+        value = sorted_samples[index];
+        target_index = index;
+        while (target_index > 0U
+            && sorted_samples[target_index - 1U] > value)
+        {
+            sorted_samples[target_index] = sorted_samples[target_index - 1U];
+            target_index -= 1U;
+        }
+        sorted_samples[target_index] = value;
+        index += 1U;
+    }
+    target_index = (sample_count - 1U) * percentile / 100U;
+    return (sorted_samples[target_index]);
+}
+
 struct analytics_scope_frame
 {
     analytics_session *session;
@@ -93,7 +125,9 @@ analytics_session::analytics_session() noexcept
     : _initialised_state(0U), _enabled(FT_FALSE), _mutex(), _regions(),
       _region_count(0U), _export_callback(ft_nullptr),
       _export_user_data(ft_nullptr), _trace_callback(ft_nullptr),
-      _trace_user_data(ft_nullptr), _dropped_scope_count(0U)
+      _trace_user_data(ft_nullptr), _dropped_scope_count(0U), _frame_samples(),
+      _frame_sample_count(0U), _frame_sample_cursor(0U), _latest_frame(),
+      _has_latest_frame(FT_FALSE)
 {
     return ;
 }
@@ -128,6 +162,10 @@ int32_t analytics_session::initialize() noexcept
     this->_trace_callback = ft_nullptr;
     this->_trace_user_data = ft_nullptr;
     this->_dropped_scope_count = 0U;
+    this->_frame_sample_count = 0U;
+    this->_frame_sample_cursor = 0U;
+    this->_latest_frame = {};
+    this->_has_latest_frame = FT_FALSE;
     this->_enabled.store(FT_TRUE, std::memory_order_release);
     this->_initialised_state = 2U;
     return (FT_ERR_SUCCESS);
@@ -139,6 +177,7 @@ int32_t analytics_session::destroy() noexcept
     if (this->_initialised_state != 2U)
         return (FT_ERR_SUCCESS);
     this->_enabled.store(FT_FALSE, std::memory_order_release);
+    this->_has_latest_frame = FT_FALSE;
     this->_initialised_state = 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -284,18 +323,57 @@ int32_t analytics_session::get_region_percentile(uint32_t region_id,
 int32_t analytics_session::publish_frame(
     const analytics_frame_statistics &frame) noexcept
 {
+    analytics_frame_statistics enriched_frame;
     analytics_export_callback callback;
     void *user_data;
+    uint64_t frame_total;
+    uint32_t index;
 
     {
         std::lock_guard<std::mutex> lock(this->_mutex);
         if (this->_initialised_state != 2U)
             return (FT_ERR_NOT_INITIALISED);
+        this->_frame_samples[this->_frame_sample_cursor] = frame.duration_nanoseconds;
+        this->_frame_sample_cursor = (this->_frame_sample_cursor + 1U)
+            % FT_ANALYTICS_MAX_FRAME_SAMPLES;
+        if (this->_frame_sample_count < FT_ANALYTICS_MAX_FRAME_SAMPLES)
+            this->_frame_sample_count += 1U;
+        frame_total = 0U;
+        index = 0U;
+        while (index < this->_frame_sample_count)
+        {
+            frame_total += this->_frame_samples[index];
+            index += 1U;
+        }
+        enriched_frame = frame;
+        enriched_frame.mean_duration_nanoseconds = frame_total
+            / static_cast<uint64_t>(this->_frame_sample_count);
+        enriched_frame.percentile_95_nanoseconds =
+            analytics_frame_percentile_value(this->_frame_samples,
+                this->_frame_sample_count, 95U);
+        enriched_frame.percentile_99_nanoseconds =
+            analytics_frame_percentile_value(this->_frame_samples,
+                this->_frame_sample_count, 99U);
+        this->_latest_frame = enriched_frame;
+        this->_has_latest_frame = FT_TRUE;
         callback = this->_export_callback;
         user_data = this->_export_user_data;
     }
     if (callback != ft_nullptr)
-        callback(frame, user_data);
+        callback(enriched_frame, user_data);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_session::get_latest_frame(
+    analytics_frame_statistics *frame) const noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+
+    if (this->_initialised_state != 2U || frame == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_has_latest_frame == FT_FALSE)
+        return (FT_ERR_EMPTY);
+    *frame = this->_latest_frame;
     return (FT_ERR_SUCCESS);
 }
 

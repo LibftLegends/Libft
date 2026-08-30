@@ -11,6 +11,7 @@
 static const uint32_t FT_ANALYTICS_MAX_REGIONS = 1024U;
 static const uint32_t FT_ANALYTICS_MAX_SCOPE_DEPTH = 64U;
 static const uint32_t FT_ANALYTICS_MAX_SAMPLES = 32U;
+static const uint32_t FT_ANALYTICS_MAX_FRAME_SAMPLES = 120U;
 static const uint32_t FT_ANALYTICS_MAX_THREAD_EVENTS = 128U;
 
 struct analytics_region_statistics
@@ -29,6 +30,9 @@ struct analytics_frame_statistics
 {
     uint64_t frame_number;
     uint64_t duration_nanoseconds;
+    uint64_t mean_duration_nanoseconds;
+    uint64_t percentile_95_nanoseconds;
+    uint64_t percentile_99_nanoseconds;
     uint64_t completed_scope_count;
     uint64_t dropped_scope_count;
 };
@@ -84,6 +88,11 @@ class analytics_session
         analytics_trace_callback _trace_callback;
         void *_trace_user_data;
         uint64_t _dropped_scope_count;
+        uint64_t _frame_samples[FT_ANALYTICS_MAX_FRAME_SAMPLES];
+        uint32_t _frame_sample_count;
+        uint32_t _frame_sample_cursor;
+        analytics_frame_statistics _latest_frame;
+        ft_bool _has_latest_frame;
 
         analytics_session(const analytics_session &other) = delete;
         analytics_session(analytics_session &&other) = delete;
@@ -112,6 +121,7 @@ class analytics_session
         int32_t get_region_percentile(uint32_t region_id, uint32_t percentile,
             uint64_t *nanoseconds) const noexcept;
         int32_t publish_frame(const analytics_frame_statistics &frame) noexcept;
+        int32_t get_latest_frame(analytics_frame_statistics *frame) const noexcept;
         int32_t publish_trace(const analytics_trace_event &event) noexcept;
         uint64_t get_dropped_scope_count() const noexcept;
 };

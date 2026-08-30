@@ -148,3 +148,33 @@ FT_TEST(test_analytics_worker_frame_flushes_to_shared_session)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
+
+FT_TEST(test_analytics_session_retains_latest_frame_and_rolling_statistics)
+{
+    analytics_session session;
+    analytics_frame_statistics first_frame;
+    analytics_frame_statistics second_frame;
+    analytics_frame_statistics latest_frame;
+
+    first_frame.frame_number = 1U;
+    first_frame.duration_nanoseconds = 10U;
+    first_frame.mean_duration_nanoseconds = 0U;
+    first_frame.percentile_95_nanoseconds = 0U;
+    first_frame.percentile_99_nanoseconds = 0U;
+    first_frame.completed_scope_count = 0U;
+    first_frame.dropped_scope_count = 0U;
+    second_frame = first_frame;
+    second_frame.frame_number = 2U;
+    second_frame.duration_nanoseconds = 30U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_EMPTY, session.get_latest_frame(&latest_frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(first_frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(second_frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&latest_frame));
+    FT_ASSERT_EQ(2U, latest_frame.frame_number);
+    FT_ASSERT_EQ(20U, latest_frame.mean_duration_nanoseconds);
+    FT_ASSERT_EQ(10U, latest_frame.percentile_95_nanoseconds);
+    FT_ASSERT_EQ(10U, latest_frame.percentile_99_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
