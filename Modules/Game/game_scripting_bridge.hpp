@@ -119,9 +119,6 @@ class game_script_bridge
             const scripting_call_context *call_context,
             const scripting_value *arguments, uint32_t argument_count,
             scripting_value *result, void *user_data) noexcept;
-        int32_t execute_custom_with_user_data(const ft_string &script,
-            game_state *state, void *user_data) noexcept;
-
     public:
         game_script_bridge() noexcept;
         game_script_bridge(const game_script_bridge &other) noexcept = delete;
@@ -149,6 +146,8 @@ class game_script_bridge
 
         int32_t execute(const ft_string &script, game_state &state) noexcept;
         int32_t execute_with_user_data(const ft_string &script,
+            game_state *state, void *user_data) noexcept;
+        int32_t execute_custom_with_user_data(const ft_string &script,
             game_state *state, void *user_data) noexcept;
         int32_t execute_lua(const ft_string &script, game_state &state) noexcept;
         int32_t execute_lua_with_user_data(const ft_string &script,

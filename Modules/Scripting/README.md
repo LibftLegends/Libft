@@ -40,3 +40,10 @@ The current implementation is single-owner per engine instance. Immutable
 future compiled modules may be shared, but mutable execution state must remain
 isolated by caller-owned instances. Production code should include
 `scripting.hpp` and must not depend on implementation details.
+
+The Voxel terrain bridge executes terrain configuration scripts through this
+custom runtime, including legacy line-oriented files after normalizing line
+boundaries to statement separators. This keeps existing configuration assets
+usable while removing Lua from terrain execution. The Game bridge still has an
+explicit Lua compatibility path during migration; new production integrations
+must use the custom runtime directly.

@@ -1454,6 +1454,15 @@ include only the individual headers they require.
 12. Remove `Modules/Lua`, vendored Lua, Lua build manifests, Lua symbols,
     compatibility shims, and obsolete tests/documentation.
 
+The terrain migration may use a compatibility normalizer for existing
+line-oriented configuration assets, but normalized source must still be
+compiled and executed by `Modules/Scripting`; it must never fall back to Lua.
+Add a parity fixture covering the old newline-separated form and the canonical
+semicolon-separated form, and require identical resolved terrain configuration,
+generated chunk bytes, diagnostics, and operation-budget behavior. Keep the
+Game Lua bridge only for rows still explicitly listed in the migration
+inventory; new Game/Voxel callers must select the custom runtime directly.
+
 Each phase must be independently reviewable. Do not combine interpreter
 construction, bridge migration, and Lua deletion into one change.
 

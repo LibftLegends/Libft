@@ -18,6 +18,40 @@ struct terrain_script_execution_context
     int32_t world_block_origin_z;
 };
 
+static int32_t terrain_script_normalize_custom_source(
+    const ft_string &script, ft_string &normalized) noexcept
+{
+    const char *data;
+    ft_size_t index;
+    int32_t error_code;
+
+    error_code = normalized.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    data = script.c_str();
+    index = 0U;
+    while (index < script.size())
+    {
+        if (data[index] == '\n' || data[index] == '\r')
+        {
+            if (data[index] == '\n' && index > 0U
+                && data[index - 1U] == '\r')
+            {
+                index += 1U;
+                continue ;
+            }
+            if (index == 0U || data[index - 1U] != ';')
+                error_code = normalized.append(';');
+        }
+        else
+            error_code = normalized.append(data[index]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 static terrain_script_execution_context *terrain_script_get_context(
     game_script_context &context) noexcept
 {
@@ -457,6 +491,8 @@ int32_t terrain_script_execute(game_script_bridge &bridge,
     const char *seed_string, terrain_generation_config &config) noexcept
 {
     terrain_script_execution_context terrain_context;
+    ft_string normalized_script;
+    int32_t normalize_error;
 
     if (seed_string == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -465,11 +501,12 @@ int32_t terrain_script_execute(game_script_bridge &bridge,
     terrain_context.seed_string = seed_string;
     terrain_context.world_block_origin_x = world_block_origin_x;
     terrain_context.world_block_origin_z = world_block_origin_z;
-    if (bridge.get_language() == "custom")
-        return (bridge.execute_with_user_data(script, ft_nullptr,
-            &terrain_context));
-    return (bridge.execute_lua_with_user_data(script, ft_nullptr,
-        &terrain_context));
+    normalize_error = terrain_script_normalize_custom_source(script,
+        normalized_script);
+    if (normalize_error != FT_ERR_SUCCESS)
+        return (normalize_error);
+    return (bridge.execute_custom_with_user_data(normalized_script,
+        ft_nullptr, &terrain_context));
 }
 
 #endif
