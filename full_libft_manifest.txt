@@ -7,6 +7,8 @@ Modules/API/api_request_signing.hpp
 Modules/API/promise.hpp
 Modules/API/tls_client.hpp
 Modules/Advanced/advanced.hpp
+Modules/Analytics/analytics.hpp
+Modules/Analytics/analytics_instrumentation.hpp
 Modules/Basic/basic.hpp
 Modules/Basic/class_nullptr.hpp
 Modules/Basic/config.hpp
@@ -31,6 +33,7 @@ Modules/CPP_class/class_string.hpp
 Modules/CPP_class/class_stringbuf.hpp
 Modules/CPP_class/thread_pool.hpp
 Modules/CSV/csv.hpp
+Modules/CardGame/card_game.hpp
 Modules/Compatebility/compatebility_cma_platform.hpp
 Modules/Compatebility/compatebility_cross_process.hpp
 Modules/Compatebility/compatebility_dumb_controls_internal.hpp
@@ -182,6 +185,7 @@ Modules/ReadLine/readline.hpp
 Modules/ReadLine/readline_internal.hpp
 Modules/SCMA/SCMA.hpp
 Modules/SCMA/scma_internal.hpp
+Modules/Scripting/scripting.hpp
 Modules/Storage/kv_store.hpp
 Modules/System_utils/system_utils.hpp
 Modules/System_utils/test_system_utils_runner.hpp
