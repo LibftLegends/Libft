@@ -47,3 +47,8 @@ Records include the command, rules hash, and state hashes before and after
 execution for auditing or deterministic replay. The log returns `FT_ERR_FULL`
 once its fixed capacity is reached, so accepted history is never silently
 discarded.
+
+`replay_command_records()` executes a validated record sequence on a fresh
+started match. It checks the configured rules hash and state hash before every
+command, routes execution through `submit_command()`, and checks the recorded
+post-command hash. A mismatch stops replay with `FT_ERR_INVALID_STATE`.
