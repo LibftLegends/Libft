@@ -282,11 +282,10 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
     if (parser->operation_count > parser->engine->get_operation_limit())
         return (scripting_fail(parser, FT_ERR_FULL, start,
             parser->offset - start));
-    (void)native_id;
     int32_t callback_error;
 
-    callback_error = parser->engine->invoke_native(parser->source + start,
-        native_name_length, arguments, argument_count, result,
+    callback_error = parser->engine->invoke_native_id(native_id, arguments,
+        argument_count, result,
         parser->operation_count);
     if (callback_error != FT_ERR_SUCCESS)
         return (scripting_fail(parser, callback_error, start,
@@ -553,20 +552,17 @@ int32_t scripting_engine::set_operation_limit(uint32_t operation_limit) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t scripting_engine::invoke_native(const char *name, uint32_t name_length,
+int32_t scripting_engine::invoke_native_id(uint32_t native_id,
     const scripting_value *arguments, uint32_t argument_count,
     scripting_value *result, uint32_t operation_count) noexcept
 {
-    uint32_t native_id;
     scripting_call_context context;
-    int32_t find_error;
 
     if (arguments == ft_nullptr || result == ft_nullptr
-        || argument_count > FT_SCRIPTING_MAX_ARGUMENTS)
+        || argument_count > FT_SCRIPTING_MAX_ARGUMENTS
+        || native_id >= this->_native_count
+        || this->_natives[native_id].registered == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
-    find_error = this->find_native(name, name_length, &native_id);
-    if (find_error != FT_ERR_SUCCESS)
-        return (find_error);
     context.engine = this;
     context.native_id = native_id;
     context.operation_count = operation_count;

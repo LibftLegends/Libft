@@ -89,7 +89,7 @@ class scripting_engine
         int32_t find_native(const char *name, uint32_t name_length,
             uint32_t *native_id) const noexcept;
         uint32_t get_operation_limit() const noexcept;
-        int32_t invoke_native(const char *name, uint32_t name_length,
+        int32_t invoke_native_id(uint32_t native_id,
             const scripting_value *arguments, uint32_t argument_count,
             scripting_value *result, uint32_t operation_count) noexcept;
 };
