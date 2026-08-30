@@ -1,5 +1,6 @@
 #include "analytics.hpp"
 #include <chrono>
+#include <thread>
 
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -44,6 +45,14 @@ struct analytics_scope_frame
     uint64_t child_nanoseconds;
 };
 
+struct analytics_pending_event
+{
+    uint32_t region_id;
+    uint64_t start_nanoseconds;
+    uint64_t inclusive_nanoseconds;
+    uint64_t exclusive_nanoseconds;
+};
+
 struct analytics_thread_state
 {
     analytics_session *session;
@@ -52,12 +61,22 @@ struct analytics_thread_state
     uint64_t completed_scope_count;
     uint32_t scope_depth;
     analytics_scope_frame scopes[FT_ANALYTICS_MAX_SCOPE_DEPTH];
+    uint32_t pending_event_count;
+    analytics_pending_event pending_events[FT_ANALYTICS_MAX_THREAD_EVENTS];
 };
 
 static thread_local analytics_thread_state g_analytics_thread_state =
 {
-    ft_nullptr, 0U, 0U, 0U, 0U, {}
+    ft_nullptr, 0U, 0U, 0U, 0U, {}, 0U, {}
 };
+
+static uint32_t analytics_thread_id(void) noexcept
+{
+    std::size_t value;
+
+    value = std::hash<std::thread::id>()(std::this_thread::get_id());
+    return (static_cast<uint32_t>(value));
+}
 
 static uint64_t analytics_clock_now(void)
 {
@@ -73,7 +92,8 @@ static uint64_t analytics_clock_now(void)
 analytics_session::analytics_session() noexcept
     : _initialised_state(0U), _enabled(FT_FALSE), _mutex(), _regions(),
       _region_count(0U), _export_callback(ft_nullptr),
-      _export_user_data(ft_nullptr), _dropped_scope_count(0U)
+      _export_user_data(ft_nullptr), _trace_callback(ft_nullptr),
+      _trace_user_data(ft_nullptr), _dropped_scope_count(0U)
 {
     return ;
 }
@@ -105,6 +125,8 @@ int32_t analytics_session::initialize() noexcept
     this->_region_count = 0U;
     this->_export_callback = ft_nullptr;
     this->_export_user_data = ft_nullptr;
+    this->_trace_callback = ft_nullptr;
+    this->_trace_user_data = ft_nullptr;
     this->_dropped_scope_count = 0U;
     this->_enabled.store(FT_TRUE, std::memory_order_release);
     this->_initialised_state = 2U;
@@ -153,6 +175,18 @@ int32_t analytics_session::set_export_callback(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t analytics_session::set_trace_callback(analytics_trace_callback callback,
+    void *user_data) noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    this->_trace_callback = callback;
+    this->_trace_user_data = user_data;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t analytics_session::set_enabled(ft_bool enabled) noexcept
 {
     if (this->_initialised_state != 2U)
@@ -192,6 +226,16 @@ int32_t analytics_session::record_scope(uint32_t region_id,
         % FT_ANALYTICS_MAX_SAMPLES;
     if (this->_regions[region_id].sample_count < FT_ANALYTICS_MAX_SAMPLES)
         this->_regions[region_id].sample_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_session::note_dropped_scope() noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    this->_dropped_scope_count += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -255,6 +299,24 @@ int32_t analytics_session::publish_frame(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t analytics_session::publish_trace(
+    const analytics_trace_event &event) noexcept
+{
+    analytics_trace_callback callback;
+    void *user_data;
+
+    {
+        std::lock_guard<std::mutex> lock(this->_mutex);
+        if (this->_initialised_state != 2U)
+            return (FT_ERR_NOT_INITIALISED);
+        callback = this->_trace_callback;
+        user_data = this->_trace_user_data;
+    }
+    if (callback != ft_nullptr)
+        callback(event, user_data);
+    return (FT_ERR_SUCCESS);
+}
+
 uint64_t analytics_session::get_dropped_scope_count() const noexcept
 {
     std::lock_guard<std::mutex> lock(this->_mutex);
@@ -282,6 +344,7 @@ int32_t analytics_begin_frame(analytics_session *session,
     g_analytics_thread_state.frame_start_nanoseconds = analytics_clock_now();
     g_analytics_thread_state.completed_scope_count = 0U;
     g_analytics_thread_state.scope_depth = 0U;
+    g_analytics_thread_state.pending_event_count = 0U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -289,17 +352,38 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
 {
     analytics_frame_statistics frame;
     uint64_t end_nanoseconds;
+    uint32_t event_index;
+    analytics_trace_event trace_event;
 
     if (session == ft_nullptr || g_analytics_thread_state.session != session
         || g_analytics_thread_state.scope_depth != 0U)
         return (FT_ERR_INVALID_STATE);
     end_nanoseconds = analytics_clock_now();
+    event_index = 0U;
+    while (event_index < g_analytics_thread_state.pending_event_count)
+    {
+        analytics_pending_event &pending_event =
+            g_analytics_thread_state.pending_events[event_index];
+        (void)session->record_scope(pending_event.region_id,
+            pending_event.inclusive_nanoseconds,
+            pending_event.exclusive_nanoseconds);
+        trace_event.frame_number = g_analytics_thread_state.frame_number;
+        trace_event.flow_id = 0U;
+        trace_event.region_id = pending_event.region_id;
+        trace_event.start_nanoseconds = pending_event.start_nanoseconds;
+        trace_event.duration_nanoseconds = pending_event.inclusive_nanoseconds;
+        trace_event.exclusive_nanoseconds = pending_event.exclusive_nanoseconds;
+        trace_event.thread_id = analytics_thread_id();
+        (void)session->publish_trace(trace_event);
+        event_index += 1U;
+    }
     frame.frame_number = g_analytics_thread_state.frame_number;
     frame.duration_nanoseconds = end_nanoseconds
         - g_analytics_thread_state.frame_start_nanoseconds;
     frame.completed_scope_count = g_analytics_thread_state.completed_scope_count;
     frame.dropped_scope_count = session->get_dropped_scope_count();
     g_analytics_thread_state.session = ft_nullptr;
+    g_analytics_thread_state.pending_event_count = 0U;
     return (session->publish_frame(frame));
 }
 
@@ -340,9 +424,56 @@ int32_t analytics_end_scope(analytics_session *session) noexcept
         g_analytics_thread_state.scopes[
             g_analytics_thread_state.scope_depth - 1U].child_nanoseconds
             += inclusive_nanoseconds;
-    if (session->record_scope(scope.region_id, inclusive_nanoseconds,
-            exclusive_nanoseconds) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
+    if (g_analytics_thread_state.pending_event_count
+        >= FT_ANALYTICS_MAX_THREAD_EVENTS)
+        (void)session->note_dropped_scope();
+    else
+    {
+        analytics_pending_event &pending_event =
+            g_analytics_thread_state.pending_events[
+                g_analytics_thread_state.pending_event_count];
+        pending_event.region_id = scope.region_id;
+        pending_event.start_nanoseconds = scope.start_nanoseconds;
+        pending_event.inclusive_nanoseconds = inclusive_nanoseconds;
+        pending_event.exclusive_nanoseconds = exclusive_nanoseconds;
+        g_analytics_thread_state.pending_event_count += 1U;
+    }
     g_analytics_thread_state.completed_scope_count += 1U;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_begin_flow(analytics_session *session, uint64_t flow_id,
+    uint32_t region_id, analytics_flow_token *token) noexcept
+{
+    if (session == ft_nullptr || token == ft_nullptr || flow_id == 0U
+        || session->is_enabled() == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    token->session = session;
+    token->flow_id = flow_id;
+    token->region_id = region_id;
+    token->start_nanoseconds = analytics_clock_now();
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_end_flow(const analytics_flow_token &token) noexcept
+{
+    analytics_trace_event event;
+    uint64_t end_nanoseconds;
+
+    if (token.session == ft_nullptr || token.flow_id == 0U
+        || token.session->is_enabled() == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    end_nanoseconds = analytics_clock_now();
+    if (token.session->record_scope(token.region_id,
+        end_nanoseconds - token.start_nanoseconds,
+        end_nanoseconds - token.start_nanoseconds) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    event.frame_number = 0U;
+    event.flow_id = token.flow_id;
+    event.region_id = token.region_id;
+    event.start_nanoseconds = token.start_nanoseconds;
+    event.duration_nanoseconds = end_nanoseconds - token.start_nanoseconds;
+    event.exclusive_nanoseconds = event.duration_nanoseconds;
+    event.thread_id = analytics_thread_id();
+    return (token.session->publish_trace(event));
 }

@@ -8,6 +8,9 @@
 static const uint32_t FT_CARD_GAME_MAX_CARDS = 128U;
 static const uint32_t FT_CARD_GAME_MAX_EFFECTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
+static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
+static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
+static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 
 enum card_game_card_type : uint8_t
 {
@@ -46,9 +49,74 @@ struct card_game_card_instance
     ft_bool on_board;
 };
 
+enum card_game_operation_type : uint8_t
+{
+    CARD_GAME_OPERATION_HEALTH = 0U,
+    CARD_GAME_OPERATION_MANA = 1U,
+    CARD_GAME_OPERATION_EMIT_EVENT = 2U
+};
+
+struct card_game_operation
+{
+    card_game_operation_type type;
+    uint32_t player_id;
+    int32_t amount;
+    uint32_t event_type;
+    uint32_t source_instance;
+    uint32_t target_instance;
+};
+
+struct card_game_event
+{
+    uint64_t sequence;
+    uint32_t event_type;
+    uint32_t source_instance;
+    uint32_t target_instance;
+};
+
+struct card_game_phase_definition
+{
+    uint32_t phase_id;
+    uint32_t next_phase_id;
+    uint32_t entry_event_type;
+    uint32_t exit_event_type;
+    uint32_t allowed_command_mask;
+};
+
+struct card_game_effect_context
+{
+    uint32_t event_type;
+    uint32_t source_instance;
+    uint32_t target_instance;
+    uint32_t active_player;
+    uint32_t turn_number;
+};
+
+class card_game_operation_buffer
+{
+    private:
+        card_game_operation _operations[FT_CARD_GAME_MAX_OPERATIONS];
+        uint32_t _count;
+
+    public:
+        card_game_operation_buffer() noexcept;
+        ~card_game_operation_buffer() noexcept;
+        card_game_operation_buffer(const card_game_operation_buffer &other) = delete;
+        card_game_operation_buffer(card_game_operation_buffer &&other) = delete;
+        card_game_operation_buffer &operator=(const card_game_operation_buffer &other) = delete;
+        card_game_operation_buffer &operator=(card_game_operation_buffer &&other) = delete;
+        int32_t clear() noexcept;
+        int32_t append(const card_game_operation &operation) noexcept;
+        uint32_t size() const noexcept;
+        int32_t get(uint32_t index, card_game_operation *operation) const noexcept;
+};
+
 class card_game_engine;
 typedef int32_t (*card_game_effect_function)(card_game_engine &engine,
     uint32_t source_instance, uint32_t target_instance, void *context) noexcept;
+typedef int32_t (*card_game_effect_callback)(const card_game_engine &engine,
+    const card_game_effect_context &context,
+    card_game_operation_buffer &operations, void *user_data) noexcept;
 
 class card_game_engine
 {
@@ -57,6 +125,15 @@ class card_game_engine
         card_game_rules _rules;
         card_game_card_definition _cards[FT_CARD_GAME_MAX_CARDS];
         card_game_effect_function _effects[FT_CARD_GAME_MAX_EFFECTS];
+        card_game_effect_callback _effect_callbacks[FT_CARD_GAME_MAX_EFFECTS];
+        void *_effect_user_data[FT_CARD_GAME_MAX_EFFECTS];
+        uint32_t _effect_event_types[FT_CARD_GAME_MAX_EFFECTS];
+        card_game_phase_definition _phases[FT_CARD_GAME_MAX_PHASES];
+        uint32_t _phase_count;
+        uint32_t _current_phase_id;
+        card_game_event _events[FT_CARD_GAME_MAX_EVENTS];
+        uint32_t _event_count;
+        uint64_t _event_sequence;
         uint32_t _card_count;
         uint32_t _effect_count;
         uint32_t _board[FT_CARD_GAME_MAX_PLAYERS][FT_CARD_GAME_MAX_CARDS];
@@ -75,6 +152,7 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        int32_t apply_operation(const card_game_operation &operation) noexcept;
 
     public:
         card_game_engine() noexcept;
@@ -85,12 +163,19 @@ class card_game_engine
         int32_t register_card(const card_game_card_definition &definition) noexcept;
         int32_t register_effect(card_game_effect_function effect,
             uint32_t *effect_id) noexcept;
+        int32_t register_effect_callback(card_game_effect_callback callback,
+            void *user_data, uint32_t event_type, uint32_t *effect_id) noexcept;
+        int32_t register_phase(const card_game_phase_definition &phase) noexcept;
         int32_t start_match(uint32_t player_count) noexcept;
         int32_t set_player_mana(uint32_t player_id, uint32_t mana) noexcept;
         int32_t modify_player_health(uint32_t player_id, int32_t delta) noexcept;
         int32_t play_card(uint32_t player_id, uint32_t card_id,
             uint32_t target_instance, void *context) noexcept;
         int32_t end_turn() noexcept;
+        int32_t emit_event(uint32_t event_type, uint32_t source_instance,
+            uint32_t target_instance) noexcept;
+        int32_t resolve_events() noexcept;
+        int32_t advance_phase() noexcept;
         int32_t get_player_health(uint32_t player_id, uint32_t *health) const noexcept;
         int32_t get_board_count(uint32_t player_id, uint32_t *count) const noexcept;
         int32_t get_turn(uint32_t *turn_number, uint32_t *active_player) const noexcept;

@@ -2,10 +2,54 @@
 
 #include "../Basic/class_nullptr.hpp"
 
+card_game_operation_buffer::card_game_operation_buffer() noexcept
+    : _operations(), _count(0U)
+{
+    return ;
+}
+
+card_game_operation_buffer::~card_game_operation_buffer() noexcept
+{
+    return ;
+}
+
+int32_t card_game_operation_buffer::clear() noexcept
+{
+    this->_count = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_operation_buffer::append(
+    const card_game_operation &operation) noexcept
+{
+    if (this->_count >= FT_CARD_GAME_MAX_OPERATIONS)
+        return (FT_ERR_FULL);
+    this->_operations[this->_count] = operation;
+    this->_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+uint32_t card_game_operation_buffer::size() const noexcept
+{
+    return (this->_count);
+}
+
+int32_t card_game_operation_buffer::get(uint32_t index,
+    card_game_operation *operation) const noexcept
+{
+    if (operation == ft_nullptr || index >= this->_count)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *operation = this->_operations[index];
+    return (FT_ERR_SUCCESS);
+}
+
 card_game_engine::card_game_engine() noexcept
-    : _initialised_state(0U), _rules(), _cards(), _effects(), _card_count(0U),
-      _effect_count(0U), _board(), _board_count(), _health(), _mana(),
-      _turn_number(0U), _active_player(0U), _player_count(0U)
+    : _initialised_state(0U), _rules(), _cards(), _effects(),
+      _effect_callbacks(), _effect_user_data(), _effect_event_types(),
+      _phases(), _phase_count(0U), _current_phase_id(0U), _events(),
+      _event_count(0U), _event_sequence(0U), _card_count(0U),
+      _effect_count(0U), _board(), _instances(), _board_count(), _health(),
+      _mana(), _turn_number(0U), _active_player(0U), _player_count(0U)
 {
     return ;
 }
@@ -27,6 +71,9 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_rules = rules;
     this->_card_count = 0U;
     this->_effect_count = 0U;
+    this->_phase_count = 0U;
+    this->_event_count = 0U;
+    this->_event_sequence = 0U;
     this->_turn_number = 0U;
     this->_active_player = 0U;
     this->_initialised_state = 2U;
@@ -51,6 +98,14 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_rules = other._rules;
     ft_memcpy(this->_cards, other._cards, sizeof(this->_cards));
     ft_memcpy(this->_effects, other._effects, sizeof(this->_effects));
+    ft_memcpy(this->_effect_callbacks, other._effect_callbacks,
+        sizeof(this->_effect_callbacks));
+    ft_memcpy(this->_effect_user_data, other._effect_user_data,
+        sizeof(this->_effect_user_data));
+    ft_memcpy(this->_effect_event_types, other._effect_event_types,
+        sizeof(this->_effect_event_types));
+    ft_memcpy(this->_phases, other._phases, sizeof(this->_phases));
+    ft_memcpy(this->_events, other._events, sizeof(this->_events));
     ft_memcpy(this->_board, other._board, sizeof(this->_board));
     ft_memcpy(this->_instances, other._instances, sizeof(this->_instances));
     ft_memcpy(this->_board_count, other._board_count, sizeof(this->_board_count));
@@ -61,6 +116,10 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_turn_number = other._turn_number;
     this->_active_player = other._active_player;
     this->_player_count = other._player_count;
+    this->_phase_count = other._phase_count;
+    this->_current_phase_id = other._current_phase_id;
+    this->_event_count = other._event_count;
+    this->_event_sequence = other._event_sequence;
     this->_initialised_state = 2U;
     (void)other.destroy();
     return (FT_ERR_SUCCESS);
@@ -111,7 +170,47 @@ int32_t card_game_engine::register_effect(card_game_effect_function effect,
         return (FT_ERR_INVALID_ARGUMENT);
     *effect_id = this->_effect_count;
     this->_effects[this->_effect_count] = effect;
+    this->_effect_callbacks[this->_effect_count] = ft_nullptr;
+    this->_effect_user_data[this->_effect_count] = ft_nullptr;
+    this->_effect_event_types[this->_effect_count] = 0U;
     this->_effect_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::register_effect_callback(
+    card_game_effect_callback callback, void *user_data, uint32_t event_type,
+    uint32_t *effect_id) noexcept
+{
+    if (this->_initialised_state != 2U || callback == ft_nullptr
+        || effect_id == ft_nullptr || this->_effect_count
+            >= FT_CARD_GAME_MAX_EFFECTS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *effect_id = this->_effect_count;
+    this->_effects[this->_effect_count] = ft_nullptr;
+    this->_effect_callbacks[this->_effect_count] = callback;
+    this->_effect_user_data[this->_effect_count] = user_data;
+    this->_effect_event_types[this->_effect_count] = event_type;
+    this->_effect_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::register_phase(
+    const card_game_phase_definition &phase) noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || phase.phase_id == 0U
+        || this->_phase_count >= FT_CARD_GAME_MAX_PHASES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_phase_count)
+    {
+        if (this->_phases[index].phase_id == phase.phase_id)
+            return (FT_ERR_ALREADY_EXISTS);
+        index += 1U;
+    }
+    this->_phases[this->_phase_count] = phase;
+    this->_phase_count += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -133,6 +232,13 @@ int32_t card_game_engine::start_match(uint32_t player_count) noexcept
     this->_turn_number = 1U;
     this->_active_player = 0U;
     this->_player_count = player_count;
+    this->_current_phase_id = 0U;
+    if (this->_phase_count != 0U)
+    {
+        this->_current_phase_id = this->_phases[0].phase_id;
+        if (this->_phases[0].entry_event_type != 0U)
+            (void)this->emit_event(this->_phases[0].entry_event_type, 0U, 0U);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -187,6 +293,38 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     this->_instances[player_id][instance_index].on_board = FT_TRUE;
     this->_board_count[player_id] += 1U;
     if (definition->effect_id < this->_effect_count
+        && this->_effect_callbacks[definition->effect_id] != ft_nullptr)
+    {
+        card_game_operation_buffer operations;
+        card_game_effect_context effect_context;
+        card_game_operation operation;
+        uint32_t operation_index;
+        int32_t effect_error;
+
+        effect_context.event_type = 0U;
+        effect_context.source_instance = instance_index;
+        effect_context.target_instance = target_instance;
+        effect_context.active_player = this->_active_player;
+        effect_context.turn_number = this->_turn_number;
+        effect_error = this->_effect_callbacks[definition->effect_id](*this,
+            effect_context, operations,
+            this->_effect_user_data[definition->effect_id]);
+        if (effect_error != FT_ERR_SUCCESS)
+            return (effect_error);
+        operation_index = 0U;
+        while (operation_index < operations.size())
+        {
+            if (operations.get(operation_index, &operation)
+                != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            effect_error = this->apply_operation(operation);
+            if (effect_error != FT_ERR_SUCCESS)
+                return (effect_error);
+            operation_index += 1U;
+        }
+        return (FT_ERR_SUCCESS);
+    }
+    if (definition->effect_id < this->_effect_count
         && this->_effects[definition->effect_id] != ft_nullptr)
         return (this->_effects[definition->effect_id](*this, instance_index,
             target_instance, context));
@@ -200,7 +338,131 @@ int32_t card_game_engine::end_turn() noexcept
     this->_active_player = (this->_active_player + 1U)
         % this->_player_count;
     this->_turn_number += 1U;
+    return (this->resolve_events());
+}
+
+int32_t card_game_engine::emit_event(uint32_t event_type,
+    uint32_t source_instance, uint32_t target_instance) noexcept
+{
+    if (this->_initialised_state != 2U || event_type == 0U
+        || this->_event_count >= FT_CARD_GAME_MAX_EVENTS)
+        return (FT_ERR_FULL);
+    this->_events[this->_event_count].sequence = this->_event_sequence;
+    this->_events[this->_event_count].event_type = event_type;
+    this->_events[this->_event_count].source_instance = source_instance;
+    this->_events[this->_event_count].target_instance = target_instance;
+    this->_event_count += 1U;
+    this->_event_sequence += 1U;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::apply_operation(
+    const card_game_operation &operation) noexcept
+{
+    if (operation.type == CARD_GAME_OPERATION_HEALTH)
+        return (this->modify_player_health(operation.player_id,
+            operation.amount));
+    if (operation.type == CARD_GAME_OPERATION_MANA)
+    {
+        if (operation.player_id >= FT_CARD_GAME_MAX_PLAYERS)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (operation.amount < 0)
+        {
+            int64_t absolute_amount = -static_cast<int64_t>(operation.amount);
+
+            if (this->_mana[operation.player_id]
+                < static_cast<uint32_t>(absolute_amount))
+                return (FT_ERR_OUT_OF_RANGE);
+        }
+        return (this->set_player_mana(operation.player_id,
+            this->_mana[operation.player_id] + operation.amount));
+    }
+    if (operation.type == CARD_GAME_OPERATION_EMIT_EVENT)
+        return (this->emit_event(operation.event_type,
+            operation.source_instance, operation.target_instance));
+    return (FT_ERR_INVALID_ARGUMENT);
+}
+
+int32_t card_game_engine::resolve_events() noexcept
+{
+    uint32_t event_index;
+    uint32_t effect_index;
+    card_game_operation_buffer operations;
+    card_game_effect_context context;
+    card_game_operation operation;
+    int32_t error_code;
+
+    event_index = 0U;
+    while (event_index < this->_event_count)
+    {
+        context.event_type = this->_events[event_index].event_type;
+        context.source_instance = this->_events[event_index].source_instance;
+        context.target_instance = this->_events[event_index].target_instance;
+        context.active_player = this->_active_player;
+        context.turn_number = this->_turn_number;
+        effect_index = 0U;
+        while (effect_index < this->_effect_count)
+        {
+            if (this->_effect_callbacks[effect_index] != ft_nullptr
+                && this->_effect_event_types[effect_index] == context.event_type)
+            {
+                (void)operations.clear();
+                error_code = this->_effect_callbacks[effect_index](*this,
+                    context, operations, this->_effect_user_data[effect_index]);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+                uint32_t operation_index = 0U;
+                while (operation_index < operations.size())
+                {
+                    if (operations.get(operation_index, &operation)
+                        != FT_ERR_SUCCESS)
+                        return (FT_ERR_INVALID_STATE);
+                    error_code = this->apply_operation(operation);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                    operation_index += 1U;
+                }
+            }
+            effect_index += 1U;
+        }
+        event_index += 1U;
+    }
+    this->_event_count = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::advance_phase() noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || this->_phase_count == 0U)
+        return (FT_ERR_INVALID_STATE);
+    index = 0U;
+    while (index < this->_phase_count)
+    {
+        if (this->_phases[index].phase_id == this->_current_phase_id)
+        {
+            if (this->_phases[index].exit_event_type != 0U)
+                (void)this->emit_event(this->_phases[index].exit_event_type,
+                    0U, 0U);
+            this->_current_phase_id = this->_phases[index].next_phase_id;
+            break ;
+        }
+        index += 1U;
+    }
+    index = 0U;
+    while (index < this->_phase_count)
+    {
+        if (this->_phases[index].phase_id == this->_current_phase_id)
+        {
+            if (this->_phases[index].entry_event_type != 0U)
+                (void)this->emit_event(this->_phases[index].entry_event_type,
+                    0U, 0U);
+            return (this->resolve_events());
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
 }
 
 int32_t card_game_engine::get_player_health(uint32_t player_id,

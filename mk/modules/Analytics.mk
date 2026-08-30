@@ -3,4 +3,4 @@ Analytics_DEBUG_TARGET := Analytics_debug.a
 
 Analytics_SOURCES := analytics.cpp
 
-Analytics_HEADERS := analytics.hpp
+Analytics_HEADERS := analytics.hpp analytics_instrumentation.hpp

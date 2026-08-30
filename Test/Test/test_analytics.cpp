@@ -5,6 +5,7 @@
 #include <thread>
 
 static uint32_t g_analytics_exported_frame = 0U;
+static uint32_t g_analytics_trace_events = 0U;
 
 static void analytics_test_export_callback(
     const analytics_frame_statistics &frame, void *user_data)
@@ -15,6 +16,19 @@ static void analytics_test_export_callback(
     if (frame_counter != ft_nullptr)
         *frame_counter += 1U;
     g_analytics_exported_frame = static_cast<uint32_t>(frame.frame_number);
+    return ;
+}
+
+static void analytics_test_trace_callback(const analytics_trace_event &event,
+    void *user_data)
+{
+    uint32_t *event_counter;
+
+    (void)event;
+    event_counter = static_cast<uint32_t *>(user_data);
+    if (event_counter != ft_nullptr)
+        *event_counter += 1U;
+    g_analytics_trace_events += 1U;
     return ;
 }
 
@@ -79,6 +93,29 @@ FT_TEST(test_analytics_session_can_be_disabled_without_recording)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
         &statistics));
     FT_ASSERT_EQ(0U, statistics.invocation_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_cross_thread_flow_exports_trace_event)
+{
+    analytics_session session;
+    analytics_flow_token flow_token;
+    uint32_t region_id;
+    uint32_t trace_events;
+
+    region_id = 0U;
+    trace_events = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("worker.flow",
+        "test", &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_trace_callback(
+        analytics_test_trace_callback, &trace_events));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_flow(&session, 99U,
+        region_id, &flow_token));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_flow(flow_token));
+    FT_ASSERT_EQ(1U, trace_events);
+    FT_ASSERT_EQ(1U, g_analytics_trace_events);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
