@@ -124,6 +124,9 @@ class scripting_engine
         scripting_engine &operator=(const scripting_engine &other) noexcept = delete;
         scripting_engine &operator=(scripting_engine &&other) noexcept = delete;
 
+        int32_t execute_direct(const char *source,
+            scripting_value *result) noexcept;
+
     public:
         scripting_engine() noexcept;
         ~scripting_engine() noexcept;

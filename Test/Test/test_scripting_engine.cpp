@@ -170,6 +170,10 @@ FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("7 >= 8", &result));
     FT_ASSERT_EQ(FT_FALSE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "return if (3 == 3) 17 else 19;", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(17), result.integer_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("\"abc\" < \"abd\"",
         &result));
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);

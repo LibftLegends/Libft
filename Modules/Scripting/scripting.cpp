@@ -1248,6 +1248,22 @@ int32_t scripting_engine::invoke_native_id(uint32_t native_id,
 int32_t scripting_engine::execute(const char *source,
     scripting_value *result) noexcept
 {
+    scripting_program program;
+    int32_t compile_error;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (source == ft_nullptr || result == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    compile_error = this->compile(source, &program);
+    if (compile_error != FT_ERR_SUCCESS)
+        return (compile_error);
+    return (this->execute_program(program, result));
+}
+
+int32_t scripting_engine::execute_direct(const char *source,
+    scripting_value *result) noexcept
+{
     scripting_parser parser;
     int32_t parse_error;
     uint32_t declaration_start;
