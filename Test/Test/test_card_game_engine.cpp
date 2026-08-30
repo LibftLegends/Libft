@@ -468,3 +468,60 @@ FT_TEST(test_card_game_engine_validates_authoritative_command_envelopes)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_records_authoritative_commands)
+{
+    card_game_engine first;
+    card_game_engine second;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    card_game_command command;
+    card_game_command_record record;
+    uint32_t record_count;
+    uint64_t first_rules_hash;
+    uint64_t second_rules_hash;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    definition.card_id = 220U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 1U;
+    definition.attack = 2;
+    definition.health = 3;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    command.command_sequence = 1U;
+    command.expected_state_sequence = 0U;
+    command.player_id = 0U;
+    command.type = CARD_GAME_INTENT_PLAY_CARD;
+    command.card_id = 220U;
+    command.target_instance = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.get_rules_hash(&first_rules_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.get_rules_hash(&second_rules_hash));
+    FT_ASSERT_EQ(first_rules_hash, second_rules_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.submit_command(command, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.submit_command(command, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.get_command_record_count(&record_count));
+    FT_ASSERT_EQ(1U, record_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.get_command_record(0U, &record));
+    FT_ASSERT_EQ(command.command_sequence, record.command.command_sequence);
+    FT_ASSERT_EQ(first_rules_hash, record.rules_hash);
+    FT_ASSERT(record.state_hash_before != record.state_hash_after);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, first.get_command_record(1U, &record));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, first.submit_command(command,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.get_command_record_count(&record_count));
+    FT_ASSERT_EQ(1U, record_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.destroy());
+    return (1);
+}

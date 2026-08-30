@@ -41,3 +41,9 @@ Network-facing callers should use `submit_command()` with a monotonically
 increasing command sequence. The optional expected state sequence rejects
 stale client intents before dispatch; accepted commands then enter the same
 transactional play, turn, and phase paths used internally.
+
+Each accepted command is retained in a bounded authoritative command log.
+Records include the command, rules hash, and state hashes before and after
+execution for auditing or deterministic replay. The log returns `FT_ERR_FULL`
+once its fixed capacity is reached, so accepted history is never silently
+discarded.

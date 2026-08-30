@@ -77,7 +77,8 @@ card_game_engine::card_game_engine() noexcept
       _event_count(0U), _event_sequence(0U), _card_count(0U),
       _effect_count(0U), _board(), _instances(), _board_count(), _health(),
       _mana(), _turn_number(0U), _active_player(0U), _player_count(0U),
-      _state_sequence(0U), _last_command_sequence(0U)
+      _state_sequence(0U), _last_command_sequence(0U), _command_records(),
+      _command_record_count(0U)
 {
     return ;
 }
@@ -108,6 +109,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_active_player = 0U;
     this->_state_sequence = 1U;
     this->_last_command_sequence = 0U;
+    this->_command_record_count = 0U;
     this->_initialised_state = 2U;
     return (FT_ERR_SUCCESS);
 }
@@ -156,6 +158,9 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_player_count = other._player_count;
     this->_state_sequence = other._state_sequence;
     this->_last_command_sequence = other._last_command_sequence;
+    ft_memcpy(this->_command_records, other._command_records,
+        sizeof(this->_command_records));
+    this->_command_record_count = other._command_record_count;
     this->_phase_count = other._phase_count;
     this->_zone_count = other._zone_count;
     this->_current_phase_id = other._current_phase_id;
@@ -1258,17 +1263,25 @@ int32_t card_game_engine::submit_command(
     const card_game_command &command, void *context) noexcept
 {
     int32_t command_error;
+    uint64_t rules_hash;
+    uint64_t state_hash_before;
+    uint64_t state_hash_after;
 
     if (this->_initialised_state != 2U
         || command.command_sequence == 0U
         || command.command_sequence <= this->_last_command_sequence)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_command_record_count >= FT_CARD_GAME_MAX_COMMAND_RECORDS)
+        return (FT_ERR_FULL);
     if (command.expected_state_sequence != 0U
         && command.expected_state_sequence != this->_state_sequence)
         return (FT_ERR_INVALID_STATE);
     if (command.player_id >= this->_player_count
         || command.player_id != this->_active_player)
         return (FT_ERR_PERMISSION_DENIED);
+    if (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
+        || this->get_state_hash(&state_hash_before) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     if (command.type == CARD_GAME_INTENT_PLAY_CARD)
         command_error = this->play_card(command.player_id, command.card_id,
             command.target_instance, context);
@@ -1280,6 +1293,38 @@ int32_t card_game_engine::submit_command(
         return (FT_ERR_INVALID_ARGUMENT);
     if (command_error != FT_ERR_SUCCESS)
         return (command_error);
+    if (this->get_state_hash(&state_hash_after) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    this->_command_records[this->_command_record_count].command = command;
+    this->_command_records[this->_command_record_count].rules_hash = rules_hash;
+    this->_command_records[this->_command_record_count].state_hash_before =
+        state_hash_before;
+    this->_command_records[this->_command_record_count].state_hash_after =
+        state_hash_after;
+    this->_command_record_count += 1U;
     this->_last_command_sequence = command.command_sequence;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_command_record_count(uint32_t *count) const noexcept
+{
+    if (count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    *count = this->_command_record_count;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_command_record(uint32_t index,
+    card_game_command_record *record) const noexcept
+{
+    if (record == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    if (index >= this->_command_record_count)
+        return (FT_ERR_NOT_FOUND);
+    *record = this->_command_records[index];
     return (FT_ERR_SUCCESS);
 }

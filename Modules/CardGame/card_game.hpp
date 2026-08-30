@@ -14,6 +14,7 @@ static const uint32_t FT_CARD_GAME_MAX_CARD_TYPES = 32U;
 static const uint32_t CARD_GAME_BOARD_ZONE_ID = 1U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
+static const uint32_t FT_CARD_GAME_MAX_COMMAND_RECORDS = 256U;
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
@@ -35,6 +36,14 @@ struct card_game_command
     card_game_command_type type;
     uint32_t card_id;
     uint32_t target_instance;
+};
+
+struct card_game_command_record
+{
+    card_game_command command;
+    uint64_t rules_hash;
+    uint64_t state_hash_before;
+    uint64_t state_hash_after;
 };
 
 enum card_game_card_type : uint8_t
@@ -231,6 +240,9 @@ class card_game_engine
         uint32_t _player_count;
         uint64_t _state_sequence;
         uint64_t _last_command_sequence;
+        card_game_command_record _command_records[
+            FT_CARD_GAME_MAX_COMMAND_RECORDS];
+        uint32_t _command_record_count;
 
         card_game_engine(const card_game_engine &other) = delete;
         card_game_engine(card_game_engine &&other) = delete;
@@ -294,6 +306,9 @@ class card_game_engine
         int32_t apply_delta(const card_game_delta &delta) noexcept;
         int32_t submit_command(const card_game_command &command,
             void *context) noexcept;
+        int32_t get_command_record_count(uint32_t *count) const noexcept;
+        int32_t get_command_record(uint32_t index,
+            card_game_command_record *record) const noexcept;
 };
 
 #endif
