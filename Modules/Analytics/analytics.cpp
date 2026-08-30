@@ -189,7 +189,8 @@ analytics_session::analytics_session() noexcept
       _region_count(0U), _export_callback(ft_nullptr),
       _export_user_data(ft_nullptr), _trace_callback(ft_nullptr),
       _trace_user_data(ft_nullptr), _trace_events(), _trace_event_count(0U),
-      _dropped_trace_count(0U), _dropped_scope_count(0U), _frame_samples(),
+      _dropped_trace_count(0U), _frame_exports(), _frame_export_count(0U),
+      _dropped_frame_export_count(0U), _dropped_scope_count(0U), _frame_samples(),
       _frame_sample_count(0U), _frame_sample_cursor(0U), _latest_frame(),
       _has_latest_frame(FT_FALSE)
 {
@@ -227,6 +228,8 @@ int32_t analytics_session::initialize() noexcept
     this->_trace_user_data = ft_nullptr;
     this->_trace_event_count = 0U;
     this->_dropped_trace_count = 0U;
+    this->_frame_export_count = 0U;
+    this->_dropped_frame_export_count = 0U;
     this->_dropped_scope_count = 0U;
     this->_frame_sample_count = 0U;
     this->_frame_sample_cursor = 0U;
@@ -244,6 +247,7 @@ int32_t analytics_session::destroy() noexcept
         return (FT_ERR_SUCCESS);
     this->_enabled.store(FT_FALSE, std::memory_order_release);
     this->_trace_event_count = 0U;
+    this->_frame_export_count = 0U;
     this->_has_latest_frame = FT_FALSE;
     this->_initialised_state = 1U;
     return (FT_ERR_SUCCESS);
@@ -391,10 +395,9 @@ int32_t analytics_session::publish_frame(
     const analytics_frame_statistics &frame) noexcept
 {
     analytics_frame_statistics enriched_frame;
-    analytics_export_callback callback;
-    void *user_data;
     uint64_t frame_total;
     uint32_t index;
+    int32_t result;
 
     {
         std::lock_guard<std::mutex> lock(this->_mutex);
@@ -423,12 +426,19 @@ int32_t analytics_session::publish_frame(
                 this->_frame_sample_count, 99U);
         this->_latest_frame = enriched_frame;
         this->_has_latest_frame = FT_TRUE;
-        callback = this->_export_callback;
-        user_data = this->_export_user_data;
+        if (this->_frame_export_count >= FT_ANALYTICS_MAX_QUEUED_FRAME_EXPORTS)
+        {
+            this->_dropped_frame_export_count += 1U;
+            result = FT_ERR_FULL;
+        }
+        else
+        {
+            this->_frame_exports[this->_frame_export_count] = enriched_frame;
+            this->_frame_export_count += 1U;
+            result = FT_ERR_SUCCESS;
+        }
     }
-    if (callback != ft_nullptr)
-        callback(enriched_frame, user_data);
-    return (FT_ERR_SUCCESS);
+    return (result);
 }
 
 int32_t analytics_session::get_latest_frame(
@@ -464,10 +474,16 @@ int32_t analytics_session::publish_trace(
 int32_t analytics_session::flush_exports() noexcept
 {
     analytics_trace_event events[FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS];
+    analytics_frame_statistics frame_exports[FT_ANALYTICS_MAX_QUEUED_FRAME_EXPORTS];
+    analytics_frame_statistics frame;
+    analytics_export_callback export_callback;
+    void *export_user_data;
     analytics_trace_callback trace_callback;
     void *trace_user_data;
     uint32_t event_count;
     uint32_t event_index;
+    uint32_t frame_export_count;
+    uint32_t frame_index;
 
     {
         std::lock_guard<std::mutex> lock(this->_mutex);
@@ -481,8 +497,26 @@ int32_t analytics_session::flush_exports() noexcept
             event_index += 1U;
         }
         this->_trace_event_count = 0U;
+        frame_export_count = this->_frame_export_count;
+        frame_index = 0U;
+        while (frame_index < frame_export_count)
+        {
+            frame_exports[frame_index] = this->_frame_exports[frame_index];
+            frame_index += 1U;
+        }
+        this->_frame_export_count = 0U;
+        export_callback = this->_export_callback;
+        export_user_data = this->_export_user_data;
         trace_callback = this->_trace_callback;
         trace_user_data = this->_trace_user_data;
+    }
+    frame_index = 0U;
+    while (frame_index < frame_export_count)
+    {
+        frame = frame_exports[frame_index];
+        if (export_callback != ft_nullptr)
+            export_callback(frame, export_user_data);
+        frame_index += 1U;
     }
     if (trace_callback == ft_nullptr)
         return (FT_ERR_SUCCESS);
@@ -505,6 +539,12 @@ uint64_t analytics_session::get_dropped_trace_count() const noexcept
 {
     std::lock_guard<std::mutex> lock(this->_mutex);
     return (this->_dropped_trace_count);
+}
+
+uint64_t analytics_session::get_dropped_frame_export_count() const noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+    return (this->_dropped_frame_export_count);
 }
 
 int32_t analytics_now_nanoseconds(uint64_t *timestamp) noexcept

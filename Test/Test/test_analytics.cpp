@@ -59,6 +59,8 @@ FT_TEST(test_analytics_session_records_nested_scope_statistics)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(0U, exported_frames);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
     FT_ASSERT_EQ(1U, exported_frames);
     FT_ASSERT_EQ(42U, g_analytics_exported_frame);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&latest_frame));

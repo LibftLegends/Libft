@@ -15,6 +15,7 @@ static const uint32_t FT_ANALYTICS_MAX_FRAME_SAMPLES = 120U;
 static const uint32_t FT_ANALYTICS_MAX_THREAD_EVENTS = 128U;
 static const uint32_t FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS = 1024U;
 static const uint32_t FT_ANALYTICS_MAX_FRAME_BREAKDOWN = 64U;
+static const uint32_t FT_ANALYTICS_MAX_QUEUED_FRAME_EXPORTS = 128U;
 
 struct analytics_frame_region_statistics
 {
@@ -104,6 +105,9 @@ class analytics_session
         analytics_trace_event _trace_events[FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS];
         uint32_t _trace_event_count;
         uint64_t _dropped_trace_count;
+        analytics_frame_statistics _frame_exports[FT_ANALYTICS_MAX_QUEUED_FRAME_EXPORTS];
+        uint32_t _frame_export_count;
+        uint64_t _dropped_frame_export_count;
         uint64_t _dropped_scope_count;
         uint64_t _frame_samples[FT_ANALYTICS_MAX_FRAME_SAMPLES];
         uint32_t _frame_sample_count;
@@ -143,6 +147,7 @@ class analytics_session
         int32_t flush_exports() noexcept;
         uint64_t get_dropped_scope_count() const noexcept;
         uint64_t get_dropped_trace_count() const noexcept;
+        uint64_t get_dropped_frame_export_count() const noexcept;
 };
 
 int32_t analytics_now_nanoseconds(uint64_t *timestamp) noexcept;
