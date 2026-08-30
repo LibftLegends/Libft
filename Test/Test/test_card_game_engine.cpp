@@ -525,3 +525,68 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
+{
+    card_game_engine source;
+    card_game_engine destination;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    card_game_command command;
+    card_game_command_record record;
+    uint8_t serialized[FT_CARD_GAME_MAX_REPLAY_BYTES];
+    uint32_t serialized_size;
+    uint32_t record_count;
+    uint32_t truncated_size;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    definition.card_id = 221U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 1U;
+    definition.attack = 2;
+    definition.health = 3;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    command.command_sequence = 4U;
+    command.expected_state_sequence = 0U;
+    command.player_id = 0U;
+    command.type = CARD_GAME_INTENT_PLAY_CARD;
+    command.card_id = 221U;
+    command.target_instance = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_command(command, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(serialized,
+        sizeof(serialized), &serialized_size));
+    FT_ASSERT_EQ(FT_CARD_GAME_REPLAY_HEADER_BYTES
+        + FT_CARD_GAME_REPLAY_RECORD_BYTES, serialized_size);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.deserialize_command_records(
+        serialized, serialized_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
+        &record_count));
+    FT_ASSERT_EQ(1U, record_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record(0U, &record));
+    FT_ASSERT_EQ(command.command_sequence, record.command.command_sequence);
+    truncated_size = 0U;
+    while (truncated_size < serialized_size)
+    {
+        FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, destination
+            .deserialize_command_records(serialized, truncated_size));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
+            &record_count));
+        FT_ASSERT_EQ(1U, record_count);
+        truncated_size += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
+        &record_count));
+    FT_ASSERT_EQ(1U, record_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+    return (1);
+}

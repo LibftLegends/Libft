@@ -15,6 +15,13 @@ static const uint32_t CARD_GAME_BOARD_ZONE_ID = 1U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_COMMAND_RECORDS = 256U;
+static const uint32_t FT_CARD_GAME_REPLAY_MAGIC = 0x43475231U;
+static const uint32_t FT_CARD_GAME_REPLAY_VERSION = 1U;
+static const uint32_t FT_CARD_GAME_REPLAY_HEADER_BYTES = 12U;
+static const uint32_t FT_CARD_GAME_REPLAY_RECORD_BYTES = 56U;
+static const uint32_t FT_CARD_GAME_MAX_REPLAY_BYTES =
+    FT_CARD_GAME_REPLAY_HEADER_BYTES
+    + (FT_CARD_GAME_MAX_COMMAND_RECORDS * FT_CARD_GAME_REPLAY_RECORD_BYTES);
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
@@ -309,6 +316,10 @@ class card_game_engine
         int32_t get_command_record_count(uint32_t *count) const noexcept;
         int32_t get_command_record(uint32_t index,
             card_game_command_record *record) const noexcept;
+        int32_t serialize_command_records(uint8_t *output,
+            uint32_t output_capacity, uint32_t *output_size) const noexcept;
+        int32_t deserialize_command_records(const uint8_t *input,
+            uint32_t input_size) noexcept;
 };
 
 #endif

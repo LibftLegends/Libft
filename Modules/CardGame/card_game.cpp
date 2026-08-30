@@ -27,6 +27,69 @@ static void card_game_hash_instance(uint64_t *hash,
     return ;
 }
 
+static void card_game_replay_write_u32(uint8_t *output, uint32_t *offset,
+    uint32_t value) noexcept
+{
+    output[*offset] = static_cast<uint8_t>(value & 255U);
+    output[*offset + 1U] = static_cast<uint8_t>((value >> 8U) & 255U);
+    output[*offset + 2U] = static_cast<uint8_t>((value >> 16U) & 255U);
+    output[*offset + 3U] = static_cast<uint8_t>((value >> 24U) & 255U);
+    *offset += 4U;
+    return ;
+}
+
+static void card_game_replay_write_u64(uint8_t *output, uint32_t *offset,
+    uint64_t value) noexcept
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < 8U)
+    {
+        output[*offset + index] = static_cast<uint8_t>(value & 255U);
+        value >>= 8U;
+        index += 1U;
+    }
+    *offset += 8U;
+    return ;
+}
+
+static int32_t card_game_replay_read_u32(const uint8_t *input,
+    uint32_t input_size, uint32_t *offset, uint32_t *value) noexcept
+{
+    if (input == ft_nullptr || offset == ft_nullptr || value == ft_nullptr
+        || *offset > input_size || input_size - *offset < 4U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *value = static_cast<uint32_t>(input[*offset])
+        | (static_cast<uint32_t>(input[*offset + 1U]) << 8U)
+        | (static_cast<uint32_t>(input[*offset + 2U]) << 16U)
+        | (static_cast<uint32_t>(input[*offset + 3U]) << 24U);
+    *offset += 4U;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t card_game_replay_read_u64(const uint8_t *input,
+    uint32_t input_size, uint32_t *offset, uint64_t *value) noexcept
+{
+    uint32_t index;
+    uint64_t result;
+
+    if (input == ft_nullptr || offset == ft_nullptr || value == ft_nullptr
+        || *offset > input_size || input_size - *offset < 8U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    result = 0U;
+    index = 0U;
+    while (index < 8U)
+    {
+        result |= static_cast<uint64_t>(input[*offset + index])
+            << (index * 8U);
+        index += 1U;
+    }
+    *offset += 8U;
+    *value = result;
+    return (FT_ERR_SUCCESS);
+}
+
 card_game_operation_buffer::card_game_operation_buffer() noexcept
     : _operations(), _count(0U)
 {
@@ -1326,5 +1389,141 @@ int32_t card_game_engine::get_command_record(uint32_t index,
     if (index >= this->_command_record_count)
         return (FT_ERR_NOT_FOUND);
     *record = this->_command_records[index];
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::serialize_command_records(uint8_t *output,
+    uint32_t output_capacity, uint32_t *output_size) const noexcept
+{
+    uint32_t required_size;
+    uint32_t offset;
+    uint32_t index;
+    const card_game_command_record *record;
+
+    if (output == ft_nullptr || output_size == ft_nullptr
+        || this->_initialised_state != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    required_size = FT_CARD_GAME_REPLAY_HEADER_BYTES
+        + this->_command_record_count * FT_CARD_GAME_REPLAY_RECORD_BYTES;
+    if (output_capacity < required_size)
+        return (FT_ERR_OUT_OF_RANGE);
+    offset = 0U;
+    card_game_replay_write_u32(output, &offset, FT_CARD_GAME_REPLAY_MAGIC);
+    card_game_replay_write_u32(output, &offset, FT_CARD_GAME_REPLAY_VERSION);
+    card_game_replay_write_u32(output, &offset, this->_command_record_count);
+    index = 0U;
+    while (index < this->_command_record_count)
+    {
+        record = &this->_command_records[index];
+        card_game_replay_write_u64(output, &offset,
+            record->command.command_sequence);
+        card_game_replay_write_u64(output, &offset,
+            record->command.expected_state_sequence);
+        card_game_replay_write_u32(output, &offset, record->command.player_id);
+        card_game_replay_write_u32(output, &offset,
+            static_cast<uint32_t>(record->command.type));
+        card_game_replay_write_u32(output, &offset, record->command.card_id);
+        card_game_replay_write_u32(output, &offset,
+            record->command.target_instance);
+        card_game_replay_write_u64(output, &offset, record->rules_hash);
+        card_game_replay_write_u64(output, &offset, record->state_hash_before);
+        card_game_replay_write_u64(output, &offset, record->state_hash_after);
+        index += 1U;
+    }
+    *output_size = offset;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
+    uint32_t input_size) noexcept
+{
+    card_game_command_record records[FT_CARD_GAME_MAX_COMMAND_RECORDS];
+    uint32_t magic;
+    uint32_t version;
+    uint32_t record_count;
+    uint32_t required_size;
+    uint32_t offset;
+    uint32_t index;
+    uint32_t type;
+    uint64_t previous_sequence;
+    int32_t read_error;
+
+
+    if (input == ft_nullptr || this->_initialised_state != 2U
+        || input_size < FT_CARD_GAME_REPLAY_HEADER_BYTES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    offset = 0U;
+    read_error = card_game_replay_read_u32(input, input_size, &offset, &magic);
+    if (read_error != FT_ERR_SUCCESS || magic != FT_CARD_GAME_REPLAY_MAGIC)
+        return (FT_ERR_INVALID_ARGUMENT);
+    read_error = card_game_replay_read_u32(input, input_size, &offset,
+        &version);
+    if (read_error != FT_ERR_SUCCESS || version != FT_CARD_GAME_REPLAY_VERSION)
+        return (FT_ERR_INVALID_ARGUMENT);
+    read_error = card_game_replay_read_u32(input, input_size, &offset,
+        &record_count);
+    if (read_error != FT_ERR_SUCCESS
+        || record_count > FT_CARD_GAME_MAX_COMMAND_RECORDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    required_size = FT_CARD_GAME_REPLAY_HEADER_BYTES
+        + record_count * FT_CARD_GAME_REPLAY_RECORD_BYTES;
+    if (input_size != required_size)
+        return (FT_ERR_INVALID_ARGUMENT);
+    previous_sequence = 0U;
+    index = 0U;
+    while (index < record_count)
+    {
+        card_game_command_record *record;
+
+        record = &records[index];
+        read_error = card_game_replay_read_u64(input, input_size, &offset,
+            &record->command.command_sequence);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u64(input, input_size, &offset,
+            &record->command.expected_state_sequence);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u32(input, input_size, &offset,
+            &record->command.player_id);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u32(input, input_size, &offset,
+            &type);
+        if (read_error != FT_ERR_SUCCESS || type < 1U || type > 3U
+            || record->command.command_sequence == 0U
+            || record->command.command_sequence <= previous_sequence)
+            return (FT_ERR_INVALID_ARGUMENT);
+        record->command.type = static_cast<card_game_command_type>(type);
+        read_error = card_game_replay_read_u32(input, input_size, &offset,
+            &record->command.card_id);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u32(input, input_size, &offset,
+            &record->command.target_instance);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u64(input, input_size, &offset,
+            &record->rules_hash);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u64(input, input_size, &offset,
+            &record->state_hash_before);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        read_error = card_game_replay_read_u64(input, input_size, &offset,
+            &record->state_hash_after);
+        if (read_error != FT_ERR_SUCCESS)
+            return (read_error);
+        previous_sequence = record->command.command_sequence;
+        index += 1U;
+    }
+    ft_memcpy(this->_command_records, records, sizeof(records));
+    this->_command_record_count = record_count;
+    if (record_count > 0U)
+        this->_last_command_sequence = records[record_count - 1U].command
+            .command_sequence;
+    else
+        this->_last_command_sequence = 0U;
     return (FT_ERR_SUCCESS);
 }
