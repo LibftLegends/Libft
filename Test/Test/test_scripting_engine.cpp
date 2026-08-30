@@ -140,6 +140,10 @@ FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
         "length(\"a\"); length(\"bc\");", &program));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile("return true;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

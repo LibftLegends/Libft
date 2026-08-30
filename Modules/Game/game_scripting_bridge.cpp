@@ -1093,6 +1093,13 @@ int32_t game_script_bridge::custom_callback_dispatch(
                     arguments[argument_index].string_value,
                     arguments[argument_index].string_length);
         }
+        else if (arguments[argument_index].type == SCRIPTING_VALUE_BOOLEAN)
+        {
+            if (arguments[argument_index].boolean_value == FT_FALSE)
+                error_code = argument.initialize("0");
+            else
+                error_code = argument.initialize("1");
+        }
         else
             return (FT_ERR_INVALID_ARGUMENT);
         if (error_code == FT_ERR_SUCCESS)

@@ -98,10 +98,13 @@ FT_TEST(test_terrain_script_execute_uses_custom_runtime_when_selected)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize(
-        "terrain_set_sea_level(41);"));
+        "terrain_set_sea_level(41);"
+        "terrain_set_biome_transitions(true, 23, 55);"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script, chunk,
         0, 0, "custom-world", config));
     FT_ASSERT_EQ(41, config.sea_level);
+    FT_ASSERT_EQ(FT_TRUE, config.enable_biome_transitions);
+    FT_ASSERT_EQ(23, config.biome_transition_noise_scale);
     terrain_runtime_reset_for_tests();
     return (1);
 }

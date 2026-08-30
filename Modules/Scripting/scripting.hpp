@@ -19,7 +19,8 @@ enum scripting_value_type : uint8_t
 {
     SCRIPTING_VALUE_NULL = 0U,
     SCRIPTING_VALUE_INTEGER = 1U,
-    SCRIPTING_VALUE_STRING = 2U
+    SCRIPTING_VALUE_STRING = 2U,
+    SCRIPTING_VALUE_BOOLEAN = 3U
 };
 
 struct scripting_value
@@ -28,6 +29,7 @@ struct scripting_value
     int64_t integer_value;
     const char *string_value;
     uint32_t string_length;
+    ft_bool boolean_value;
 };
 
 class scripting_engine;
@@ -67,7 +69,8 @@ enum scripting_opcode : uint8_t
     SCRIPTING_OP_CALL_NATIVE = 9U,
     SCRIPTING_OP_RETURN = 10U,
     SCRIPTING_OP_PUSH_STRING = 11U,
-    SCRIPTING_OP_POP = 12U
+    SCRIPTING_OP_POP = 12U,
+    SCRIPTING_OP_PUSH_BOOLEAN = 13U
 };
 
 struct scripting_instruction
@@ -144,5 +147,7 @@ int32_t scripting_value_set_integer(scripting_value *value,
     int64_t integer_value) noexcept;
 int32_t scripting_value_set_string(scripting_value *value,
     const char *string, uint32_t length) noexcept;
+int32_t scripting_value_set_boolean(scripting_value *value,
+    ft_bool boolean_value) noexcept;
 
 #endif

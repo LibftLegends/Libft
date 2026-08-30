@@ -335,6 +335,14 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
     if (scripting_equal_identifier(parser->source, start, name_length, "null")
         != FT_FALSE)
         return (scripting_compile_emit(parser, SCRIPTING_OP_PUSH_NULL, 0, 0U));
+    if (scripting_equal_identifier(parser->source, start, name_length, "true")
+        != FT_FALSE)
+        return (scripting_compile_emit(parser,
+            SCRIPTING_OP_PUSH_BOOLEAN, 1, 0U));
+    if (scripting_equal_identifier(parser->source, start, name_length, "false")
+        != FT_FALSE)
+        return (scripting_compile_emit(parser,
+            SCRIPTING_OP_PUSH_BOOLEAN, 0, 0U));
     scripting_compile_skip_space(parser);
     if (parser->offset >= parser->source_length
         || parser->source[parser->offset] != '(')
@@ -587,6 +595,12 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
     {
         return (scripting_value_set_null(result));
     }
+    if (scripting_equal_identifier(parser->source, start, native_name_length,
+        "true") != FT_FALSE)
+        return (scripting_value_set_boolean(result, FT_TRUE));
+    if (scripting_equal_identifier(parser->source, start, native_name_length,
+        "false") != FT_FALSE)
+        return (scripting_value_set_boolean(result, FT_FALSE));
     scripting_skip_space(parser);
     if (parser->offset >= parser->source_length
         || parser->source[parser->offset] != '(')
@@ -1235,8 +1249,12 @@ int32_t scripting_engine::verify_program(
         instruction = &program.instructions[instruction_index];
         if (instruction->opcode == SCRIPTING_OP_PUSH_NULL
             || instruction->opcode == SCRIPTING_OP_PUSH_INTEGER
-            || instruction->opcode == SCRIPTING_OP_LOAD_LOCAL)
+            || instruction->opcode == SCRIPTING_OP_LOAD_LOCAL
+            || instruction->opcode == SCRIPTING_OP_PUSH_BOOLEAN)
         {
+            if (instruction->opcode == SCRIPTING_OP_PUSH_BOOLEAN
+                && (instruction->operand != 0 && instruction->operand != 1))
+                return (FT_ERR_INVALID_ARGUMENT);
             if (instruction->opcode == SCRIPTING_OP_LOAD_LOCAL
                 && (instruction->operand < 0
                     || instruction->operand >= FT_SCRIPTING_MAX_LOCALS))
@@ -1351,6 +1369,13 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
             scripting_value_set_string(&stack[stack_count++],
                 program.string_data + instruction->operand,
                 instruction->auxiliary);
+        else if (instruction->opcode == SCRIPTING_OP_PUSH_BOOLEAN)
+        {
+            if (instruction->operand == 0)
+                scripting_value_set_boolean(&stack[stack_count++], FT_FALSE);
+            else
+                scripting_value_set_boolean(&stack[stack_count++], FT_TRUE);
+        }
         else if (instruction->opcode == SCRIPTING_OP_LOAD_LOCAL)
             stack[stack_count++] = locals[instruction->operand];
         else if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL)
@@ -1449,6 +1474,7 @@ int32_t scripting_value_set_null(scripting_value *value) noexcept
     value->integer_value = 0;
     value->string_value = ft_nullptr;
     value->string_length = 0U;
+    value->boolean_value = FT_FALSE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1461,6 +1487,7 @@ int32_t scripting_value_set_integer(scripting_value *value,
     value->integer_value = integer_value;
     value->string_value = ft_nullptr;
     value->string_length = 0U;
+    value->boolean_value = FT_FALSE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1474,5 +1501,22 @@ int32_t scripting_value_set_string(scripting_value *value,
     value->integer_value = 0;
     value->string_value = string;
     value->string_length = length;
+    value->boolean_value = FT_FALSE;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t scripting_value_set_boolean(scripting_value *value,
+    ft_bool boolean_value) noexcept
+{
+    if (value == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    value->type = SCRIPTING_VALUE_BOOLEAN;
+    value->integer_value = 0;
+    value->string_value = ft_nullptr;
+    value->string_length = 0U;
+    if (boolean_value == FT_FALSE)
+        value->boolean_value = FT_FALSE;
+    else
+        value->boolean_value = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
