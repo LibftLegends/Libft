@@ -13,17 +13,21 @@ static const uint32_t FT_SCRIPTING_MAX_TOKENS = 4096U;
 static const uint32_t FT_SCRIPTING_MAX_OPERATIONS = 4096U;
 static const uint32_t FT_SCRIPTING_BYTECODE_VERSION = 1U;
 static const uint32_t FT_SCRIPTING_MAX_INSTRUCTIONS = 4096U;
+static const uint32_t FT_SCRIPTING_MAX_STRING_BYTES = 16384U;
 
 enum scripting_value_type : uint8_t
 {
     SCRIPTING_VALUE_NULL = 0U,
-    SCRIPTING_VALUE_INTEGER = 1U
+    SCRIPTING_VALUE_INTEGER = 1U,
+    SCRIPTING_VALUE_STRING = 2U
 };
 
 struct scripting_value
 {
     scripting_value_type type;
     int64_t integer_value;
+    const char *string_value;
+    uint32_t string_length;
 };
 
 class scripting_engine;
@@ -61,7 +65,8 @@ enum scripting_opcode : uint8_t
     SCRIPTING_OP_MULTIPLY = 7U,
     SCRIPTING_OP_DIVIDE = 8U,
     SCRIPTING_OP_CALL_NATIVE = 9U,
-    SCRIPTING_OP_RETURN = 10U
+    SCRIPTING_OP_RETURN = 10U,
+    SCRIPTING_OP_PUSH_STRING = 11U
 };
 
 struct scripting_instruction
@@ -75,6 +80,8 @@ struct scripting_program
 {
     uint32_t format_version;
     uint32_t instruction_count;
+    uint32_t string_data_size;
+    char string_data[FT_SCRIPTING_MAX_STRING_BYTES];
     scripting_instruction instructions[FT_SCRIPTING_MAX_INSTRUCTIONS];
 };
 
@@ -134,5 +141,7 @@ class scripting_engine
 int32_t scripting_value_set_null(scripting_value *value) noexcept;
 int32_t scripting_value_set_integer(scripting_value *value,
     int64_t integer_value) noexcept;
+int32_t scripting_value_set_string(scripting_value *value,
+    const char *string, uint32_t length) noexcept;
 
 #endif

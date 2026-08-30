@@ -25,6 +25,19 @@ static int32_t scripting_test_add_native(const scripting_call_context *context,
     return (scripting_value_set_integer(result, total));
 }
 
+static int32_t scripting_test_string_length_native(
+    const scripting_call_context *context, const scripting_value *arguments,
+    uint32_t argument_count, scripting_value *result, void *user_data) noexcept
+{
+    (void)context;
+    (void)user_data;
+    if (arguments == ft_nullptr || result == ft_nullptr || argument_count != 1U
+        || arguments[0].type != SCRIPTING_VALUE_STRING)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (scripting_value_set_integer(result,
+        static_cast<int64_t>(arguments[0].string_length)));
+}
+
 FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
 {
     scripting_engine engine;
@@ -102,6 +115,27 @@ FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
     FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
     program.instructions[0].opcode = static_cast<scripting_opcode>(255U);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("length",
+        scripting_test_string_length_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return length(\"terrain\");", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(7), result.integer_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

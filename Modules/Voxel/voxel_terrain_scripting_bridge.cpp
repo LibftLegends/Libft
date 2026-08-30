@@ -465,6 +465,9 @@ int32_t terrain_script_execute(game_script_bridge &bridge,
     terrain_context.seed_string = seed_string;
     terrain_context.world_block_origin_x = world_block_origin_x;
     terrain_context.world_block_origin_z = world_block_origin_z;
+    if (bridge.get_language() == "custom")
+        return (bridge.execute_with_user_data(script, ft_nullptr,
+            &terrain_context));
     return (bridge.execute_lua_with_user_data(script, ft_nullptr,
         &terrain_context));
 }

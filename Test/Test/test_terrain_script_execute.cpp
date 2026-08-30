@@ -81,4 +81,29 @@ FT_TEST(test_terrain_script_execute_rejects_invalid_arguments)
     return (1);
 }
 
+FT_TEST(test_terrain_script_execute_uses_custom_runtime_when_selected)
+{
+    ft_sharedptr<game_world> world_pointer;
+    game_script_bridge bridge;
+    terrain_generation_config config;
+    game_voxel_chunk chunk;
+    ft_string script;
+
+    terrain_runtime_reset_for_tests();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer.initialize(new game_world()));
+    FT_ASSERT(world_pointer.get() != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(world_pointer, "custom"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_register_api(bridge));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize(
+        "terrain_set_sea_level(41);"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script, chunk,
+        0, 0, "custom-world", config));
+    FT_ASSERT_EQ(41, config.sea_level);
+    terrain_runtime_reset_for_tests();
+    return (1);
+}
+
 #endif
