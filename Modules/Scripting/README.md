@@ -25,6 +25,9 @@ until parity tests are complete.
   operation limit; an unbounded condition cannot run indefinitely.
 - Logical precedence follows conventional rules: unary `!`, then `&&`, then
   `||`.
+- Locals declared with `let` can be reassigned with `name = expression`.
+  Assignment leaves the resulting value on the expression stack and is
+  therefore usable as a loop body.
 - `get_last_diagnostic()` reports the error code and source span of the last
   failed execution.
 - `scripting_value_set_null()` and `scripting_value_set_integer()` construct

@@ -89,7 +89,8 @@ enum scripting_opcode : uint8_t
     SCRIPTING_OP_JUMP = 21U,
     SCRIPTING_OP_LOGICAL_NOT = 22U,
     SCRIPTING_OP_LOGICAL_AND = 23U,
-    SCRIPTING_OP_LOGICAL_OR = 24U
+    SCRIPTING_OP_LOGICAL_OR = 24U,
+    SCRIPTING_OP_DUP = 25U
 };
 
 struct scripting_instruction

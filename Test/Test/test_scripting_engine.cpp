@@ -302,6 +302,12 @@ FT_TEST(test_scripting_engine_executes_bounded_while_expression)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(3U));
     FT_ASSERT_EQ(FT_ERR_FULL, engine.execute(
         "while (has_work()) 7;", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(
+        FT_SCRIPTING_MAX_OPERATIONS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let counter = 3; while (counter > 0) counter = counter - 1;",
+        &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

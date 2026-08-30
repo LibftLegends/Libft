@@ -456,6 +456,20 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
             name_length, &local_id) != FT_ERR_SUCCESS)
             return (scripting_compile_fail(parser, FT_ERR_NOT_FOUND, start,
                 name_length));
+        if (parser->offset < parser->source_length
+            && parser->source[parser->offset] == '=')
+        {
+            parser->offset += 1U;
+            parse_error = scripting_compile_condition(parser);
+            if (parse_error != FT_ERR_SUCCESS)
+                return (parse_error);
+            parse_error = scripting_compile_emit(parser, SCRIPTING_OP_DUP,
+                0, 0U);
+            if (parse_error != FT_ERR_SUCCESS)
+                return (parse_error);
+            return (scripting_compile_emit(parser, SCRIPTING_OP_STORE_LOCAL,
+                static_cast<int64_t>(local_id), 0U));
+        }
         return (scripting_compile_emit(parser, SCRIPTING_OP_LOAD_LOCAL,
             static_cast<int64_t>(local_id), 0U));
     }
@@ -1825,6 +1839,12 @@ int32_t scripting_engine::verify_program(
                 return (FT_ERR_INVALID_ARGUMENT);
             stack_after += 1U;
         }
+        else if (instruction->opcode == SCRIPTING_OP_DUP)
+        {
+            if (stack_depth == 0U)
+                return (FT_ERR_INVALID_ARGUMENT);
+            stack_after += 1U;
+        }
         else if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL
             || instruction->opcode == SCRIPTING_OP_NEGATE
             || instruction->opcode == SCRIPTING_OP_LOGICAL_NOT)
@@ -1947,6 +1967,7 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
     uint32_t operation_count;
     uint32_t jump_target;
     int64_t calculated_value;
+    scripting_value duplicated_value;
     ft_bool comparison_result;
     ft_bool jumped;
     int32_t execution_error;
@@ -1990,6 +2011,12 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
         }
         else if (instruction->opcode == SCRIPTING_OP_LOAD_LOCAL)
             stack[stack_count++] = locals[instruction->operand];
+        else if (instruction->opcode == SCRIPTING_OP_DUP)
+        {
+            duplicated_value = stack[stack_count - 1U];
+            stack[stack_count] = duplicated_value;
+            stack_count += 1U;
+        }
         else if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL)
         {
             local_index = static_cast<uint32_t>(instruction->operand);
