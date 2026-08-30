@@ -20,6 +20,9 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     int32_t ready_index;
     int32_t descriptor;
     int32_t search_index;
+    int32_t counted_index;
+    int32_t unique_ready_count;
+    ft_bool already_counted;
     timespec timeout;
     timespec *timeout_pointer;
 
@@ -119,9 +122,24 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         return (ready_descriptors);
     }
     ready_index = 0;
+    unique_ready_count = 0;
     while (ready_index < ready_descriptors)
     {
         descriptor = static_cast<int32_t>(event_list[ready_index].ident);
+        already_counted = FT_FALSE;
+        counted_index = 0;
+        while (counted_index < ready_index)
+        {
+            if (static_cast<int32_t>(event_list[counted_index].ident)
+                == descriptor)
+            {
+                already_counted = FT_TRUE;
+                break ;
+            }
+            counted_index++;
+        }
+        if (already_counted == FT_FALSE)
+            unique_ready_count++;
         search_index = 0;
         while (read_file_descriptors && search_index < read_count)
         {
@@ -183,5 +201,5 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     cma_free(event_list);
     close(kqueue_descriptor);
     (void)(FT_ERR_SUCCESS);
-    return (ready_descriptors);
+    return (unique_ready_count);
 }

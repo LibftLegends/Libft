@@ -6,6 +6,7 @@
 FT_TEST(test_game_hooks_thread_safe_lifecycle)
 {
     game_hooks hooks;
+    ft_vector<ft_game_hook_metadata> *catalog_metadata;
     ft_function<void(game_character&, game_item&)> item_crafted_callback(
         [](game_character &, game_item &) noexcept
         {
@@ -32,7 +33,11 @@ FT_TEST(test_game_hooks_thread_safe_lifecycle)
     FT_ASSERT(hooks.get_on_item_crafted() == FT_TRUE);
     FT_ASSERT(hooks.get_on_character_damaged() == FT_TRUE);
     FT_ASSERT(hooks.get_on_event_triggered() == FT_TRUE);
-    FT_ASSERT_EQ(static_cast<ft_size_t>(3), hooks.get_catalog_metadata()->size());
+    catalog_metadata = hooks.get_catalog_metadata();
+    FT_ASSERT(catalog_metadata != ft_nullptr);
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), catalog_metadata->size());
+    (void)catalog_metadata->destroy();
+    delete catalog_metadata;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks.enable_thread_safety());
     FT_ASSERT(hooks.is_thread_safe() == FT_TRUE);
     hooks.reset();

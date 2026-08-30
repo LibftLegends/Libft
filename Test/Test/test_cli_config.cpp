@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CLI/cli.hpp"
+#include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/File/file_utils.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -72,5 +73,11 @@ FT_TEST(test_cli_merge_config_file_applies_nested_values)
     port_value = subcommands[0].options[0].value_uint64;
     FT_ASSERT_EQ(static_cast<uint64_t>(8080U), port_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(config_path));
+    if (root_options[0].value_string_storage != ft_nullptr)
+    {
+        (void)root_options[0].value_string_storage->destroy();
+        delete root_options[0].value_string_storage;
+        root_options[0].value_string_storage = ft_nullptr;
+    }
     return (1);
 }

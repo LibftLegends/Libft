@@ -7,23 +7,30 @@ UNAME_S := $(shell uname -s 2>/dev/null)
 
 ifeq ($(OPT_LEVEL),0)
     OPT_FLAGS = -O0 -g
+    LINK_OPT_FLAGS =
 else ifeq ($(OPT_LEVEL),1)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O1 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O1 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O1 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O1 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else ifeq ($(OPT_LEVEL),2)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O2 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O2 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O2 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O2 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else ifeq ($(OPT_LEVEL),3)
     ifeq ($(UNAME_S),Darwin)
-        OPT_FLAGS = -O3 -flto -ffunction-sections -fdata-sections -Wl,-dead_strip
+        OPT_FLAGS = -O3 -flto -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,-dead_strip
     else
-        OPT_FLAGS = -O3 -s -ffunction-sections -fdata-sections -Wl,--gc-sections
+        OPT_FLAGS = -O3 -s -ffunction-sections -fdata-sections
+        LINK_OPT_FLAGS = -Wl,--gc-sections
     endif
 else
     $(error Unsupported OPT_LEVEL=$(OPT_LEVEL))
@@ -34,7 +41,7 @@ SANITIZER_FLAGS :=
 SANITIZER_SUFFIX :=
 ifneq ($(strip $(SANITIZERS)),)
     SANITIZER_SELECTION := $(sort $(SANITIZERS))
-    UNSUPPORTED_SANITIZERS := $(filter-out address undefined,$(SANITIZER_SELECTION))
+    UNSUPPORTED_SANITIZERS := $(filter-out address undefined thread,$(SANITIZER_SELECTION))
     ifneq ($(UNSUPPORTED_SANITIZERS),)
         $(error Unsupported SANITIZERS: $(UNSUPPORTED_SANITIZERS))
     endif
@@ -43,6 +50,9 @@ ifneq ($(strip $(SANITIZERS)),)
     endif
     ifneq ($(filter undefined,$(SANITIZER_SELECTION)),)
         SANITIZER_FLAGS += -fsanitize=undefined
+    endif
+    ifneq ($(filter thread,$(SANITIZER_SELECTION)),)
+        SANITIZER_FLAGS += -fsanitize=thread
     endif
     SANITIZER_FLAGS += -fno-omit-frame-pointer
     EMPTY :=
@@ -63,6 +73,10 @@ COMPILE_FLAGS ?= -Wall -Werror -Wextra -std=c++17 -Wmissing-declarations \
                 -Wfloat-equal -Wodr \
                 -DLIBFT_INTERNAL_HEADERS \
                 $(OPT_FLAGS) $(SANITIZER_FLAGS)
+
+ifeq ($(LIBFT_DISABLE_OPENSSL),1)
+    COMPILE_FLAGS += -DNETWORKING_HAS_OPENSSL=0
+endif
 
 ifeq ($(UNAME_S),Darwin)
     COMPILE_FLAGS += -Wno-format-nonliteral -Wno-tautological-compare

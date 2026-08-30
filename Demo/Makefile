@@ -10,7 +10,7 @@ validate-levels:
 $(TARGET): ../Full_Libft.a $(SRCS)
 	@printf '        [%s] Linking %s\n' "$(MODULE_NAME)" "$(TARGET)"
 	@mkdir -p $(TARGET_DIR)
-	@$(CXX) $(COMPILE_FLAGS) $(SRCS) -o $@ ../Full_Libft.a $(LINK_FLAGS)
+	@$(CXX) $(COMPILE_FLAGS) $(SRCS) -o $@ ../Full_Libft.a $(LINK_OPT_FLAGS) $(LINK_FLAGS)
 
 $(LEGACY_TARGET): $(TARGET)
 	@printf '        [%s] Syncing %s\n' "$(MODULE_NAME)" "$(LEGACY_TARGET)"

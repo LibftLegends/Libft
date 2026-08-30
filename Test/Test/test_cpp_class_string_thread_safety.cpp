@@ -28,6 +28,7 @@ FT_TEST(test_ft_string_concurrent_appends_are_serialized)
 {
     ft_string            shared_string;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, shared_string.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shared_string.enable_thread_safety());
     std::atomic<bool>    start_flag;
     std::atomic<bool>    worker_done;
     std::thread          worker;

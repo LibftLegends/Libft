@@ -175,9 +175,25 @@ enum terrain_biome
 enum terrain_json_file_mode
 {
     TERRAIN_JSON_FILE_CREATE_ONLY = 0,
-    TERRAIN_JSON_FILE_REPLACE = 1,
-    TERRAIN_JSON_FILE_APPEND = 2
+    TERRAIN_JSON_FILE_REPLACE = 1
 };
+
+#ifdef LIBFT_TEST_BUILD
+enum terrain_json_test_file_operation
+{
+    TERRAIN_JSON_TEST_FILE_OPEN_CREATE_ONLY = 1,
+    TERRAIN_JSON_TEST_FILE_OPEN_REPLACE = 2,
+    TERRAIN_JSON_TEST_FILE_FIRST_WRITE = 3,
+    TERRAIN_JSON_TEST_FILE_PARTIAL_WRITE = 4,
+    TERRAIN_JSON_TEST_FILE_INTERRUPTED_WRITE = 5,
+    TERRAIN_JSON_TEST_FILE_CLOSE = 6
+};
+
+int32_t terrain_json_test_fail_file_operation(
+    terrain_json_test_file_operation operation, int32_t error_code,
+    ft_size_t partial_write_after) noexcept;
+void terrain_json_test_clear_file_failure(void) noexcept;
+#endif
 
 struct terrain_biome_profile
 {

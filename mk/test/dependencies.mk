@@ -1,4 +1,8 @@
+ifeq ($(LIBFT_DISABLE_OPENSSL),1)
+HAS_OPENSSL_HEADERS := 0
+else
 HAS_OPENSSL_HEADERS := $(shell printf "\#include <openssl/ssl.h>\n" | $(CXX) -x c++ -E - >/dev/null 2>&1 && echo 1 || echo 0)
+endif
 ifneq ($(HAS_OPENSSL_HEADERS),1)
 SRCS := $(filter-out Test/test_api_tls_diagnostics.cpp \
                     Test/test_encryption_aead.cpp \
@@ -6,7 +10,11 @@ SRCS := $(filter-out Test/test_api_tls_diagnostics.cpp \
                     Test/test_encryption_hash_algorithms.cpp,$(SRCS))
 endif
 
+ifeq ($(LIBFT_DISABLE_OPENSSL),1)
+HAS_OPENSSL_LIBS := 0
+else
 HAS_OPENSSL_LIBS := $(shell printf 'int main(void){return 0;}\n' | $(CXX) -x c++ -o /tmp/libft_test_openssl_check_$$$$_tmp - -lssl -lcrypto >/dev/null 2>&1 && echo 1 || echo 0)
+endif
 ifeq ($(and $(HAS_OPENSSL_HEADERS),$(HAS_OPENSSL_LIBS)),1)
 OPENSSL_LIBS := -lssl -lcrypto
 else

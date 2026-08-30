@@ -62,8 +62,6 @@ int pt_condition_variable::ensure_native_sync_objects()
     int native_error;
     bool mutex_created;
 
-    if (this->_mutex_initialised && this->_condition_initialised)
-        return (FT_ERR_SUCCESS);
     this->_initialization_mutex.lock();
     if (this->_mutex_initialised && this->_condition_initialised)
     {

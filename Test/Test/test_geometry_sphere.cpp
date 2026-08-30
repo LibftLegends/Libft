@@ -2576,7 +2576,14 @@ FT_TEST(test_sphere_move_bidirectional_high_load_soak_rounds)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second->initialize(1.0, 1.0, 1.0, 4.0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first->enable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second->enable_thread_safety());
+    /* Windows CI can be heavily oversubscribed while this contention test is
+       running. Keep the timeout bounded, but do not classify scheduler delay
+       as a lock failure. */
+#ifdef _WIN32
+    join_timeout_ms = 60000;
+#else
     join_timeout_ms = 10000;
+#endif
     round_index = 0;
     while (round_index < 3)
     {

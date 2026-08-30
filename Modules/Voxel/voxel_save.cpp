@@ -358,8 +358,7 @@ static int32_t terrain_save_read_ore(ft_byte_buffer &buffer,
     error_code = ore.set_vein(vein_size, chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = ore.set_ore_replacement(
-        static_cast<ft_bool>(allow_ore_replacement));
+    error_code = ore.set_ore_replacement(allow_ore_replacement);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     error_code = ore.set_enabled(ft_platform_cast<ft_bool>(enabled));
@@ -792,8 +791,7 @@ int32_t terrain_generation_config_deserialize(
             error_code = buffer.read_u8(&enable_biome_size_control);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            loaded_config.enable_biome_size_control =
-                static_cast<ft_bool>(enable_biome_size_control);
+            loaded_config.enable_biome_size_control = enable_biome_size_control;
             index = 0U;
             while (index < TERRAIN_MAX_CUSTOM_BIOMES)
             {
@@ -810,8 +808,7 @@ int32_t terrain_generation_config_deserialize(
                 error_code = buffer.read_u8(&override_enabled);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
-                loaded_config.biome_size_override_enabled[index] =
-                    static_cast<ft_bool>(override_enabled);
+                loaded_config.biome_size_override_enabled[index] = override_enabled;
                 index += 1U;
             }
         }

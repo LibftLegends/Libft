@@ -14,6 +14,12 @@ Networking_SOURCES := networking_socket_class.cpp \
         networking_ssl_wrapper.cpp \
         networking_tls_aead.cpp \
         networking_quic_experimental.cpp \
+        networking_message_transport.cpp \
+        networking_crypto_backend.cpp \
+        networking_secure_channel.cpp \
+        networking_handshake.cpp \
+        networking_simulator.cpp \
+        networking_nat_traversal.cpp \
         networking_nonblocking.cpp \
         networking_event_loop.cpp \
         networking_http_client.cpp \
@@ -44,10 +50,17 @@ endif
 
 Networking_HEADERS := socket_class.hpp \
            networking.hpp \
+           networking_ssl_compat.hpp \
            udp_socket.hpp \
            ssl_wrapper.hpp \
            networking_tls_aead.hpp \
            networking_quic_experimental.hpp \
+           message_transport.hpp \
+           networking_crypto_backend.hpp \
+           networking_secure_channel.hpp \
+           networking_handshake.hpp \
+           networking_simulator.hpp \
+           networking_nat_traversal.hpp \
            http_client.hpp \
            http2_client.hpp \
            http_server.hpp \

@@ -141,6 +141,7 @@ FT_TEST(test_readline_initialize_state_success)
     rl_disable_raw_mode();
     if (allocated_buffer != ft_nullptr)
         cma_free(allocated_buffer);
+    rl_state_teardown_thread_safety(&state);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, init_result);
     FT_ASSERT(allocated_buffer != ft_nullptr);
     FT_ASSERT_EQ(INITIAL_BUFFER_SIZE, buffer_size);

@@ -290,7 +290,7 @@ static int32_t terrain_region_cross_chunk_block_writer(int32_t world_block_x,
     region = static_cast<game_voxel_region *>(user_data);
     if (region == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    return (region->write_block(world_block_x, world_block_y,
+    return (region->write_generated_block(world_block_x, world_block_y,
         world_block_z, block_id));
 }
 

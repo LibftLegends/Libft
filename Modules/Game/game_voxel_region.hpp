@@ -61,6 +61,8 @@ class game_voxel_region
             uint32_t *block_id) const noexcept;
         int32_t write_block(int32_t world_x, int32_t world_y, int32_t world_z,
             uint32_t block_id) noexcept;
+        int32_t write_generated_block(int32_t world_x, int32_t world_y,
+            int32_t world_z, uint32_t block_id) noexcept;
         ft_bool has_chunk(int32_t world_chunk_x,
             int32_t world_chunk_z) const noexcept;
         ft_bool is_chunk_loaded(int32_t world_chunk_x,

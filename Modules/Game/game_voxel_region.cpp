@@ -911,6 +911,7 @@ int32_t game_voxel_region::write_block(int32_t world_x, int32_t world_y,
     int32_t chunk_z;
     uint16_t slot;
     game_voxel_chunk *chunk;
+    game_block_edit_op edit;
     int32_t error_code;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
@@ -930,8 +931,55 @@ int32_t game_voxel_region::write_block(int32_t world_x, int32_t world_y,
     error_code = this->ensure_chunk(slot, &chunk);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = chunk->write_block(local_x & 15, world_y, local_z & 15,
-        block_id);
+    edit.world_x = world_x;
+    edit.world_y = world_y;
+    edit.world_z = world_z;
+    edit.block_type = block_id;
+    edit.tick = 0U;
+    error_code = chunk->apply_block_edit(local_x & 15, world_y,
+        local_z & 15, edit);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    this->_dirty = FT_TRUE;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_voxel_region::write_generated_block(int32_t world_x,
+    int32_t world_y, int32_t world_z, uint32_t block_id) noexcept
+{
+    int32_t local_x;
+    int32_t local_z;
+    int32_t chunk_x;
+    int32_t chunk_z;
+    uint16_t slot;
+    game_voxel_chunk *chunk;
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_region::write_generated_block");
+    if (world_y < 0 || world_y >= GAME_VOXEL_CHUNK_HEIGHT)
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    local_x = world_x - this->_region_start_x;
+    local_z = world_z - this->_region_start_z;
+    if (local_x < 0 || local_x >= GAME_VOXEL_REGION_BLOCK_WIDTH
+        || local_z < 0 || local_z >= GAME_VOXEL_REGION_BLOCK_WIDTH)
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    if (block_id == GAME_VOXEL_AIR_BLOCK)
+    {
+        chunk_x = local_x >> 4;
+        chunk_z = local_z >> 4;
+        slot = game_voxel_region::chunk_slot_from_local(chunk_x, chunk_z);
+        if (this->_chunks[slot] == ft_nullptr)
+            return (this->set_error(FT_ERR_SUCCESS));
+    }
+    chunk_x = local_x >> 4;
+    chunk_z = local_z >> 4;
+    slot = game_voxel_region::chunk_slot_from_local(chunk_x, chunk_z);
+    error_code = this->ensure_chunk(slot, &chunk);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = chunk->write_generated_block(local_x & 15, world_y,
+        local_z & 15, block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (this->set_error(error_code));
     this->_dirty = FT_TRUE;

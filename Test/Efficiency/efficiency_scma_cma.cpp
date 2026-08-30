@@ -17,6 +17,7 @@
 #include "../../Modules/Time/time.hpp"
 
 void efficiency_run_windows_mutex_probe(void);
+void efficiency_run_pthread_rwlock_probe(void);
 
 static const ft_size_t EFFICIENCY_BLOCK_COUNT = 512;
 static const ft_size_t EFFICIENCY_BLOCK_SIZE = 128;
@@ -445,9 +446,9 @@ static void print_mutex_result(const char *name, s_mutex_result result,
         relative_percent = static_cast<double>(baseline_microseconds)
             / static_cast<double>(result.elapsed_microseconds) * 100.0;
     std::printf("[PERFORMANCE] %s: %" PRIu64
-        " us (lock_ops=%zu; %.2f%% of std baseline) status=%s\n",
+        " us (lock_ops=%" PRIu64 "; %.2f%% of std baseline) status=%s\n",
         name, result.elapsed_microseconds,
-        static_cast<std::size_t>(result.lock_operations), relative_percent,
+        static_cast<uint64_t>(result.lock_operations), relative_percent,
         status);
 }
 
@@ -456,8 +457,7 @@ static void efficiency_fill_payload(unsigned char *payload, ft_size_t size,
 {
     if (payload == ft_nullptr)
         return ;
-    std::memset(payload, static_cast<int>(value),
-        static_cast<std::size_t>(size));
+    std::memset(payload, static_cast<int>(value), size);
     return ;
 }
 
@@ -833,7 +833,7 @@ static const char *efficiency_cpu_architecture(void)
 static void efficiency_write_allocator_json(FILE *output, const char *name,
     s_allocator_result result, ft_size_t instances, ft_bool trailing_comma)
 {
-    std::fprintf(output, "    \"%s\": {\"instances\": %zu, "
+    std::fprintf(output, "    \"%s\": {\"instances\": %" PRIu64 ", "
         "\"average_microseconds\": %.6f, "
         "\"allocation_average_microseconds\": %.6f, "
         "\"access_average_microseconds\": %.6f, "
@@ -844,7 +844,7 @@ static void efficiency_write_allocator_json(FILE *output, const char *name,
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<std::size_t>(instances),
+        name, static_cast<uint64_t>(instances),
         efficiency_average_microseconds(result.elapsed_microseconds, instances),
         efficiency_average_microseconds(result.allocation_microseconds, instances),
         efficiency_average_microseconds(result.access_microseconds, instances),
@@ -867,16 +867,16 @@ static void print_operation_result(const char *name, s_mutex_result result)
     if (result.passed == FT_TRUE)
         status = "PASS";
     std::printf("[PERFORMANCE] %s: %" PRIu64
-        " us (operations=%zu; status=%s)\n",
+        " us (operations=%" PRIu64 "; status=%s)\n",
         name, result.elapsed_microseconds,
-        static_cast<std::size_t>(result.lock_operations), status);
+        static_cast<uint64_t>(result.lock_operations), status);
     return ;
 }
 
 static void efficiency_write_mutex_json(FILE *output, const char *name,
     s_mutex_result result, ft_bool trailing_comma)
 {
-    std::fprintf(output, "    \"%s\": {\"lock_operations\": %zu, "
+    std::fprintf(output, "    \"%s\": {\"lock_operations\": %" PRIu64 ", "
         "\"microseconds_per_lock_unlock_level\": %.9f, "
         "\"average_microseconds\": %" PRIu64 ", "
         "\"p95_microseconds\": %" PRIu64 ", "
@@ -884,7 +884,7 @@ static void efficiency_write_mutex_json(FILE *output, const char *name,
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<std::size_t>(result.lock_operations),
+        name, static_cast<uint64_t>(result.lock_operations),
         efficiency_average_microseconds(result.elapsed_microseconds,
             result.lock_operations), result.elapsed_microseconds,
         result.percentile_95_microseconds,
@@ -900,14 +900,14 @@ static void efficiency_write_mutex_json(FILE *output, const char *name,
 static void efficiency_write_operation_json(FILE *output, const char *name,
     s_mutex_result result, ft_bool trailing_comma)
 {
-    std::fprintf(output, "    \"%s\": {\"operations\": %zu, "
+    std::fprintf(output, "    \"%s\": {\"operations\": %" PRIu64 ", "
         "\"average_microseconds\": %" PRIu64 ", "
         "\"p95_microseconds\": %" PRIu64 ", "
         "\"samples_microseconds\": [%" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<std::size_t>(result.lock_operations),
+        name, static_cast<uint64_t>(result.lock_operations),
         result.elapsed_microseconds, result.percentile_95_microseconds,
         result.samples[0], result.samples[1], result.samples[2],
         result.samples[3], result.samples[4], result.samples[5],
@@ -1067,6 +1067,7 @@ int main(void)
                 std_recursive_mutex_result.elapsed_microseconds)) != FT_TRUE)
         pt_recursive_mutex_result.passed = FT_FALSE;
     efficiency_run_windows_mutex_probe();
+    efficiency_run_pthread_rwlock_probe();
     scma_shutdown();
     print_result("malloc", malloc_result, malloc_result.elapsed_microseconds);
     print_result("CMA", cma_result, malloc_result.elapsed_microseconds);

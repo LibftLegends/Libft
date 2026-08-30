@@ -27,6 +27,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Compression` | `Basic`, `CPP_class`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Config` | `Advanced`, `Basic`, `CMA`, `Compatebility`, `Errno`, `File`, `JSon`, `PThread`, `Printf` |
 | `CrossProcess` | `Basic`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
+| `Crypto` | `Basic`, `Errno`, `RNG`, `Template` |
 | `DUMB` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `PThread` |
 | `Debug` | `Basic`, `Compatebility`, `Errno` |
 | `Encoding` | `Basic`, `CMA`, `Errno` |
@@ -43,7 +44,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `JSon` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template` |
 | `Logger` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Networking`, `PThread`, `Printf`, `Sink`, `System_utils`, `Template`, `Time` |
 | `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `GetNextLine`, `PThread`, `Printf`, `RNG`, `Template` |
-| `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
+| `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Crypto`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Observability` | `Basic`, `CMA`, `Errno`, `PThread`, `Template`, `Threading`, `Time` |
 | `PThread` | `Basic`, `Compatebility`, `Errno`, `System_utils`, `Time` |
 | `Parser` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template` |
@@ -164,6 +165,10 @@ graph TD
     CrossProcess --> Compatebility
     CrossProcess --> Errno
     CrossProcess --> PThread
+    Crypto --> Basic
+    Crypto --> Errno
+    Crypto --> RNG
+    Crypto --> Template
     DUMB --> Basic
     DUMB --> CMA
     DUMB --> CPP_class
@@ -284,6 +289,7 @@ graph TD
     Networking --> CPP_class
     Networking --> Compatebility
     Networking --> Compression
+    Networking --> Crypto
     Networking --> Encryption
     Networking --> Errno
     Networking --> Observability

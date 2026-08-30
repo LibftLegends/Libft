@@ -20,10 +20,11 @@ LIBFT_GLOBAL_TEST_DEBUG_ROOT := $(LIBFT_GLOBAL_ROOT)/test_debug
 LIBFT_GLOBAL_CC ?= gcc
 LIBFT_GLOBAL_MV ?= mv
 
+
 LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
     GetNextLine DUMB Math Geometry System_utils Printf ReadLine Regex PThread \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
-    Compression CSV Encryption Encoding RNG JSon YAML File HTML Time \
+    Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \
     Filesystem XML Storage Networking URI API Application Observability Sink \
     Logger Parser Lua Game Voxel GPGR
 
@@ -79,8 +80,17 @@ LIBFT_GLOBAL_$(1)_DEBUG_DEPS := $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS:.o=.d)
 LIBFT_GLOBAL_$(1)_TEST_DEPS := $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS:.o=.d)
 LIBFT_GLOBAL_$(1)_TEST_DEBUG_DEPS := $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS:.o=.d)
 LIBFT_GLOBAL_$(1)_MANIFEST := $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk
+LIBFT_GLOBAL_$(1)_MANIFEST_FINGERPRINT := $(shell cksum $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk | awk '{print $$1 "_" $$2}')
+LIBFT_GLOBAL_$(1)_MANIFEST_STAMP := $$(LIBFT_GLOBAL_ROOT)/manifests/$(1)-$$(LIBFT_GLOBAL_$(1)_MANIFEST_FINGERPRINT).stamp
 
-$$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+# Keep manifest invalidation content-based rather than relying on filesystem
+# timestamp granularity.  A changed manifest selects a new stamp path, while
+# an unchanged manifest keeps the same prerequisite and remains incremental.
+$$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP): $$(LIBFT_GLOBAL_$(1)_MANIFEST)
+	@$$(MKDIR) $$(dir $$@)
+	@cp $$< $$@
+
+$$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
@@ -92,7 +102,7 @@ $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $(LIBFT_GLOB
 		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
 	fi
 
-$$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
@@ -104,7 +114,7 @@ $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $(LIBFT_
 		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
 	fi
 
-$$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
@@ -116,7 +126,7 @@ $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TES
 		printf '\033[1;35m[LIBFT][$(1)] Archive ready: %s\033[0m\n' "$$@"; \
 	fi
 
-$$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp

@@ -195,14 +195,15 @@ FT_TEST(test_strncat_s_maximum_equal_source_length_succeeds)
 
 FT_TEST(test_strncat_s_invalid_existing_length_preserves_buffer)
 {
-    char destination[4];
+    char destination[5];
 
     destination[0] = 'a';
     destination[1] = 'b';
     destination[2] = 'c';
     destination[3] = 'd';
+    destination[4] = '\0';
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ft_strncat_s(destination,
-            sizeof(destination), "z", 1));
+            4U, "z", 1));
     FT_ASSERT_EQ('a', destination[0]);
     FT_ASSERT_EQ('b', destination[1]);
     FT_ASSERT_EQ('c', destination[2]);

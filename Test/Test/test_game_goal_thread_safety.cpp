@@ -86,6 +86,7 @@ FT_TEST(test_game_goal_thread_safety)
     failure_expression = ft_nullptr;
     failure_line = 0;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_goal.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_goal.enable_thread_safety());
     primary_goal.set_target(128);
     primary_goal.set_progress(0);
     increment_arguments.goal_pointer = &primary_goal;

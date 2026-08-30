@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
+#include <thread>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -27,6 +29,7 @@
 struct cmp_file_watch_context
 {
     std::atomic<ft_bool>    running;
+    std::mutex              mutex;
 #if defined(__linux__)
     int32_t                  file_descriptor;
     int32_t                  watch_descriptor;
@@ -131,7 +134,7 @@ int32_t cmp_file_watch_start(cmp_file_watch_context *context, const char *path)
         return (FT_ERR_INVALID_ARGUMENT);
     cmp_file_watch_stop(context);
 #if defined(__linux__)
-    context->file_descriptor = inotify_init();
+    context->file_descriptor = inotify_init1(IN_NONBLOCK);
     if (context->file_descriptor < 0)
     {
         error_code = cmp_file_watch_translate_error();
@@ -195,6 +198,7 @@ void cmp_file_watch_stop(cmp_file_watch_context *context)
 {
     if (!context)
         return ;
+    std::lock_guard<std::mutex> lock(context->mutex);
     context->running.store(FT_FALSE);
 #if defined(__linux__)
     if (context->watch_descriptor >= 0 && context->file_descriptor >= 0)
@@ -235,6 +239,10 @@ ft_bool cmp_file_watch_wait_event(cmp_file_watch_context *context,
 #if defined(__linux__)
     while (context->running.load())
     {
+        std::unique_lock<std::mutex> lock(context->mutex);
+
+        if (!context->running.load())
+            return (FT_FALSE);
         if (context->buffer_offset < context->buffer_size)
         {
             const struct inotify_event *notify_event =
@@ -264,6 +272,12 @@ ft_bool cmp_file_watch_wait_event(cmp_file_watch_context *context,
         }
         int64_t read_result = ::read(context->file_descriptor, context->buffer,
                 sizeof(context->buffer));
+        if (read_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        {
+            lock.unlock();
+            std::this_thread::yield();
+            continue ;
+        }
         if (read_result <= 0)
         {
             context->running.store(FT_FALSE);

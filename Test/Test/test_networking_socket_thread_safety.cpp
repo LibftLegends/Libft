@@ -91,7 +91,7 @@ static void networking_socket_configure_client(SocketConfig &config, uint16_t po
     config._ip[sizeof(config._ip) - 1] = '\0';
     config._port = port;
     config._address_family = AF_INET;
-    config._non_blocking = false;
+    config._non_blocking = true;
     config._recv_timeout = 200;
     config._send_timeout = 200;
     return ;
@@ -321,6 +321,7 @@ FT_TEST(test_networking_socket_receive_close_thread_safety)
         return ;
     });
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_socket.initialize(client_config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_socket.enable_thread_safety());
     accept_thread.join();
     FT_ASSERT(networking_socket_is_valid_file_descriptor(accepted_fd) == FT_TRUE);
     received_once.store(false);

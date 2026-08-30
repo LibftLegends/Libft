@@ -124,7 +124,7 @@ static void inv_shift_rows(uint8_t *state)
 static uint8_t xtime(uint8_t value)
 {
     uint8_t high_bit = value & 0x80;
-    value <<= 1;
+    value = static_cast<uint8_t>(static_cast<uint32_t>(value) << 1U);
     if (high_bit)
         value ^= 0x1b;
     return (value);
@@ -139,7 +139,7 @@ static uint8_t multiply(uint8_t value, uint8_t multiplier)
         if (multiplier & 1)
             result ^= value;
         uint8_t high_bit = value & 0x80;
-        value <<= 1;
+        value = static_cast<uint8_t>(static_cast<uint32_t>(value) << 1U);
         if (high_bit)
             value ^= 0x1b;
         multiplier >>= 1;

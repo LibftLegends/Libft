@@ -239,6 +239,13 @@ FT_TEST(test_path_step_thread_safety)
         failure_expression = "primary_step->initialize() == FT_ERR_SUCCESS";
         failure_line = __LINE__;
     }
+    if (test_failed == 0
+        && primary_step->enable_thread_safety() != FT_ERR_SUCCESS)
+    {
+        test_failed = 1;
+        failure_expression = "primary_step->enable_thread_safety() == FT_ERR_SUCCESS";
+        failure_line = __LINE__;
+    }
     if (copy_target.initialize() != FT_ERR_SUCCESS && test_failed == 0)
     {
         test_failed = 1;
@@ -422,6 +429,7 @@ FT_TEST(test_pathfinding_thread_safety)
     primary_finder = new game_pathfinding();
     FT_ASSERT(primary_finder != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_finder->initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_finder->enable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, seed_path.initialize());
     recalc_arguments = new pathfinding_recalc_args();
     read_arguments = new pathfinding_read_args();

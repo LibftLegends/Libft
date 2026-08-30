@@ -3,7 +3,6 @@
 
 #include "../CPP_class/class_string.hpp"
 #include "../Template/vector.hpp"
-#include "openssl_support.hpp"
 #include "../Basic/basic.hpp"
 
 #ifdef _WIN32
@@ -45,6 +44,27 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
             int32_t *write_file_descriptors, int32_t write_count,
             int32_t timeout_milliseconds);
 
+# define EVENT_LOOP_INTEREST_READ  (1U << 0)
+# define EVENT_LOOP_INTEREST_WRITE (1U << 1)
+# define EVENT_LOOP_READY_READ     (1U << 0)
+# define EVENT_LOOP_READY_WRITE    (1U << 1)
+# define EVENT_LOOP_READY_HANGUP   (1U << 2)
+# define EVENT_LOOP_READY_ERROR    (1U << 3)
+
+struct event_loop_ready_event
+{
+    int32_t file_descriptor;
+    uint32_t ready_mask;
+    int32_t error_code;
+};
+
+struct event_loop_registration
+{
+    int32_t file_descriptor;
+    uint32_t interest_mask;
+    uint64_t generation;
+};
+
 class pt_mutex;
 
 struct networking_resolved_address
@@ -77,10 +97,6 @@ void networking_dns_set_error(int32_t resolver_status) noexcept;
 void networking_dns_destroy_cache_for_tests(void) noexcept;
 #endif
 
-#if NETWORKING_HAS_OPENSSL
-int32_t networking_check_ssl_after_send(SSL *ssl_connection);
-#endif
-
 struct event_loop
 {
     int32_t *read_file_descriptors;
@@ -89,15 +105,39 @@ struct event_loop
     int32_t write_count;
     pt_mutex *mutex;
     ft_bool thread_safe_enabled;
+    event_loop_registration *registrations;
+    uint32_t registration_count;
+    uint32_t registration_capacity;
+    event_loop_ready_event *ready_events;
+    uint32_t ready_capacity;
+    void *backend_events;
+    uint32_t backend_event_capacity;
+    int32_t backend_descriptor;
+    int32_t wakeup_read_descriptor;
+    int32_t wakeup_write_descriptor;
+    pt_mutex *wait_mutex;
+    ft_bool wait_active;
+    ft_bool stopping;
+    uint64_t next_generation;
 };
 
 class udp_socket;
 
 void event_loop_init(event_loop *loop);
 void event_loop_clear(event_loop *loop);
+int32_t event_loop_initialize(event_loop *loop) noexcept;
+int32_t event_loop_destroy(event_loop *loop) noexcept;
 int32_t event_loop_add_socket(event_loop *loop, int32_t socket_fd, ft_bool is_write);
 int32_t event_loop_remove_socket(event_loop *loop, int32_t socket_fd, ft_bool is_write);
 int32_t event_loop_run(event_loop *loop, int32_t timeout_milliseconds);
+int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
+    uint32_t interest_mask) noexcept;
+int32_t event_loop_remove_interest(event_loop *loop, int32_t file_descriptor,
+    uint32_t interest_mask) noexcept;
+int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
+    uint32_t event_capacity, uint32_t *event_count,
+    int32_t timeout_milliseconds) noexcept;
+int32_t event_loop_interrupt(event_loop *loop) noexcept;
 int32_t event_loop_prepare_thread_safety(event_loop *loop);
 void event_loop_teardown_thread_safety(event_loop *loop);
 int32_t event_loop_lock(event_loop *loop, ft_bool *lock_acquired);

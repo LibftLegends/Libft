@@ -49,7 +49,10 @@ static void game_item_definition_destroy(game_item_definition &value)
 }
 static void game_item_definition_move(game_item_definition &value)
 {
+    if (value.initialize() != FT_ERR_SUCCESS)
+        return ;
     (void)value.move(value);
+    (void)value.destroy();
     return ;
 }
 
@@ -109,7 +112,7 @@ FT_TEST(test_game_item_definition_destroy_is_safe)
 }
 FT_TEST(test_game_item_definition_move_is_safe)
 {
-    FT_ASSERT_EQ(1, expect_game_lifecycle_sigabrt<game_item_definition>(
+    FT_ASSERT_EQ(0, expect_game_lifecycle_sigabrt<game_item_definition>(
                         game_item_definition_move));
     return (1);
 }

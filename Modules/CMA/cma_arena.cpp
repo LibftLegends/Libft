@@ -135,6 +135,7 @@ static ft_bool cma_arena_owns_allocation(const void *memory_pointer,
     cma_arena *arena;
     cma_arena_allocation_header *header;
     const uint8_t *byte_pointer;
+    uintptr_t header_address;
 
     arena = static_cast<cma_arena *>(user_data);
     if (cma_arena_is_initialised(arena) == FT_FALSE)
@@ -145,9 +146,13 @@ static ft_bool cma_arena_owns_allocation(const void *memory_pointer,
     if (byte_pointer < arena->buffer
         || byte_pointer >= arena->buffer + arena->capacity)
         return (FT_FALSE);
-    header = cma_arena_header_from_pointer(memory_pointer);
-    if (reinterpret_cast<uint8_t *>(header) < arena->buffer)
+    if (byte_pointer < arena->buffer + sizeof(cma_arena_allocation_header))
         return (FT_FALSE);
+    header_address = reinterpret_cast<uintptr_t>(byte_pointer)
+        - sizeof(cma_arena_allocation_header);
+    if (header_address % alignof(cma_arena_allocation_header) != 0U)
+        return (FT_FALSE);
+    header = reinterpret_cast<cma_arena_allocation_header *>(header_address);
     if (header->magic != CMA_ARENA_ALLOCATION_MAGIC)
         return (FT_FALSE);
     return (FT_TRUE);

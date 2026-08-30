@@ -22,8 +22,11 @@
 #include <cstdlib>
 #include <exception>
 #include <csignal>
+#include <chrono>
+#include <condition_variable>
 #include <fcntl.h>
 #include <mutex>
+#include <thread>
 #if !defined(_WIN32) && !defined(_WIN64)
 # include <sys/ioctl.h>
 #endif
@@ -79,6 +82,151 @@ struct s_test_case
     const char *module;
     const char *name;
 };
+
+#ifdef LIBFT_TEST_BUILD
+static uint32_t test_timeout_seconds(void)
+{
+    const char *value;
+    char *end_pointer;
+    unsigned long parsed_value;
+
+    value = std::getenv("FT_TEST_TIMEOUT_SECONDS");
+    if (value == NULL || value[0] == '\0')
+        return (0U);
+    parsed_value = std::strtoul(value, &end_pointer, 10);
+    if (end_pointer == value || *end_pointer != '\0'
+        || parsed_value > UINT32_MAX)
+        return (0U);
+    return (static_cast<uint32_t>(parsed_value));
+}
+
+static void test_abort_for_timeout(const s_test_case *test)
+{
+    std::fprintf(stderr, "[LIBFT][Test] timeout: %s/%s exceeded %s seconds\n",
+        test->module, test->name, std::getenv("FT_TEST_TIMEOUT_SECONDS"));
+    std::fflush(stderr);
+    std::raise(SIGABRT);
+    std::abort();
+}
+
+class test_timeout_watchdog
+{
+    private:
+        std::atomic<ft_bool> _stop_requested;
+        std::condition_variable _condition;
+        std::mutex _mutex;
+        ft_bool _test_active;
+        const s_test_case *_active_test;
+        std::chrono::steady_clock::time_point _deadline;
+        std::thread _thread;
+
+    public:
+        test_timeout_watchdog() noexcept
+            : _stop_requested(FT_FALSE), _condition(), _mutex(),
+              _test_active(FT_FALSE), _active_test(ft_nullptr), _deadline(),
+              _thread()
+        {
+            if (test_timeout_seconds() == 0U)
+                return ;
+            try
+            {
+                this->_thread = std::thread([this]()
+                {
+                    std::unique_lock<std::mutex> lock(this->_mutex);
+                    while (this->_stop_requested.load(
+                            std::memory_order_acquire) == FT_FALSE)
+                    {
+                        if (this->_test_active == FT_FALSE)
+                        {
+                            this->_condition.wait(lock);
+                            continue ;
+                        }
+                        if (this->_condition.wait_until(lock, this->_deadline)
+                            == std::cv_status::timeout
+                            && this->_test_active != FT_FALSE)
+                        {
+                            const s_test_case *test;
+
+                            test = this->_active_test;
+                            lock.unlock();
+                            test_abort_for_timeout(test);
+                            return ;
+                        }
+                    }
+                });
+            }
+            catch (...)
+            {
+                std::fprintf(stderr,
+                    "[LIBFT][Test] unable to start persistent timeout watchdog\n");
+                std::fflush(stderr);
+                return ;
+            }
+        }
+
+        ~test_timeout_watchdog() noexcept
+        {
+            this->_stop_requested.store(FT_TRUE, std::memory_order_release);
+            this->_condition.notify_all();
+            if (this->_thread.joinable())
+                this->_thread.join();
+        }
+
+        void begin_test(const s_test_case *test) noexcept
+        {
+            uint32_t timeout;
+
+            timeout = test_timeout_seconds();
+            if (timeout == 0U || !this->_thread.joinable())
+                return ;
+            {
+                std::lock_guard<std::mutex> lock(this->_mutex);
+                this->_active_test = test;
+                this->_deadline = std::chrono::steady_clock::now()
+                    + std::chrono::seconds(timeout);
+                this->_test_active = FT_TRUE;
+            }
+            this->_condition.notify_all();
+            return ;
+        }
+
+        void finish_test() noexcept
+        {
+            if (!this->_thread.joinable())
+                return ;
+            {
+                std::lock_guard<std::mutex> lock(this->_mutex);
+                this->_test_active = FT_FALSE;
+                this->_active_test = ft_nullptr;
+            }
+            this->_condition.notify_all();
+            return ;
+        }
+
+        test_timeout_watchdog(const test_timeout_watchdog &other) noexcept = delete;
+        test_timeout_watchdog &operator=(const test_timeout_watchdog &other) noexcept = delete;
+};
+
+static test_timeout_watchdog *g_test_timeout_watchdog = ft_nullptr;
+#endif
+
+#ifdef LIBFT_TEST_BUILD
+static void write_test_trace(int32_t test_number, const s_test_case *test)
+{
+    FILE *trace_file;
+
+    if (std::getenv("FT_TEST_TRACE_CURRENT_TEST") == NULL || test == NULL)
+        return ;
+    trace_file = std::fopen("test_current.log", "w");
+    if (trace_file == NULL)
+        return ;
+    std::fprintf(trace_file, "started %d %s/%s\n", test_number,
+        test->module, test->name);
+    std::fflush(trace_file);
+    std::fclose(trace_file);
+    return ;
+}
+#endif
 
 static int32_t *get_test_count(void)
 {
@@ -210,9 +358,15 @@ static void sort_tests(void)
     tests = get_tests();
     test_count = get_test_count();
     std::sort(tests, tests + *test_count,
-        [](const s_test_case &left_test, const s_test_case &right_test) -> int32_t
+        [](const s_test_case &left_test, const s_test_case &right_test) -> bool
         {
-            return (std::strcmp(left_test.module, right_test.module) < 0);
+            int module_comparison;
+
+            module_comparison = std::strcmp(left_test.module,
+                right_test.module);
+            if (module_comparison != 0)
+                return (module_comparison < 0);
+            return (std::strcmp(left_test.name, right_test.name) < 0);
         });
     return ;
 }
@@ -450,12 +604,21 @@ static int32_t restore_baseline_descriptors(int32_t baseline_stdin_descriptor,
     return (1);
 }
 
+static int32_t diagnostic_output_enabled(void)
+{
+    const char *diagnostic_output;
+
+    diagnostic_output = std::getenv("FT_TEST_DIAGNOSTIC_OUTPUT");
+    return (env_value_is_enabled(diagnostic_output));
+}
+
 static int32_t execute_test_function(const s_test_case *test,
     int32_t baseline_stdin_descriptor, int32_t baseline_stdout_descriptor,
     int32_t baseline_stderr_descriptor, int32_t null_descriptor)
 {
     int32_t reset_error;
     int32_t result;
+    int32_t preserve_output;
 
     /*
      * Tests which exercise abort behaviour install temporary signal handlers.
@@ -496,9 +659,10 @@ static int32_t execute_test_function(const s_test_case *test,
     su_service_clear_signal_handlers();
     su_service_force_no_fork(FT_FALSE);
 
-    if (dup2(null_descriptor, STDOUT_FILENO) < 0)
+    preserve_output = diagnostic_output_enabled();
+    if (preserve_output == 0 && dup2(null_descriptor, STDOUT_FILENO) < 0)
         return (0);
-    if (dup2(null_descriptor, STDERR_FILENO) < 0)
+    if (preserve_output == 0 && dup2(null_descriptor, STDERR_FILENO) < 0)
     {
         if (restore_baseline_descriptors(baseline_stdin_descriptor,
                 baseline_stdout_descriptor, baseline_stderr_descriptor) == 0)
@@ -518,6 +682,8 @@ static int32_t execute_test_function(const s_test_case *test,
     clear_last_failure_message();
 #ifdef LIBFT_TEST_BUILD
     ft_test_runner_set_current_test_name(test->name);
+    if (g_test_timeout_watchdog != ft_nullptr)
+        g_test_timeout_watchdog->begin_test(test);
 #endif
     try
     {
@@ -557,6 +723,10 @@ static int32_t execute_test_function(const s_test_case *test,
     }
     sink_clear();
     reset_mutex_failure_overrides();
+#ifdef LIBFT_TEST_BUILD
+    if (g_test_timeout_watchdog != ft_nullptr)
+        g_test_timeout_watchdog->finish_test();
+#endif
     if (restore_baseline_descriptors(baseline_stdin_descriptor,
             baseline_stdout_descriptor, baseline_stderr_descriptor) == 0)
         result = 0;
@@ -659,6 +829,9 @@ int32_t ft_run_registered_tests(void)
     int32_t hide_successful_tests;
     int32_t terminal_width;
     int32_t show_running_line;
+#ifdef LIBFT_TEST_BUILD
+    test_timeout_watchdog timeout_watchdog;
+#endif
     log_file = fopen("test_failures.log", "w");
     if (log_file)
         fclose(log_file);
@@ -706,6 +879,9 @@ int32_t ft_run_registered_tests(void)
         return (1);
     }
     total_tests = *test_count;
+#ifdef LIBFT_TEST_BUILD
+    g_test_timeout_watchdog = &timeout_watchdog;
+#endif
     selected_tests = 0;
     hide_successful_tests = hide_successful_tests_enabled();
     terminal_width = get_stdout_terminal_width();
@@ -729,6 +905,9 @@ int32_t ft_run_registered_tests(void)
             print_running_test_line(selected_tests, current_test.description,
                 terminal_width);
         }
+#ifdef LIBFT_TEST_BUILD
+        write_test_trace(selected_tests, &current_test);
+#endif
         if (execute_test_function(&current_test, baseline_stdin_descriptor,
                 baseline_stdout_descriptor, baseline_stderr_descriptor,
                 null_descriptor))
@@ -766,6 +945,9 @@ int32_t ft_run_registered_tests(void)
         (void)close(baseline_stderr_descriptor);
     if (null_descriptor >= 0)
         (void)close(null_descriptor);
+#ifdef LIBFT_TEST_BUILD
+    g_test_timeout_watchdog = ft_nullptr;
+#endif
 #ifdef _WIN32
     if (socket_runtime_acquired == FT_TRUE)
         ft_socket_runtime_release();

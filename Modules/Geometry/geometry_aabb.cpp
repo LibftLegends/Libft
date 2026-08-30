@@ -15,7 +15,6 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
     const aabb *ordered_second;
     uint32_t lower_error;
     uint32_t upper_error;
-    uint32_t retry_count;
     std::less<const aabb *> pointer_order;
     std::less<const pt_recursive_mutex *> mutex_order;
 
@@ -49,9 +48,8 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
     }
     lower = ordered_first;
     upper = ordered_second;
-    retry_count = 0;
     upper_error = FT_ERR_MUTEX_ALREADY_LOCKED;
-    while (retry_count < 8U)
+    while (true)
     {
         lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
         if (lower_error != FT_ERR_SUCCESS)
@@ -59,7 +57,6 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
             if (lower_error != FT_ERR_MUTEX_ALREADY_LOCKED)
                 return (lower_error);
             (void)pt_thread_yield();
-            retry_count += 1U;
             continue ;
         }
         upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
@@ -69,9 +66,7 @@ uint32_t aabb::lock_pair(const aabb &other, const aabb *&lower,
         if (upper_error != FT_ERR_MUTEX_ALREADY_LOCKED)
             return (upper_error);
         (void)pt_thread_yield();
-        retry_count += 1U;
     }
-    return (upper_error);
 }
 
 void aabb::unlock_pair(const aabb *lower, const aabb *upper)
@@ -177,19 +172,17 @@ uint32_t aabb::move(aabb &other) noexcept
 {
     const aabb *lower;
     const aabb *upper;
+    ft_bool source_uninitialised;
     uint32_t lock_error;
 
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state, "aabb::move source",
-            "called with uninitialised source object");
-        return (FT_ERR_INVALID_STATE);
-    }
     if (this == &other)
-        return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        {
+            errno_abort_lifecycle(this->_initialised_state,
+                "aabb::move source", "called with uninitialised source object");
+            return (FT_ERR_INVALID_STATE);
+        }
         return (FT_ERR_SUCCESS);
     }
     lock_error = this->lock_pair(other, lower, upper);
@@ -197,6 +190,22 @@ uint32_t aabb::move(aabb &other) noexcept
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (lock_error);
+    }
+    source_uninitialised = FT_FALSE;
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        source_uninitialised = FT_TRUE;
+    if (source_uninitialised != FT_FALSE)
+    {
+        this->unlock_pair(lower, upper);
+        errno_abort_lifecycle(other._initialised_state, "aabb::move source",
+            "called with uninitialised source object");
+        return (FT_ERR_INVALID_STATE);
+    }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->unlock_pair(lower, upper);
+        return (FT_ERR_SUCCESS);
     }
     this->_minimum_x = other._minimum_x;
     this->_minimum_y = other._minimum_y;

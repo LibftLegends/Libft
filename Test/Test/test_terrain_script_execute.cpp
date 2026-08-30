@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Voxel/terrain_scripting_bridge.hpp"
+#include "../../Modules/Voxel/voxel_block_registry.hpp"
 #include "../../Modules/Voxel/terrain_api.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -21,6 +22,7 @@ FT_TEST(test_terrain_script_execute_configures_and_generates_chunk)
     ft_string script;
     uint32_t block_id;
 
+    terrain_runtime_reset_for_tests();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer.initialize(new game_world()));
     FT_ASSERT(world_pointer.get() != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->initialize());
@@ -48,6 +50,7 @@ FT_TEST(test_terrain_script_execute_configures_and_generates_chunk)
     FT_ASSERT_EQ(FT_TRUE, chunk.has_generation_metadata());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 255, 0, &block_id));
     FT_ASSERT_EQ(13U, block_id);
+    terrain_runtime_reset_for_tests();
     return (1);
 }
 
@@ -59,6 +62,7 @@ FT_TEST(test_terrain_script_execute_rejects_invalid_arguments)
     game_voxel_chunk chunk;
     ft_string script;
 
+    terrain_runtime_reset_for_tests();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer.initialize(new game_world()));
     FT_ASSERT(world_pointer.get() != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->initialize());
@@ -73,6 +77,7 @@ FT_TEST(test_terrain_script_execute_rejects_invalid_arguments)
         script, chunk, 0, 0, "scripted-world", config));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, terrain_script_execute(bridge,
         script, chunk, 0, 0, ft_nullptr, config));
+    terrain_runtime_reset_for_tests();
     return (1);
 }
 

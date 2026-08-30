@@ -87,6 +87,7 @@ SUBDIRS := Modules/Basic \
            Modules/Compression \
            Modules/CSV \
            Modules/Encryption \
+           Modules/Crypto \
            Modules/Encoding \
            Modules/RNG \
            Modules/JSon \
@@ -137,6 +138,7 @@ LIB_BASES := \
   Modules/Compression/compression \
   Modules/CSV/CSV \
   Modules/Encryption/encryption \
+  Modules/Crypto/crypto \
   Modules/Encoding/encoding \
   Modules/RNG/RNG \
   Modules/JSon/JSon \

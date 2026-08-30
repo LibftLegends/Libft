@@ -20,7 +20,14 @@ static ft_bool nw_windows_descriptor_is_pipe(int32_t file_descriptor)
 {
     HANDLE file_handle;
     DWORD file_type;
+    int32_t socket_type;
+    int32_t socket_type_length;
 
+    socket_type = 0;
+    socket_type_length = sizeof(socket_type);
+    if (getsockopt(static_cast<SOCKET>(file_descriptor), SOL_SOCKET, SO_TYPE,
+        reinterpret_cast<char *>(&socket_type), &socket_type_length) == 0)
+        return (FT_FALSE);
     file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(file_descriptor));
     if (file_handle == INVALID_HANDLE_VALUE)
         return (FT_FALSE);
@@ -28,6 +35,144 @@ static ft_bool nw_windows_descriptor_is_pipe(int32_t file_descriptor)
     if (file_type == FILE_TYPE_PIPE)
         return (FT_TRUE);
     return (FT_FALSE);
+}
+
+static ft_bool nw_windows_scan_pipe_ready(int32_t *read_file_descriptors,
+    int32_t read_count, int32_t *write_file_descriptors, int32_t write_count,
+    int32_t *read_ready_flags, int32_t *write_ready_flags)
+{
+    int32_t index;
+    HANDLE file_handle;
+    DWORD wait_result;
+    DWORD bytes_available;
+    BOOL pipe_is_readable;
+    DWORD pipe_error;
+    ft_bool has_ready_descriptor;
+    fd_set read_set;
+    fd_set write_set;
+    int32_t max_descriptor;
+    timeval zero_timeout;
+    int32_t select_result;
+
+    has_ready_descriptor = FT_FALSE;
+    FD_ZERO(&read_set);
+    FD_ZERO(&write_set);
+    max_descriptor = -1;
+    index = 0;
+    while (index < read_count)
+    {
+        if (read_ready_flags)
+            read_ready_flags[index] = 0;
+        index++;
+    }
+    index = 0;
+    while (index < write_count)
+    {
+        if (write_ready_flags)
+            write_ready_flags[index] = 0;
+        index++;
+    }
+    index = 0;
+    while (read_file_descriptors && index < read_count)
+    {
+        if (read_file_descriptors[index] >= 0)
+        {
+            if (nw_windows_descriptor_is_pipe(read_file_descriptors[index])
+                == FT_TRUE)
+            {
+                file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(
+                        read_file_descriptors[index]));
+                if (file_handle != INVALID_HANDLE_VALUE)
+                {
+                    wait_result = WaitForSingleObject(file_handle, 0);
+                    bytes_available = 0;
+                    pipe_is_readable = PeekNamedPipe(file_handle, NULL, 0,
+                            NULL, &bytes_available, NULL);
+                    pipe_error = GetLastError();
+                    if ((pipe_is_readable != 0 && bytes_available > 0)
+                        || wait_result == WAIT_OBJECT_0
+                        || (pipe_is_readable == 0
+                            && pipe_error == ERROR_BROKEN_PIPE))
+                    {
+                        if (read_ready_flags)
+                            read_ready_flags[index] = 1;
+                        has_ready_descriptor = FT_TRUE;
+                    }
+                }
+            }
+            else
+            {
+                FD_SET(static_cast<SOCKET>(read_file_descriptors[index]),
+                    &read_set);
+                if (read_file_descriptors[index] > max_descriptor)
+                    max_descriptor = read_file_descriptors[index];
+            }
+        }
+        index++;
+    }
+    index = 0;
+    while (write_file_descriptors && index < write_count)
+    {
+        if (write_file_descriptors[index] >= 0)
+        {
+            if (nw_windows_descriptor_is_pipe(write_file_descriptors[index])
+                == FT_TRUE)
+            {
+                if (write_ready_flags)
+                    write_ready_flags[index] = 1;
+                has_ready_descriptor = FT_TRUE;
+            }
+            else
+            {
+                FD_SET(static_cast<SOCKET>(write_file_descriptors[index]),
+                    &write_set);
+                if (write_file_descriptors[index] > max_descriptor)
+                    max_descriptor = write_file_descriptors[index];
+            }
+        }
+        index++;
+    }
+    zero_timeout.tv_sec = 0;
+    zero_timeout.tv_usec = 0;
+    if (max_descriptor >= 0)
+    {
+        select_result = select(max_descriptor + 1, &read_set, &write_set,
+                NULL, &zero_timeout);
+        if (select_result > 0)
+        {
+            index = 0;
+            while (read_file_descriptors && index < read_count)
+            {
+                if (read_file_descriptors[index] >= 0
+                    && nw_windows_descriptor_is_pipe(
+                        read_file_descriptors[index]) == FT_FALSE
+                    && FD_ISSET(static_cast<SOCKET>(
+                        read_file_descriptors[index]), &read_set))
+                {
+                    if (read_ready_flags)
+                        read_ready_flags[index] = 1;
+                    has_ready_descriptor = FT_TRUE;
+                }
+                index++;
+            }
+            index = 0;
+            while (write_file_descriptors && index < write_count)
+            {
+                if (write_file_descriptors[index] >= 0
+                    && nw_windows_descriptor_is_pipe(
+                        write_file_descriptors[index]) == FT_FALSE
+                    && FD_ISSET(static_cast<SOCKET>(
+                        write_file_descriptors[index]), &write_set))
+                {
+                    if (write_ready_flags)
+                        write_ready_flags[index] = 1;
+                    has_ready_descriptor = FT_TRUE;
+                }
+                index++;
+            }
+        }
+    }
+    return (has_ready_descriptor);
 }
 #endif
 
@@ -42,11 +187,10 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
     int32_t max_descriptor;
     int32_t ready_descriptors;
     int32_t total_ready;
+    int32_t unique_ready;
     timeval timeout;
     timeval *timeout_pointer;
     ft_bool use_pipe_fallback;
-    HANDLE file_handle;
-    DWORD wait_result;
 
     use_pipe_fallback = FT_TRUE;
     index = 0;
@@ -81,7 +225,9 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         int32_t pipe_ready_count;
         int32_t *read_ready_flags;
         int32_t *write_ready_flags;
-        DWORD bytes_available;
+        int64_t elapsed_milliseconds;
+        int64_t start_milliseconds;
+        ft_bool has_ready_descriptor;
 
         read_ready_flags = ft_nullptr;
         write_ready_flags = ft_nullptr;
@@ -103,81 +249,63 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
                 return (-1);
             }
         }
-        index = 0;
-        while (index < read_count)
+        start_milliseconds = static_cast<int64_t>(GetTickCount64());
+        has_ready_descriptor = FT_FALSE;
+        while (has_ready_descriptor == FT_FALSE)
         {
-            if (read_ready_flags)
-                read_ready_flags[index] = 0;
-            index++;
-        }
-        index = 0;
-        while (index < write_count)
-        {
-            if (write_ready_flags)
-                write_ready_flags[index] = 0;
-            index++;
+            has_ready_descriptor = nw_windows_scan_pipe_ready(
+                read_file_descriptors, read_count, write_file_descriptors,
+                write_count, read_ready_flags, write_ready_flags);
+            if (has_ready_descriptor != FT_FALSE || timeout_milliseconds == 0)
+                break ;
+            elapsed_milliseconds = static_cast<int64_t>(GetTickCount64())
+                - start_milliseconds;
+            if (timeout_milliseconds > 0
+                && elapsed_milliseconds >= timeout_milliseconds)
+                break ;
+            cmp_thread_sleep(1);
         }
         pipe_ready_count = 0;
         index = 0;
         while (read_file_descriptors && index < read_count)
         {
-            if (read_file_descriptors[index] >= 0)
-            {
-                file_handle = reinterpret_cast<HANDLE>(_get_osfhandle(read_file_descriptors[index]));
-                if (file_handle != INVALID_HANDLE_VALUE)
-                {
-                    wait_result = WaitForSingleObject(file_handle, 0);
-                    bytes_available = 0;
-                    if (PeekNamedPipe(file_handle, NULL, 0, NULL, &bytes_available, NULL) != 0
-                        && bytes_available > 0)
-                    {
-                        if (read_ready_flags)
-                            read_ready_flags[index] = 1;
-                        pipe_ready_count++;
-                    }
-                    else if (wait_result == WAIT_OBJECT_0)
-                    {
-                        if (read_ready_flags)
-                            read_ready_flags[index] = 1;
-                        pipe_ready_count++;
-                    }
-                    else if (PeekNamedPipe(file_handle, NULL, 0, NULL, &bytes_available, NULL) == 0
-                        && GetLastError() == ERROR_BROKEN_PIPE)
-                    {
-                        if (read_ready_flags)
-                            read_ready_flags[index] = 1;
-                        pipe_ready_count++;
-                    }
-                }
-            }
-            index++;
-        }
-        index = 0;
-        while (write_file_descriptors && index < write_count)
-        {
-            if (write_file_descriptors[index] >= 0)
-            {
-                if (write_ready_flags)
-                    write_ready_flags[index] = 1;
+            if (read_file_descriptors[index] >= 0 && read_ready_flags
+                && read_ready_flags[index] != 0)
                 pipe_ready_count++;
-            }
-            index++;
-        }
-        index = 0;
-        while (read_file_descriptors && index < read_count)
-        {
-            if (read_file_descriptors[index] < 0
-                || read_ready_flags == ft_nullptr
-                || read_ready_flags[index] == 0)
+            else
                 read_file_descriptors[index] = -1;
             index++;
         }
         index = 0;
         while (write_file_descriptors && index < write_count)
         {
-            if (write_file_descriptors[index] < 0
-                || write_ready_flags == ft_nullptr
-                || write_ready_flags[index] == 0)
+            if (write_file_descriptors[index] >= 0 && write_ready_flags
+                && write_ready_flags[index] != 0)
+            {
+                if (read_file_descriptors == ft_nullptr)
+                    pipe_ready_count++;
+                else
+                {
+                    int32_t search_index;
+                    ft_bool already_counted;
+
+                    search_index = 0;
+                    already_counted = FT_FALSE;
+                    while (search_index < read_count)
+                    {
+                        if (read_file_descriptors[search_index]
+                            == write_file_descriptors[index])
+                        {
+                            already_counted = FT_TRUE;
+                            break ;
+                        }
+                        search_index++;
+                    }
+                    if (already_counted == FT_FALSE)
+                        pipe_ready_count++;
+                }
+            }
+            else
                 write_file_descriptors[index] = -1;
             index++;
         }
@@ -185,11 +313,6 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
             cma_free(read_ready_flags);
         if (write_ready_flags)
             cma_free(write_ready_flags);
-        if (timeout_milliseconds < 0 && pipe_ready_count == 0)
-        {
-            while (pipe_ready_count == 0)
-                cmp_thread_sleep(1);
-        }
         return (pipe_ready_count);
     }
 
@@ -259,7 +382,38 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         index++;
     }
     (void)(FT_ERR_SUCCESS);
-    return (total_ready);
+    unique_ready = 0;
+    index = 0;
+    while (read_file_descriptors && index < read_count)
+    {
+        if (read_file_descriptors[index] >= 0)
+            unique_ready++;
+        index++;
+    }
+    index = 0;
+    while (write_file_descriptors && index < write_count)
+    {
+        int32_t search_index;
+        ft_bool already_counted;
+
+        already_counted = FT_FALSE;
+        search_index = 0;
+        while (read_file_descriptors && search_index < read_count)
+        {
+            if (read_file_descriptors[search_index]
+                == write_file_descriptors[index])
+            {
+                already_counted = FT_TRUE;
+                break ;
+            }
+            search_index++;
+        }
+        if (write_file_descriptors[index] >= 0
+            && already_counted == FT_FALSE)
+            unique_ready++;
+        index++;
+    }
+    return (unique_ready);
 #else
     struct pollfd *poll_descriptors;
     int32_t *poll_index_to_read_index;
@@ -492,6 +646,7 @@ int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
         cma_free(read_ready_flags);
     if (write_ready_flags)
         cma_free(write_ready_flags);
-    return (total_ready);
+    /* poll() reports each unique descriptor, even with both interests set. */
+    return (ready_descriptors);
 #endif
 }

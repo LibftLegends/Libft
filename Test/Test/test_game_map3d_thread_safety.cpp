@@ -184,6 +184,7 @@ FT_TEST(test_game_map3d_toggle_thread_safe)
 {
     game_map3d map_instance;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.initialize(6, 6, 6, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.enable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.get_error());
     pthread_t threads[3];
     game_map3d_toggle_args arguments[3];

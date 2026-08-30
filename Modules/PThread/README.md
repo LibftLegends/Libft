@@ -23,7 +23,25 @@ The `PThread` module wraps the low-level pthread-style primitives used by the re
 
 ## Reader/Writer Locks
 
-- `s_pt_rwlock` - Low-level reader/writer lock state with mutex, reader/writer conditions, active/waiting counters, strategy, and error code.
+- `s_pt_rwlock` - Low-level reader/writer lock state with mutex, reader/writer conditions, active/waiting counters, writer tickets, ownership records, strategy, lifecycle state, and error code.
 - `e_pt_rwlock_strategy` - Reader/writer lock fairness strategy enum.
+- `pt_rwlock_strategy_rdlock` / `pt_rwlock_strategy_rdunlock` - Blocking read-side acquisition and mode-specific release. Multiple readers may enter together.
+- `pt_rwlock_strategy_wrlock` / `pt_rwlock_strategy_wrunlock` - Blocking write-side acquisition and mode-specific release. Writer-priority mode queues writers by ticket and blocks later readers.
+- `pt_rwlock_strategy_try_rdlock` / `pt_rwlock_strategy_try_wrlock` - Non-blocking read/write acquisition.
+
+`PT_RWLOCK_STRATEGY_WRITER_PRIORITY` is the recommended queued mode. Readers
+enter freely while no writer is waiting. When a writer queues, free reader
+admission closes. After a writer completes, all readers waiting at that phase
+boundary are admitted together, even if later writers are already queued; new
+readers arriving after the phase cutoff wait for a later phase. Writers always
+run one at a time in ticket order. This prevents starvation while retaining
+concurrent reader batches. The lock is non-recursive: read/read, read/write,
+write/read, and write/write reacquisition by the same thread return
+`FT_ERR_MUTEX_ALREADY_LOCKED`. Read-to-write upgrades and write-to-read
+downgrades are unsupported. Use the explicit mode-specific unlock functions in
+new code; the generic unlock function remains only for compatibility.
+
+The direct `pt_rwlock_*` functions around native `pthread_rwlock_t` remain
+compatibility wrappers and do not promise deterministic writer FIFO ordering.
 
 Higher-level thread orchestration, cancellation, task scheduling, RAII lock helpers, and the `pt_errno_guard` compatibility wrapper now live in the separate `Threading` module. `PThread` keeps compatibility exemptions for native pthread types and legacy method names because this module is the primitive layer used by higher-level lifecycle classes.

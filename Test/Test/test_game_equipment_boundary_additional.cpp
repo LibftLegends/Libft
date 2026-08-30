@@ -95,10 +95,22 @@ FT_TEST(test_game_equipment_empty_weapon_can_be_unequipped)
 FT_TEST(test_game_equipment_all_slots_are_retrievable)
 {
     game_equipment value;
+    ft_sharedptr<game_item> *head_item;
+    ft_sharedptr<game_item> *chest_item;
+    ft_sharedptr<game_item> *weapon_item;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
-    FT_ASSERT_NEQ(ft_nullptr, value.get_item(EQUIP_HEAD));
-    FT_ASSERT_NEQ(ft_nullptr, value.get_item(EQUIP_CHEST));
-    FT_ASSERT_NEQ(ft_nullptr, value.get_item(EQUIP_WEAPON));
+    head_item = value.get_item(EQUIP_HEAD);
+    chest_item = value.get_item(EQUIP_CHEST);
+    weapon_item = value.get_item(EQUIP_WEAPON);
+    FT_ASSERT_NEQ(ft_nullptr, head_item);
+    FT_ASSERT_NEQ(ft_nullptr, chest_item);
+    FT_ASSERT_NEQ(ft_nullptr, weapon_item);
+    (void)head_item->destroy();
+    (void)chest_item->destroy();
+    (void)weapon_item->destroy();
+    delete head_item;
+    delete chest_item;
+    delete weapon_item;
     return (1);
 }

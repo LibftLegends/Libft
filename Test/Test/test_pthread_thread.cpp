@@ -4,16 +4,17 @@
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include <cerrno>
+#include <atomic>
 #ifndef LIBFT_TEST_BUILD
 #endif
 
-static void *pthread_test_routine(void *argument)
+static void *pthread_atomic_test_routine(void *argument)
 {
-    int *started_flag;
+    std::atomic<int> *started_flag;
 
-    started_flag = static_cast<int*>(argument);
+    started_flag = static_cast<std::atomic<int>*>(argument);
     if (started_flag != ft_nullptr)
-        *started_flag = 1;
+        started_flag->store(1, std::memory_order_release);
     return (ft_nullptr);
 }
 
@@ -42,20 +43,19 @@ FT_TEST(test_pt_thread_join_rejects_invalid_thread)
 
 FT_TEST(test_pt_thread_detach_updates_errno)
 {
-    pthread_t invalid_thread;
     pthread_t thread;
     int failure_result;
     int detach_result;
-    int routine_started;
+    std::atomic<int> routine_started;
 
-    invalid_thread = 0;
-    failure_result = pt_thread_detach(invalid_thread);
+    failure_result = pt_thread_detach(static_cast<pthread_t>(0));
     FT_ASSERT(failure_result != 0);
-    routine_started = 0;
-    FT_ASSERT_EQ(0, pt_thread_create(&thread, ft_nullptr, pthread_test_routine, &routine_started));
+    routine_started.store(0, std::memory_order_relaxed);
+    FT_ASSERT_EQ(0, pt_thread_create(&thread, ft_nullptr,
+        pthread_atomic_test_routine, &routine_started));
     detach_result = pt_thread_detach(thread);
     FT_ASSERT_EQ(0, detach_result);
-    while (routine_started == 0)
+    while (routine_started.load(std::memory_order_acquire) == 0)
         pt_thread_sleep(10);
     return (1);
 }

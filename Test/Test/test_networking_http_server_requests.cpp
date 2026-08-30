@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "networking_test_support.hpp"
+#include "networking_test_hooks.hpp"
 #include "../../Modules/Networking/http_server.hpp"
 #include "../../Modules/Networking/socket_class.hpp"
 #include "../../Modules/Networking/networking.hpp"
@@ -10,6 +11,11 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstddef>
+#if defined(_WIN32) || defined(_WIN64)
+# include <winsock2.h>
+#else
+# include <sys/socket.h>
+#endif
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
@@ -216,7 +222,7 @@ cleanup:
     return (1);
 }
 
-FT_TEST(test_networking_http_server_short_write_sets_error)
+FT_TEST(test_networking_http_server_send_failure_sets_error)
 {
     if (networking_test_local_ipv4_available() == FT_FALSE)
         return (1);
@@ -231,11 +237,13 @@ FT_TEST(test_networking_http_server_short_write_sets_error)
     ft_bool thread_started;
     ft_bool client_initialized;
     ft_bool test_passed;
+    ft_bool failure_hooks_started;
 
     error_code = FT_ERR_INVALID_STATE;
     thread_started = FT_FALSE;
     client_initialized = FT_FALSE;
     test_passed = FT_FALSE;
+    failure_hooks_started = FT_FALSE;
     context.result = FT_ERR_INVALID_STATE;
     FT_TEST_REQUIRE(server.initialize() == FT_ERR_SUCCESS);
     FT_TEST_REQUIRE(start_http_server_with_retry(server) == FT_ERR_SUCCESS);
@@ -254,13 +262,37 @@ FT_TEST(test_networking_http_server_short_write_sets_error)
     FT_TEST_REQUIRE(client_socket.initialize(client_configuration) == FT_ERR_SUCCESS);
     client_initialized = FT_TRUE;
     request_string = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    client_socket.send_all(request_string, ft_strlen(request_string), 0);
+    struct linger linger_option;
+
+    linger_option.l_onoff = 1;
+    linger_option.l_linger = 0;
+    FT_TEST_REQUIRE(setsockopt(client_socket.get_file_descriptor(), SOL_SOCKET,
+        SO_LINGER, reinterpret_cast<const char *>(&linger_option),
+        static_cast<socklen_t>(sizeof(linger_option))) == 0);
+    FT_TEST_REQUIRE(client_socket.send_all(request_string,
+        ft_strlen(request_string), 0)
+        == static_cast<ssize_t>(ft_strlen(request_string)));
+    FT_TEST_REQUIRE(networking_test_failure_begin() == FT_ERR_SUCCESS);
+    failure_hooks_started = FT_TRUE;
+    FT_TEST_REQUIRE(networking_test_failure_fail_next(
+        NETWORKING_TEST_HTTP_SERVER_SEND) == FT_ERR_SUCCESS);
     client_socket.close_socket();
-    FT_TEST_REQUIRE(context.result != FT_ERR_SUCCESS);
+    if (thread_started == FT_TRUE)
+    {
+        server_thread.join();
+        thread_started = FT_FALSE;
+    }
+    FT_TEST_REQUIRE(networking_test_failure_attempt_count(
+        NETWORKING_TEST_HTTP_SERVER_SEND) == 1U);
+    FT_TEST_REQUIRE(context.result == FT_ERR_INVALID_OPERATION);
     error_code = context.result;
     FT_TEST_REQUIRE(error_code != FT_ERR_SUCCESS);
+    FT_TEST_REQUIRE(networking_test_failure_end() == FT_ERR_SUCCESS);
+    failure_hooks_started = FT_FALSE;
     test_passed = FT_TRUE;
 cleanup:
+    if (failure_hooks_started != FT_FALSE)
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     if (client_initialized == FT_TRUE)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, client_socket.destroy());
     if (thread_started == FT_TRUE)

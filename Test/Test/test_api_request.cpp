@@ -1350,6 +1350,39 @@ static void api_request_circuit_success_server(
         context->ready.store(true, std::memory_order_release);
         return ;
     }
+    address_length = sizeof(address_storage);
+    if (getsockname(server_socket.get_file_descriptor(),
+            reinterpret_cast<struct sockaddr *>(&address_storage),
+            &address_length) != 0)
+    {
+        context->start_error.store(cmp_map_system_error_to_ft(errno),
+            std::memory_order_relaxed);
+        context->ready.store(true, std::memory_order_release);
+        return ;
+    }
+    if (address_storage.ss_family == AF_INET)
+    {
+        const struct sockaddr_in *address_ipv4;
+
+        address_ipv4 = reinterpret_cast<const struct sockaddr_in *>(
+            &address_storage);
+        context->port = ntohs(address_ipv4->sin_port);
+    }
+    else if (address_storage.ss_family == AF_INET6)
+    {
+        const struct sockaddr_in6 *address_ipv6;
+
+        address_ipv6 = reinterpret_cast<const struct sockaddr_in6 *>(
+            &address_storage);
+        context->port = ntohs(address_ipv6->sin6_port);
+    }
+    else
+    {
+        context->start_error.store(FT_ERR_INVALID_ARGUMENT,
+            std::memory_order_relaxed);
+        context->ready.store(true, std::memory_order_release);
+        return ;
+    }
     served_count = 0;
     long long start_time_ms;
     int client_fd;
@@ -2106,12 +2139,31 @@ FT_TEST(test_api_request_async_missing_callback_sets_errno)
 
 FT_TEST(test_api_request_async_success_resets_errno)
 {
+    std::atomic<bool> callback_completed(false);
+    std::atomic<int> callback_status(0);
+    std::atomic<char *> callback_body(ft_nullptr);
+    api_request_async_test_callback_data callback_data;
     bool result;
+    unsigned int wait_iterations;
 
-    result = api_request_string_async("127.0.0.1", 59999, "GET", "/", api_request_noop_callback,
-                                      ft_nullptr, ft_nullptr, ft_nullptr, 100);
+    callback_data.completed = &callback_completed;
+    callback_data.status = &callback_status;
+    callback_data.body = &callback_body;
+    result = api_request_string_async("127.0.0.1", 59999, "GET", "/",
+        api_request_test_async_callback, &callback_data, ft_nullptr,
+        ft_nullptr, 100);
     if (!result)
         return (0);
+    wait_iterations = 0;
+    while (!callback_completed.load(std::memory_order_acquire)
+        && wait_iterations < 300U)
+    {
+        api_request_small_delay();
+        wait_iterations++;
+    }
+    FT_ASSERT(callback_completed.load(std::memory_order_acquire));
+    if (callback_body.load(std::memory_order_acquire) != ft_nullptr)
+        cma_free(callback_body.load(std::memory_order_acquire));
     return (1);
 }
 
@@ -2844,7 +2896,7 @@ FT_TEST(test_api_request_circuit_breaker_blocks_after_threshold)
     api_retry_circuit_reset();
     server_context.ready.store(false, std::memory_order_relaxed);
     server_context.start_error.store(FT_ERR_SUCCESS, std::memory_order_relaxed);
-    server_context.port = 55310;
+    server_context.port = 0;
     server_context.responses = 1;
     server_thread = ft_thread(api_request_circuit_success_server,
             &server_context);
@@ -2859,7 +2911,7 @@ FT_TEST(test_api_request_circuit_breaker_blocks_after_threshold)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         server_context.start_error.load(std::memory_order_acquire));
     status_value = 0;
-    body = api_request_string("127.0.0.1", 55310, "GET", "/", ft_nullptr,
+    body = api_request_string("127.0.0.1", server_context.port, "GET", "/", ft_nullptr,
             ft_nullptr, &status_value, 200, &retry_policy);
     server_thread.join();
     FT_ASSERT_NEQ(ft_nullptr, body);
@@ -2908,7 +2960,7 @@ FT_TEST(test_api_request_circuit_breaker_half_open_recovers)
     time_sleep_ms(150);
     server_context.ready.store(false, std::memory_order_relaxed);
     server_context.start_error.store(FT_ERR_SUCCESS, std::memory_order_relaxed);
-    server_context.port = 55311;
+    server_context.port = 0;
     server_context.responses = 2;
     server_thread = ft_thread(api_request_circuit_success_server,
             &server_context);
@@ -2924,7 +2976,7 @@ FT_TEST(test_api_request_circuit_breaker_half_open_recovers)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         server_context.start_error.load(std::memory_order_acquire));
     status_value = 0;
-    body = api_request_string("127.0.0.1", 55311, "GET", "/", ft_nullptr,
+    body = api_request_string("127.0.0.1", server_context.port, "GET", "/", ft_nullptr,
             ft_nullptr, &status_value, 200, &retry_policy);
     request_errno = FT_ERR_SUCCESS;
     if (!body)
@@ -2950,7 +3002,7 @@ FT_TEST(test_api_request_circuit_breaker_half_open_recovers)
         return (0);
     }
     status_value = 0;
-    body = api_request_string("127.0.0.1", 55311, "GET", "/", ft_nullptr,
+    body = api_request_string("127.0.0.1", server_context.port, "GET", "/", ft_nullptr,
             ft_nullptr, &status_value, 200, &retry_policy);
     request_errno = FT_ERR_SUCCESS;
     server_thread.join();

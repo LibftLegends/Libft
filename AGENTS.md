@@ -222,7 +222,8 @@ Thread-safety ownership and mutex requirements:
   - Class mutexes must always be recursive mutexes.
   - The mutex must always be heap-allocated.
   - For regular classes, the mutex is instance-local and must not be shared across instances.
-  - Exception: the SCMA module may use one shared global mutex, and that global mutex must also live on the heap.
+- Exception: the SCMA module may use one shared global mutex, and that global mutex must also live on the heap.
+- Exception: classes explicitly documented as read-mostly may own one heap-allocated `t_pt_rwlock` configured with `PT_RWLOCK_STRATEGY_WRITER_PRIORITY`. Such classes must use mode-specific read/write lock and unlock helpers, must not call a public method that reacquires the same lock while already holding it, and must not expose references or pointers whose validity depends on the lock after it is released.
 
 Enable/disable behavior:
 - `enable_thread_safety()` must be safely retryable. If enable fails, object state remains valid for later retries.
@@ -236,10 +237,10 @@ Locking rules:
 - Use `pt_recursive_mutex_*_if_not_null(...)` for recursive mutex pointers (including class-owned mutex fields).
 - Use `pt_mutex_*_if_not_null(...)` for regular non-recursive mutex pointers (for non-class and class code where a regular mutex type is intentionally used).
 - Internal helper prototypes to use:
-  - `uint32_t pt_mutex_lock_if_not_null(const pt_mutex *mutex_pointer)`
-  - `uint32_t pt_mutex_unlock_if_not_null(const pt_mutex *mutex_pointer)`
-  - `uint32_t pt_recursive_mutex_lock_if_not_null(const pt_recursive_mutex *mutex_pointer)`
-  - `uint32_t pt_recursive_mutex_unlock_if_not_null(const pt_recursive_mutex *mutex_pointer)`
+  - `int32_t pt_mutex_lock_if_not_null(const pt_mutex *mutex_pointer)`
+  - `int32_t pt_mutex_unlock_if_not_null(const pt_mutex *mutex_pointer)`
+  - `int32_t pt_recursive_mutex_lock_if_not_null(const pt_recursive_mutex *mutex_pointer)`
+  - `int32_t pt_recursive_mutex_unlock_if_not_null(const pt_recursive_mutex *mutex_pointer)`
 - For multi-object operations, always lock mutexes in ascending memory-address order (lowest address first) and unlock explicitly in reverse order.
 - Lock acquisition failures are operation failures and must be converted to `FT_ERR_*` return codes by the caller.
 - Unlock return values must not be checked by callers and must always be ignored explicitly with `(void)pt_*_unlock_if_not_null(...)`.

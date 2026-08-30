@@ -343,8 +343,9 @@ int32_t ft_string::append(char character) noexcept
         if (lock_error != FT_ERR_SUCCESS)
             return (this->set_error(lock_error));
         int32_t result = this->append_char_buffer(character);
+        this->set_error(result);
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (this->set_error(result));
+        return (result);
     }
     int32_t result = this->append_char_buffer(character);
     return (this->set_error(result));

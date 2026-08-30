@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Voxel/terrain_scripting_bridge.hpp"
 #include "../../Modules/Voxel/terrain_api.hpp"
+#include "../../Modules/Voxel/voxel_block_registry.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/File/file_utils.hpp"
 #include "../../Modules/Game/game_voxel_chunk.hpp"
@@ -24,6 +25,7 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     const uint8_t *asset_data;
     const terrain_block_metadata *metadata;
 
+    terrain_runtime_reset_for_tests();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer.initialize(new game_world()));
     FT_ASSERT(world_pointer.get() != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->initialize());
@@ -58,6 +60,7 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     FT_ASSERT(asset_data != ft_nullptr);
     FT_ASSERT(asset_size > 0U);
     FT_ASSERT_EQ(static_cast<uint8_t>('b'), asset_data[0]);
+    terrain_runtime_reset_for_tests();
     return (1);
 }
 
@@ -67,6 +70,7 @@ FT_TEST(test_terrain_runtime_block_registration_rejects_missing_asset)
     uint32_t block_id;
     int32_t error_code;
 
+    terrain_runtime_reset_for_tests();
     registration.name = "test:missing_asset_block";
     registration.metadata.solid = FT_TRUE;
     registration.metadata.transparent = FT_FALSE;
@@ -94,6 +98,7 @@ FT_TEST(test_terrain_runtime_block_registration_rejects_missing_asset)
     error_code = terrain_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, error_code);
     FT_ASSERT_EQ(0U, block_id);
+    terrain_runtime_reset_for_tests();
     return (1);
 }
 
