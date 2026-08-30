@@ -329,3 +329,37 @@ FT_TEST(test_card_game_engine_exposes_deterministic_rules_and_state_hashes)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second_engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_registers_configurable_zones)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_zone_definition zone;
+    card_game_zone_definition loaded_zone;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    zone.zone_id = 7U;
+    zone.capacity = 30U;
+    zone.allowed_card_type_mask = 1U << CARD_GAME_CREATURE;
+    zone.owner_scoped = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_zone(zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_zone(7U, &loaded_zone));
+    FT_ASSERT_EQ(zone.zone_id, loaded_zone.zone_id);
+    FT_ASSERT_EQ(zone.capacity, loaded_zone.capacity);
+    FT_ASSERT_EQ(zone.allowed_card_type_mask,
+        loaded_zone.allowed_card_type_mask);
+    FT_ASSERT_EQ(zone.owner_scoped, loaded_zone.owner_scoped);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.register_zone(zone));
+    zone.zone_id = 8U;
+    zone.allowed_card_type_mask = 0U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.register_zone(zone));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.get_zone(9U, &loaded_zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

@@ -22,3 +22,7 @@ function pointers or callback-owned data.
 `get_state_hash()` identifies the current authoritative match state. Both use
 fixed-width field hashing rather than object-memory hashing, so padding and
 platform byte order do not affect the result.
+
+Zones are registered as data with a stable ID, capacity, owner-scope flag, and
+allowed card-type mask. The engine does not assign game-specific meanings to
+those IDs; the consuming game decides how its zones are used.

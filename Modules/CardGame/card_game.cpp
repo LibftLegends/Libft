@@ -71,7 +71,8 @@ int32_t card_game_operation_buffer::get(uint32_t index,
 card_game_engine::card_game_engine() noexcept
     : _initialised_state(0U), _rules(), _cards(), _effects(),
       _effect_callbacks(), _effect_user_data(), _effect_event_types(),
-      _phases(), _phase_count(0U), _current_phase_id(0U), _events(),
+      _phases(), _phase_count(0U), _zones(), _zone_count(0U),
+      _current_phase_id(0U), _events(),
       _event_count(0U), _event_sequence(0U), _card_count(0U),
       _effect_count(0U), _board(), _instances(), _board_count(), _health(),
       _mana(), _turn_number(0U), _active_player(0U), _player_count(0U),
@@ -98,6 +99,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_card_count = 0U;
     this->_effect_count = 0U;
     this->_phase_count = 0U;
+    this->_zone_count = 0U;
     this->_event_count = 0U;
     this->_event_sequence = 0U;
     this->_turn_number = 0U;
@@ -132,6 +134,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     ft_memcpy(this->_effect_event_types, other._effect_event_types,
         sizeof(this->_effect_event_types));
     ft_memcpy(this->_phases, other._phases, sizeof(this->_phases));
+    ft_memcpy(this->_zones, other._zones, sizeof(this->_zones));
     ft_memcpy(this->_events, other._events, sizeof(this->_events));
     ft_memcpy(this->_board, other._board, sizeof(this->_board));
     ft_memcpy(this->_instances, other._instances, sizeof(this->_instances));
@@ -145,6 +148,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_player_count = other._player_count;
     this->_state_sequence = other._state_sequence;
     this->_phase_count = other._phase_count;
+    this->_zone_count = other._zone_count;
     this->_current_phase_id = other._current_phase_id;
     this->_event_count = other._event_count;
     this->_event_sequence = other._event_sequence;
@@ -263,6 +267,49 @@ int32_t card_game_engine::register_phase(
     this->_phases[this->_phase_count] = phase;
     this->_phase_count += 1U;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::register_zone(
+    const card_game_zone_definition &zone) noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || zone.zone_id == 0U
+        || zone.capacity == 0U || zone.capacity > FT_CARD_GAME_MAX_CARDS
+        || zone.allowed_card_type_mask == 0U
+        || this->_zone_count >= FT_CARD_GAME_MAX_ZONES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_zone_count)
+    {
+        if (this->_zones[index].zone_id == zone.zone_id)
+            return (FT_ERR_ALREADY_EXISTS);
+        index += 1U;
+    }
+    this->_zones[this->_zone_count] = zone;
+    this->_zone_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_zone(uint32_t zone_id,
+    card_game_zone_definition *zone) const noexcept
+{
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || zone == ft_nullptr
+        || zone_id == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_zone_count)
+    {
+        if (this->_zones[index].zone_id == zone_id)
+        {
+            *zone = this->_zones[index];
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
 }
 
 int32_t card_game_engine::start_match(uint32_t player_count) noexcept
@@ -793,6 +840,18 @@ int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
             this->_phases[index].exit_event_type);
         card_game_hash_u32(&calculated_hash,
             this->_phases[index].allowed_command_mask);
+        index += 1U;
+    }
+    card_game_hash_u32(&calculated_hash, this->_zone_count);
+    index = 0U;
+    while (index < this->_zone_count)
+    {
+        card_game_hash_u32(&calculated_hash, this->_zones[index].zone_id);
+        card_game_hash_u32(&calculated_hash, this->_zones[index].capacity);
+        card_game_hash_u32(&calculated_hash,
+            this->_zones[index].allowed_card_type_mask);
+        card_game_hash_u32(&calculated_hash,
+            static_cast<uint32_t>(this->_zones[index].owner_scoped));
         index += 1U;
     }
     *hash = calculated_hash;

@@ -9,6 +9,7 @@ static const uint32_t FT_CARD_GAME_MAX_CARDS = 128U;
 static const uint32_t FT_CARD_GAME_MAX_EFFECTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
 static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
+static const uint32_t FT_CARD_GAME_MAX_ZONES = 32U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
@@ -23,6 +24,14 @@ enum card_game_card_type : uint8_t
     CARD_GAME_SPELL = 1U,
     CARD_GAME_ARTIFACT = 2U,
     CARD_GAME_ENCHANTMENT = 3U
+};
+
+struct card_game_zone_definition
+{
+    uint32_t zone_id;
+    uint32_t capacity;
+    uint32_t allowed_card_type_mask;
+    ft_bool owner_scoped;
 };
 
 struct card_game_rules
@@ -175,6 +184,8 @@ class card_game_engine
         uint32_t _effect_event_types[FT_CARD_GAME_MAX_EFFECTS];
         card_game_phase_definition _phases[FT_CARD_GAME_MAX_PHASES];
         uint32_t _phase_count;
+        card_game_zone_definition _zones[FT_CARD_GAME_MAX_ZONES];
+        uint32_t _zone_count;
         uint32_t _current_phase_id;
         card_game_event _events[FT_CARD_GAME_MAX_EVENTS];
         uint32_t _event_count;
@@ -213,6 +224,9 @@ class card_game_engine
         int32_t register_effect_callback(card_game_effect_callback callback,
             void *user_data, uint32_t event_type, uint32_t *effect_id) noexcept;
         int32_t register_phase(const card_game_phase_definition &phase) noexcept;
+        int32_t register_zone(const card_game_zone_definition &zone) noexcept;
+        int32_t get_zone(uint32_t zone_id,
+            card_game_zone_definition *zone) const noexcept;
         int32_t start_match(uint32_t player_count) noexcept;
         int32_t set_player_mana(uint32_t player_id, uint32_t mana) noexcept;
         int32_t modify_player_health(uint32_t player_id, int32_t delta) noexcept;
