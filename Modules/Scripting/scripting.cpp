@@ -251,6 +251,9 @@ static int32_t scripting_compile_comparison(
 static int32_t scripting_compile_logical_and(
     scripting_compile_parser *parser) noexcept;
 
+static int32_t scripting_compile_block(scripting_compile_parser *parser)
+    noexcept;
+
 static int32_t scripting_compile_term(scripting_compile_parser *parser)
     noexcept;
 
@@ -269,6 +272,8 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
     if (parser->offset >= parser->source_length)
         return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
             parser->offset, 1U));
+    if (parser->source[parser->offset] == '{')
+        return (scripting_compile_block(parser));
     if (scripting_compile_keyword_at(parser, "while", 5U) != FT_FALSE)
     {
         uint32_t loop_start_index;
@@ -693,6 +698,49 @@ static int32_t scripting_compile_condition(scripting_compile_parser *parser)
         if (parse_error != FT_ERR_SUCCESS)
             return (parse_error);
     }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t scripting_compile_block(scripting_compile_parser *parser)
+    noexcept
+{
+    int32_t parse_error;
+
+    parser->offset += 1U;
+    scripting_compile_skip_space(parser);
+    if (parser->offset < parser->source_length
+        && parser->source[parser->offset] == '}')
+    {
+        parser->offset += 1U;
+        return (scripting_compile_emit(parser, SCRIPTING_OP_PUSH_NULL,
+            0, 0U));
+    }
+    parse_error = scripting_compile_condition(parser);
+    if (parse_error != FT_ERR_SUCCESS)
+        return (parse_error);
+    scripting_compile_skip_space(parser);
+    while (parser->offset < parser->source_length
+        && parser->source[parser->offset] == ';')
+    {
+        parser->offset += 1U;
+        scripting_compile_skip_space(parser);
+        if (parser->offset < parser->source_length
+            && parser->source[parser->offset] == '}')
+            break ;
+        parse_error = scripting_compile_emit(parser, SCRIPTING_OP_POP, 0,
+            0U);
+        if (parse_error != FT_ERR_SUCCESS)
+            return (parse_error);
+        parse_error = scripting_compile_condition(parser);
+        if (parse_error != FT_ERR_SUCCESS)
+            return (parse_error);
+        scripting_compile_skip_space(parser);
+    }
+    if (parser->offset >= parser->source_length
+        || parser->source[parser->offset] != '}')
+        return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+            parser->offset, 1U));
+    parser->offset += 1U;
     return (FT_ERR_SUCCESS);
 }
 

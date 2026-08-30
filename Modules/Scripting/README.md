@@ -28,6 +28,9 @@ until parity tests are complete.
 - Locals declared with `let` can be reassigned with `name = expression`.
   Assignment leaves the resulting value on the expression stack and is
   therefore usable as a loop body.
+- Braced blocks contain multiple expressions separated by semicolons. Their
+  final expression is the block value; intermediate values are discarded and
+  an empty block evaluates to `null`.
 - `get_last_diagnostic()` reports the error code and source span of the last
   failed execution.
 - `scripting_value_set_null()` and `scripting_value_set_integer()` construct

@@ -298,6 +298,13 @@ FT_TEST(test_scripting_engine_executes_bounded_while_expression)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
     FT_ASSERT_EQ(0U, remaining_calls);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let block_counter = 2; while (block_counter > 0) {"
+        "block_counter = block_counter - 1; }", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "return { 4; 5; };", &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(5), result.integer_value);
     remaining_calls = 2U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(3U));
     FT_ASSERT_EQ(FT_ERR_FULL, engine.execute(
