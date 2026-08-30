@@ -1,13 +1,15 @@
-# Compression hardening, runtime analytics, and card-engine foundations
+# Compression hardening, runtime analytics, card-engine foundations, and custom scripting
 
 ## Document status
 
-This document is an implementation handoff. It describes three independent
+This document is an implementation handoff. It describes four independent
 work streams:
 
 1. hardening generic file-descriptor compression streams;
 2. adding a low-overhead runtime analytics module for frame and function timing;
-3. laying the foundations for a configurable card-game rules engine.
+3. laying the foundations for a configurable card-game rules engine;
+4. replacing the vendored Lua runtime with a completely custom Libft scripting
+   language, compiler, and virtual machine.
 
 No implementation is part of this document. Each work stream must be delivered
 in separate commits so it can be reviewed and reverted independently. All code
@@ -33,6 +35,9 @@ rules.
   triggers, damage, healing, and other common concepts configurable.
 - Preserve determinism so matches can be replayed, synchronized, tested, and
   validated by an authoritative server.
+- Remove Lua, its vendored sources, and its ABI from Libft after a custom,
+  deterministic scripting module has reached feature parity with every current
+  Game and Voxel scripting entry point.
 
 ## Non-goals
 
@@ -46,6 +51,8 @@ rules.
 - Letting effect callbacks mutate arbitrary engine internals without validation.
 - Building card rendering, networking transport, matchmaking, or user-interface
   code into the card engine.
+- Reproducing the complete Lua language, Lua C API, or Lua bytecode format.
+- Adding a JIT compiler in the first scripting implementation.
 
 # Part I: Compression stream hardening
 
@@ -975,6 +982,292 @@ only public APIs; consumers include individual headers for individual needs.
 - Event/effect queues under bounded random rulesets.
 - Differential replay: direct execution versus serialize/reload/replay.
 
+# Part IV: Custom scripting module and Lua removal
+
+## Objective and module boundary
+
+Create `Modules/Scripting` as a fully custom language runtime owned by Libft.
+It must perform the jobs currently handled by Lua without embedding Lua or
+another third-party parser, compiler, bytecode VM, JIT, garbage collector, or
+standard library. The goal is behavioral replacement of Libft's scripting use
+cases, not source or ABI compatibility with Lua.
+
+Game, Voxel, CardGame, and future consumers must depend on typed Scripting
+interfaces rather than VM internals. Scripts must never receive raw engine
+pointers or unrestricted access to files, sockets, processes, clocks, or native
+libraries. All host interaction goes through explicitly registered capabilities
+and validated function calls.
+
+The existing Lua implementation must remain available only during migration.
+Do not delete it until all current scripts and bridges pass parity tests against
+the custom runtime. A temporary dual-runtime comparison mode may exist in tests
+and development builds, but it must not become a permanent public compatibility
+layer or enter normal release builds.
+
+## Required migration inventory
+
+Before designing syntax around assumptions, record every current dependency:
+
+- `Modules/Lua` and `Modules/Lua/vendor/lua-5.4.8`;
+- `mk/modules/Lua.mk` and all archive/dependency-graph references;
+- `game_lua_runtime.cpp` and every public or internal caller;
+- `game_scripting_bridge.*`, including every native function exposed to scripts;
+- `terrain_scripting_bridge.hpp` and `voxel_terrain_scripting_bridge.cpp`;
+- all script files, test fixtures, documentation, configuration, and examples;
+- lifecycle, allocation, error, logging, and thread assumptions made by callers.
+
+Produce a migration table with one row per script entry point: current Lua
+name, arguments, result, side effects, determinism requirements, required
+capability, replacement native-function ID, and parity-test location. Lua may be
+removed only when every row is complete.
+
+## Language specification
+
+Write and review a versioned language specification before implementing the
+parser. The first version should deliberately be small and predictable:
+
+- UTF-8 source with a precise identifier policy, comments, and source locations;
+- null, `ft_bool`, signed and unsigned fixed-width integers, deterministic
+  fixed-point numbers, strings, arrays, records/maps, and function references;
+- constants, local variables, functions, conditionals, bounded loops, returns,
+  and explicit module imports;
+- typed native calls and structured values rather than a dynamically shaped C
+  stack interface;
+- checked arithmetic with defined overflow, divide-by-zero, shift, and conversion
+  behavior;
+- stable map iteration order and canonical value serialization;
+- no `eval`, native dynamic loading, pointer arithmetic, implicit host globals,
+  or finalizers that can execute arbitrary script code;
+- recursion disabled initially or constrained by a hard call-depth budget.
+
+Floating-point behavior differs across platforms and compiler modes. Gameplay,
+terrain, card rules, save data, and replay-affecting operations should therefore
+use integers or a specified fixed-point representation. If floating point is
+added later, its permitted operations and canonicalization rules require
+cross-platform vectors before deterministic code may use it.
+
+Version the source language, bytecode format, native ABI, and serialized script
+state separately. Never execute bytecode whose declared versions or integrity
+checks are unsupported.
+
+## Compilation pipeline
+
+Use an explicit, independently testable pipeline:
+
+```text
+source -> lexer -> parser -> AST -> semantic validation
+       -> bytecode compiler -> bytecode verifier -> immutable module
+```
+
+Compilation must be transactional. A failed lex, parse, type, allocation,
+registration, or verification step leaves the previously installed module
+unchanged. Diagnostics contain a stable error code, source/module path, line,
+column, byte range, and human-readable message. Multiple diagnostics may be
+collected within a configured bound, but allocation failure must still return a
+reliable primary error.
+
+Use a compact stack-based VM initially because its stack effects are simple to
+specify and verify. Every opcode must define operand encoding, stack inputs and
+outputs, failure behavior, budget cost, and control-flow rules. The verifier
+must reject invalid opcodes, truncated operands, out-of-range constants,
+illegal jumps, inconsistent stack depths, invalid call signatures, excessive
+resource declarations, and unreachable malformed instruction streams before a
+module can execute.
+
+Serialized bytecode uses a canonical byte order and includes magic, format
+version, language version, section lengths, capability requirements, source or
+content hash, and integrity validation. Source compilation remains the trusted
+default until bytecode loading and its verifier are fuzzed thoroughly.
+
+## Runtime and memory model
+
+Each `scripting_vm` owns bounded stacks, frames, temporary values, and script
+heap state. Immutable verified modules may be shared; mutable execution state
+may not be shared concurrently. Use Libft allocation and container facilities,
+`ft_memcpy`, and `ft_memset`, following root `AGENTS.md`. Public APIs return
+Libft error codes and must not rely on C++ exceptions.
+
+Every execution receives hard limits for:
+
+- instructions and backward branches;
+- call depth and value-stack depth;
+- heap bytes, object count, string length, and collection length;
+- native calls, yielded operations, diagnostics, and returned data.
+
+Prefer invocation- or VM-owned arenas plus deterministic collection at explicit
+safe points. Do not allow unpredictable garbage-collection pauses in arbitrary
+instructions. If cyclic object graphs are supported, use a bounded tracing pass
+at documented safe points; otherwise reject cycles in the first version. All
+allocation paths must work with the tester-only CMA failure-injection framework.
+
+Budget exhaustion, script errors, and native callback errors terminate only the
+current invocation and roll back its uncommitted host operations. Verifier or VM
+invariant failures are distinct internal errors and must produce diagnostics
+without accepting further execution from the affected module.
+
+## Native function and capability interface
+
+Native functions are registered before use under stable numeric IDs and names,
+with declared argument and result schemas. Never serialize function pointers.
+The registry resolves configuration names to IDs transactionally, then becomes
+immutable and receives a canonical hash.
+
+A callback interface should carry only validated data and an opaque host context:
+
+```cpp
+typedef int32_t (*scripting_native_callback)(
+    const scripting_call_context *context,
+    const scripting_value *arguments,
+    ft_size_t argument_count,
+    scripting_value *result,
+    void *user_data) noexcept;
+```
+
+Exact ownership and lifetime rules for arguments, results, strings, collections,
+and `user_data` must be documented. Callbacks return meaningful error codes;
+tests must assert those returns rather than casting them to `void`.
+
+Capabilities are granted per loaded module or execution instance. Initial
+capabilities should be narrowly separated, for example terrain query, generated
+terrain write, game-state query, validated game command, CardGame effect,
+deterministic RNG, and bounded logging. A script requesting an undeclared or
+ungranted capability fails to load or call. The default environment grants no
+filesystem, network, process, wall-clock, environment-variable, or native-module
+access.
+
+Scripts should return proposed commands or operation lists for validation and
+transactional application by Game, Voxel, or CardGame. They must not mutate
+authoritative world or match state directly. This preserves server authority,
+supports replay, and prevents partially applied effects after callback failure.
+
+## Determinism, sandboxing, and replay
+
+The same verified module, inputs, configuration, and seed must produce the same
+result and operation sequence on Windows, Linux, and macOS. Enforce this with:
+
+- host-supplied deterministic RNG streams, never process-global randomness;
+- no wall clock, thread identity, address, locale, filesystem-order, or hash-table
+  iteration as script-visible inputs;
+- canonical ordering and serialization for maps, modules, operations, and state;
+- explicit integer/fixed-point arithmetic semantics;
+- deterministic instruction and resource budgets rather than wall-time limits.
+
+Saved script state may contain only approved serializable values. Include the
+language version, state format version, module hash, native-registry hash, and
+schema hash. Reject incompatible state transactionally. Replays store stable
+script/function/effect IDs, inputs, seeds, and resulting validated operations,
+never pointers or process-specific handles.
+
+## Concurrency and hot reload
+
+One mutable VM instance has one execution owner. Run parallel scripts through
+separate execution contexts sharing immutable modules. Do not solve optional
+thread safety by creating and destroying mutexes while access may be active.
+
+Do not hold registry, world, match, or module-management locks while invoking a
+host callback, performing I/O, joining threads, or waiting for script work.
+Asynchronous integration uses explicit yield/resume opcodes and opaque host task
+handles; suspension is allowed only at verified safe points and remains subject
+to lifetime and budget checks.
+
+Hot reload compiles and verifies a new immutable module generation, validates
+its capabilities and state migration, and atomically publishes it at a game,
+world, or frame boundary. Existing invocations keep their old generation until
+they drain. Failed reload leaves the active generation and state untouched.
+
+## Analytics integration
+
+The Scripting module should expose optional Analytics scopes for compile phases,
+module load, VM execution, native calls, allocation/collection safe points, and
+budget failures. Instrumentation must use the low-overhead worker event-buffer
+design described in Part II, avoid double-counting invocations, and preserve
+correct minimum, rolling-average, percentile, frame-breakdown, and cross-thread
+flow semantics. It must compile out when `LIBFT_ENABLE_ANALYTICS` is disabled;
+profiling macros and tester hooks must not appear in ordinary release archives.
+
+## Suggested module layout
+
+```text
+Modules/Scripting/
+    scripting.hpp
+    scripting_types.hpp
+    scripting_diagnostics.hpp/.cpp
+    scripting_lexer.hpp/.cpp
+    scripting_parser.hpp/.cpp
+    scripting_ast.hpp/.cpp
+    scripting_compiler.hpp/.cpp
+    scripting_bytecode.hpp/.cpp
+    scripting_verifier.hpp/.cpp
+    scripting_value.hpp/.cpp
+    scripting_vm.hpp/.cpp
+    scripting_module.hpp/.cpp
+    scripting_registry.hpp/.cpp
+    scripting_native.hpp/.cpp
+    scripting_snapshot.hpp/.cpp
+    README.md
+```
+
+The umbrella header exists for compatibility, but production consumers should
+include only the individual headers they require.
+
+## Implementation and Lua-removal phases
+
+1. Inventory and freeze every existing Lua entry point and script behavior.
+2. Approve language, bytecode, numeric, ownership, error, and capability specs.
+3. Implement lexer, parser, AST, diagnostics, and malformed-input tests.
+4. Implement compiler, bytecode format, verifier, and golden vectors.
+5. Implement bounded VM, values, memory management, deterministic RNG, and
+   sandbox budgets.
+6. Implement immutable native registry and transactional operation interface.
+7. Port the terrain bridge and compare generated outputs against Lua fixtures.
+8. Port Game scripting and compare state transitions and errors against Lua.
+9. Integrate CardGame effects only after its native operation API is stable.
+10. Migrate scripts/configuration and run dual-runtime differential tests.
+11. Switch all production build dependencies to Scripting.
+12. Remove `Modules/Lua`, vendored Lua, Lua build manifests, Lua symbols,
+    compatibility shims, and obsolete tests/documentation.
+
+Each phase must be independently reviewable. Do not combine interpreter
+construction, bridge migration, and Lua deletion into one change.
+
+## Scripting test plan
+
+- Lexer/parser tests for every token, construct, malformed input, UTF-8 edge,
+  depth limit, integer boundary, and allocation failure.
+- Compiler and verifier golden vectors plus rejection of every truncated bytecode
+  boundary, invalid jump, stack mismatch, bad signature, overflowed section, and
+  unsupported version.
+- Per-opcode VM tests, checked arithmetic, branch/loop behavior, stack and call
+  limits, instruction budgets, memory limits, cancellation, and rollback.
+- Native registration collisions, missing functions, bad argument/result types,
+  capability denial, callback failure, ownership, and re-entrant misuse.
+- Deterministic repeated execution and cross-platform golden hashes for values,
+  bytecode, terrain output, Game operations, snapshots, and replay records.
+- Terrain and Game differential tests running the same fixtures through Lua and
+  the custom runtime until migration is complete.
+- Isolation tests across worlds, matches, VMs, threads, reload generations, and
+  simultaneous immutable-module readers; run supported paths under TSan.
+- Hot-reload success, compile failure, incompatible-state migration, active-call
+  draining, and allocation failure at every transactional step.
+- Fuzz the lexer, parser, bytecode loader/verifier, value deserializer, VM, and
+  native-call boundary with strict budgets.
+- ASan, UBSan, TSan, lifecycle-abort, CMA failure-injection, clean-build,
+  incremental-build, and archive-integrity coverage on every supported platform.
+- Release checks proving no Lua objects/symbols/vendor paths, tester-only hooks,
+  profiling code when disabled, or unintended filesystem/network APIs remain.
+
+## Lua-removal acceptance criteria
+
+- Every migration-inventory row has a passing custom-runtime parity test.
+- All production Game and Voxel callers use typed Scripting interfaces.
+- No production include, link, archive, Makefile, configuration, or source
+  dependency refers to Lua or its ABI.
+- Repository searches find `lua_`, `LUA_`, and `vendor/lua` only in explicitly
+  retained historical documentation or migration fixtures scheduled for removal.
+- Deterministic vectors match across Windows, Linux, and macOS.
+- Full CI and relevant sanitizer, fuzz, failure-injection, lifecycle, clean, and
+  incremental build suites pass after the Lua module is physically removed.
+
 # Delivery order and review gates
 
 Recommended order:
@@ -985,7 +1278,11 @@ Recommended order:
 4. Analytics exporters and Minecraft integration;
 5. CardGame immutable ruleset and callback registry;
 6. CardGame match state and operation engine;
-7. CardGame events, configurable phases, triggers, and replay foundations.
+7. CardGame events, configurable phases, triggers, and replay foundations;
+8. scripting inventory and approved language/bytecode specifications;
+9. custom compiler, verifier, VM, sandbox, and native registry;
+10. terrain and Game bridge migration with differential parity tests;
+11. production cutover followed by complete Lua dependency removal.
 
 Each stage must pass:
 
