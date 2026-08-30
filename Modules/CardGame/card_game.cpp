@@ -1536,7 +1536,9 @@ int32_t card_game_engine::replay_command_records(
     uint64_t rules_hash;
     uint64_t state_hash;
     card_game_command_record executed_record;
+    card_game_snapshot starting_snapshot;
     int32_t command_error;
+    int32_t restore_error;
 
     if (this->_initialised_state != 2U || this->_player_count == 0U
         || record_count > FT_CARD_GAME_MAX_COMMAND_RECORDS
@@ -1545,6 +1547,8 @@ int32_t card_game_engine::replay_command_records(
     if (this->_command_record_count != 0U
         || this->_last_command_sequence != 0U)
         return (FT_ERR_INVALID_STATE);
+    if (this->get_snapshot(&starting_snapshot) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     index = 0U;
     while (index < record_count)
     {
@@ -1552,16 +1556,37 @@ int32_t card_game_engine::replay_command_records(
             || rules_hash != records[index].rules_hash
             || this->get_state_hash(&state_hash) != FT_ERR_SUCCESS
             || state_hash != records[index].state_hash_before)
+        {
+            restore_error = this->apply_snapshot(starting_snapshot);
+            this->_command_record_count = 0U;
+            this->_last_command_sequence = 0U;
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
             return (FT_ERR_INVALID_STATE);
+        }
         command_error = this->submit_command(records[index].command, context);
         if (command_error != FT_ERR_SUCCESS)
+        {
+            restore_error = this->apply_snapshot(starting_snapshot);
+            this->_command_record_count = 0U;
+            this->_last_command_sequence = 0U;
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
             return (command_error);
+        }
         command_error = this->get_command_record(
             this->_command_record_count - 1U, &executed_record);
         if (command_error != FT_ERR_SUCCESS
             || executed_record.state_hash_after
                 != records[index].state_hash_after)
+        {
+            restore_error = this->apply_snapshot(starting_snapshot);
+            this->_command_record_count = 0U;
+            this->_last_command_sequence = 0U;
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
             return (FT_ERR_INVALID_STATE);
+        }
         index += 1U;
     }
     return (FT_ERR_SUCCESS);

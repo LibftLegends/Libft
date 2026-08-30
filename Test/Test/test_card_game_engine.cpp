@@ -474,13 +474,17 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     card_game_engine first;
     card_game_engine second;
     card_game_engine replay_engine;
+    card_game_engine failed_replay_engine;
     card_game_rules rules;
     card_game_card_definition definition;
     card_game_command command;
     card_game_command_record record;
+    card_game_command_record invalid_record;
     uint32_t record_count;
     uint64_t first_rules_hash;
     uint64_t second_rules_hash;
+    uint64_t hash_before_failure;
+    uint64_t hash_after_failure;
 
     rules.max_board_spaces = 2U;
     rules.max_hand_size = 4U;
@@ -525,6 +529,21 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.get_state_hash(
         &second_rules_hash));
     FT_ASSERT_EQ(record.state_hash_after, second_rules_hash);
+    invalid_record = record;
+    invalid_record.state_hash_before ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.get_state_hash(
+        &hash_before_failure));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, failed_replay_engine
+        .replay_command_records(&invalid_record, 1U, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.get_state_hash(
+        &hash_after_failure));
+    FT_ASSERT_EQ(hash_before_failure, hash_after_failure);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine
+        .get_command_record_count(&record_count));
+    FT_ASSERT_EQ(0U, record_count);
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, first.get_command_record(1U, &record));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, first.submit_command(command,
         ft_nullptr));
@@ -533,6 +552,7 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.destroy());
     return (1);
 }
 
