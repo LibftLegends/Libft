@@ -126,7 +126,8 @@ analytics_session::analytics_session() noexcept
     : _initialised_state(0U), _enabled(FT_FALSE), _mutex(), _regions(),
       _region_count(0U), _export_callback(ft_nullptr),
       _export_user_data(ft_nullptr), _trace_callback(ft_nullptr),
-      _trace_user_data(ft_nullptr), _dropped_scope_count(0U), _frame_samples(),
+      _trace_user_data(ft_nullptr), _trace_events(), _trace_event_count(0U),
+      _dropped_trace_count(0U), _dropped_scope_count(0U), _frame_samples(),
       _frame_sample_count(0U), _frame_sample_cursor(0U), _latest_frame(),
       _has_latest_frame(FT_FALSE)
 {
@@ -162,6 +163,8 @@ int32_t analytics_session::initialize() noexcept
     this->_export_user_data = ft_nullptr;
     this->_trace_callback = ft_nullptr;
     this->_trace_user_data = ft_nullptr;
+    this->_trace_event_count = 0U;
+    this->_dropped_trace_count = 0U;
     this->_dropped_scope_count = 0U;
     this->_frame_sample_count = 0U;
     this->_frame_sample_cursor = 0U;
@@ -178,6 +181,7 @@ int32_t analytics_session::destroy() noexcept
     if (this->_initialised_state != 2U)
         return (FT_ERR_SUCCESS);
     this->_enabled.store(FT_FALSE, std::memory_order_release);
+    this->_trace_event_count = 0U;
     this->_has_latest_frame = FT_FALSE;
     this->_initialised_state = 1U;
     return (FT_ERR_SUCCESS);
@@ -381,18 +385,51 @@ int32_t analytics_session::get_latest_frame(
 int32_t analytics_session::publish_trace(
     const analytics_trace_event &event) noexcept
 {
-    analytics_trace_callback callback;
-    void *user_data;
+    std::lock_guard<std::mutex> lock(this->_mutex);
+
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_trace_event_count >= FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS)
+    {
+        this->_dropped_trace_count += 1U;
+        return (FT_ERR_FULL);
+    }
+    this->_trace_events[this->_trace_event_count] = event;
+    this->_trace_event_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_session::flush_exports() noexcept
+{
+    analytics_trace_event events[FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS];
+    analytics_trace_callback trace_callback;
+    void *trace_user_data;
+    uint32_t event_count;
+    uint32_t event_index;
 
     {
         std::lock_guard<std::mutex> lock(this->_mutex);
         if (this->_initialised_state != 2U)
             return (FT_ERR_NOT_INITIALISED);
-        callback = this->_trace_callback;
-        user_data = this->_trace_user_data;
+        event_count = this->_trace_event_count;
+        event_index = 0U;
+        while (event_index < event_count)
+        {
+            events[event_index] = this->_trace_events[event_index];
+            event_index += 1U;
+        }
+        this->_trace_event_count = 0U;
+        trace_callback = this->_trace_callback;
+        trace_user_data = this->_trace_user_data;
     }
-    if (callback != ft_nullptr)
-        callback(event, user_data);
+    if (trace_callback == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    event_index = 0U;
+    while (event_index < event_count)
+    {
+        trace_callback(events[event_index], trace_user_data);
+        event_index += 1U;
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -400,6 +437,12 @@ uint64_t analytics_session::get_dropped_scope_count() const noexcept
 {
     std::lock_guard<std::mutex> lock(this->_mutex);
     return (this->_dropped_scope_count);
+}
+
+uint64_t analytics_session::get_dropped_trace_count() const noexcept
+{
+    std::lock_guard<std::mutex> lock(this->_mutex);
+    return (this->_dropped_trace_count);
 }
 
 int32_t analytics_now_nanoseconds(uint64_t *timestamp) noexcept

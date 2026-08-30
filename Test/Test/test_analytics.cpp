@@ -114,8 +114,37 @@ FT_TEST(test_analytics_cross_thread_flow_exports_trace_event)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_flow(&session, 99U,
         region_id, &flow_token));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_flow(flow_token));
+    FT_ASSERT_EQ(0U, trace_events);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
     FT_ASSERT_EQ(1U, trace_events);
     FT_ASSERT_EQ(1U, g_analytics_trace_events);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_trace_queue_reports_overflow_and_flushes)
+{
+    analytics_session session;
+    analytics_trace_event event;
+    uint32_t trace_events;
+    uint32_t event_index;
+
+    trace_events = 0U;
+    event = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_trace_callback(
+        analytics_test_trace_callback, &trace_events));
+    event_index = 0U;
+    while (event_index < FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_trace(event));
+        event_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_FULL, session.publish_trace(event));
+    FT_ASSERT_EQ(1U, session.get_dropped_trace_count());
+    FT_ASSERT_EQ(0U, trace_events);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
+    FT_ASSERT_EQ(FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS, trace_events);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
