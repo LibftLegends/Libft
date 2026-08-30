@@ -7,6 +7,7 @@
 
 static const uint32_t FT_SCRIPTING_MAX_NATIVES = 128U;
 static const uint32_t FT_SCRIPTING_MAX_ARGUMENTS = 8U;
+static const uint32_t FT_SCRIPTING_MAX_LOCALS = 32U;
 static const uint32_t FT_SCRIPTING_MAX_SOURCE_BYTES = 65536U;
 static const uint32_t FT_SCRIPTING_MAX_TOKENS = 4096U;
 static const uint32_t FT_SCRIPTING_MAX_OPERATIONS = 4096U;

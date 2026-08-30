@@ -34,6 +34,9 @@ FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("2 + 3 * 4", &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
     FT_ASSERT_EQ(static_cast<int64_t>(14), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let base = 9; return base * 2;", &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(18), result.integer_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

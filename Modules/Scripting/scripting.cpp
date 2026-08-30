@@ -9,6 +9,13 @@ struct scripting_parser
     uint32_t offset;
     uint32_t operation_count;
     scripting_diagnostic diagnostic;
+    struct scripting_local
+    {
+        const char *name;
+        uint32_t name_length;
+        scripting_value value;
+    } locals[FT_SCRIPTING_MAX_LOCALS];
+    uint32_t local_count;
 };
 
 static ft_bool scripting_is_space(char character) noexcept
@@ -68,12 +75,39 @@ static int32_t scripting_fail(scripting_parser *parser, int32_t error_code,
     return (error_code);
 }
 
-static int32_t scripting_skip_space(scripting_parser *parser) noexcept
+static void scripting_skip_space(scripting_parser *parser) noexcept
 {
     while (parser->offset < parser->source_length
         && scripting_is_space(parser->source[parser->offset]) != FT_FALSE)
         parser->offset += 1U;
-    return (FT_ERR_SUCCESS);
+    return ;
+}
+
+static int32_t scripting_find_local(scripting_parser *parser,
+    const char *name, uint32_t name_length, scripting_value *value) noexcept
+{
+    uint32_t index;
+    uint32_t character_index;
+
+    index = 0U;
+    while (index < parser->local_count)
+    {
+        if (parser->locals[index].name_length == name_length)
+        {
+            character_index = 0U;
+            while (character_index < name_length
+                && parser->locals[index].name[character_index]
+                    == name[character_index])
+                character_index += 1U;
+            if (character_index == name_length)
+            {
+                *value = parser->locals[index].value;
+                return (FT_ERR_SUCCESS);
+            }
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
 }
 
 static int32_t scripting_parse_expression(scripting_parser *parser,
@@ -139,7 +173,7 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
     uint32_t argument_count;
     scripting_value arguments[FT_SCRIPTING_MAX_ARGUMENTS];
 
-    (void)scripting_skip_space(parser);
+    scripting_skip_space(parser);
     if (parser->offset >= parser->source_length)
         return (scripting_fail(parser, FT_ERR_INVALID_ARGUMENT, parser->offset, 1U));
     if (parser->source[parser->offset] == '(')
@@ -147,7 +181,7 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
         parser->offset += 1U;
         if (scripting_parse_expression(parser, result) != FT_ERR_SUCCESS)
             return (parser->diagnostic.error_code);
-        (void)scripting_skip_space(parser);
+        scripting_skip_space(parser);
         if (parser->offset >= parser->source_length
             || parser->source[parser->offset] != ')')
             return (scripting_fail(parser, FT_ERR_INVALID_ARGUMENT,
@@ -180,25 +214,31 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
         && scripting_is_identifier_part(parser->source[parser->offset]) != FT_FALSE)
         parser->offset += 1U;
     native_name_length = parser->offset - start;
-    if (scripting_equal_identifier(parser->source, start, parser->offset - start,
+    native_name_length = parser->offset - start;
+    if (scripting_equal_identifier(parser->source, start, native_name_length,
         "null") != FT_FALSE)
     {
         result->type = SCRIPTING_VALUE_NULL;
         result->integer_value = 0;
         return (FT_ERR_SUCCESS);
     }
-    if (parser->engine->find_native(parser->source + start,
-        parser->offset - start, &native_id)
-        != FT_ERR_SUCCESS)
-        return (scripting_fail(parser, FT_ERR_NOT_FOUND, start,
-            parser->offset - start));
-    (void)scripting_skip_space(parser);
+    scripting_skip_space(parser);
     if (parser->offset >= parser->source_length
         || parser->source[parser->offset] != '(')
-        return (scripting_fail(parser, FT_ERR_INVALID_ARGUMENT, parser->offset, 1U));
+    {
+        if (scripting_find_local(parser, parser->source + start,
+            native_name_length, result) != FT_ERR_SUCCESS)
+            return (scripting_fail(parser, FT_ERR_NOT_FOUND, start,
+                native_name_length));
+        return (FT_ERR_SUCCESS);
+    }
+    if (parser->engine->find_native(parser->source + start,
+        native_name_length, &native_id) != FT_ERR_SUCCESS)
+        return (scripting_fail(parser, FT_ERR_NOT_FOUND, start,
+            native_name_length));
     parser->offset += 1U;
     argument_count = 0U;
-    (void)scripting_skip_space(parser);
+    scripting_skip_space(parser);
     if (parser->offset < parser->source_length
         && parser->source[parser->offset] != ')')
     {
@@ -210,7 +250,7 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
                 &arguments[argument_count]) != FT_ERR_SUCCESS)
                 return (parser->diagnostic.error_code);
             argument_count += 1U;
-            (void)scripting_skip_space(parser);
+            scripting_skip_space(parser);
             if (parser->offset >= parser->source_length
                 || parser->source[parser->offset] != ',')
                 break ;
@@ -242,7 +282,7 @@ static int32_t scripting_parse_unary(scripting_parser *parser,
 {
     ft_bool negative;
 
-    (void)scripting_skip_space(parser);
+    scripting_skip_space(parser);
     negative = FT_FALSE;
     if (parser->offset < parser->source_length
         && parser->source[parser->offset] == '-')
@@ -273,7 +313,7 @@ static int32_t scripting_parse_expression(scripting_parser *parser,
         return (parser->diagnostic.error_code);
     while (1)
     {
-        (void)scripting_skip_space(parser);
+        scripting_skip_space(parser);
         if (parser->offset >= parser->source_length)
             break ;
         operation = parser->source[parser->offset];
@@ -317,7 +357,7 @@ static int32_t scripting_parse_term(scripting_parser *parser,
         return (parser->diagnostic.error_code);
     while (1)
     {
-        (void)scripting_skip_space(parser);
+        scripting_skip_space(parser);
         if (parser->offset >= parser->source_length)
             break ;
         operation = parser->source[parser->offset];
@@ -522,6 +562,9 @@ int32_t scripting_engine::execute(const char *source,
 {
     scripting_parser parser;
     int32_t parse_error;
+    uint32_t declaration_start;
+    uint32_t declaration_name_length;
+    scripting_value declaration_value;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -538,11 +581,74 @@ int32_t scripting_engine::execute(const char *source,
     }
     parser.offset = 0U;
     parser.operation_count = 0U;
+    parser.local_count = 0U;
     parser.diagnostic.error_code = FT_ERR_SUCCESS;
     parser.diagnostic.source_offset = 0U;
     parser.diagnostic.source_length = 0U;
+    scripting_skip_space(&parser);
+    while (parser.source_length - parser.offset >= 3U
+        && scripting_equal_identifier(parser.source, parser.offset, 3U,
+            "let") != FT_FALSE)
+    {
+        parser.offset += 3U;
+        scripting_skip_space(&parser);
+        declaration_start = parser.offset;
+        while (parser.offset < parser.source_length
+            && scripting_is_identifier_part(parser.source[parser.offset])
+                != FT_FALSE)
+            parser.offset += 1U;
+        declaration_name_length = parser.offset - declaration_start;
+        if (declaration_name_length == 0U
+            || parser.local_count >= FT_SCRIPTING_MAX_LOCALS)
+        {
+            parse_error = scripting_fail(&parser, FT_ERR_FULL,
+                declaration_start, 1U);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
+        scripting_skip_space(&parser);
+        if (parser.offset >= parser.source_length
+            || parser.source[parser.offset] != '=')
+        {
+            parse_error = scripting_fail(&parser, FT_ERR_INVALID_ARGUMENT,
+                parser.offset, 1U);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
+        parser.offset += 1U;
+        if (scripting_parse_expression(&parser, &declaration_value)
+            != FT_ERR_SUCCESS)
+        {
+            this->_last_diagnostic = parser.diagnostic;
+            return (parser.diagnostic.error_code);
+        }
+        scripting_skip_space(&parser);
+        if (parser.offset >= parser.source_length
+            || parser.source[parser.offset] != ';')
+        {
+            parse_error = scripting_fail(&parser, FT_ERR_INVALID_ARGUMENT,
+                parser.offset, 1U);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
+        parser.locals[parser.local_count].name = parser.source
+            + declaration_start;
+        parser.locals[parser.local_count].name_length = declaration_name_length;
+        parser.locals[parser.local_count].value = declaration_value;
+        parser.local_count += 1U;
+        parser.offset += 1U;
+        scripting_skip_space(&parser);
+    }
+    if (parser.source_length - parser.offset >= 6U
+        && scripting_equal_identifier(parser.source, parser.offset, 6U,
+            "return") != FT_FALSE)
+        parser.offset += 6U;
     parse_error = scripting_parse_expression(&parser, result);
-    (void)scripting_skip_space(&parser);
+    scripting_skip_space(&parser);
+    if (parse_error == FT_ERR_SUCCESS && parser.offset < parser.source_length
+        && parser.source[parser.offset] == ';')
+        parser.offset += 1U;
+    scripting_skip_space(&parser);
     if (parse_error == FT_ERR_SUCCESS && parser.offset != parser.source_length)
         parse_error = scripting_fail(&parser, FT_ERR_INVALID_ARGUMENT,
             parser.offset, parser.source_length - parser.offset);
