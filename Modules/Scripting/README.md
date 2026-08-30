@@ -11,7 +11,11 @@ until parity tests are complete.
 - `scripting_engine::initialize()` and `destroy()` manage the runtime lifecycle.
 - `register_native()` registers a stable name and function-pointer callback.
 - `set_operation_limit()` bounds native calls during one execution.
-- `execute()` evaluates integer expressions and registered native calls.
+- `execute()` evaluates bounded expressions, typed literals, comparisons, and
+  registered native calls.
+- Comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`. Integer,
+  boolean, string, and null equality is supported; ordering is defined for
+  integers, booleans, and strings.
 - `get_last_diagnostic()` reports the error code and source span of the last
   failed execution.
 - `scripting_value_set_null()` and `scripting_value_set_integer()` construct

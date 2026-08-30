@@ -147,3 +147,30 @@ FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("2 + 3 == 5", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("7 >= 8", &result));
+    FT_ASSERT_EQ(FT_FALSE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("\"abc\" < \"abd\"",
+        &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("null < null",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "let value = 9; return value != 4;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

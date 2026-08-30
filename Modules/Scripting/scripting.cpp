@@ -130,6 +130,9 @@ static int32_t scripting_find_local(scripting_parser *parser,
 static int32_t scripting_parse_expression(scripting_parser *parser,
     scripting_value *result) noexcept;
 
+static int32_t scripting_parse_condition(scripting_parser *parser,
+    scripting_value *result) noexcept;
+
 static int32_t scripting_parse_term(scripting_parser *parser,
     scripting_value *result) noexcept;
 
@@ -238,6 +241,9 @@ static int32_t scripting_compile_find_local(
 static int32_t scripting_compile_expression(scripting_compile_parser *parser)
     noexcept;
 
+static int32_t scripting_compile_condition(scripting_compile_parser *parser)
+    noexcept;
+
 static int32_t scripting_compile_term(scripting_compile_parser *parser)
     noexcept;
 
@@ -259,7 +265,7 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
     if (parser->source[parser->offset] == '(')
     {
         parser->offset += 1U;
-        parse_error = scripting_compile_expression(parser);
+        parse_error = scripting_compile_condition(parser);
         if (parse_error != FT_ERR_SUCCESS)
             return (parse_error);
         scripting_compile_skip_space(parser);
@@ -369,7 +375,7 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
             if (argument_count >= FT_SCRIPTING_MAX_ARGUMENTS)
                 return (scripting_compile_fail(parser, FT_ERR_FULL,
                     parser->offset, 1U));
-            parse_error = scripting_compile_expression(parser);
+            parse_error = scripting_compile_condition(parser);
             if (parse_error != FT_ERR_SUCCESS)
                 return (parse_error);
             argument_count += 1U;
@@ -444,6 +450,65 @@ static int32_t scripting_compile_expression(scripting_compile_parser *parser)
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t scripting_compile_condition(scripting_compile_parser *parser)
+    noexcept
+{
+    scripting_opcode comparison_opcode;
+    int32_t parse_error;
+
+    parse_error = scripting_compile_expression(parser);
+    if (parse_error != FT_ERR_SUCCESS)
+        return (parse_error);
+    scripting_compile_skip_space(parser);
+    comparison_opcode = SCRIPTING_OP_EQUAL;
+    if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '='
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '!'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_NOT_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '<'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_LESS_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '>'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_GREATER_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->offset < parser->source_length
+        && parser->source[parser->offset] == '<')
+    {
+        comparison_opcode = SCRIPTING_OP_LESS_THAN;
+        parser->offset += 1U;
+    }
+    else if (parser->offset < parser->source_length
+        && parser->source[parser->offset] == '>')
+    {
+        comparison_opcode = SCRIPTING_OP_GREATER_THAN;
+        parser->offset += 1U;
+    }
+    else
+        return (FT_ERR_SUCCESS);
+    parse_error = scripting_compile_expression(parser);
+    if (parse_error != FT_ERR_SUCCESS)
+        return (parse_error);
+    return (scripting_compile_emit(parser, comparison_opcode, 0, 0U));
+}
+
 static int32_t scripting_compile_term(scripting_compile_parser *parser)
     noexcept
 {
@@ -514,6 +579,112 @@ static int32_t scripting_multiply_checked(int64_t left_value,
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t scripting_compare_values(const scripting_value &left_value,
+    const scripting_value &right_value, scripting_opcode opcode,
+    ft_bool *result) noexcept
+{
+    int32_t comparison;
+    uint32_t index;
+
+    if (result == ft_nullptr || left_value.type != right_value.type)
+        return (FT_ERR_INVALID_ARGUMENT);
+    comparison = 0;
+    if (left_value.type == SCRIPTING_VALUE_INTEGER)
+    {
+        if (left_value.integer_value < right_value.integer_value)
+            comparison = -1;
+        else if (left_value.integer_value > right_value.integer_value)
+            comparison = 1;
+    }
+    else if (left_value.type == SCRIPTING_VALUE_BOOLEAN)
+    {
+        if (left_value.boolean_value < right_value.boolean_value)
+            comparison = -1;
+        else if (left_value.boolean_value > right_value.boolean_value)
+            comparison = 1;
+    }
+    else if (left_value.type == SCRIPTING_VALUE_STRING)
+    {
+        index = 0U;
+        while (index < left_value.string_length
+            && index < right_value.string_length)
+        {
+            if (left_value.string_value[index]
+                < right_value.string_value[index])
+            {
+                comparison = -1;
+                break ;
+            }
+            if (left_value.string_value[index]
+                > right_value.string_value[index])
+            {
+                comparison = 1;
+                break ;
+            }
+            index += 1U;
+        }
+        if (comparison == 0 && left_value.string_length
+            < right_value.string_length)
+            comparison = -1;
+        else if (comparison == 0 && left_value.string_length
+            > right_value.string_length)
+            comparison = 1;
+    }
+    else if (left_value.type == SCRIPTING_VALUE_NULL)
+    {
+        if (opcode != SCRIPTING_OP_EQUAL
+            && opcode != SCRIPTING_OP_NOT_EQUAL)
+            return (FT_ERR_INVALID_ARGUMENT);
+    }
+    else
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (opcode == SCRIPTING_OP_EQUAL)
+    {
+        if (comparison == 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else if (opcode == SCRIPTING_OP_NOT_EQUAL)
+    {
+        if (comparison != 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else if (opcode == SCRIPTING_OP_LESS_THAN)
+    {
+        if (comparison < 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else if (opcode == SCRIPTING_OP_LESS_EQUAL)
+    {
+        if (comparison <= 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else if (opcode == SCRIPTING_OP_GREATER_THAN)
+    {
+        if (comparison > 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else if (opcode == SCRIPTING_OP_GREATER_EQUAL)
+    {
+        if (comparison >= 0)
+            *result = FT_TRUE;
+        else
+            *result = FT_FALSE;
+    }
+    else
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (FT_ERR_SUCCESS);
+}
+
 static int32_t scripting_parse_primary(scripting_parser *parser,
     scripting_value *result) noexcept
 {
@@ -530,7 +701,7 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
     if (parser->source[parser->offset] == '(')
     {
         parser->offset += 1U;
-        if (scripting_parse_expression(parser, result) != FT_ERR_SUCCESS)
+        if (scripting_parse_condition(parser, result) != FT_ERR_SUCCESS)
             return (parser->diagnostic.error_code);
         scripting_skip_space(parser);
         if (parser->offset >= parser->source_length
@@ -625,7 +796,7 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
         {
             if (argument_count >= FT_SCRIPTING_MAX_ARGUMENTS)
                 return (scripting_fail(parser, FT_ERR_FULL, parser->offset, 1U));
-            if (scripting_parse_expression(parser,
+            if (scripting_parse_condition(parser,
                 &arguments[argument_count]) != FT_ERR_SUCCESS)
                 return (parser->diagnostic.error_code);
             argument_count += 1U;
@@ -723,6 +894,68 @@ static int32_t scripting_parse_expression(scripting_parser *parser,
         }
     }
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t scripting_parse_condition(scripting_parser *parser,
+    scripting_value *result) noexcept
+{
+    scripting_value right;
+    scripting_opcode comparison_opcode;
+    ft_bool comparison_result;
+
+    if (scripting_parse_expression(parser, result) != FT_ERR_SUCCESS)
+        return (parser->diagnostic.error_code);
+    scripting_skip_space(parser);
+    comparison_opcode = SCRIPTING_OP_EQUAL;
+    if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '='
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '!'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_NOT_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '<'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_LESS_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->source_length - parser->offset >= 2U
+        && parser->source[parser->offset] == '>'
+        && parser->source[parser->offset + 1U] == '=')
+    {
+        comparison_opcode = SCRIPTING_OP_GREATER_EQUAL;
+        parser->offset += 2U;
+    }
+    else if (parser->offset < parser->source_length
+        && parser->source[parser->offset] == '<')
+    {
+        comparison_opcode = SCRIPTING_OP_LESS_THAN;
+        parser->offset += 1U;
+    }
+    else if (parser->offset < parser->source_length
+        && parser->source[parser->offset] == '>')
+    {
+        comparison_opcode = SCRIPTING_OP_GREATER_THAN;
+        parser->offset += 1U;
+    }
+    else
+        return (FT_ERR_SUCCESS);
+    if (scripting_parse_expression(parser, &right) != FT_ERR_SUCCESS)
+        return (parser->diagnostic.error_code);
+    if (scripting_compare_values(*result, right, comparison_opcode,
+        &comparison_result) != FT_ERR_SUCCESS)
+        return (scripting_fail(parser, FT_ERR_INVALID_ARGUMENT,
+            parser->offset, 1U));
+    return (scripting_value_set_boolean(result, comparison_result));
 }
 
 static int32_t scripting_parse_term(scripting_parser *parser,
@@ -1012,7 +1245,7 @@ int32_t scripting_engine::execute(const char *source,
             return (parse_error);
         }
         parser.offset += 1U;
-        if (scripting_parse_expression(&parser, &declaration_value)
+        if (scripting_parse_condition(&parser, &declaration_value)
             != FT_ERR_SUCCESS)
         {
             this->_last_diagnostic = parser.diagnostic;
@@ -1037,7 +1270,7 @@ int32_t scripting_engine::execute(const char *source,
     }
     if (scripting_keyword_at(&parser, "return", 6U) != FT_FALSE)
         parser.offset += 6U;
-    parse_error = scripting_parse_expression(&parser, result);
+    parse_error = scripting_parse_condition(&parser, result);
     scripting_skip_space(&parser);
     if (parse_error == FT_ERR_SUCCESS && parser.offset < parser.source_length
         && parser.source[parser.offset] == ';')
@@ -1121,7 +1354,7 @@ int32_t scripting_engine::compile(const char *source,
             return (parse_error);
         }
         parser.offset += 1U;
-        parse_error = scripting_compile_expression(&parser);
+        parse_error = scripting_compile_condition(&parser);
         if (parse_error != FT_ERR_SUCCESS)
         {
             this->_last_diagnostic = parser.diagnostic;
@@ -1156,7 +1389,7 @@ int32_t scripting_engine::compile(const char *source,
         parser.offset += 6U;
         explicit_return = FT_TRUE;
     }
-    parse_error = scripting_compile_expression(&parser);
+    parse_error = scripting_compile_condition(&parser);
     if (parse_error != FT_ERR_SUCCESS)
     {
         this->_last_diagnostic = parser.diagnostic;
@@ -1203,7 +1436,7 @@ int32_t scripting_engine::compile(const char *source,
                 }
                 break ;
             }
-            parse_error = scripting_compile_expression(&parser);
+            parse_error = scripting_compile_condition(&parser);
             if (parse_error != FT_ERR_SUCCESS)
             {
                 this->_last_diagnostic = parser.diagnostic;
@@ -1302,6 +1535,17 @@ int32_t scripting_engine::verify_program(
                 return (FT_ERR_INVALID_ARGUMENT);
             stack_depth -= 1U;
         }
+        else if (instruction->opcode == SCRIPTING_OP_EQUAL
+            || instruction->opcode == SCRIPTING_OP_NOT_EQUAL
+            || instruction->opcode == SCRIPTING_OP_LESS_THAN
+            || instruction->opcode == SCRIPTING_OP_LESS_EQUAL
+            || instruction->opcode == SCRIPTING_OP_GREATER_THAN
+            || instruction->opcode == SCRIPTING_OP_GREATER_EQUAL)
+        {
+            if (stack_depth < 2U)
+                return (FT_ERR_INVALID_ARGUMENT);
+            stack_depth -= 1U;
+        }
         else if (instruction->opcode == SCRIPTING_OP_CALL_NATIVE)
         {
             if (instruction->auxiliary > FT_SCRIPTING_MAX_ARGUMENTS
@@ -1341,6 +1585,7 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
     uint32_t argument_index;
     uint32_t operation_count;
     int64_t calculated_value;
+    ft_bool comparison_result;
     int32_t execution_error;
 
     if (result == ft_nullptr)
@@ -1419,6 +1664,22 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
         {
             *result = stack[stack_count - 1U];
             return (FT_ERR_SUCCESS);
+        }
+        else if (instruction->opcode == SCRIPTING_OP_EQUAL
+            || instruction->opcode == SCRIPTING_OP_NOT_EQUAL
+            || instruction->opcode == SCRIPTING_OP_LESS_THAN
+            || instruction->opcode == SCRIPTING_OP_LESS_EQUAL
+            || instruction->opcode == SCRIPTING_OP_GREATER_THAN
+            || instruction->opcode == SCRIPTING_OP_GREATER_EQUAL)
+        {
+            execution_error = scripting_compare_values(
+                stack[stack_count - 2U], stack[stack_count - 1U],
+                instruction->opcode, &comparison_result);
+            if (execution_error != FT_ERR_SUCCESS)
+                return (execution_error);
+            stack_count -= 2U;
+            scripting_value_set_boolean(&stack[stack_count++],
+                comparison_result);
         }
         else
         {
