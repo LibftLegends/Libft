@@ -546,9 +546,8 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
                 + static_cast<uint64_t>(parser->source[parser->offset] - '0');
             parser->offset += 1U;
         }
-        result->type = SCRIPTING_VALUE_INTEGER;
-        result->integer_value = static_cast<int64_t>(unsigned_value);
-        return (FT_ERR_SUCCESS);
+        return (scripting_value_set_integer(result,
+            static_cast<int64_t>(unsigned_value)));
     }
     if (parser->source[parser->offset] == '"')
     {
@@ -583,13 +582,10 @@ static int32_t scripting_parse_primary(scripting_parser *parser,
         && scripting_is_identifier_part(parser->source[parser->offset]) != FT_FALSE)
         parser->offset += 1U;
     native_name_length = parser->offset - start;
-    native_name_length = parser->offset - start;
     if (scripting_equal_identifier(parser->source, start, native_name_length,
         "null") != FT_FALSE)
     {
-        result->type = SCRIPTING_VALUE_NULL;
-        result->integer_value = 0;
-        return (FT_ERR_SUCCESS);
+        return (scripting_value_set_null(result));
     }
     scripting_skip_space(parser);
     if (parser->offset >= parser->source_length
@@ -1046,6 +1042,7 @@ int32_t scripting_engine::compile(const char *source,
     uint32_t declaration_name_length;
     uint32_t local_id;
     int32_t parse_error;
+    ft_bool explicit_return;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -1136,8 +1133,12 @@ int32_t scripting_engine::compile(const char *source,
         parser.offset += 1U;
         scripting_compile_skip_space(&parser);
     }
+    explicit_return = FT_FALSE;
     if (scripting_compile_keyword_at(&parser, "return", 6U) != FT_FALSE)
+    {
         parser.offset += 6U;
+        explicit_return = FT_TRUE;
+    }
     parse_error = scripting_compile_expression(&parser);
     if (parse_error != FT_ERR_SUCCESS)
     {
@@ -1145,16 +1146,62 @@ int32_t scripting_engine::compile(const char *source,
         return (parse_error);
     }
     scripting_compile_skip_space(&parser);
-    if (parser.offset < parser.source_length
-        && parser.source[parser.offset] == ';')
-        parser.offset += 1U;
-    scripting_compile_skip_space(&parser);
-    if (parser.offset != parser.source_length)
+    if (explicit_return != FT_FALSE)
     {
-        parse_error = scripting_compile_fail(&parser, FT_ERR_INVALID_ARGUMENT,
-            parser.offset, parser.source_length - parser.offset);
-        this->_last_diagnostic = parser.diagnostic;
-        return (parse_error);
+        if (parser.offset < parser.source_length
+            && parser.source[parser.offset] == ';')
+            parser.offset += 1U;
+        scripting_compile_skip_space(&parser);
+        if (parser.offset != parser.source_length)
+        {
+            parse_error = scripting_compile_fail(&parser,
+                FT_ERR_INVALID_ARGUMENT, parser.offset,
+                parser.source_length - parser.offset);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
+    }
+    else
+    {
+        while (parser.offset < parser.source_length
+            && parser.source[parser.offset] == ';')
+        {
+            parse_error = scripting_compile_emit(&parser,
+                SCRIPTING_OP_POP, 0, 0U);
+            if (parse_error != FT_ERR_SUCCESS)
+            {
+                this->_last_diagnostic = parser.diagnostic;
+                return (parse_error);
+            }
+            parser.offset += 1U;
+            scripting_compile_skip_space(&parser);
+            if (parser.offset >= parser.source_length)
+            {
+                parse_error = scripting_compile_emit(&parser,
+                    SCRIPTING_OP_PUSH_NULL, 0, 0U);
+                if (parse_error != FT_ERR_SUCCESS)
+                {
+                    this->_last_diagnostic = parser.diagnostic;
+                    return (parse_error);
+                }
+                break ;
+            }
+            parse_error = scripting_compile_expression(&parser);
+            if (parse_error != FT_ERR_SUCCESS)
+            {
+                this->_last_diagnostic = parser.diagnostic;
+                return (parse_error);
+            }
+            scripting_compile_skip_space(&parser);
+        }
+        if (parser.offset != parser.source_length)
+        {
+            parse_error = scripting_compile_fail(&parser,
+                FT_ERR_INVALID_ARGUMENT, parser.offset,
+                parser.source_length - parser.offset);
+            this->_last_diagnostic = parser.diagnostic;
+            return (parse_error);
+        }
     }
     parse_error = scripting_compile_emit(&parser, SCRIPTING_OP_RETURN, 0, 0U);
     if (parse_error != FT_ERR_SUCCESS)
@@ -1218,6 +1265,12 @@ int32_t scripting_engine::verify_program(
                 return (FT_ERR_INVALID_ARGUMENT);
             if (instruction->opcode == SCRIPTING_OP_STORE_LOCAL)
                 stack_depth -= 1U;
+        }
+        else if (instruction->opcode == SCRIPTING_OP_POP)
+        {
+            if (stack_depth == 0U)
+                return (FT_ERR_INVALID_ARGUMENT);
+            stack_depth -= 1U;
         }
         else if (instruction->opcode == SCRIPTING_OP_ADD
             || instruction->opcode == SCRIPTING_OP_SUBTRACT
@@ -1306,6 +1359,8 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
             locals[local_index] = stack[stack_count - 1U];
             stack_count -= 1U;
         }
+        else if (instruction->opcode == SCRIPTING_OP_POP)
+            stack_count -= 1U;
         else if (instruction->opcode == SCRIPTING_OP_NEGATE)
         {
             if (stack[stack_count - 1U].type != SCRIPTING_VALUE_INTEGER
@@ -1412,7 +1467,8 @@ int32_t scripting_value_set_integer(scripting_value *value,
 int32_t scripting_value_set_string(scripting_value *value,
     const char *string, uint32_t length) noexcept
 {
-    if (value == ft_nullptr || (string == ft_nullptr && length != 0U))
+    if (value == ft_nullptr || length > FT_SCRIPTING_MAX_STRING_BYTES
+        || (string == ft_nullptr && length != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
     value->type = SCRIPTING_VALUE_STRING;
     value->integer_value = 0;

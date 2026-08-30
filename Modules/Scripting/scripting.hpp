@@ -66,7 +66,8 @@ enum scripting_opcode : uint8_t
     SCRIPTING_OP_DIVIDE = 8U,
     SCRIPTING_OP_CALL_NATIVE = 9U,
     SCRIPTING_OP_RETURN = 10U,
-    SCRIPTING_OP_PUSH_STRING = 11U
+    SCRIPTING_OP_PUSH_STRING = 11U,
+    SCRIPTING_OP_POP = 12U
 };
 
 struct scripting_instruction

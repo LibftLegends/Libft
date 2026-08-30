@@ -136,6 +136,10 @@ FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
     FT_ASSERT_EQ(static_cast<int64_t>(7), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "length(\"a\"); length(\"bc\");", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
