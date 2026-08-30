@@ -596,6 +596,43 @@ messages, or replays.
 
 This separation is intentional: terrain configuration describes how a world
 generator behaves, while CardGame configuration describes how a match behaves.
+
+The configuration contract must nevertheless be the same at the engine
+boundary. CardGame must consume the same validated, transactional, canonical
+configuration pipeline as terrain: the host parser may accept JSON, YAML, or
+another format, but it must produce the same resolved-definition interface,
+stable IDs, reference diagnostics, range checks, and canonical hash rules.
+CardGame-specific fields belong in the schema; the loading, validation,
+resolution, reload, and failure-rollback mechanics must not be a second
+configuration system. A CardGame ruleset should therefore be expressible
+without adding a C++ enum or changing Libft code for each new card, effect,
+zone, board shape, trigger, or stack policy.
+
+At minimum, the resolved configuration must expose data equivalent to:
+
+```text
+ruleset {
+    cards: [{ id, type, tags, stats, abilities, triggers }]
+    effects: [{ id, callback_name, argument_schema, capabilities }]
+    boards: [{ id, spaces, adjacency, capacity, placement_rules }]
+    zones: [{ id, ordering, visibility, capacity, access_policy }]
+    decks: [{ zone_id, initial_cards, shuffle_policy, draw_policy }]
+    resolution: { ordering, admission, child_effect_policy, failure_policy }
+    phases: [{ id, transitions, triggers, allowed_commands }]
+    limits: { actions, effects, stack_depth, serialized_bytes }
+}
+```
+
+The loader must resolve every `callback_name`, card/effect/zone reference, and
+capability before publishing the ruleset. Unknown fields are rejected or
+explicitly versioned, duplicate IDs are rejected, and a failed load/reload
+must leave the previously active ruleset byte-for-byte usable. The canonical
+hash must include all behavior-affecting values, including deck order, stack
+admission, visibility, trigger ordering, and limits, while excluding pointer
+addresses and host-specific parser details. Tests must load the same ruleset
+through the terrain and CardGame configuration adapters, compare canonical
+normalization and diagnostics, and prove that changing each behavior-affecting
+field changes the ruleset hash and replay compatibility as expected.
 Both use the same pattern of data-driven definitions, validation, deterministic
 resolution, and immutable runtime consumption.
 
