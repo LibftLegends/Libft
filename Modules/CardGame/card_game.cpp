@@ -219,6 +219,7 @@ int32_t card_game_engine::register_phase(
 
 int32_t card_game_engine::start_match(uint32_t player_count) noexcept
 {
+    int32_t event_error;
     uint32_t index;
 
     if (this->_initialised_state != 2U || player_count == 0U
@@ -241,7 +242,12 @@ int32_t card_game_engine::start_match(uint32_t player_count) noexcept
     {
         this->_current_phase_id = this->_phases[0].phase_id;
         if (this->_phases[0].entry_event_type != 0U)
-            (void)this->emit_event(this->_phases[0].entry_event_type, 0U, 0U);
+        {
+            event_error = this->emit_event(
+                this->_phases[0].entry_event_type, 0U, 0U);
+            if (event_error != FT_ERR_SUCCESS)
+                return (event_error);
+        }
     }
     return (FT_ERR_SUCCESS);
 }

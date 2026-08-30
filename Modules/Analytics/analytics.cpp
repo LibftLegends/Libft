@@ -539,6 +539,8 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     uint64_t end_nanoseconds;
     uint32_t event_index;
     analytics_trace_event trace_event;
+    int32_t first_error;
+    int32_t operation_error;
 
     if (session == ft_nullptr || g_analytics_thread_state.session != session
         || g_analytics_thread_state.scope_depth != 0U)
@@ -546,15 +548,19 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     end_nanoseconds = analytics_clock_now();
     analytics_init_frame_statistics(&frame, &g_analytics_thread_state,
         end_nanoseconds);
+    first_error = FT_ERR_SUCCESS;
     event_index = 0U;
     while (event_index < g_analytics_thread_state.pending_event_count)
     {
         analytics_pending_event &pending_event =
             g_analytics_thread_state.pending_events[event_index];
         analytics_add_frame_breakdown(&frame, pending_event);
-        (void)session->record_scope(pending_event.region_id,
+        operation_error = session->record_scope(pending_event.region_id,
             pending_event.inclusive_nanoseconds,
             pending_event.exclusive_nanoseconds);
+        if (operation_error != FT_ERR_SUCCESS
+            && first_error == FT_ERR_SUCCESS)
+            first_error = operation_error;
         trace_event.frame_number = g_analytics_thread_state.frame_number;
         trace_event.flow_id = 0U;
         trace_event.region_id = pending_event.region_id;
@@ -562,13 +568,19 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
         trace_event.duration_nanoseconds = pending_event.inclusive_nanoseconds;
         trace_event.exclusive_nanoseconds = pending_event.exclusive_nanoseconds;
         trace_event.thread_id = analytics_thread_id();
-        (void)session->publish_trace(trace_event);
+        operation_error = session->publish_trace(trace_event);
+        if (operation_error != FT_ERR_SUCCESS
+            && first_error == FT_ERR_SUCCESS)
+            first_error = operation_error;
         event_index += 1U;
     }
     frame.dropped_scope_count = session->get_dropped_scope_count();
     g_analytics_thread_state.session = ft_nullptr;
     g_analytics_thread_state.pending_event_count = 0U;
-    return (session->publish_frame(frame));
+    operation_error = session->publish_frame(frame);
+    if (operation_error != FT_ERR_SUCCESS)
+        return (operation_error);
+    return (first_error);
 }
 
 int32_t analytics_end_thread_frame(analytics_session *session) noexcept
