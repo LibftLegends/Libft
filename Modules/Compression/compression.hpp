@@ -52,6 +52,8 @@ class t_compress_stream_options
         void    abort_lifecycle_error(const char *method_name,
                     const char *reason) const;
         void    abort_if_not_initialised(const char *method_name) const;
+        int     lock_for_access() const;
+        int     unlock_for_access() const;
 
         t_compress_stream_options(const t_compress_stream_options &other) = delete;
         t_compress_stream_options(t_compress_stream_options &&other) = delete;

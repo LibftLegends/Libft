@@ -95,6 +95,26 @@ int t_compress_stream_options::enable_thread_safety()
     return (FT_ERR_SUCCESS);
 }
 
+int t_compress_stream_options::lock_for_access() const
+{
+    int lock_error;
+
+    this->_thread_safety_transition_mutex.lock();
+    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        this->_thread_safety_transition_mutex.unlock();
+    return (lock_error);
+}
+
+int t_compress_stream_options::unlock_for_access() const
+{
+    int unlock_error;
+
+    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->_thread_safety_transition_mutex.unlock();
+    return (unlock_error);
+}
+
 int t_compress_stream_options::disable_thread_safety()
 {
     std::lock_guard<std::mutex> transition_lock(
@@ -109,11 +129,19 @@ int t_compress_stream_options::disable_thread_safety()
 
 bool t_compress_stream_options::is_thread_safe() const
 {
+    std::lock_guard<std::mutex> transition_lock(
+        this->_thread_safety_transition_mutex);
+
     this->abort_if_not_initialised("is_thread_safe");
     return (this->_mutex != ft_nullptr
         && this->_thread_safety_enabled.load(std::memory_order_acquire)
             != FT_FALSE);
 }
+
+#define COMPRESSION_STREAM_OPTIONS_LOCK() this->lock_for_access()
+#define COMPRESSION_STREAM_OPTIONS_UNLOCK() this->unlock_for_access()
+#define pt_recursive_mutex_lock_if_not_null(mutex) this->lock_for_access()
+#define pt_recursive_mutex_unlock_if_not_null(mutex) this->unlock_for_access()
 
 t_compress_stream_options::t_compress_stream_options(void)
 {
@@ -172,7 +200,7 @@ int t_compress_stream_options::reset(void)
     int lock_error;
     int unlock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);    if (lock_error != FT_ERR_SUCCESS)
+    lock_error = this->lock_for_access();    if (lock_error != FT_ERR_SUCCESS)
     {
         return (lock_error);
     }
@@ -185,7 +213,7 @@ int t_compress_stream_options::reset(void)
     this->_window_bits = 0;
     this->_memory_level = 0;
     this->_strategy = Z_DEFAULT_STRATEGY;
-    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);    if (unlock_error != FT_ERR_SUCCESS)
+    unlock_error = this->unlock_for_access();    if (unlock_error != FT_ERR_SUCCESS)
     {
         return (unlock_error);
     }
@@ -197,12 +225,12 @@ int t_compress_stream_options::set_input_buffer_size(std::size_t input_buffer_si
     int lock_error;
     int unlock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);    if (lock_error != FT_ERR_SUCCESS)
+    lock_error = COMPRESSION_STREAM_OPTIONS_LOCK();    if (lock_error != FT_ERR_SUCCESS)
     {
         return (lock_error);
     }
     this->_input_buffer_size = input_buffer_size;
-    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);    if (unlock_error != FT_ERR_SUCCESS)
+    unlock_error = COMPRESSION_STREAM_OPTIONS_UNLOCK();    if (unlock_error != FT_ERR_SUCCESS)
     {
         return (unlock_error);
     }
@@ -515,6 +543,11 @@ pt_recursive_mutex *t_compress_stream_options::get_mutex_for_validation() const
     return (this->_mutex);
 }
 #endif
+
+#undef pt_recursive_mutex_lock_if_not_null
+#undef pt_recursive_mutex_unlock_if_not_null
+#undef COMPRESSION_STREAM_OPTIONS_LOCK
+#undef COMPRESSION_STREAM_OPTIONS_UNLOCK
 
 void    ft_compress_stream_apply_speed_preset(t_compress_stream_options *options)
 {

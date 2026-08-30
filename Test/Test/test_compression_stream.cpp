@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <cstdint>
 #include <zlib.h>
+#include <atomic>
+#include <thread>
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -17,6 +19,55 @@
 #include "../../Modules/Template/pair.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_compress_stream_options_thread_safety_transitions_are_safe)
+{
+    t_compress_stream_options options;
+    std::atomic<uint32_t> errors(0U);
+    std::thread accessor;
+    std::thread transitioner;
+    uint32_t iteration;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.enable_thread_safety());
+    accessor = std::thread([&options, &errors]()
+    {
+        uint32_t local_iteration;
+
+        local_iteration = 0U;
+        while (local_iteration < 1000U)
+        {
+            if (options.set_input_buffer_size(1024U)
+                != FT_ERR_SUCCESS)
+                errors.fetch_add(1U, std::memory_order_relaxed);
+            if (options.get_input_buffer_size().key != FT_ERR_SUCCESS)
+                errors.fetch_add(1U, std::memory_order_relaxed);
+            local_iteration += 1U;
+        }
+        return ;
+    });
+    transitioner = std::thread([&options, &errors]()
+    {
+        uint32_t local_iteration;
+
+        local_iteration = 0U;
+        while (local_iteration < 1000U)
+        {
+            if (options.disable_thread_safety() != FT_ERR_SUCCESS)
+                errors.fetch_add(1U, std::memory_order_relaxed);
+            if (options.enable_thread_safety() != FT_ERR_SUCCESS)
+                errors.fetch_add(1U, std::memory_order_relaxed);
+            local_iteration += 1U;
+        }
+        return ;
+    });
+    accessor.join();
+    transitioner.join();
+    iteration = errors.load(std::memory_order_relaxed);
+    FT_ASSERT_EQ(0U, iteration);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.destroy());
+    return (1);
+}
 
 static int compression_stream_fail_deflate_init(z_stream *stream, int compression_level)
 {
