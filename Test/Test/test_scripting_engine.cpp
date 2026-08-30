@@ -91,6 +91,9 @@ FT_TEST(test_scripting_engine_reports_bounded_and_malformed_execution)
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.execute("returnx", &result));
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, engine.execute("9223372036854775807 + 1",
         &result));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("true & false",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("true &&", &result));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
@@ -176,6 +179,12 @@ FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
     FT_ASSERT_EQ(static_cast<int64_t>(17), result.integer_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("\"abc\" < \"abd\"",
         &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("!(2 > 3) && (1 == 1)",
+        &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("false || true", &result));
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("null < null",
         &result));
