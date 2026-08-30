@@ -17,9 +17,9 @@ until parity tests are complete.
   boolean, string, and null equality is supported; ordering is defined for
   integers, booleans, and strings.
 - `serialize_program()` and `deserialize_program()` use a canonical
-  little-endian format with a magic value, version, exact lengths, and no raw
-  pointers. Loading is transactional and runs the bytecode verifier before
-  replacing the caller's program.
+  little-endian format with a magic value, version, exact lengths, a payload
+  checksum, and no raw pointers. Loading is transactional and runs the
+  bytecode verifier before replacing the caller's program.
 - `if (condition) value else value` and `while (condition) value` are
   supported as expressions. Loop execution is bounded by the engine's
   operation limit; an unbounded condition cannot run indefinitely.

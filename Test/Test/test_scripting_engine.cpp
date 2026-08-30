@@ -257,6 +257,12 @@ FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
         &result));
     FT_ASSERT_EQ(static_cast<int64_t>(31), result.integer_value);
     original_instruction_count = loaded_program.instruction_count;
+    serialized[FT_SCRIPTING_SERIALIZED_HEADER_BYTES] ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(program, serialized,
+        sizeof(serialized), &serialized_size));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
         serialized, serialized_size - 1U, &loaded_program));
     FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);

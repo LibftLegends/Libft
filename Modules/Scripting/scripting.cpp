@@ -929,6 +929,23 @@ static uint64_t scripting_read_u64(const uint8_t *input) noexcept
     return (value);
 }
 
+static uint64_t scripting_hash_bytes(const uint8_t *input,
+    uint32_t input_size) noexcept
+{
+    uint64_t hash;
+    uint32_t index;
+
+    hash = 1469598103934665603ULL;
+    index = 0U;
+    while (index < input_size)
+    {
+        hash ^= static_cast<uint64_t>(input[index]);
+        hash *= 1099511628211ULL;
+        index += 1U;
+    }
+    return (hash);
+}
+
 static int32_t scripting_parse_primary(scripting_parser *parser,
     scripting_value *result) noexcept
 {
@@ -2106,6 +2123,7 @@ int32_t scripting_engine::serialize_program(const scripting_program &program,
     uint32_t required_size;
     uint32_t offset;
     uint32_t instruction_index;
+    uint64_t checksum;
     const scripting_instruction *instruction;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -2141,6 +2159,9 @@ int32_t scripting_engine::serialize_program(const scripting_program &program,
         offset += FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
         instruction_index += 1U;
     }
+    checksum = scripting_hash_bytes(output + FT_SCRIPTING_SERIALIZED_HEADER_BYTES,
+        offset - FT_SCRIPTING_SERIALIZED_HEADER_BYTES);
+    scripting_write_u64(output + 16U, checksum);
     *output_size = offset;
     return (FT_ERR_SUCCESS);
 }
@@ -2154,6 +2175,7 @@ int32_t scripting_engine::deserialize_program(const uint8_t *input,
     uint32_t required_size;
     uint32_t offset;
     uint32_t instruction_index;
+    uint64_t stored_checksum;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -2174,6 +2196,11 @@ int32_t scripting_engine::deserialize_program(const uint8_t *input,
     required_size = FT_SCRIPTING_SERIALIZED_HEADER_BYTES + string_data_size
         + instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
     if (required_size != input_size)
+        return (FT_ERR_INVALID_ARGUMENT);
+    stored_checksum = scripting_read_u64(input + 16U);
+    if (stored_checksum != scripting_hash_bytes(
+        input + FT_SCRIPTING_SERIALIZED_HEADER_BYTES,
+        input_size - FT_SCRIPTING_SERIALIZED_HEADER_BYTES))
         return (FT_ERR_INVALID_ARGUMENT);
     loaded_program.instruction_count = instruction_count;
     loaded_program.string_data_size = string_data_size;
