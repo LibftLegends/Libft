@@ -2,6 +2,31 @@
 
 #include "../Basic/class_nullptr.hpp"
 
+static void card_game_hash_u32(uint64_t *hash, uint32_t value) noexcept
+{
+    *hash ^= static_cast<uint64_t>(value);
+    *hash *= 1099511628211ULL;
+    return ;
+}
+
+static void card_game_hash_u64(uint64_t *hash, uint64_t value) noexcept
+{
+    *hash ^= value;
+    *hash *= 1099511628211ULL;
+    return ;
+}
+
+static void card_game_hash_instance(uint64_t *hash,
+    const card_game_card_instance &instance) noexcept
+{
+    card_game_hash_u32(hash, instance.definition_id);
+    card_game_hash_u32(hash, instance.owner_id);
+    card_game_hash_u32(hash, static_cast<uint32_t>(instance.attack));
+    card_game_hash_u32(hash, static_cast<uint32_t>(instance.health));
+    card_game_hash_u32(hash, static_cast<uint32_t>(instance.on_board));
+    return ;
+}
+
 card_game_operation_buffer::card_game_operation_buffer() noexcept
     : _operations(), _count(0U)
 {
@@ -723,6 +748,112 @@ int32_t card_game_engine::get_snapshot(
             this->_mana[player_id]);
         player_id += 1U;
     }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
+{
+    uint64_t calculated_hash;
+    uint32_t index;
+
+    if (this->_initialised_state != 2U || hash == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    calculated_hash = 1469598103934665603ULL;
+    card_game_hash_u32(&calculated_hash, this->_rules.max_board_spaces);
+    card_game_hash_u32(&calculated_hash, this->_rules.max_hand_size);
+    card_game_hash_u32(&calculated_hash, this->_rules.starting_health);
+    card_game_hash_u32(&calculated_hash, this->_rules.starting_mana);
+    card_game_hash_u32(&calculated_hash, this->_rules.max_mana);
+    card_game_hash_u32(&calculated_hash, this->_rules.max_turns);
+    card_game_hash_u32(&calculated_hash, this->_card_count);
+    index = 0U;
+    while (index < this->_card_count)
+    {
+        card_game_hash_u32(&calculated_hash, this->_cards[index].card_id);
+        card_game_hash_u32(&calculated_hash,
+            static_cast<uint32_t>(this->_cards[index].type));
+        card_game_hash_u32(&calculated_hash, this->_cards[index].cost);
+        card_game_hash_u32(&calculated_hash,
+            static_cast<uint32_t>(this->_cards[index].attack));
+        card_game_hash_u32(&calculated_hash,
+            static_cast<uint32_t>(this->_cards[index].health));
+        card_game_hash_u32(&calculated_hash, this->_cards[index].effect_id);
+        index += 1U;
+    }
+    card_game_hash_u32(&calculated_hash, this->_phase_count);
+    index = 0U;
+    while (index < this->_phase_count)
+    {
+        card_game_hash_u32(&calculated_hash, this->_phases[index].phase_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_phases[index].next_phase_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_phases[index].entry_event_type);
+        card_game_hash_u32(&calculated_hash,
+            this->_phases[index].exit_event_type);
+        card_game_hash_u32(&calculated_hash,
+            this->_phases[index].allowed_command_mask);
+        index += 1U;
+    }
+    *hash = calculated_hash;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
+{
+    card_game_snapshot snapshot;
+    uint64_t calculated_hash;
+    uint32_t player_id;
+    uint32_t event_index;
+    uint32_t board_index;
+
+    if (this->_initialised_state != 2U || hash == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->get_snapshot(&snapshot) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    calculated_hash = 1469598103934665603ULL;
+    card_game_hash_u32(&calculated_hash, snapshot.format_version);
+    card_game_hash_u64(&calculated_hash, snapshot.state_sequence);
+    card_game_hash_u32(&calculated_hash, snapshot.player_count);
+    card_game_hash_u32(&calculated_hash, snapshot.turn_number);
+    card_game_hash_u32(&calculated_hash, snapshot.active_player);
+    card_game_hash_u32(&calculated_hash, snapshot.current_phase_id);
+    card_game_hash_u32(&calculated_hash, snapshot.event_count);
+    card_game_hash_u64(&calculated_hash, snapshot.event_sequence);
+    event_index = 0U;
+    while (event_index < snapshot.event_count)
+    {
+        card_game_hash_u64(&calculated_hash,
+            snapshot.events[event_index].sequence);
+        card_game_hash_u32(&calculated_hash,
+            snapshot.events[event_index].event_type);
+        card_game_hash_u32(&calculated_hash,
+            snapshot.events[event_index].source_instance);
+        card_game_hash_u32(&calculated_hash,
+            snapshot.events[event_index].target_instance);
+        event_index += 1U;
+    }
+    player_id = 0U;
+    while (player_id < snapshot.player_count)
+    {
+        card_game_hash_u32(&calculated_hash,
+            snapshot.players[player_id].board_count);
+        card_game_hash_u32(&calculated_hash,
+            snapshot.players[player_id].health);
+        card_game_hash_u32(&calculated_hash,
+            snapshot.players[player_id].mana);
+        board_index = 0U;
+        while (board_index < snapshot.players[player_id].board_count)
+        {
+            card_game_hash_u32(&calculated_hash,
+                snapshot.players[player_id].board[board_index]);
+            card_game_hash_instance(&calculated_hash,
+                snapshot.players[player_id].instances[board_index]);
+            board_index += 1U;
+        }
+        player_id += 1U;
+    }
+    *hash = calculated_hash;
     return (FT_ERR_SUCCESS);
 }
 

@@ -292,3 +292,40 @@ FT_TEST(test_card_game_engine_accepts_cards_without_effects)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_exposes_deterministic_rules_and_state_hashes)
+{
+    card_game_engine first_engine;
+    card_game_engine second_engine;
+    card_game_rules rules;
+    uint64_t first_rules_hash;
+    uint64_t second_rules_hash;
+    uint64_t first_state_hash;
+    uint64_t second_state_hash;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.get_rules_hash(
+        &first_rules_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_engine.get_rules_hash(
+        &second_rules_hash));
+    FT_ASSERT_EQ(first_rules_hash, second_rules_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.get_state_hash(&first_state_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        second_engine.get_state_hash(&second_state_hash));
+    FT_ASSERT_EQ(first_state_hash, second_state_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.modify_player_health(0U, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.get_state_hash(&first_state_hash));
+    FT_ASSERT_NEQ(first_state_hash, second_state_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_engine.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_engine.destroy());
+    return (1);
+}

@@ -229,6 +229,8 @@ class card_game_engine
         int32_t get_instance(uint32_t player_id, uint32_t index,
             card_game_card_instance *instance) const noexcept;
         int32_t get_snapshot(card_game_snapshot *snapshot) const noexcept;
+        int32_t get_rules_hash(uint64_t *hash) const noexcept;
+        int32_t get_state_hash(uint64_t *hash) const noexcept;
         int32_t apply_snapshot(const card_game_snapshot &snapshot) noexcept;
         int32_t create_delta(const card_game_snapshot &baseline,
             card_game_delta *delta) const noexcept;

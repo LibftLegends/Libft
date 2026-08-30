@@ -17,3 +17,8 @@ state sequences. A receiver must first apply the matching snapshot and then
 call `apply_delta()`; stale or mismatched deltas are rejected before any state
 is changed. Snapshots and deltas contain state only and never serialize effect
 function pointers or callback-owned data.
+
+`get_rules_hash()` identifies the configured rules, cards, and phases.
+`get_state_hash()` identifies the current authoritative match state. Both use
+fixed-width field hashing rather than object-memory hashing, so padding and
+platform byte order do not affect the result.
