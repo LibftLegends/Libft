@@ -39,6 +39,7 @@ FT_TEST(test_analytics_session_records_nested_scope_statistics)
     uint32_t outer_region;
     uint32_t inner_region;
     uint32_t exported_frames;
+    analytics_frame_statistics latest_frame;
 
     outer_region = 0U;
     inner_region = 0U;
@@ -60,6 +61,8 @@ FT_TEST(test_analytics_session_records_nested_scope_statistics)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
     FT_ASSERT_EQ(1U, exported_frames);
     FT_ASSERT_EQ(42U, g_analytics_exported_frame);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&latest_frame));
+    FT_ASSERT_EQ(2U, latest_frame.breakdown_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(inner_region,
         &statistics));
     FT_ASSERT_EQ(1U, statistics.invocation_count);
@@ -155,6 +158,7 @@ FT_TEST(test_analytics_worker_frame_flushes_to_shared_session)
     uint32_t region_id;
     uint64_t timestamp;
     analytics_region_statistics statistics;
+    analytics_frame_statistics latest_frame;
 
     region_id = 0U;
     timestamp = 0U;
@@ -174,6 +178,8 @@ FT_TEST(test_analytics_worker_frame_flushes_to_shared_session)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
         &statistics));
     FT_ASSERT_EQ(1U, statistics.invocation_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&latest_frame));
+    FT_ASSERT_EQ(1U, latest_frame.breakdown_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }

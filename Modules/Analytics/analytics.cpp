@@ -103,6 +103,68 @@ static thread_local analytics_thread_state g_analytics_thread_state =
     ft_nullptr, 0U, 0U, 0U, 0U, 0U, {}, 0U, {}
 };
 
+static void analytics_init_frame_statistics(analytics_frame_statistics *frame,
+    const analytics_thread_state *thread_state, uint64_t end_nanoseconds)
+{
+    uint32_t index;
+
+    frame->frame_number = thread_state->frame_number;
+    frame->duration_nanoseconds = end_nanoseconds
+        - thread_state->frame_start_nanoseconds;
+    if (thread_state->instrumented_top_level_nanoseconds
+        >= frame->duration_nanoseconds)
+        frame->uninstrumented_nanoseconds = 0U;
+    else
+        frame->uninstrumented_nanoseconds = frame->duration_nanoseconds
+            - thread_state->instrumented_top_level_nanoseconds;
+    frame->completed_scope_count = thread_state->completed_scope_count;
+    frame->dropped_scope_count = 0U;
+    frame->breakdown_count = 0U;
+    frame->dropped_breakdown_count = 0U;
+    index = 0U;
+    while (index < FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    {
+        frame->breakdown[index].region_id = 0U;
+        frame->breakdown[index].invocation_count = 0U;
+        frame->breakdown[index].inclusive_nanoseconds = 0U;
+        frame->breakdown[index].exclusive_nanoseconds = 0U;
+        index += 1U;
+    }
+    return ;
+}
+
+static void analytics_add_frame_breakdown(
+    analytics_frame_statistics *frame, const analytics_pending_event &event)
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < frame->breakdown_count)
+    {
+        if (frame->breakdown[index].region_id == event.region_id)
+        {
+            frame->breakdown[index].invocation_count += 1U;
+            frame->breakdown[index].inclusive_nanoseconds +=
+                event.inclusive_nanoseconds;
+            frame->breakdown[index].exclusive_nanoseconds +=
+                event.exclusive_nanoseconds;
+            return ;
+        }
+        index += 1U;
+    }
+    if (frame->breakdown_count >= FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    {
+        frame->dropped_breakdown_count += 1U;
+        return ;
+    }
+    frame->breakdown[index].region_id = event.region_id;
+    frame->breakdown[index].invocation_count = 1U;
+    frame->breakdown[index].inclusive_nanoseconds = event.inclusive_nanoseconds;
+    frame->breakdown[index].exclusive_nanoseconds = event.exclusive_nanoseconds;
+    frame->breakdown_count += 1U;
+    return ;
+}
+
 static uint32_t analytics_thread_id(void) noexcept
 {
     std::size_t value;
@@ -482,11 +544,14 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
         || g_analytics_thread_state.scope_depth != 0U)
         return (FT_ERR_INVALID_STATE);
     end_nanoseconds = analytics_clock_now();
+    analytics_init_frame_statistics(&frame, &g_analytics_thread_state,
+        end_nanoseconds);
     event_index = 0U;
     while (event_index < g_analytics_thread_state.pending_event_count)
     {
         analytics_pending_event &pending_event =
             g_analytics_thread_state.pending_events[event_index];
+        analytics_add_frame_breakdown(&frame, pending_event);
         (void)session->record_scope(pending_event.region_id,
             pending_event.inclusive_nanoseconds,
             pending_event.exclusive_nanoseconds);
@@ -500,16 +565,6 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
         (void)session->publish_trace(trace_event);
         event_index += 1U;
     }
-    frame.frame_number = g_analytics_thread_state.frame_number;
-    frame.duration_nanoseconds = end_nanoseconds
-        - g_analytics_thread_state.frame_start_nanoseconds;
-    if (g_analytics_thread_state.instrumented_top_level_nanoseconds
-        >= frame.duration_nanoseconds)
-        frame.uninstrumented_nanoseconds = 0U;
-    else
-        frame.uninstrumented_nanoseconds = frame.duration_nanoseconds
-            - g_analytics_thread_state.instrumented_top_level_nanoseconds;
-    frame.completed_scope_count = g_analytics_thread_state.completed_scope_count;
     frame.dropped_scope_count = session->get_dropped_scope_count();
     g_analytics_thread_state.session = ft_nullptr;
     g_analytics_thread_state.pending_event_count = 0U;
@@ -518,18 +573,24 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
 
 int32_t analytics_end_thread_frame(analytics_session *session) noexcept
 {
+    analytics_frame_statistics frame;
     uint32_t event_index;
     analytics_pending_event *pending_event;
     analytics_trace_event trace_event;
     int32_t record_error;
+    uint64_t end_nanoseconds;
 
     if (session == ft_nullptr || g_analytics_thread_state.session != session
         || g_analytics_thread_state.scope_depth != 0U)
         return (FT_ERR_INVALID_STATE);
+    end_nanoseconds = analytics_clock_now();
+    analytics_init_frame_statistics(&frame, &g_analytics_thread_state,
+        end_nanoseconds);
     event_index = 0U;
     while (event_index < g_analytics_thread_state.pending_event_count)
     {
         pending_event = &g_analytics_thread_state.pending_events[event_index];
+        analytics_add_frame_breakdown(&frame, *pending_event);
         record_error = session->record_scope(pending_event->region_id,
             pending_event->inclusive_nanoseconds,
             pending_event->exclusive_nanoseconds);
@@ -549,7 +610,8 @@ int32_t analytics_end_thread_frame(analytics_session *session) noexcept
     g_analytics_thread_state.session = ft_nullptr;
     g_analytics_thread_state.pending_event_count = 0U;
     g_analytics_thread_state.completed_scope_count = 0U;
-    return (FT_ERR_SUCCESS);
+    frame.dropped_scope_count = session->get_dropped_scope_count();
+    return (session->publish_frame(frame));
 }
 
 int32_t analytics_begin_scope(analytics_session *session,

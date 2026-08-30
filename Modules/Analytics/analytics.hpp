@@ -14,6 +14,15 @@ static const uint32_t FT_ANALYTICS_MAX_SAMPLES = 32U;
 static const uint32_t FT_ANALYTICS_MAX_FRAME_SAMPLES = 120U;
 static const uint32_t FT_ANALYTICS_MAX_THREAD_EVENTS = 128U;
 static const uint32_t FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS = 1024U;
+static const uint32_t FT_ANALYTICS_MAX_FRAME_BREAKDOWN = 64U;
+
+struct analytics_frame_region_statistics
+{
+    uint32_t region_id;
+    uint64_t invocation_count;
+    uint64_t inclusive_nanoseconds;
+    uint64_t exclusive_nanoseconds;
+};
 
 struct analytics_region_statistics
 {
@@ -37,6 +46,9 @@ struct analytics_frame_statistics
     uint64_t uninstrumented_nanoseconds;
     uint64_t completed_scope_count;
     uint64_t dropped_scope_count;
+    uint32_t breakdown_count;
+    uint64_t dropped_breakdown_count;
+    analytics_frame_region_statistics breakdown[FT_ANALYTICS_MAX_FRAME_BREAKDOWN];
 };
 
 struct analytics_trace_event
