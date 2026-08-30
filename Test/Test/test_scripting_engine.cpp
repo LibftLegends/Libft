@@ -81,3 +81,27 @@ FT_TEST(test_scripting_engine_reports_bounded_and_malformed_execution)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "let base = 9; return add(base, 3) * 2;", &program));
+    FT_ASSERT_EQ(FT_SCRIPTING_BYTECODE_VERSION, program.format_version);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
+    program.instructions[0].opcode = static_cast<scripting_opcode>(255U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

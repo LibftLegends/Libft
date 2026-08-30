@@ -11,6 +11,8 @@ static const uint32_t FT_SCRIPTING_MAX_LOCALS = 32U;
 static const uint32_t FT_SCRIPTING_MAX_SOURCE_BYTES = 65536U;
 static const uint32_t FT_SCRIPTING_MAX_TOKENS = 4096U;
 static const uint32_t FT_SCRIPTING_MAX_OPERATIONS = 4096U;
+static const uint32_t FT_SCRIPTING_BYTECODE_VERSION = 1U;
+static const uint32_t FT_SCRIPTING_MAX_INSTRUCTIONS = 4096U;
 
 enum scripting_value_type : uint8_t
 {
@@ -45,6 +47,35 @@ struct scripting_diagnostic
     int32_t error_code;
     uint32_t source_offset;
     uint32_t source_length;
+};
+
+enum scripting_opcode : uint8_t
+{
+    SCRIPTING_OP_PUSH_NULL = 0U,
+    SCRIPTING_OP_PUSH_INTEGER = 1U,
+    SCRIPTING_OP_LOAD_LOCAL = 2U,
+    SCRIPTING_OP_STORE_LOCAL = 3U,
+    SCRIPTING_OP_NEGATE = 4U,
+    SCRIPTING_OP_ADD = 5U,
+    SCRIPTING_OP_SUBTRACT = 6U,
+    SCRIPTING_OP_MULTIPLY = 7U,
+    SCRIPTING_OP_DIVIDE = 8U,
+    SCRIPTING_OP_CALL_NATIVE = 9U,
+    SCRIPTING_OP_RETURN = 10U
+};
+
+struct scripting_instruction
+{
+    scripting_opcode opcode;
+    int64_t operand;
+    uint32_t auxiliary;
+};
+
+struct scripting_program
+{
+    uint32_t format_version;
+    uint32_t instruction_count;
+    scripting_instruction instructions[FT_SCRIPTING_MAX_INSTRUCTIONS];
 };
 
 class scripting_engine
@@ -85,6 +116,10 @@ class scripting_engine
             uint32_t *native_id) noexcept;
         int32_t set_operation_limit(uint32_t operation_limit) noexcept;
         int32_t execute(const char *source, scripting_value *result) noexcept;
+        int32_t compile(const char *source, scripting_program *program) noexcept;
+        int32_t verify_program(const scripting_program &program) const noexcept;
+        int32_t execute_program(const scripting_program &program,
+            scripting_value *result) noexcept;
         int32_t get_last_diagnostic(scripting_diagnostic *diagnostic) const noexcept;
         int32_t find_native(const char *name, uint32_t name_length,
             uint32_t *native_id) const noexcept;
