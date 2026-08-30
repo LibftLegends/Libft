@@ -143,20 +143,15 @@ General rules for these orchestration classes:
   callbacks are resolved through stable native IDs. A temporary line-command
   adapter preserves existing `set`, `unset`, and `call` scripts while they are
   migrated to the custom language.
-- Explicit `execute_lua(...)` and `execute_lua_with_user_data(...)` entry
-  points remain only for migration fixtures and initialize the legacy Lua
-  runtime on demand. They are not the default execution path and must not be
-  used by new production code. `get_lua_global_string(...)`,
-  `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` likewise
-  belong only to that compatibility path.
+- The old interpreter-specific entry points have been removed. Script sources
+  are executed by Libft's bounded custom runtime; the line-command adapter is
+  retained only as a temporary source-compatibility layer for existing assets.
 - Registered callbacks may return one integer through
-  `game_script_context::set_result_integer(...)`; the custom and Lua adapters
-  expose that result to the script. This is used by the Voxel bridge for
-  runtime block ids.
-- `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound the
-  explicit legacy Lua compatibility path. The default Lua limits are 100,000
-  VM instructions and 16 MiB; custom-runtime execution is bounded by its
-  configured deterministic operation and resource limits.
+  `game_script_context::set_result_integer(...)`; the custom adapter exposes
+  that result to the script. This is used by the Voxel bridge for runtime block
+  ids.
+- Custom-runtime execution is bounded by its configured deterministic
+  operation and resource limits.
   Filesystem, operating-system, package-loading, debug, and dynamic-code
   libraries are not exposed to scripts.
 - `game_data_catalog` - Registry for item definitions, recipes, loadouts, and other static catalog records.

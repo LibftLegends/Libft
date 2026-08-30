@@ -1439,6 +1439,11 @@ include only the individual headers they require.
 
 ## Implementation and Lua-removal phases
 
+Implementation status: the custom Scripting runtime is now the production
+runtime for Game and Voxel. The legacy interpreter and its build integration
+have been removed; only historical test fixtures may retain old filenames
+until they are independently renamed.
+
 1. Inventory and freeze every existing Lua entry point and script behavior.
 2. Approve language, bytecode, numeric, ownership, error, and capability specs.
 3. Implement lexer, parser, AST, diagnostics, and malformed-input tests.
@@ -1449,19 +1454,21 @@ include only the individual headers they require.
 7. Port the terrain bridge and compare generated outputs against Lua fixtures.
 8. Port Game scripting and compare state transitions and errors against Lua.
 9. Integrate CardGame effects only after its native operation API is stable.
-10. Migrate scripts/configuration and run dual-runtime differential tests.
+10. Migrate scripts/configuration and run custom-runtime parity tests.
 11. Switch all production build dependencies to Scripting.
 12. Remove `Modules/Lua`, vendored Lua, Lua build manifests, Lua symbols,
-    compatibility shims, and obsolete tests/documentation.
+    compatibility shims, and obsolete tests/documentation. **Completed for
+    production code in this implementation batch.**
 
 The terrain migration may use a compatibility normalizer for existing
 line-oriented configuration assets, but normalized source must still be
 compiled and executed by `Modules/Scripting`; it must never fall back to Lua.
 Add a parity fixture covering the old newline-separated form and the canonical
 semicolon-separated form, and require identical resolved terrain configuration,
-generated chunk bytes, diagnostics, and operation-budget behavior. Keep the
-Game Lua bridge only for rows still explicitly listed in the migration
-inventory; new Game/Voxel callers must select the custom runtime directly.
+generated chunk bytes, diagnostics, and operation-budget behavior. The Game and
+Voxel bridges now select the custom runtime directly. The line-command adapter
+is retained only as a source-compatibility normalizer; it does not invoke an
+external interpreter.
 
 Each phase must be independently reviewable. Do not combine interpreter
 construction, bridge migration, and Lua deletion into one change.
@@ -1479,8 +1486,8 @@ construction, bridge migration, and Lua deletion into one change.
   capability denial, callback failure, ownership, and re-entrant misuse.
 - Deterministic repeated execution and cross-platform golden hashes for values,
   bytecode, terrain output, Game operations, snapshots, and replay records.
-- Terrain and Game differential tests running the same fixtures through Lua and
-  the custom runtime until migration is complete.
+- Terrain and Game parity tests running canonical fixtures through the custom
+  runtime, including normalized line-oriented input and typed callback results.
 - Isolation tests across worlds, matches, VMs, threads, reload generations, and
   simultaneous immutable-module readers; run supported paths under TSan.
 - Hot-reload success, compile failure, incompatible-state migration, active-call
@@ -1498,8 +1505,9 @@ construction, bridge migration, and Lua deletion into one change.
 - All production Game and Voxel callers use typed Scripting interfaces.
 - No production include, link, archive, Makefile, configuration, or source
   dependency refers to Lua or its ABI.
-- Repository searches find `lua_`, `LUA_`, and `vendor/lua` only in explicitly
-  retained historical documentation or migration fixtures scheduled for removal.
+- Repository searches find no Lua production source, build, include, or link
+  dependency. Historical documents and legacy fixture names are isolated from
+  production targets.
 - Deterministic vectors match across Windows, Linux, and macOS.
 - Full CI and relevant sanitizer, fuzz, failure-injection, lifecycle, clean, and
   incremental build suites pass after the Lua module is physically removed.

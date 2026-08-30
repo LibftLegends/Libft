@@ -18,10 +18,9 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     ft_string script;
     terrain_generation_config config;
     game_voxel_chunk chunk;
-    int64_t registered_block_id;
+    int32_t find_error;
     uint32_t block_id;
     ft_size_t asset_size;
-    ft_string global_name;
     const uint8_t *asset_data;
     const terrain_block_metadata *metadata;
 
@@ -34,18 +33,16 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize());
-    if (file_read_all("Lua/terrain_register_block.lua", script)
+    if (file_read_all("Scripting/terrain_register_block.script", script)
         != FT_ERR_SUCCESS)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(
-            "Test/Lua/terrain_register_block.lua", script));
+            "Test/Scripting/terrain_register_block.script", script));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script,
         chunk, 0, 0, "test", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, global_name.initialize(
-        "registered_block_id"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.get_lua_global_integer(
-        global_name, registered_block_id));
-    FT_ASSERT(registered_block_id >= 19);
-    block_id = static_cast<uint32_t>(registered_block_id);
+    find_error = terrain_find_block_id_by_name("test:script_block",
+        &block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, find_error);
+    FT_ASSERT(block_id >= 19U);
     FT_ASSERT_EQ(FT_TRUE, terrain_block_is_known(block_id));
     metadata = &terrain_get_block_metadata(block_id);
     FT_ASSERT_EQ(FT_TRUE, metadata->solid);
@@ -54,7 +51,7 @@ FT_TEST(test_terrain_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(0, std::strcmp(terrain_get_block_name(block_id),
         "test:script_block"));
     FT_ASSERT_EQ(0, std::strcmp(terrain_get_block_asset_path(block_id,
-        TERRAIN_BLOCK_ASSET_FACE_TOP), "Lua/export_values.lua"));
+        TERRAIN_BLOCK_ASSET_FACE_TOP), "Scripting/export_values.asset"));
     asset_data = terrain_get_block_asset_data(block_id,
         TERRAIN_BLOCK_ASSET_FACE_TOP, &asset_size);
     FT_ASSERT(asset_data != ft_nullptr);
@@ -83,17 +80,17 @@ FT_TEST(test_terrain_runtime_block_registration_rejects_missing_asset)
     registration.metadata.hardness = 1U;
     registration.metadata.breakable = FT_TRUE;
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_TOP] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_BOTTOM] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_NORTH] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_SOUTH] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_EAST] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     registration.asset_paths[TERRAIN_BLOCK_ASSET_FACE_WEST] =
-        "Lua/does_not_exist.asset";
+        "Scripting/does_not_exist.asset";
     block_id = 0U;
     error_code = terrain_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, error_code);

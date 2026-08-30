@@ -86,7 +86,7 @@ FT_TEST(test_game_script_bridge_rejects_unsupported_language)
     return (1);
 }
 
-FT_TEST(test_game_script_bridge_language_update_accepts_supported_value)
+FT_TEST(test_game_script_bridge_language_update_accepts_custom_value)
 {
     ft_sharedptr<game_world> world_pointer(new game_world());
     FT_ASSERT(world_pointer.get() != ft_nullptr);
@@ -95,10 +95,10 @@ FT_TEST(test_game_script_bridge_language_update_accepts_supported_value)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(world_pointer));
 
     {
-        ft_string python_lang;
-        FT_ASSERT_EQ(FT_ERR_SUCCESS, python_lang.initialize("python"));
-        bridge.set_language(python_lang);
-        FT_ASSERT_STR_EQ("python", bridge.get_language().c_str());
+        ft_string custom_lang;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_lang.initialize("custom"));
+        bridge.set_language(custom_lang);
+        FT_ASSERT_STR_EQ("custom", bridge.get_language().c_str());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.get_error());
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.get_error());
@@ -114,16 +114,16 @@ FT_TEST(test_game_script_bridge_language_update_rejects_null)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(world_pointer));
 
     {
-        ft_string python_lang;
-        FT_ASSERT_EQ(FT_ERR_SUCCESS, python_lang.initialize("python"));
-        bridge.set_language(python_lang);
-        FT_ASSERT_STR_EQ("python", bridge.get_language().c_str());
+        ft_string custom_lang;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_lang.initialize("custom"));
+        bridge.set_language(custom_lang);
+        FT_ASSERT_STR_EQ("custom", bridge.get_language().c_str());
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.get_error());
 
     bridge.set_language(ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, bridge.get_error());
-    FT_ASSERT_STR_EQ("python", bridge.get_language().c_str());
+    FT_ASSERT_STR_EQ("custom", bridge.get_language().c_str());
     return (1);
 }
 

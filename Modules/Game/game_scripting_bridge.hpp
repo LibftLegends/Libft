@@ -14,9 +14,6 @@
 #include "../PThread/mutex.hpp"
 #include <cstddef>
 
-struct lua_State;
-struct lua_Debug;
-
 class game_script_context
 {
     #ifdef LIBFT_TEST_BUILD
@@ -82,13 +79,6 @@ class game_script_bridge
         ft_map<ft_string, ft_function<int32_t(game_script_context &, const ft_vector<ft_string> &)> > _callbacks;
         ft_string _language;
         int32_t _max_operations;
-        int32_t _lua_instruction_limit;
-        int32_t _lua_instruction_count;
-        int32_t _lua_callback_error;
-        ft_size_t _lua_memory_limit;
-        ft_size_t _lua_memory_used;
-        lua_State *_lua_state;
-        game_script_context *_lua_context;
         scripting_engine _custom_engine;
         game_script_context *_custom_context;
         uint8_t _initialised_state;
@@ -104,17 +94,6 @@ class game_script_bridge
         int32_t handle_set(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept;
         int32_t handle_unset(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept;
         void tokenize_line(const ft_string &line, ft_vector<ft_string> &tokens) const noexcept;
-        int32_t initialize_lua_runtime() noexcept;
-        void destroy_lua_runtime() noexcept;
-        int32_t register_lua_callbacks() noexcept;
-        void remove_lua_callback(const ft_string &name) noexcept;
-        static void *lua_allocate(void *user_data, void *pointer,
-            ft_size_t old_size, ft_size_t new_size) noexcept;
-        static void *lua_allocate_native(void *user_data, void *pointer,
-            std::size_t old_size, std::size_t new_size) noexcept;
-        static void lua_instruction_hook(lua_State *lua_state,
-            lua_Debug *debug_record) noexcept;
-        static int32_t lua_callback_dispatch(lua_State *lua_state) noexcept;
         static int32_t custom_callback_dispatch(
             const scripting_call_context *call_context,
             const scripting_value *arguments, uint32_t argument_count,
@@ -149,22 +128,6 @@ class game_script_bridge
             game_state *state, void *user_data) noexcept;
         int32_t execute_custom_with_user_data(const ft_string &script,
             game_state *state, void *user_data) noexcept;
-        int32_t execute_lua(const ft_string &script, game_state &state) noexcept;
-        int32_t execute_lua_with_user_data(const ft_string &script,
-            game_state *state, void *user_data) noexcept;
-        int32_t get_lua_global_string(const ft_string &name,
-            ft_string &value) noexcept;
-        int32_t get_lua_global_integer(const ft_string &name,
-            int64_t &value) noexcept;
-        int32_t get_lua_global_boolean(const ft_string &name,
-            ft_bool &value) noexcept;
-
-        void set_lua_instruction_limit(int32_t limit) noexcept;
-        int32_t get_lua_instruction_limit() const noexcept;
-        void set_lua_memory_limit(ft_size_t limit) noexcept;
-        ft_size_t get_lua_memory_limit() const noexcept;
-        ft_size_t get_lua_memory_used() const noexcept;
-
         int32_t check_sandbox_capabilities(const ft_string &script, ft_vector<ft_string> &violations) noexcept;
         int32_t validate_dry_run(const ft_string &script, ft_vector<ft_string> &warnings) noexcept;
         int32_t inspect_bytecode_budget(const ft_string &script, int32_t &required_operations) noexcept;

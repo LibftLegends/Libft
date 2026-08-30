@@ -23,6 +23,7 @@ static int32_t terrain_script_normalize_custom_source(
 {
     const char *data;
     ft_size_t index;
+    uint32_t parenthesis_depth;
     int32_t error_code;
 
     error_code = normalized.initialize();
@@ -30,6 +31,7 @@ static int32_t terrain_script_normalize_custom_source(
         return (error_code);
     data = script.c_str();
     index = 0U;
+    parenthesis_depth = 0U;
     while (index < script.size())
     {
         if (data[index] == '\n' || data[index] == '\r')
@@ -40,11 +42,18 @@ static int32_t terrain_script_normalize_custom_source(
                 index += 1U;
                 continue ;
             }
-            if (index == 0U || data[index - 1U] != ';')
+            if (parenthesis_depth == 0U
+                && (index == 0U || data[index - 1U] != ';'))
                 error_code = normalized.append(';');
         }
         else
+        {
             error_code = normalized.append(data[index]);
+            if (data[index] == '(')
+                parenthesis_depth += 1U;
+            else if (data[index] == ')' && parenthesis_depth > 0U)
+                parenthesis_depth -= 1U;
+        }
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         index += 1U;

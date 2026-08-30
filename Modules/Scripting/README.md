@@ -2,9 +2,9 @@
 
 `Scripting` is Libft's deterministic custom scripting runtime. It provides a
 small bounded expression language and typed native callbacks without exposing
-raw host pointers or depending on Lua. The runtime is intentionally being
-expanded in stages; existing Game and Voxel Lua bridges remain in migration
-until parity tests are complete.
+raw host pointers or depending on an external interpreter. Game and Voxel
+production paths use this runtime; the line-command adapter remains only as a
+temporary migration aid for existing assets.
 
 ## Current API
 
@@ -46,6 +46,5 @@ custom runtime, including legacy line-oriented files after normalizing line
 boundaries to statement separators. This keeps existing configuration assets
 usable while removing Lua from terrain execution. The Game bridge defaults to
 the custom runtime and temporarily retains its legacy line-command adapter
-(`set`, `unset`, and `call`) for existing scripts. Explicit Lua entry points
-remain only for migration fixtures; new production integrations must use the
-custom runtime directly.
+(`set`, `unset`, and `call`) for existing scripts. New production integrations
+must use the custom runtime directly.

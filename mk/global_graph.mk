@@ -26,7 +26,7 @@ LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
     Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \
     Filesystem XML Storage Networking URI API Application Observability Analytics CardGame Sink \
-    Logger Parser Lua Scripting Game Voxel GPGR
+    Logger Parser Scripting Game Voxel GPGR
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 
@@ -43,7 +43,7 @@ LIBFT_GLOBAL_$(1)_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(
 LIBFT_GLOBAL_$(1)_MM_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_MM_SOURCES))
 LIBFT_GLOBAL_$(1)_CPP_FLAGS := $$($(1)_CPP_FLAGS)
 LIBFT_GLOBAL_$(1)_MM_FLAGS := $$($(1)_MM_FLAGS)
-LIBFT_GLOBAL_$(1)_C_FLAGS := $$(subst -I$$($(1)_LUA_VENDOR_DIR),-I$(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$($(1)_LUA_VENDOR_DIR),$$($(1)_C_FLAGS))
+LIBFT_GLOBAL_$(1)_C_FLAGS := $$($(1)_C_FLAGS)
 LIBFT_GLOBAL_MANIFEST_LOAD :=
 endef
 

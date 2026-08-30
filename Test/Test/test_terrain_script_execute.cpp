@@ -31,10 +31,10 @@ FT_TEST(test_terrain_script_execute_configures_and_generates_chunk)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize());
-    if (file_read_all("Lua/terrain_generation.lua", script)
+    if (file_read_all("Scripting/terrain_generation.script", script)
         != FT_ERR_SUCCESS)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(
-            "Test/Lua/terrain_generation.lua", script));
+            "Test/Scripting/terrain_generation.script", script));
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_script_execute(bridge, script, chunk,
         32, 64, "scripted-world", config));

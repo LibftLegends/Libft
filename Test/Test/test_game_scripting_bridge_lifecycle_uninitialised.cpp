@@ -8,7 +8,7 @@ typedef ft_function<int32_t(game_script_context &,
 
 static void game_script_bridge_set_language(game_script_bridge &value)
 {
-    value.set_language("lua");
+    value.set_language("custom");
     return ;
 }
 

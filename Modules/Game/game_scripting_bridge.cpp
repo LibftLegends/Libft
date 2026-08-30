@@ -483,10 +483,6 @@ ft_bool game_script_bridge::is_supported_language(const ft_string &language) noe
     data = normalized.data();
     if (data)
         ft_to_lower(data);
-    if (normalized == "lua")
-        return (FT_TRUE);
-    if (normalized == "python")
-        return (FT_TRUE);
     if (normalized == "custom")
         return (FT_TRUE);
     return (FT_FALSE);
@@ -494,10 +490,6 @@ ft_bool game_script_bridge::is_supported_language(const ft_string &language) noe
 
 game_script_bridge::game_script_bridge() noexcept
     : _world(), _callbacks(), _language(), _max_operations(32),
-      _lua_instruction_limit(100000), _lua_instruction_count(0),
-      _lua_callback_error(FT_ERR_SUCCESS),
-      _lua_memory_limit(16U * 1024U * 1024U), _lua_memory_used(0U),
-      _lua_state(ft_nullptr), _lua_context(ft_nullptr),
       _custom_engine(), _custom_context(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       _mutex(ft_nullptr)
@@ -536,13 +528,6 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         return (FT_ERR_INVALID_STATE);
     }
     this->_max_operations = 32;
-    this->_lua_instruction_limit = 100000;
-    this->_lua_instruction_count = 0;
-    this->_lua_callback_error = FT_ERR_SUCCESS;
-    this->_lua_memory_limit = 16U * 1024U * 1024U;
-    this->_lua_memory_used = 0U;
-    this->_lua_state = ft_nullptr;
-    this->_lua_context = ft_nullptr;
     this->_custom_context = ft_nullptr;
     map_error = this->_callbacks.initialize();
     if (map_error != FT_ERR_SUCCESS)
@@ -594,21 +579,6 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         this->set_error(map_error);
         return (map_error);
     }
-    if (this->_language == "custom")
-    {
-        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    map_error = this->initialize_lua_runtime();
-    if (map_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        (void)this->_callbacks.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(map_error);
-        return (map_error);
-    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -634,7 +604,6 @@ int32_t game_script_bridge::destroy() noexcept
     current_error = this->disable_thread_safety();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
-    this->destroy_lua_runtime();
     current_error = this->_custom_engine.destroy();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
@@ -647,10 +616,6 @@ int32_t game_script_bridge::destroy() noexcept
     this->_language.clear();
     this->_custom_context = ft_nullptr;
     this->_max_operations = 32;
-    this->_lua_instruction_limit = 100000;
-    this->_lua_instruction_count = 0;
-    this->_lua_callback_error = FT_ERR_SUCCESS;
-    this->_lua_memory_limit = 16U * 1024U * 1024U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     this->set_error(first_error);
     return (first_error);
@@ -889,7 +854,6 @@ int32_t game_script_bridge::remove_function(const ft_string &name) noexcept
     }
 
     this->_callbacks.remove(name);
-    this->remove_lua_callback(name);
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);

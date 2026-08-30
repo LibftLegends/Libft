@@ -8,9 +8,8 @@ The game runtime exposes three integration layers:
 
 1. **Data-driven content** – JSON/YAML manifests loaded by `ft_world` describe entities, quests, loot tables, and balance tweaks.
 2. **Scripting bridges** – the callback-command bridge exposes a restricted
-   host API through `game_script_bridge`. An embedded Lua or Python interpreter
-   can adapt calls to this bridge; interpreter runtimes are not bundled by
-   Libft.
+   host API through `game_script_bridge`. Libft's bounded custom scripting
+   runtime adapts calls to this bridge; external interpreters are not required.
 3. **Event pipelines** – asynchronous hooks that attach to the scheduler to react to combat, crafting, quest, and dialogue events.
 
 Mods interact with these layers through `ft_mod_context`, which validates permissions and orchestrates lifecycle callbacks.
@@ -30,9 +29,8 @@ mods/
 
 - `manifest.yml` declares metadata (version, author, required engine features) and the entry points to register.
 - `scripts/` contains files consumed by the application's selected scripting
-  runtime. Libft supplies the callback bridge and terrain bindings; loading an
-  interpreter and restricting its standard library remain the embedding
-  application's responsibility.
+  runtime. Libft supplies the callback bridge and terrain bindings through its
+  bounded custom scripting runtime; no external interpreter is required.
 - `data/` holds JSON/YAML content for new items, quests, and dialogue. The engine merges these with the base catalogs via `ft_world::merge_content_catalogues`.
 - `assets/` carries optional binary resources (audio, textures) referenced by content definitions.
 
@@ -65,10 +63,10 @@ The scripting bridge exposes a curated API surface:
 - Commands gated by capability tokens (`grant_item`, `start_quest`, `modify_reputation`, `schedule_event`).
 - Utility helpers for math, random numbers (seeded per session), and logging through the main logger with the `_api_logging` flag enabled.
 
-The callback bridge includes an embedded Lua 5.4 runtime. Lua execution has
-configurable instruction and memory limits, and does not expose file, network,
-operating-system, package-loading, debug, or native-module APIs. The legacy
-command execution path remains available separately for compatibility.
+The callback bridge uses deterministic operation and resource limits and does
+not expose file, network, operating-system, package-loading, debug, or
+native-module APIs. The legacy line-command execution path remains available
+separately for compatibility.
 
 The Voxel module adds terrain callbacks through
 `terrain_script_register_api(...)`. Scripts can tune sea level, noise, biome
