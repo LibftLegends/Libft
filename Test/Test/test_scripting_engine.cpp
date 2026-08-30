@@ -38,6 +38,24 @@ static int32_t scripting_test_string_length_native(
         static_cast<int64_t>(arguments[0].string_length)));
 }
 
+static int32_t scripting_test_loop_guard_native(
+    const scripting_call_context *context, const scripting_value *arguments,
+    uint32_t argument_count, scripting_value *result, void *user_data) noexcept
+{
+    uint32_t *remaining_calls;
+
+    (void)context;
+    (void)arguments;
+    if (result == ft_nullptr || user_data == ft_nullptr
+        || argument_count != 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    remaining_calls = static_cast<uint32_t *>(user_data);
+    if (*remaining_calls == 0U)
+        return (scripting_value_set_boolean(result, FT_FALSE));
+    *remaining_calls -= 1U;
+    return (scripting_value_set_boolean(result, FT_TRUE));
+}
+
 FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
 {
     scripting_engine engine;
@@ -248,6 +266,33 @@ FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
     FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
     FT_ASSERT_EQ(FT_ERR_FULL, engine.serialize_program(program, serialized,
         serialized_size - 1U, &serialized_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_executes_bounded_while_expression)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+    uint32_t remaining_calls;
+    uint32_t native_id;
+
+    remaining_calls = 3U;
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("has_work",
+        scripting_test_loop_guard_native, &remaining_calls, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return while (has_work()) 7;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(0U, remaining_calls);
+    remaining_calls = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(3U));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.execute(
+        "while (has_work()) 7;", &result));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

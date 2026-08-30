@@ -266,6 +266,49 @@ static int32_t scripting_compile_primary(scripting_compile_parser *parser)
     if (parser->offset >= parser->source_length)
         return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
             parser->offset, 1U));
+    if (scripting_compile_keyword_at(parser, "while", 5U) != FT_FALSE)
+    {
+        uint32_t loop_start_index;
+        uint32_t jump_end_index;
+        int32_t loop_error;
+
+        parser->offset += 5U;
+        scripting_compile_skip_space(parser);
+        if (parser->offset >= parser->source_length
+            || parser->source[parser->offset] != '(')
+            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+                parser->offset, 1U));
+        parser->offset += 1U;
+        loop_start_index = parser->program.instruction_count;
+        loop_error = scripting_compile_condition(parser);
+        if (loop_error != FT_ERR_SUCCESS)
+            return (loop_error);
+        scripting_compile_skip_space(parser);
+        if (parser->offset >= parser->source_length
+            || parser->source[parser->offset] != ')')
+            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
+                parser->offset, 1U));
+        parser->offset += 1U;
+        jump_end_index = parser->program.instruction_count;
+        loop_error = scripting_compile_emit(parser,
+            SCRIPTING_OP_JUMP_IF_FALSE, 0, 0U);
+        if (loop_error != FT_ERR_SUCCESS)
+            return (loop_error);
+        loop_error = scripting_compile_condition(parser);
+        if (loop_error != FT_ERR_SUCCESS)
+            return (loop_error);
+        loop_error = scripting_compile_emit(parser, SCRIPTING_OP_POP, 0, 0U);
+        if (loop_error != FT_ERR_SUCCESS)
+            return (loop_error);
+        loop_error = scripting_compile_emit(parser, SCRIPTING_OP_JUMP,
+            static_cast<int64_t>(loop_start_index), 0U);
+        if (loop_error != FT_ERR_SUCCESS)
+            return (loop_error);
+        parser->program.instructions[jump_end_index].operand =
+            static_cast<int64_t>(parser->program.instruction_count);
+        return (scripting_compile_emit(parser, SCRIPTING_OP_PUSH_NULL, 0,
+            0U));
+    }
     if (scripting_compile_keyword_at(parser, "if", 2U) != FT_FALSE)
     {
         uint32_t jump_false_index;
