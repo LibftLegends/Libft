@@ -369,16 +369,30 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
 
 int32_t card_game_engine::end_turn() noexcept
 {
+    card_game_snapshot before_state;
+    int32_t snapshot_error;
     int32_t resolve_error;
+    int32_t restore_error;
 
     if (this->_initialised_state != 2U)
         return (FT_ERR_NOT_INITIALISED);
+    if (this->_player_count == 0U)
+        return (FT_ERR_INVALID_STATE);
+    snapshot_error = this->get_snapshot(&before_state);
+    if (snapshot_error != FT_ERR_SUCCESS)
+        return (snapshot_error);
     this->_active_player = (this->_active_player + 1U)
         % this->_player_count;
     this->_turn_number += 1U;
     resolve_error = this->resolve_events();
-    if (resolve_error == FT_ERR_SUCCESS)
-        this->_state_sequence += 1U;
+    if (resolve_error != FT_ERR_SUCCESS)
+    {
+        restore_error = this->apply_snapshot(before_state);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
+        return (resolve_error);
+    }
+    this->_state_sequence += 1U;
     return (resolve_error);
 }
 
@@ -499,35 +513,72 @@ int32_t card_game_engine::resolve_events() noexcept
 
 int32_t card_game_engine::advance_phase() noexcept
 {
+    card_game_snapshot before_state;
+    int32_t emit_error;
+    int32_t resolve_error;
+    int32_t restore_error;
+    int32_t snapshot_error;
+    ft_bool phase_found;
     uint32_t index;
 
     if (this->_initialised_state != 2U || this->_phase_count == 0U)
         return (FT_ERR_INVALID_STATE);
+    snapshot_error = this->get_snapshot(&before_state);
+    if (snapshot_error != FT_ERR_SUCCESS)
+        return (snapshot_error);
+    phase_found = FT_FALSE;
     index = 0U;
     while (index < this->_phase_count)
     {
         if (this->_phases[index].phase_id == this->_current_phase_id)
         {
             if (this->_phases[index].exit_event_type != 0U)
-                (void)this->emit_event(this->_phases[index].exit_event_type,
-                    0U, 0U);
+            {
+                emit_error = this->emit_event(
+                    this->_phases[index].exit_event_type, 0U, 0U);
+                if (emit_error != FT_ERR_SUCCESS)
+                    return (emit_error);
+            }
             this->_current_phase_id = this->_phases[index].next_phase_id;
+            phase_found = FT_TRUE;
             break ;
         }
         index += 1U;
     }
+    if (phase_found == FT_FALSE)
+        return (FT_ERR_NOT_FOUND);
     index = 0U;
     while (index < this->_phase_count)
     {
         if (this->_phases[index].phase_id == this->_current_phase_id)
         {
             if (this->_phases[index].entry_event_type != 0U)
-                (void)this->emit_event(this->_phases[index].entry_event_type,
-                    0U, 0U);
-            return (this->resolve_events());
+            {
+                emit_error = this->emit_event(
+                    this->_phases[index].entry_event_type, 0U, 0U);
+                if (emit_error != FT_ERR_SUCCESS)
+                {
+                    restore_error = this->apply_snapshot(before_state);
+                    if (restore_error != FT_ERR_SUCCESS)
+                        return (restore_error);
+                    return (emit_error);
+                }
+            }
+            resolve_error = this->resolve_events();
+            if (resolve_error != FT_ERR_SUCCESS)
+            {
+                restore_error = this->apply_snapshot(before_state);
+                if (restore_error != FT_ERR_SUCCESS)
+                    return (restore_error);
+                return (resolve_error);
+            }
+            return (FT_ERR_SUCCESS);
         }
         index += 1U;
     }
+    restore_error = this->apply_snapshot(before_state);
+    if (restore_error != FT_ERR_SUCCESS)
+        return (restore_error);
     return (FT_ERR_NOT_FOUND);
 }
 

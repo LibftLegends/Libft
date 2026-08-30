@@ -208,3 +208,31 @@ FT_TEST(test_card_game_engine_rolls_back_card_when_effect_fails)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_rolls_back_turn_when_event_effect_fails)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    uint32_t effect_id;
+    uint32_t turn_number;
+    uint32_t active_player;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 2U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 10U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_effect_callback(
+        card_game_test_failing_effect, ft_nullptr, 77U, &effect_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.emit_event(77U, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_turn(&turn_number,
+        &active_player));
+    FT_ASSERT_EQ(1U, turn_number);
+    FT_ASSERT_EQ(0U, active_player);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
