@@ -26,7 +26,7 @@ LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
     Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \
     Filesystem XML Storage Networking URI API Application Observability Analytics CardGame Sink \
-    Logger Parser Lua Game Voxel GPGR
+    Logger Parser Lua Scripting Game Voxel GPGR
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 

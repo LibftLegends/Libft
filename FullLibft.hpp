@@ -164,6 +164,7 @@
 #include "Modules/Analytics/analytics.hpp"
 #include "Modules/Analytics/analytics_instrumentation.hpp"
 #include "Modules/CardGame/card_game.hpp"
+#include "Modules/Scripting/scripting.hpp"
 #include "Modules/Observability/observability_game_metrics.hpp"
 #include "Modules/Observability/observability_networking_metrics.hpp"
 #include "Modules/Observability/observability_task_scheduler_bridge.hpp"

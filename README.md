@@ -228,6 +228,9 @@ Every module that allocates through this layer inherits the same mechanisms for 
   It is intended for game render and world-generation profiling, with collection controlled by the build and runtime session configuration.
 
 - `CardGame/`: Provides a configuration-driven card-game state engine.
+- `Scripting/`: Provides a deterministic, sandboxed custom scripting runtime
+  with typed native callbacks. It is the replacement target for the legacy Lua
+  integration and does not expose raw host pointers.
   Card definitions, board limits, turn limits, and effect function pointers are supplied by the game, so the library dispatches mechanics without hard-coding a particular ruleset.
 
 - `PThread/`: Wraps the low-level threading and synchronization primitives such as mutexes, condition variables, rwlocks, and native thread helpers.

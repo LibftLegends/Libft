@@ -1,0 +1,77 @@
+#include "../test_internal.hpp"
+#include "../../Modules/Scripting/scripting.hpp"
+#include "../../Modules/System_utils/test_system_utils_runner.hpp"
+
+static int32_t scripting_test_add_native(const scripting_call_context *context,
+    const scripting_value *arguments, uint32_t argument_count,
+    scripting_value *result, void *user_data) noexcept
+{
+    int64_t total;
+    uint32_t index;
+
+    (void)context;
+    (void)user_data;
+    if (arguments == ft_nullptr || result == ft_nullptr || argument_count != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    total = 0;
+    index = 0U;
+    while (index < argument_count)
+    {
+        if (arguments[index].type != SCRIPTING_VALUE_INTEGER)
+            return (FT_ERR_INVALID_ARGUMENT);
+        total += arguments[index].integer_value;
+        index += 1U;
+    }
+    return (scripting_value_set_integer(result, total));
+}
+
+FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
+{
+    scripting_engine engine;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("2 + 3 * 4", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(14), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_invokes_typed_native_callback)
+{
+    scripting_engine engine;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(0U, native_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("add(7, 5)", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(12), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_reports_bounded_and_malformed_execution)
+{
+    scripting_engine engine;
+    scripting_value result;
+    scripting_diagnostic diagnostic;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(1U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.execute("missing(1)", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_last_diagnostic(&diagnostic));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, diagnostic.error_code);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("(1 +", &result));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, engine.execute("9223372036854775807 + 1",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

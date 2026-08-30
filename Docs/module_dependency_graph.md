@@ -57,6 +57,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `SCMA` | `Basic`, `Compatebility`, `Errno`, `PThread` |
 | `Sink` | `Basic`, `Errno` |
 | `Storage` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template`, `Threading`, `Time` |
+| `Scripting` | `Basic`, `Errno` |
 | `System_utils` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `File`, `PThread`, `Printf`, `SCMA`, `Sink`, `Template` |
 | `Template` | `Basic`, `CMA`, `CPP_class`, `Errno`, `JSon`, `PThread`, `Printf`, `RNG`, `YAML` |
 | `Threading` | `Basic`, `CMA`, `Errno`, `PThread`, `System_utils`, `Template`, `Time` |
@@ -313,6 +314,8 @@ graph TD
     Analytics --> Errno
     CardGame --> Basic
     CardGame --> Errno
+    Scripting --> Basic
+    Scripting --> Errno
     PThread --> Basic
     PThread --> Compatebility
     PThread --> Errno
