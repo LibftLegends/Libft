@@ -219,6 +219,9 @@ FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("false || true", &result));
     FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "true || false && false", &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("null < null",
         &result));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(

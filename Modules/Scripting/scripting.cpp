@@ -248,6 +248,9 @@ static int32_t scripting_compile_condition(
 static int32_t scripting_compile_comparison(
     scripting_compile_parser *parser) noexcept;
 
+static int32_t scripting_compile_logical_and(
+    scripting_compile_parser *parser) noexcept;
+
 static int32_t scripting_compile_term(scripting_compile_parser *parser)
     noexcept;
 
@@ -624,10 +627,9 @@ static int32_t scripting_compile_comparison(
     return (scripting_compile_emit(parser, comparison_opcode, 0, 0U));
 }
 
-static int32_t scripting_compile_condition(scripting_compile_parser *parser)
-    noexcept
+static int32_t scripting_compile_logical_and(
+    scripting_compile_parser *parser) noexcept
 {
-    char operation;
     int32_t parse_error;
 
     parse_error = scripting_compile_comparison(parser);
@@ -636,25 +638,44 @@ static int32_t scripting_compile_condition(scripting_compile_parser *parser)
     while (1)
     {
         scripting_compile_skip_space(parser);
-        if (parser->source_length - parser->offset < 2U)
+        if (parser->source_length - parser->offset < 2U
+            || parser->source[parser->offset] != '&'
+            || parser->source[parser->offset + 1U] != '&')
             break ;
-        if (parser->source[parser->offset] != '&'
-            && parser->source[parser->offset] != '|')
-            break ;
-        operation = parser->source[parser->offset];
-        if (parser->source[parser->offset + 1U] != operation)
-            return (scripting_compile_fail(parser, FT_ERR_INVALID_ARGUMENT,
-                parser->offset, 2U));
         parser->offset += 2U;
         parse_error = scripting_compile_comparison(parser);
         if (parse_error != FT_ERR_SUCCESS)
             return (parse_error);
-        if (operation == '&')
-            parse_error = scripting_compile_emit(parser,
-                SCRIPTING_OP_LOGICAL_AND, 0, 0U);
-        else
-            parse_error = scripting_compile_emit(parser,
-                SCRIPTING_OP_LOGICAL_OR, 0, 0U);
+        parse_error = scripting_compile_emit(parser,
+            SCRIPTING_OP_LOGICAL_AND, 0, 0U);
+        if (parse_error != FT_ERR_SUCCESS)
+            return (parse_error);
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t scripting_compile_condition(scripting_compile_parser *parser)
+    noexcept
+{
+    int32_t parse_error;
+
+    parse_error = scripting_compile_logical_and(parser);
+    if (parse_error != FT_ERR_SUCCESS)
+        return (parse_error);
+    while (1)
+    {
+        scripting_compile_skip_space(parser);
+        if (parser->source_length - parser->offset < 2U)
+            break ;
+        if (parser->source[parser->offset] != '|'
+            || parser->source[parser->offset + 1U] != '|')
+            break ;
+        parser->offset += 2U;
+        parse_error = scripting_compile_logical_and(parser);
+        if (parse_error != FT_ERR_SUCCESS)
+            return (parse_error);
+        parse_error = scripting_compile_emit(parser, SCRIPTING_OP_LOGICAL_OR,
+            0, 0U);
         if (parse_error != FT_ERR_SUCCESS)
             return (parse_error);
     }

@@ -23,6 +23,8 @@ until parity tests are complete.
 - `if (condition) value else value` and `while (condition) value` are
   supported as expressions. Loop execution is bounded by the engine's
   operation limit; an unbounded condition cannot run indefinitely.
+- Logical precedence follows conventional rules: unary `!`, then `&&`, then
+  `||`.
 - `get_last_diagnostic()` reports the error code and source span of the last
   failed execution.
 - `scripting_value_set_null()` and `scripting_value_set_integer()` construct
