@@ -31,3 +31,8 @@ Built-in card types use IDs `0` through `3`. Games may register custom type
 IDs from `4` through `31` and register cards against them with
 `register_card_with_type()`; custom type definitions include their allowed
 zones and per-player copy limit.
+
+When a card is played, the engine enforces the configured board-zone capacity,
+the zone's allowed type mask, and the type's per-player copy limit before
+charging mana or invoking an effect. Rejected placements leave match state
+unchanged.

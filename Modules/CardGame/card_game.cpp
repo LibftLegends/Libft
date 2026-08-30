@@ -184,6 +184,43 @@ int32_t card_game_engine::find_card(uint32_t card_id,
     return (FT_ERR_NOT_FOUND);
 }
 
+int32_t card_game_engine::find_card_type_id(uint32_t card_id,
+    uint32_t *type_id) const noexcept
+{
+    uint32_t index;
+
+    if (type_id == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_card_count)
+    {
+        if (this->_cards[index].card_id == card_id)
+        {
+            *type_id = this->_card_type_ids[index];
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
+}
+
+uint32_t card_game_engine::get_board_capacity() const noexcept
+{
+    uint32_t index;
+    uint32_t capacity;
+
+    capacity = this->_rules.max_board_spaces;
+    index = 0U;
+    while (index < this->_zone_count)
+    {
+        if (this->_zones[index].zone_id == CARD_GAME_BOARD_ZONE_ID
+            && this->_zones[index].capacity < capacity)
+            capacity = this->_zones[index].capacity;
+        index += 1U;
+    }
+    return (capacity);
+}
+
 int32_t card_game_engine::register_card_internal(
     const card_game_card_definition &definition, uint32_t type_id) noexcept
 {
@@ -451,7 +488,14 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     uint32_t target_instance, void *context) noexcept
 {
     card_game_card_definition *definition;
+    card_game_card_type_definition type_definition;
     uint32_t instance_index;
+    uint32_t type_id;
+    uint32_t existing_type_id;
+    uint32_t board_index;
+    uint32_t type_copy_count;
+    uint32_t board_capacity;
+    uint32_t zone_index;
     card_game_snapshot before_state;
     int32_t snapshot_error;
     int32_t restore_error;
@@ -460,11 +504,45 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     if (this->_initialised_state != 2U || player_id != this->_active_player
         || this->is_command_allowed(CARD_GAME_COMMAND_PLAY_CARD) == FT_FALSE)
         return (FT_ERR_PERMISSION_DENIED);
+    board_capacity = this->get_board_capacity();
     if (player_id >= FT_CARD_GAME_MAX_PLAYERS
-        || this->_board_count[player_id] >= this->_rules.max_board_spaces)
+        || this->_board_count[player_id] >= board_capacity)
         return (FT_ERR_FULL);
     if (this->find_card(card_id, &definition) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_FOUND);
+    if (this->find_card_type_id(card_id, &type_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    if (type_id >= 32U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->get_card_type(type_id, &type_definition) == FT_ERR_SUCCESS)
+    {
+        if ((type_definition.allowed_zone_mask
+            & (1U << CARD_GAME_BOARD_ZONE_ID)) == 0U)
+            return (FT_ERR_PERMISSION_DENIED);
+        type_copy_count = 0U;
+        board_index = 0U;
+        while (board_index < this->_board_count[player_id])
+        {
+            if (this->find_card_type_id(
+                this->_instances[player_id][board_index].definition_id,
+                &existing_type_id) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            if (existing_type_id == type_definition.type_id)
+                type_copy_count += 1U;
+            board_index += 1U;
+        }
+        if (type_copy_count >= type_definition.max_copies_per_player)
+            return (FT_ERR_FULL);
+    }
+    zone_index = 0U;
+    while (zone_index < this->_zone_count)
+    {
+        if (this->_zones[zone_index].zone_id == CARD_GAME_BOARD_ZONE_ID
+            && (this->_zones[zone_index].allowed_card_type_mask
+                & (1U << (type_id & 31U))) == 0U)
+            return (FT_ERR_PERMISSION_DENIED);
+        zone_index += 1U;
+    }
     if (this->_mana[player_id] < definition->cost)
         return (FT_ERR_OUT_OF_RANGE);
     snapshot_error = this->get_snapshot(&before_state);

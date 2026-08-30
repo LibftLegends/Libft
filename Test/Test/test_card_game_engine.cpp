@@ -371,6 +371,10 @@ FT_TEST(test_card_game_engine_registers_custom_card_types)
     card_game_card_type_definition type;
     card_game_card_type_definition loaded_type;
     card_game_card_definition definition;
+    card_game_card_type_definition disallowed_type;
+    card_game_card_definition disallowed_definition;
+    card_game_zone_definition board_zone;
+    uint32_t board_count;
 
     rules.max_board_spaces = 3U;
     rules.max_hand_size = 4U;
@@ -379,7 +383,7 @@ FT_TEST(test_card_game_engine_registers_custom_card_types)
     rules.max_mana = 10U;
     rules.max_turns = 20U;
     type.type_id = 4U;
-    type.allowed_zone_mask = 1U << 4U;
+    type.allowed_zone_mask = 1U << CARD_GAME_BOARD_ZONE_ID;
     type.max_copies_per_player = 2U;
     definition.card_id = 200U;
     definition.type = CARD_GAME_CREATURE;
@@ -387,14 +391,34 @@ FT_TEST(test_card_game_engine_registers_custom_card_types)
     definition.attack = 2;
     definition.health = 2;
     definition.effect_id = CARD_GAME_NO_EFFECT;
+    board_zone.zone_id = CARD_GAME_BOARD_ZONE_ID;
+    board_zone.capacity = 3U;
+    board_zone.allowed_card_type_mask = 1U << 4U;
+    board_zone.owner_scoped = FT_TRUE;
+    disallowed_type.type_id = 5U;
+    disallowed_type.allowed_zone_mask = 1U << 2U;
+    disallowed_type.max_copies_per_player = 2U;
+    disallowed_definition = definition;
+    disallowed_definition.card_id = 201U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_type(type));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_zone(board_zone));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_card_type(4U, &loaded_type));
     FT_ASSERT_EQ(type.type_id, loaded_type.type_id);
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.register_card_with_type(
         definition, 5U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_with_type(
         definition, 4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_type(disallowed_type));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_with_type(
+        disallowed_definition, 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 200U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(0U, &board_count));
+    FT_ASSERT_EQ(1U, board_count);
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.play_card(0U, 201U, 0U,
+        ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.register_card_type(type));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);

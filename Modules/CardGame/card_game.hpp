@@ -11,6 +11,7 @@ static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
 static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
 static const uint32_t FT_CARD_GAME_MAX_ZONES = 32U;
 static const uint32_t FT_CARD_GAME_MAX_CARD_TYPES = 32U;
+static const uint32_t CARD_GAME_BOARD_ZONE_ID = 1U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
@@ -220,6 +221,9 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        int32_t find_card_type_id(uint32_t card_id,
+            uint32_t *type_id) const noexcept;
+        uint32_t get_board_capacity() const noexcept;
         int32_t register_card_internal(
             const card_game_card_definition &definition,
             uint32_t type_id) noexcept;
