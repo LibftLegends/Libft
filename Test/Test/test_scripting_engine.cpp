@@ -212,3 +212,42 @@ FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_program loaded_program;
+    uint8_t serialized[FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES];
+    uint32_t serialized_size;
+    uint32_t original_instruction_count;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (4 <= 4) 31 else 32;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(program,
+        serialized, sizeof(serialized), &serialized_size));
+    FT_ASSERT_EQ(FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        + program.string_data_size
+        + program.instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES,
+        serialized_size);
+    loaded_program = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deserialize_program(serialized,
+        serialized_size, &loaded_program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(loaded_program,
+        &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(31), result.integer_value);
+    original_instruction_count = loaded_program.instruction_count;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size - 1U, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    serialized[0] ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.serialize_program(program, serialized,
+        serialized_size - 1U, &serialized_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

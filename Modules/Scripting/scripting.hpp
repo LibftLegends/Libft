@@ -15,6 +15,13 @@ static const uint32_t FT_SCRIPTING_BYTECODE_VERSION = 1U;
 static const uint32_t FT_SCRIPTING_MAX_INSTRUCTIONS = 4096U;
 static const uint32_t FT_SCRIPTING_MAX_STRING_BYTES = 16384U;
 static const uint32_t FT_SCRIPTING_MAX_NATIVE_NAME_BYTES = 128U;
+static const uint32_t FT_SCRIPTING_BYTECODE_MAGIC = 0x46545331U;
+static const uint32_t FT_SCRIPTING_SERIALIZED_HEADER_BYTES = 16U;
+static const uint32_t FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES = 13U;
+static const uint32_t FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES =
+    FT_SCRIPTING_SERIALIZED_HEADER_BYTES + FT_SCRIPTING_MAX_STRING_BYTES
+    + (FT_SCRIPTING_MAX_INSTRUCTIONS
+        * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES);
 
 enum scripting_value_type : uint8_t
 {
@@ -146,6 +153,11 @@ class scripting_engine
         int32_t verify_program(const scripting_program &program) const noexcept;
         int32_t execute_program(const scripting_program &program,
             scripting_value *result) noexcept;
+        int32_t serialize_program(const scripting_program &program,
+            uint8_t *output, uint32_t output_capacity,
+            uint32_t *output_size) const noexcept;
+        int32_t deserialize_program(const uint8_t *input, uint32_t input_size,
+            scripting_program *program) const noexcept;
         int32_t get_last_diagnostic(scripting_diagnostic *diagnostic) const noexcept;
         int32_t find_native(const char *name, uint32_t name_length,
             uint32_t *native_id) const noexcept;

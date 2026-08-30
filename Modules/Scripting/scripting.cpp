@@ -828,6 +828,64 @@ static int32_t scripting_verify_enqueue(uint32_t *stack_depths,
     return (FT_ERR_SUCCESS);
 }
 
+static void scripting_write_u32(uint8_t *output, uint32_t value) noexcept
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < 4U)
+    {
+        output[index] = static_cast<uint8_t>(value & 0xffU);
+        value >>= 8U;
+        index += 1U;
+    }
+    return ;
+}
+
+static void scripting_write_u64(uint8_t *output, uint64_t value) noexcept
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < 8U)
+    {
+        output[index] = static_cast<uint8_t>(value & 0xffU);
+        value >>= 8U;
+        index += 1U;
+    }
+    return ;
+}
+
+static uint32_t scripting_read_u32(const uint8_t *input) noexcept
+{
+    uint32_t value;
+    uint32_t index;
+
+    value = 0U;
+    index = 0U;
+    while (index < 4U)
+    {
+        value |= static_cast<uint32_t>(input[index]) << (index * 8U);
+        index += 1U;
+    }
+    return (value);
+}
+
+static uint64_t scripting_read_u64(const uint8_t *input) noexcept
+{
+    uint64_t value;
+    uint32_t index;
+
+    value = 0U;
+    index = 0U;
+    while (index < 8U)
+    {
+        value |= static_cast<uint64_t>(input[index]) << (index * 8U);
+        index += 1U;
+    }
+    return (value);
+}
+
 static int32_t scripting_parse_primary(scripting_parser *parser,
     scripting_value *result) noexcept
 {
@@ -1996,6 +2054,109 @@ int32_t scripting_engine::execute_program(const scripting_program &program,
             instruction_index += 1U;
     }
     return (FT_ERR_INVALID_STATE);
+}
+
+int32_t scripting_engine::serialize_program(const scripting_program &program,
+    uint8_t *output, uint32_t output_capacity,
+    uint32_t *output_size) const noexcept
+{
+    uint32_t required_size;
+    uint32_t offset;
+    uint32_t instruction_index;
+    const scripting_instruction *instruction;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (output == ft_nullptr || output_size == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->verify_program(program) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    required_size = FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        + program.string_data_size
+        + program.instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+    if (output_capacity < required_size)
+        return (FT_ERR_FULL);
+    scripting_write_u32(output, FT_SCRIPTING_BYTECODE_MAGIC);
+    scripting_write_u32(output + 4U, program.format_version);
+    scripting_write_u32(output + 8U, program.instruction_count);
+    scripting_write_u32(output + 12U, program.string_data_size);
+    offset = FT_SCRIPTING_SERIALIZED_HEADER_BYTES;
+    if (program.string_data_size != 0U)
+    {
+        ft_memcpy(output + offset, program.string_data,
+            program.string_data_size);
+        offset += program.string_data_size;
+    }
+    instruction_index = 0U;
+    while (instruction_index < program.instruction_count)
+    {
+        instruction = &program.instructions[instruction_index];
+        output[offset] = static_cast<uint8_t>(instruction->opcode);
+        scripting_write_u64(output + offset + 1U,
+            static_cast<uint64_t>(instruction->operand));
+        scripting_write_u32(output + offset + 9U, instruction->auxiliary);
+        offset += FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+        instruction_index += 1U;
+    }
+    *output_size = offset;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t scripting_engine::deserialize_program(const uint8_t *input,
+    uint32_t input_size, scripting_program *program) const noexcept
+{
+    scripting_program loaded_program;
+    uint32_t instruction_count;
+    uint32_t string_data_size;
+    uint32_t required_size;
+    uint32_t offset;
+    uint32_t instruction_index;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (input == ft_nullptr || program == ft_nullptr
+        || input_size < FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        || input_size > FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (scripting_read_u32(input) != FT_SCRIPTING_BYTECODE_MAGIC)
+        return (FT_ERR_INVALID_ARGUMENT);
+    loaded_program = {};
+    loaded_program.format_version = scripting_read_u32(input + 4U);
+    instruction_count = scripting_read_u32(input + 8U);
+    string_data_size = scripting_read_u32(input + 12U);
+    if (instruction_count == 0U
+        || instruction_count > FT_SCRIPTING_MAX_INSTRUCTIONS
+        || string_data_size > FT_SCRIPTING_MAX_STRING_BYTES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    required_size = FT_SCRIPTING_SERIALIZED_HEADER_BYTES + string_data_size
+        + instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+    if (required_size != input_size)
+        return (FT_ERR_INVALID_ARGUMENT);
+    loaded_program.instruction_count = instruction_count;
+    loaded_program.string_data_size = string_data_size;
+    offset = FT_SCRIPTING_SERIALIZED_HEADER_BYTES;
+    if (string_data_size != 0U)
+    {
+        ft_memcpy(loaded_program.string_data, input + offset,
+            string_data_size);
+        offset += string_data_size;
+    }
+    instruction_index = 0U;
+    while (instruction_index < instruction_count)
+    {
+        loaded_program.instructions[instruction_index].opcode =
+            static_cast<scripting_opcode>(input[offset]);
+        loaded_program.instructions[instruction_index].operand =
+            static_cast<int64_t>(scripting_read_u64(input + offset + 1U));
+        loaded_program.instructions[instruction_index].auxiliary =
+            scripting_read_u32(input + offset + 9U);
+        offset += FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+        instruction_index += 1U;
+    }
+    if (this->verify_program(loaded_program) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *program = loaded_program;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t scripting_engine::get_last_diagnostic(

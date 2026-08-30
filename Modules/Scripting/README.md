@@ -16,6 +16,10 @@ until parity tests are complete.
 - Comparison operators are `==`, `!=`, `<`, `<=`, `>`, and `>=`. Integer,
   boolean, string, and null equality is supported; ordering is defined for
   integers, booleans, and strings.
+- `serialize_program()` and `deserialize_program()` use a canonical
+  little-endian format with a magic value, version, exact lengths, and no raw
+  pointers. Loading is transactional and runs the bytecode verifier before
+  replacing the caller's program.
 - `get_last_diagnostic()` reports the error code and source span of the last
   failed execution.
 - `scripting_value_set_null()` and `scripting_value_set_integer()` construct
