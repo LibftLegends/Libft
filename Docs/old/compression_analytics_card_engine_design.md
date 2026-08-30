@@ -665,6 +665,116 @@ battlefield, command, shop, or custom zones. Configure:
 - whether randomization/shuffling is allowed;
 - whether contents are included in public state hashes.
 
+#### Ordered decks and stack-like zones
+
+An ordered zone must store an explicit sequence of stable card-instance IDs;
+it must never derive order from allocation addresses or an unordered container.
+The same ordered-container implementation should support decks, queues, draw
+piles, discard stacks, effect stacks, and game-specific piles. A zone
+definition declares:
+
+- `ordered`, `unordered`, `LIFO`, or `FIFO` access semantics;
+- maximum capacity and whether overflow is an error, a discard, or a configured
+  replacement operation;
+- whether `draw`, `peek`, `remove`, and `insert` are permitted while a match is
+  resolving;
+- whether insertion positions are top, bottom, explicit index, or callback
+  selected;
+- whether duplicate card instances are allowed and how instance identity is
+  preserved;
+- whether order is public, owner-visible, observer-redacted, or secret;
+- whether the zone participates in state hashes, snapshots, deltas, and replay.
+
+Deck operations must be explicit and deterministic:
+
+```text
+peek_top(deck)                 // no mutation
+draw_top(deck)                 // remove first card in configured orientation
+draw_bottom(deck)
+insert_top(deck, card)
+insert_bottom(deck, card)
+insert_at(deck, index, card)
+remove_instance(deck, instance_id)
+shuffle(deck, match_random_stream)
+```
+
+The API should expose the orientation rather than making callers infer it
+from an array index. `top` and `bottom` remain stable names even if the
+internal representation changes. Invalid positions, duplicate instance IDs,
+capacity overflow, and forbidden operations return errors without modifying
+the zone.
+
+Shuffle must consume only the match-owned deterministic random stream. Use a
+specified unbiased Fisher-Yates procedure over the logical sequence, record
+the stream position or random draws in the command record, and include the
+resulting order in the state hash whenever the zone is hash-visible. A seed
+alone is insufficient if random calls can vary between platforms or rule
+paths. Tests must compare exact shuffled orders across platforms and after
+serialize/load/replay.
+
+A deck is not a special hard-coded game object. It is a configured ordered
+zone with optional draw/search/reveal permissions. Search, tutor, mill,
+return-to-top, return-to-bottom, and insert-random-position are operations
+with separate authorization and visibility rules. Hidden order must never
+appear in an unauthorized snapshot, delta, trace, diagnostic, or error
+message.
+
+#### Configurable resolution stacks
+
+Effect resolution uses a configured stack descriptor rather than assuming one
+universal ordering. A stack descriptor contains:
+
+- `LIFO` or `FIFO` resolution order;
+- maximum pending entries and maximum total entries resolved per command;
+- whether entries may be added while resolution is active;
+- if additions are allowed, whether they are appended to the active stack,
+  inserted at the next position, or placed in a deferred queue;
+- whether newly added entries may resolve in the same pass or only after the
+  current batch completes;
+- whether cancellation, replacement, or priority responses are allowed;
+- deterministic ordering keys for equal-priority entries;
+- behavior when the stack is full, a callback fails, or a loop limit is hit.
+
+Recommended policies are represented explicitly:
+
+```text
+stack_policy {
+    ordering: LIFO | FIFO;
+    admission: CLOSED | OPEN_CURRENT_BATCH | OPEN_DEFERRED;
+    resolve_new_entries: SAME_PASS | NEXT_PASS;
+    failure_policy: ROLLBACK_BATCH | COMMIT_PRIOR_BATCHES;
+}
+```
+
+`CLOSED` rejects pushes during resolution unless the current effect is
+authorized to enqueue a declared child batch. `OPEN_CURRENT_BATCH` allows a
+child effect to enqueue entries and makes them eligible according to the
+configured ordering. `OPEN_DEFERRED` records new entries separately and
+merges them only at a defined barrier. The engine must not silently choose a
+policy based on the callback that happens to run.
+
+Each pending entry carries a stable entry ID, source/event IDs, controller,
+priority group, insertion sequence, effect ID, serialized arguments, and
+visibility metadata. Function pointers are never stored in a stack entry.
+The resolver should process entries iteratively:
+
+```text
+begin transaction and resolution context
+while eligible entries exist:
+    select next entry using ordering and deterministic tie-breakers
+    validate admission and capability rules
+    execute effect into an uncommitted operation batch
+    validate and commit the batch
+    enqueue child entries according to stack policy
+    enforce effect, event, depth, and total-work limits
+commit or roll back according to failure policy
+```
+
+A callback must not mutate the stack or match state directly. It emits a
+declared operation/entry batch that the engine validates. This makes
+`LIFO`/`FIFO`, same-pass/deferred behavior, and rollback testable and makes
+replays independent of callback pointer identity.
+
 ### Card and entity types
 
 Card types are data, not an enum frozen into Libft. A type definition may
@@ -944,6 +1054,16 @@ only public APIs; consumers include individual headers for individual needs.
 - Configurable board sizes including zero, one, and large sparse graphs.
 - Custom card types and tags with no core code changes.
 - Move cards through configured zones.
+- Deck order is preserved through draw, peek, top/bottom insertion, indexed
+  insertion, removal, and repeated deterministic shuffles.
+- Invalid deck indexes, duplicate instance IDs, forbidden zone operations, and
+  capacity overflow leave the deck byte-for-byte unchanged.
+- LIFO and FIFO stacks resolve in exact configured order, including equal-
+  priority tie-breaking by insertion sequence.
+- Closed stacks reject in-resolution pushes; current-batch admission and
+  deferred admission each resolve at their documented barrier.
+- Same-pass and next-pass child effects produce distinct, deterministic traces
+  and state hashes.
 - End-phase damage cleanup/healing through a configured trigger and callback.
 - Temporary modifiers expiring on configured events.
 - Optional and mandatory triggers.
@@ -955,6 +1075,12 @@ only public APIs; consumers include individual headers for individual needs.
 ### Determinism and networking foundations
 
 - Replay the same command log thousands of times and compare every state hash.
+- Replay logs containing draws, inserts, and shuffles and compare exact hidden
+  and public zone views using the same random-stream positions.
+- Serialize/load every ordered-zone and resolution-stack format at every byte
+  truncation boundary; failed loads preserve the previous state.
+- Verify that a failed effect stack transaction restores both match state and
+  ordered-container contents.
 - Cross-platform golden vectors for snapshots, deltas, and ruleset hashes.
 - Different registration/insertion orders produce the required canonical order.
 - Hidden information is absent from unauthorized participant snapshots/deltas.
