@@ -320,6 +320,9 @@ class card_game_engine
             uint32_t output_capacity, uint32_t *output_size) const noexcept;
         int32_t deserialize_command_records(const uint8_t *input,
             uint32_t input_size) noexcept;
+        int32_t replay_command_records(
+            const card_game_command_record *records, uint32_t record_count,
+            void *context) noexcept;
 };
 
 #endif

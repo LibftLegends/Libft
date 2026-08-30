@@ -1527,3 +1527,42 @@ int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
         this->_last_command_sequence = 0U;
     return (FT_ERR_SUCCESS);
 }
+
+int32_t card_game_engine::replay_command_records(
+    const card_game_command_record *records, uint32_t record_count,
+    void *context) noexcept
+{
+    uint32_t index;
+    uint64_t rules_hash;
+    uint64_t state_hash;
+    card_game_command_record executed_record;
+    int32_t command_error;
+
+    if (this->_initialised_state != 2U || this->_player_count == 0U
+        || record_count > FT_CARD_GAME_MAX_COMMAND_RECORDS
+        || (record_count > 0U && records == ft_nullptr))
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_command_record_count != 0U
+        || this->_last_command_sequence != 0U)
+        return (FT_ERR_INVALID_STATE);
+    index = 0U;
+    while (index < record_count)
+    {
+        if (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
+            || rules_hash != records[index].rules_hash
+            || this->get_state_hash(&state_hash) != FT_ERR_SUCCESS
+            || state_hash != records[index].state_hash_before)
+            return (FT_ERR_INVALID_STATE);
+        command_error = this->submit_command(records[index].command, context);
+        if (command_error != FT_ERR_SUCCESS)
+            return (command_error);
+        command_error = this->get_command_record(
+            this->_command_record_count - 1U, &executed_record);
+        if (command_error != FT_ERR_SUCCESS
+            || executed_record.state_hash_after
+                != records[index].state_hash_after)
+            return (FT_ERR_INVALID_STATE);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
