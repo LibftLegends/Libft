@@ -15,6 +15,7 @@ static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
 static const uint32_t CARD_GAME_COMMAND_ADVANCE_PHASE = 1U << 2U;
+static const uint32_t CARD_GAME_NO_EFFECT = UINT32_MAX;
 
 enum card_game_card_type : uint8_t
 {

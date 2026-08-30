@@ -262,3 +262,33 @@ FT_TEST(test_card_game_engine_rolls_back_turn_when_event_effect_fails)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_engine_accepts_cards_without_effects)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    uint32_t board_count;
+
+    rules.max_board_spaces = 2U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 10U;
+    definition.card_id = 123U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 1U;
+    definition.attack = 2;
+    definition.health = 3;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 123U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(0U, &board_count));
+    FT_ASSERT_EQ(1U, board_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

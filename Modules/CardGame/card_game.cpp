@@ -154,7 +154,8 @@ int32_t card_game_engine::register_card(
     card_game_card_definition *existing;
 
     if (this->_initialised_state != 2U || definition.card_id == 0U
-        || definition.effect_id >= this->_effect_count
+        || (definition.effect_id != CARD_GAME_NO_EFFECT
+            && definition.effect_id >= this->_effect_count)
         || this->_card_count >= FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->find_card(definition.card_id, &existing) == FT_ERR_SUCCESS)
@@ -335,7 +336,8 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     this->_instances[player_id][instance_index].on_board = FT_TRUE;
     this->_board_count[player_id] += 1U;
     this->_state_sequence += 1U;
-    if (definition->effect_id < this->_effect_count
+    if (definition->effect_id != CARD_GAME_NO_EFFECT
+        && definition->effect_id < this->_effect_count
         && this->_effect_callbacks[definition->effect_id] != ft_nullptr)
     {
         card_game_operation_buffer operations;
@@ -380,7 +382,8 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         }
         return (FT_ERR_SUCCESS);
     }
-    if (definition->effect_id < this->_effect_count
+    if (definition->effect_id != CARD_GAME_NO_EFFECT
+        && definition->effect_id < this->_effect_count
         && this->_effects[definition->effect_id] != ft_nullptr)
     {
         effect_error = this->_effects[definition->effect_id](*this,
