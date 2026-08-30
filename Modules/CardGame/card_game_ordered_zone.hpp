@@ -2,7 +2,9 @@
 # define CARD_GAME_ORDERED_ZONE_HPP
 
 # include <cstdint>
-# include "card_game.hpp"
+# include "../Basic/basic.hpp"
+# include "../Errno/errno.hpp"
+# include "card_game_limits.hpp"
 
 class card_game_ordered_zone
 {

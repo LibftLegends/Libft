@@ -117,6 +117,27 @@ int32_t networking_crypto_backend::move(networking_crypto_backend &other) noexce
     return (FT_ERR_SUCCESS);
 }
 
+int32_t networking_crypto_backend::swap(
+    networking_crypto_backend &other) noexcept
+{
+    uint8_t temporary_key[sizeof(this->_encryption_key)];
+    uint8_t temporary_state;
+
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    ft_memcpy(temporary_key, this->_encryption_key,
+        sizeof(temporary_key));
+    temporary_state = this->_initialised_state;
+    ft_memcpy(this->_encryption_key, other._encryption_key,
+        sizeof(this->_encryption_key));
+    this->_initialised_state = other._initialised_state;
+    ft_memcpy(other._encryption_key, temporary_key,
+        sizeof(other._encryption_key));
+    other._initialised_state = temporary_state;
+    (void)crypto_secure_wipe(temporary_key, sizeof(temporary_key));
+    return (FT_ERR_SUCCESS);
+}
+
 ft_bool networking_crypto_backend::seal(const uint8_t nonce[12],
     const uint8_t *associated_data, ft_size_t associated_data_length,
     const uint8_t *plaintext, ft_size_t plaintext_length,

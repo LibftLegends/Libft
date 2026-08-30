@@ -81,6 +81,7 @@ static const t_ft_error_string g_error_strings[] =
     {FT_ERR_SYS_MUTEX_UNLOCK_FAILED, "Mutex unlock failed"},
     {FT_ERR_SYS_INTERNAL, "Internal system error"},
     {FT_ERR_NOT_INITIALISED, "Object not initialised"},
+    {FT_ERR_RWLOCK_READER_CAPACITY, "RW-lock reader ownership capacity reached"},
     {FT_ERR_SSL_SYSCALL_ERROR, "SSL system call error"},
     {FT_ERR_HTTP_PROTOCOL_MISMATCH, "HTTP protocol mismatch"},
     {FT_ERR_API_CIRCUIT_OPEN, "API circuit breaker is open"}

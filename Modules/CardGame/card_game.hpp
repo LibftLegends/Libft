@@ -4,8 +4,8 @@
 # include <cstdint>
 # include "../Basic/basic.hpp"
 # include "../Errno/errno.hpp"
+# include "card_game_limits.hpp"
 
-static const uint32_t FT_CARD_GAME_MAX_CARDS = 128U;
 static const uint32_t FT_CARD_GAME_MAX_EFFECTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_PLAYERS = 8U;
 static const uint32_t FT_CARD_GAME_MAX_PHASES = 64U;
@@ -22,6 +22,8 @@ static const uint32_t FT_CARD_GAME_REPLAY_RECORD_BYTES = 56U;
 static const uint32_t FT_CARD_GAME_MAX_REPLAY_BYTES =
     FT_CARD_GAME_REPLAY_HEADER_BYTES
     + (FT_CARD_GAME_MAX_COMMAND_RECORDS * FT_CARD_GAME_REPLAY_RECORD_BYTES);
+
+# include "card_game_ordered_zone.hpp"
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
@@ -151,9 +153,11 @@ struct card_game_effect_context
 struct card_game_player_snapshot
 {
     uint32_t board_count;
+    uint32_t deck_count;
     uint32_t health;
     uint32_t mana;
     uint32_t board[FT_CARD_GAME_MAX_CARDS];
+    uint32_t deck[FT_CARD_GAME_MAX_CARDS];
     card_game_card_instance instances[FT_CARD_GAME_MAX_CARDS];
 };
 
@@ -240,6 +244,7 @@ class card_game_engine
         uint32_t _board[FT_CARD_GAME_MAX_PLAYERS][FT_CARD_GAME_MAX_CARDS];
         card_game_card_instance _instances[FT_CARD_GAME_MAX_PLAYERS][FT_CARD_GAME_MAX_CARDS];
         uint32_t _board_count[FT_CARD_GAME_MAX_PLAYERS];
+        card_game_ordered_zone _decks[FT_CARD_GAME_MAX_PLAYERS];
         uint32_t _health[FT_CARD_GAME_MAX_PLAYERS];
         uint32_t _mana[FT_CARD_GAME_MAX_PLAYERS];
         uint32_t _turn_number;
@@ -258,6 +263,7 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        ft_bool is_card_registered(uint32_t card_id) const noexcept;
         int32_t find_card_type_id(uint32_t card_id,
             uint32_t *type_id) const noexcept;
         uint32_t get_board_capacity() const noexcept;
@@ -301,6 +307,18 @@ class card_game_engine
         int32_t advance_phase() noexcept;
         int32_t get_player_health(uint32_t player_id, uint32_t *health) const noexcept;
         int32_t get_board_count(uint32_t player_id, uint32_t *count) const noexcept;
+        int32_t get_deck_count(uint32_t player_id, uint32_t *count) const noexcept;
+        int32_t deck_push_top(uint32_t player_id, uint32_t card_id) noexcept;
+        int32_t deck_push_bottom(uint32_t player_id, uint32_t card_id) noexcept;
+        int32_t deck_insert_at(uint32_t player_id, uint32_t index,
+            uint32_t card_id) noexcept;
+        int32_t deck_peek_top(uint32_t player_id, uint32_t *card_id) const noexcept;
+        int32_t deck_peek_bottom(uint32_t player_id,
+            uint32_t *card_id) const noexcept;
+        int32_t deck_draw_top(uint32_t player_id, uint32_t *card_id) noexcept;
+        int32_t deck_draw_bottom(uint32_t player_id, uint32_t *card_id) noexcept;
+        int32_t deck_remove(uint32_t player_id, uint32_t card_id) noexcept;
+        int32_t shuffle_deck(uint32_t player_id, uint64_t *random_state) noexcept;
         int32_t get_turn(uint32_t *turn_number, uint32_t *active_player) const noexcept;
         int32_t get_instance(uint32_t player_id, uint32_t index,
             card_game_card_instance *instance) const noexcept;

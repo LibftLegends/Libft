@@ -14,9 +14,27 @@ struct s_pt_rwlock_tls_read_lock
     ft_bool fast_path;
 };
 
-static thread_local s_pt_rwlock_tls_read_lock
-    g_pt_rwlock_tls_read_locks[PT_RWLOCK_TLS_READ_LOCK_CAPACITY];
-static thread_local uint32_t g_pt_rwlock_tls_read_lock_count = 0U;
+struct s_pt_rwlock_tls_state
+{
+    s_pt_rwlock_tls_read_lock inline_locks[PT_RWLOCK_TLS_READ_LOCK_CAPACITY];
+    uint32_t lock_count;
+    pt_buffer<s_pt_rwlock_tls_read_lock> spill_locks;
+
+    s_pt_rwlock_tls_state() noexcept : inline_locks(), lock_count(0U),
+        spill_locks()
+    {
+        pt_buffer_init(this->spill_locks);
+        return ;
+    }
+
+    ~s_pt_rwlock_tls_state() noexcept
+    {
+        pt_buffer_destroy(this->spill_locks);
+        return ;
+    }
+};
+
+static thread_local s_pt_rwlock_tls_state g_pt_rwlock_tls_state;
 
 static int pt_rwlock_strategy_lock_mutex(t_pt_rwlock *rwlock);
 static int pt_rwlock_strategy_unlock_mutex(t_pt_rwlock *rwlock);
@@ -40,9 +58,19 @@ static int pt_rwlock_tls_has_read_lock(const t_pt_rwlock *rwlock,
     uint32_t index;
 
     index = 0U;
-    while (index < g_pt_rwlock_tls_read_lock_count)
+    while (index < g_pt_rwlock_tls_state.lock_count)
     {
-        if (g_pt_rwlock_tls_read_locks[index].rwlock == rwlock)
+        if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+        {
+            if (g_pt_rwlock_tls_state.inline_locks[index].rwlock == rwlock)
+            {
+                if (lock_index != ft_nullptr)
+                    *lock_index = index;
+                return (FT_TRUE);
+            }
+        }
+        else if (g_pt_rwlock_tls_state.spill_locks.data[
+                index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].rwlock == rwlock)
         {
             if (lock_index != ft_nullptr)
                 *lock_index = index;
@@ -56,13 +84,25 @@ static int pt_rwlock_tls_has_read_lock(const t_pt_rwlock *rwlock,
 static int pt_rwlock_tls_add_read_lock(t_pt_rwlock *rwlock,
     ft_bool fast_path)
 {
-    if (g_pt_rwlock_tls_read_lock_count
-        >= PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-        return (FT_ERR_NO_MEMORY);
-    g_pt_rwlock_tls_read_locks[g_pt_rwlock_tls_read_lock_count].rwlock = rwlock;
-    g_pt_rwlock_tls_read_locks[g_pt_rwlock_tls_read_lock_count].fast_path =
-        fast_path;
-    g_pt_rwlock_tls_read_lock_count += 1U;
+    s_pt_rwlock_tls_read_lock entry;
+    int32_t error_code;
+
+    entry.rwlock = rwlock;
+    entry.fast_path = fast_path;
+    if (g_pt_rwlock_tls_state.lock_count
+        < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+    {
+        g_pt_rwlock_tls_state.inline_locks[
+            g_pt_rwlock_tls_state.lock_count] = entry;
+    }
+    else
+    {
+        error_code = pt_buffer_push(g_pt_rwlock_tls_state.spill_locks,
+            entry);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    g_pt_rwlock_tls_state.lock_count += 1U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -72,24 +112,52 @@ static ft_bool pt_rwlock_tls_remove_read_lock(t_pt_rwlock *rwlock,
     uint32_t index;
 
     index = 0U;
-    while (index < g_pt_rwlock_tls_read_lock_count)
+    while (index < g_pt_rwlock_tls_state.lock_count)
     {
-        if (g_pt_rwlock_tls_read_locks[index].rwlock == rwlock)
+        if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
         {
-            if (fast_path != ft_nullptr)
-                *fast_path = g_pt_rwlock_tls_read_locks[index].fast_path;
-            g_pt_rwlock_tls_read_lock_count -= 1U;
-            while (index < g_pt_rwlock_tls_read_lock_count)
+            if (g_pt_rwlock_tls_state.inline_locks[index].rwlock != rwlock)
             {
-                g_pt_rwlock_tls_read_locks[index] =
-                    g_pt_rwlock_tls_read_locks[index + 1U];
                 index += 1U;
+                continue;
             }
-            g_pt_rwlock_tls_read_locks[g_pt_rwlock_tls_read_lock_count].rwlock =
-                ft_nullptr;
-            return (FT_TRUE);
         }
-        index += 1U;
+        else if (g_pt_rwlock_tls_state.spill_locks.data[
+                index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].rwlock != rwlock)
+        {
+            index += 1U;
+            continue;
+        }
+        if (fast_path != ft_nullptr)
+        {
+            if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+                *fast_path = g_pt_rwlock_tls_state.inline_locks[index].fast_path;
+            else
+                *fast_path = g_pt_rwlock_tls_state.spill_locks.data[
+                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].fast_path;
+        }
+        while (index + 1U < g_pt_rwlock_tls_state.lock_count)
+        {
+            if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+            {
+                if (index + 1U < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+                    g_pt_rwlock_tls_state.inline_locks[index] =
+                        g_pt_rwlock_tls_state.inline_locks[index + 1U];
+                else
+                    g_pt_rwlock_tls_state.inline_locks[index] =
+                        g_pt_rwlock_tls_state.spill_locks.data[0U];
+            }
+            else
+                g_pt_rwlock_tls_state.spill_locks.data[
+                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY] =
+                    g_pt_rwlock_tls_state.spill_locks.data[
+                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY + 1U];
+            index += 1U;
+        }
+        g_pt_rwlock_tls_state.lock_count -= 1U;
+        if (g_pt_rwlock_tls_state.spill_locks.size > 0U)
+            g_pt_rwlock_tls_state.spill_locks.size -= 1U;
+        return (FT_TRUE);
     }
     return (FT_FALSE);
 }
@@ -795,7 +863,11 @@ int32_t pt_rwlock_strategy_rdunlock(t_pt_rwlock *rwlock)
     if (pt_rwlock_tls_has_read_lock(rwlock, &lock_index) == FT_FALSE)
         return (pt_rwlock_strategy_report_result(rwlock,
                 FT_ERR_MUTEX_NOT_OWNER, FT_ERR_MUTEX_NOT_OWNER));
-    fast_path = g_pt_rwlock_tls_read_locks[lock_index].fast_path;
+    if (lock_index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+        fast_path = g_pt_rwlock_tls_state.inline_locks[lock_index].fast_path;
+    else
+        fast_path = g_pt_rwlock_tls_state.spill_locks.data[
+            lock_index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].fast_path;
     if (fast_path == FT_TRUE)
     {
         (void)pt_rwlock_tls_remove_read_lock(rwlock, ft_nullptr);

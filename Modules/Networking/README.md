@@ -96,7 +96,9 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `networking_secure_channel.hpp` - Encrypted channel wrapper with packet
   number-derived nonces, authenticated headers, and a replay window.
   Applications must provide key material; the message transport enables
-  encryption by default and does not silently downgrade to plaintext.
+  encryption by default and does not silently downgrade to plaintext. Key
+  epoch rotation prepares replacement directional backends before committing,
+  so preparation failures leave the prior channel usable.
 - `networking_handshake.hpp` - Canonical client/server hello exchange,
   transcript-bound directional key derivation, Finished MAC verification,
   address-bound retry cookies, stateless retry challenges, and bounded

@@ -138,8 +138,9 @@ card_game_engine::card_game_engine() noexcept
       _phases(), _phase_count(0U), _zones(), _zone_count(0U),
       _current_phase_id(0U), _events(),
       _event_count(0U), _event_sequence(0U), _card_count(0U),
-      _effect_count(0U), _board(), _instances(), _board_count(), _health(),
-      _mana(), _turn_number(0U), _active_player(0U), _player_count(0U),
+      _effect_count(0U), _board(), _instances(), _board_count(), _decks(),
+      _health(), _mana(), _turn_number(0U), _active_player(0U),
+      _player_count(0U),
       _state_sequence(0U), _last_command_sequence(0U), _command_records(),
       _command_record_count(0U)
 {
@@ -154,6 +155,9 @@ card_game_engine::~card_game_engine() noexcept
 
 int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
 {
+    uint32_t deck_index;
+    int32_t deck_error;
+
     if (this->_initialised_state == 2U)
         return (FT_ERR_ALREADY_INITIALISED);
     if (rules.max_board_spaces == 0U || rules.max_board_spaces
@@ -161,6 +165,23 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         || rules.max_turns == 0U || rules.max_mana == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     this->_rules = rules;
+    deck_index = 0U;
+    while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        deck_error = this->_decks[deck_index].initialize(
+            FT_CARD_GAME_MAX_CARDS, FT_TRUE);
+        if (deck_error != FT_ERR_SUCCESS)
+        {
+            while (deck_index > 0U)
+            {
+                deck_index -= 1U;
+                (void)this->_decks[deck_index].destroy();
+            }
+            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            return (deck_error);
+        }
+        deck_index += 1U;
+    }
     this->_card_count = 0U;
     this->_card_type_count = 0U;
     this->_effect_count = 0U;
@@ -179,14 +200,24 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
 
 int32_t card_game_engine::destroy() noexcept
 {
+    uint32_t deck_index;
+
     if (this->_initialised_state != 2U)
         return (FT_ERR_SUCCESS);
+    deck_index = 0U;
+    while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        (void)this->_decks[deck_index].destroy();
+        deck_index += 1U;
+    }
     this->_initialised_state = 1U;
     return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_engine::move(card_game_engine &other) noexcept
 {
+    uint32_t deck_index;
+
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != 2U)
@@ -212,6 +243,14 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     ft_memcpy(this->_instances, other._instances, sizeof(this->_instances));
     ft_memcpy(this->_board_count, other._board_count, sizeof(this->_board_count));
     ft_memcpy(this->_health, other._health, sizeof(this->_health));
+    deck_index = 0U;
+    while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        if (this->_decks[deck_index].move(other._decks[deck_index])
+            != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        deck_index += 1U;
+    }
     ft_memcpy(this->_mana, other._mana, sizeof(this->_mana));
     this->_card_count = other._card_count;
     this->_card_type_count = other._card_type_count;
@@ -252,6 +291,20 @@ int32_t card_game_engine::find_card(uint32_t card_id,
         index += 1U;
     }
     return (FT_ERR_NOT_FOUND);
+}
+
+ft_bool card_game_engine::is_card_registered(uint32_t card_id) const noexcept
+{
+    uint32_t index;
+
+    index = 0U;
+    while (index < this->_card_count)
+    {
+        if (this->_cards[index].card_id == card_id)
+            return (FT_TRUE);
+        index += 1U;
+    }
+    return (FT_FALSE);
 }
 
 int32_t card_game_engine::find_card_type_id(uint32_t card_id,
@@ -503,6 +556,8 @@ int32_t card_game_engine::start_match(uint32_t player_count) noexcept
     while (index < player_count)
     {
         this->_board_count[index] = 0U;
+        if (this->_decks[index].clear() != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
         this->_health[index] = this->_rules.starting_health;
         this->_mana[index] = this->_rules.starting_mana;
         index += 1U;
@@ -931,6 +986,130 @@ int32_t card_game_engine::get_board_count(uint32_t player_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::get_deck_count(uint32_t player_id,
+    uint32_t *count) const noexcept
+{
+    if (this->_initialised_state != 2U || count == ft_nullptr
+        || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *count = this->_decks[player_id].size();
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_push_top(uint32_t player_id,
+    uint32_t card_id) noexcept
+{
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->is_card_registered(card_id) == FT_FALSE)
+        return (FT_ERR_NOT_FOUND);
+    if (this->_decks[player_id].push_top(card_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_FULL);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_push_bottom(uint32_t player_id,
+    uint32_t card_id) noexcept
+{
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->is_card_registered(card_id) == FT_FALSE)
+        return (FT_ERR_NOT_FOUND);
+    if (this->_decks[player_id].push_bottom(card_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_FULL);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_insert_at(uint32_t player_id, uint32_t index,
+    uint32_t card_id) noexcept
+{
+    int32_t insert_error;
+
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->is_card_registered(card_id) == FT_FALSE)
+        return (FT_ERR_NOT_FOUND);
+    insert_error = this->_decks[player_id].insert_at(index, card_id);
+    if (insert_error != FT_ERR_SUCCESS)
+        return (insert_error);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_peek_top(uint32_t player_id,
+    uint32_t *card_id) const noexcept
+{
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (this->_decks[player_id].peek_top(card_id));
+}
+
+int32_t card_game_engine::deck_peek_bottom(uint32_t player_id,
+    uint32_t *card_id) const noexcept
+{
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (this->_decks[player_id].peek_bottom(card_id));
+}
+
+int32_t card_game_engine::deck_draw_top(uint32_t player_id,
+    uint32_t *card_id) noexcept
+{
+    int32_t draw_error;
+
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    draw_error = this->_decks[player_id].pop_top(card_id);
+    if (draw_error != FT_ERR_SUCCESS)
+        return (draw_error);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_draw_bottom(uint32_t player_id,
+    uint32_t *card_id) noexcept
+{
+    int32_t draw_error;
+
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    draw_error = this->_decks[player_id].pop_bottom(card_id);
+    if (draw_error != FT_ERR_SUCCESS)
+        return (draw_error);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::deck_remove(uint32_t player_id,
+    uint32_t card_id) noexcept
+{
+    int32_t remove_error;
+
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    remove_error = this->_decks[player_id].remove_instance(card_id);
+    if (remove_error != FT_ERR_SUCCESS)
+        return (remove_error);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::shuffle_deck(uint32_t player_id,
+    uint64_t *random_state) noexcept
+{
+    int32_t shuffle_error;
+
+    if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    shuffle_error = this->_decks[player_id].shuffle(random_state);
+    if (shuffle_error != FT_ERR_SUCCESS)
+        return (shuffle_error);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::get_turn(uint32_t *turn_number,
     uint32_t *active_player) const noexcept
 {
@@ -962,6 +1141,8 @@ static int32_t card_game_validate_player_snapshot(
     if (player.board_count > max_board_spaces
         || player.board_count > FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (player.deck_count > FT_CARD_GAME_MAX_CARDS)
+        return (FT_ERR_INVALID_ARGUMENT);
     index = 0U;
     while (index < player.board_count)
     {
@@ -974,19 +1155,31 @@ static int32_t card_game_validate_player_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
-static void card_game_copy_player_snapshot(
+static int32_t card_game_copy_player_snapshot(
     card_game_player_snapshot *destination, const uint32_t *board,
     const card_game_card_instance *instances, uint32_t board_count,
-    uint32_t health, uint32_t mana) noexcept
+    const card_game_ordered_zone &deck, uint32_t health,
+    uint32_t mana) noexcept
 {
+    uint32_t deck_index;
+
     ft_memcpy(destination->board, board,
         sizeof(destination->board));
     ft_memcpy(destination->instances, instances,
         sizeof(destination->instances));
     destination->board_count = board_count;
+    destination->deck_count = deck.size();
+    deck_index = 0U;
+    while (deck_index < destination->deck_count)
+    {
+        if (deck.get(deck_index, &destination->deck[deck_index])
+            != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        deck_index += 1U;
+    }
     destination->health = health;
     destination->mana = mana;
-    return ;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_engine::get_snapshot(
@@ -1009,10 +1202,12 @@ int32_t card_game_engine::get_snapshot(
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
-        card_game_copy_player_snapshot(&snapshot->players[player_id],
+        if (card_game_copy_player_snapshot(&snapshot->players[player_id],
             this->_board[player_id], this->_instances[player_id],
-            this->_board_count[player_id], this->_health[player_id],
-            this->_mana[player_id]);
+            this->_board_count[player_id], this->_decks[player_id],
+            this->_health[player_id], this->_mana[player_id])
+            != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
         player_id += 1U;
     }
     return (FT_ERR_SUCCESS);
@@ -1096,6 +1291,7 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
     uint32_t player_id;
     uint32_t event_index;
     uint32_t board_index;
+    uint32_t deck_index;
 
     if (this->_initialised_state != 2U || hash == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -1129,6 +1325,8 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
         card_game_hash_u32(&calculated_hash,
             snapshot.players[player_id].board_count);
         card_game_hash_u32(&calculated_hash,
+            snapshot.players[player_id].deck_count);
+        card_game_hash_u32(&calculated_hash,
             snapshot.players[player_id].health);
         card_game_hash_u32(&calculated_hash,
             snapshot.players[player_id].mana);
@@ -1141,6 +1339,13 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
                 snapshot.players[player_id].instances[board_index]);
             board_index += 1U;
         }
+        deck_index = 0U;
+        while (deck_index < snapshot.players[player_id].deck_count)
+        {
+            card_game_hash_u32(&calculated_hash,
+                snapshot.players[player_id].deck[deck_index]);
+            deck_index += 1U;
+        }
         player_id += 1U;
     }
     *hash = calculated_hash;
@@ -1152,6 +1357,7 @@ int32_t card_game_engine::apply_snapshot(
 {
     uint32_t player_id;
     uint32_t phase_index;
+    uint32_t deck_index;
     ft_bool phase_found;
 
     if (this->_initialised_state != 2U
@@ -1189,6 +1395,14 @@ int32_t card_game_engine::apply_snapshot(
             || card_game_validate_player_snapshot(snapshot.players[player_id],
                 player_id, this->_rules.max_board_spaces) != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_ARGUMENT);
+        deck_index = 0U;
+        while (deck_index < snapshot.players[player_id].deck_count)
+        {
+            if (this->is_card_registered(
+                    snapshot.players[player_id].deck[deck_index]) == FT_FALSE)
+                return (FT_ERR_NOT_FOUND);
+            deck_index += 1U;
+        }
         player_id += 1U;
     }
     this->_player_count = snapshot.player_count;
@@ -1207,6 +1421,17 @@ int32_t card_game_engine::apply_snapshot(
             snapshot.players[player_id].instances,
             sizeof(this->_instances[player_id]));
         this->_board_count[player_id] = snapshot.players[player_id].board_count;
+        if (this->_decks[player_id].clear() != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        deck_index = 0U;
+        while (deck_index < snapshot.players[player_id].deck_count)
+        {
+            if (this->_decks[player_id].push_bottom(
+                    snapshot.players[player_id].deck[deck_index])
+                != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            deck_index += 1U;
+        }
         this->_health[player_id] = snapshot.players[player_id].health;
         this->_mana[player_id] = snapshot.players[player_id].mana;
         player_id += 1U;
@@ -1266,6 +1491,7 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
 int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
 {
     uint32_t player_id;
+    uint32_t deck_index;
 
     if (this->_initialised_state != 2U
         || delta.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
@@ -1290,6 +1516,14 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
                     player_id, this->_rules.max_board_spaces)
                     != FT_ERR_SUCCESS))
             return (FT_ERR_INVALID_ARGUMENT);
+        deck_index = 0U;
+        while (deck_index < delta.players[player_id].deck_count)
+        {
+            if (this->is_card_registered(
+                    delta.players[player_id].deck[deck_index]) == FT_FALSE)
+                return (FT_ERR_NOT_FOUND);
+            deck_index += 1U;
+        }
         player_id += 1U;
     }
     if (delta.global_state_changed != FT_FALSE)
@@ -1313,6 +1547,17 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
                 delta.players[player_id].instances,
                 sizeof(this->_instances[player_id]));
             this->_board_count[player_id] = delta.players[player_id].board_count;
+            if (this->_decks[player_id].clear() != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            deck_index = 0U;
+            while (deck_index < delta.players[player_id].deck_count)
+            {
+                if (this->_decks[player_id].push_bottom(
+                        delta.players[player_id].deck[deck_index])
+                    != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_STATE);
+                deck_index += 1U;
+            }
             this->_health[player_id] = delta.players[player_id].health;
             this->_mana[player_id] = delta.players[player_id].mana;
         }

@@ -58,3 +58,10 @@ piles. It supports top/bottom/index insertion, peeking, removal, duplicate
 policy, capacity enforcement, and deterministic seeded Fisher-Yates shuffles.
 The container stores stable card-instance IDs rather than pointers and returns
 without mutation when an operation is rejected.
+
+`card_game_engine` exposes the same deck operations per player through
+`deck_push_top`, `deck_push_bottom`, `deck_insert_at`, `deck_peek_top`,
+`deck_peek_bottom`, `deck_draw_top`, `deck_draw_bottom`, `deck_remove`, and
+`shuffle_deck`. Deck order is part of snapshots, authoritative deltas, and
+state hashes, so a replicated match preserves the exact order rather than only
+the set of cards.

@@ -44,4 +44,9 @@ new code; the generic unlock function remains only for compatibility.
 The direct `pt_rwlock_*` functions around native `pthread_rwlock_t` remain
 compatibility wrappers and do not promise deterministic writer FIFO ordering.
 
+The optimized strategy keeps a 64-entry inline reader-ownership cache per
+thread and transparently spills additional distinct held locks into a Libft
+buffer. The cache size is not a public lock-count limit; spill allocation
+failure leaves admission and ownership state unchanged.
+
 Higher-level thread orchestration, cancellation, task scheduling, RAII lock helpers, and the `pt_errno_guard` compatibility wrapper now live in the separate `Threading` module. `PThread` keeps compatibility exemptions for native pthread types and legacy method names because this module is the primitive layer used by higher-level lifecycle classes.

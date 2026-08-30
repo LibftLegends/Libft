@@ -52,6 +52,7 @@ class networking_crypto_backend
         int32_t wipe(void *data, ft_size_t length) noexcept;
         int32_t destroy() noexcept;
         int32_t move(networking_crypto_backend &other) noexcept;
+        int32_t swap(networking_crypto_backend &other) noexcept;
         ft_bool seal(const uint8_t nonce[12], const uint8_t *associated_data,
             ft_size_t associated_data_length, const uint8_t *plaintext,
             ft_size_t plaintext_length, ft_vector<uint8_t> &ciphertext,

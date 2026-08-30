@@ -71,6 +71,7 @@ This registry enumerates every error code defined in [`Errno/errno.hpp`](errno.h
 | `FT_ERR_SYS_MUTEX_NOT_OWNER` | 64 | System mutex unlock attempted by non-owner. | Errno module (mutex wrappers) |
 | `FT_ERR_SYS_MUTEX_UNLOCK_FAILED` | 65 | System mutex unlock failed. | Errno module (mutex wrappers) |
 | `FT_ERR_SYS_INTERNAL` | 66 | Internal system error. | Errno module (system wrappers) |
+| `FT_ERR_RWLOCK_READER_CAPACITY` | 74 | Thread-local RW-lock reader ownership capacity reached. | PThread optimized RW-lock |
 | `FT_ERR_SSL_SYSCALL_ERROR` | 2005 | SSL syscall failure propagated from platform `errno`. | Networking TLS wrappers |
 | `FT_ERR_HTTP_PROTOCOL_MISMATCH` | 2006 | Server replied with a different HTTP version than requested. | API HTTP clients |
 | `FT_ERR_API_CIRCUIT_OPEN` | 2007 | API circuit breaker prevented request execution. | API HTTP clients |

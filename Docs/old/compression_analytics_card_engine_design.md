@@ -1458,6 +1458,168 @@ construction, bridge migration, and Lua deletion into one change.
 - Full CI and relevant sanitizer, fuzz, failure-injection, lifecycle, clean, and
   incremental build suites pass after the Lua module is physically removed.
 
+# Part V: Secure-channel and RW-lock hardening
+
+This section records the follow-up review of the secure channel and optimized
+custom RW-lock. These items are implementation requirements, not optional
+cleanup. The common rule is that cryptographic state, ownership state, and lock
+admission state must never be published partially when a fallible operation
+fails.
+
+## Findings confirmed against the current implementation
+
+| Area | Current behavior | Required disposition |
+| --- | --- | --- |
+| Send key rotation | Derives the new material, destroys the live backend, then initializes the replacement | Fix transactionally before relying on rotation for recovery |
+| Combined key rotation | Destroys both live backends before initializing replacements; one backend can be new while public metadata is old | Fix as one all-or-nothing commit |
+| Receive key rotation | Publishes previous-key fields before the new current backend is known to be usable | Prepare both backend objects and all metadata privately |
+| Channel move | Copies metadata and moves backends sequentially; a later move failure leaves partial ownership | Make move prevalidated/infallible or commit through a complete temporary state |
+| RW-lock reader ownership | Fixed TLS array rejects the 65th distinct held lock with `FT_ERR_NO_MEMORY` | Document and replace with a distinct capacity result plus a spill strategy |
+| Cancelled writer tickets | Repeatedly scans and erases a buffer, shifting entries | Add contention benchmarks; replace with ordered/indexed cancellation if measurable |
+
+The current crypto backend's `destroy()` is effectively infallible, but the
+rotation contract must not depend on that forever. Failure injection must cover
+derive, temporary initialization, old-backend retirement, and move/ownership
+steps. A retirement failure must have an explicitly defined result: either the
+old backend remains owned and usable, or the operation returns success only
+after ownership has been safely transferred to a deferred-retirement object.
+
+## Transactional key rotation
+
+All key-update APIs must preserve this invariant on every non-success return:
+
+```text
+current send backend + send key + send IV + send epoch remain usable
+current receive backend + receive key + receive IV + receive epoch remain usable
+previous receive backend and replay metadata remain exactly as before
+packet counters and replay windows are unchanged
+```
+
+For `update_send_key_epoch(next_epoch)`:
+
+1. Validate initialization and strictly increasing epoch without changing state.
+2. Derive the next key and IV into local wiped buffers.
+3. Initialize a separate temporary crypto backend with the derived key.
+4. If either step fails, wipe temporary material and return while leaving the
+   current backend untouched.
+5. Commit the temporary backend, key, IV, epoch, and send packet-window reset as
+   one internal state transition. The old backend becomes a retirement object.
+6. Destroy the retired backend only after the new backend is owned by the
+   channel. If retirement can report failure, retain it for safe deferred
+   cleanup and report that condition without invalidating the new channel.
+7. Wipe all temporary key and IV buffers on every path, including allocation,
+   initialization, commit, and test-injection failures.
+
+For `update_receive_key_epoch(next_epoch)`, prepare both of these before
+publishing any previous-key fields:
+
+```text
+temporary previous backend = current receive key
+temporary current backend  = derived next receive key
+temporary previous metadata = current key/IV/epoch/replay window
+temporary current metadata  = next key/IV/epoch/empty replay window
+```
+
+Only after both backends initialize successfully may the channel commit the
+new current backend and the previous backend together. A failed update must not
+set `_has_previous_receive_key`, change previous epochs, destroy the current
+backend, or reset the current replay window. `clear_previous_receive_key()`
+must remain independently safe after a successful rotation.
+
+For `update_key_epoch(next_epoch)`, use one preparation object containing both
+directional backends and all directional metadata. Do not implement it as two
+independent public updates: the send and receive halves must either both move
+to the new epoch or neither does. If send preparation succeeds but receive
+preparation fails, destroy only the temporary send backend and prove that the
+old channel still seals and opens a packet.
+
+The implementation should use a private temporary-state helper or an explicit
+transaction structure. It must not use exceptions for rollback. Every helper
+returns a Libft error code, and tests must check each meaningful return rather
+than casting it to `void`.
+
+## Transactional channel move
+
+`networking_secure_channel::move()` must not destroy the destination or mutate
+the source until a complete destination state is available. Preferred order:
+
+1. Validate that the source is initialized and that all required source
+   backends are present and internally initialized.
+2. Construct a temporary channel state and transfer/copy every key, IV, epoch,
+   replay window, packet counter, and presence flag into it.
+3. Transfer all required backends into the temporary state. Backend transfer
+   should be made infallible after validation, or expose a non-destructive
+   `prepare_move`/swap operation. A fallible operation must not consume its
+   source on failure.
+4. Commit the complete temporary state into the destination.
+5. Wipe and destroy the old destination only after commit, then mark the source
+   destroyed in one final step.
+
+If the existing backend API cannot support this safely, add a backend swap or
+non-consuming clone of initialized key state rather than attempting three
+sequential destructive moves. The channel must satisfy: after any injected
+failure, either the original source remains fully usable or the destination is
+fully usable; never split send/receive/previous-receive ownership between them.
+
+## Required secure-channel tests
+
+Add test-only, release-compiled-out failure controls with named stages rather
+than byte/allocation counting. Cover every derive, temporary backend initialize,
+retirement/destroy, backend move, and commit stage for send-only, receive-only,
+and combined rotation. For each injected failure:
+
+- assert the exact returned error;
+- assert send and receive epochs and previous-key visibility are unchanged;
+- seal with the old sender and open with the old receiver;
+- verify packet counters and replay acceptance are unchanged;
+- retry the same rotation without failure and verify the new epoch works;
+- verify all secret buffers and temporary backends are cleaned up.
+
+For receive rotation, test old-epoch packets during the permitted previous-key
+window, then test `clear_previous_receive_key()`. For moves, inject failure at
+each backend transfer and test both source and destination from independent
+seal/open directions. Run these tests under ASan, UBSan, TSan, and CMA failure
+injection on Linux, macOS, and Windows. Release archive checks must prove that
+failure hooks and test symbols are absent when `LIBFT_TEST_BUILD` is disabled.
+
+## RW-lock ownership capacity and cancellation
+
+The optimized reader path now stores entries in a 64-entry inline thread-local
+cache and spills additional distinct locks into a Libft-backed thread-local
+buffer. The inline size is therefore only a fast-path cache size, not a public
+ownership ceiling. Spill allocation failure must be reported distinctly from a
+cache-capacity condition, leave the lock unacquired, and preserve writer
+admission invariants. `FT_ERR_RWLOCK_READER_CAPACITY` remains reserved for a
+future genuinely bounded configuration; ordinary spill allocation failures
+continue to use the appropriate memory error.
+
+Required tests hold 63, 64, and 65 distinct read locks on one thread, then test
+read unlock, writer progress, duplicate/nested acquisition policy, and cleanup
+after a failed admission. Repeat with mixed fast-path and normal-path locks.
+The implemented inline-cache-plus-spill design must be extended with explicit
+spill allocation-failure injection. That failure must be reported without
+incrementing the fast-reader count or leaving an ownership entry behind.
+
+For cancelled writers, add deterministic stress tests and benchmarks with
+hundreds and thousands of timed-out tickets, cancellations at the head/middle/
+tail of the queue, ticket wraparound, and concurrent reader admission. Assert
+that every live writer eventually progresses, cancelled tickets never acquire,
+and queue state returns to its zero-ticket baseline. Measure cancellation and
+unlock latency separately from ordinary uncontended read/write latency. If the
+linear scan/erase becomes visible, replace it with ordered cancellation tickets
+or a ticket-indexed structure while preserving FIFO writer semantics and
+transactional allocation failure behavior.
+
+## Review gates
+
+Do not mark secure-channel rotation complete until failure-injection tests prove
+old-state usability after every failed preparation step. Do not mark the RW-lock
+optimization complete until the capacity contract is explicit, the 65-lock case
+has defined behavior, and cancellation-heavy benchmarks show no unacceptable
+queue degradation. Keep all diagnostics, fault hooks, and stress-only controls
+behind test/build feature definitions so ordinary release archives contain no
+tester-only instrumentation.
+
 # Delivery order and review gates
 
 Recommended order:
