@@ -19,3 +19,7 @@ they need:
 `voxel.hpp` is retained as a compatibility umbrella for consumers that need
 the complete Voxel API. New code should include the narrowest focused header
 that provides its required declarations.
+
+Runtime block assets are loaded only after path validation and are capped at
+`TERRAIN_RUNTIME_MAX_ASSET_SIZE`, currently 4 MiB per face asset, to bound
+filesystem reads and memory use.
