@@ -16,10 +16,12 @@ they need:
   Terrain configuration scripts are normalized and executed by Libft's custom
   Scripting runtime; the bridge no longer routes terrain execution through Lua.
 
-`voxel.hpp` is retained as a compatibility umbrella for consumers that need
-the complete Voxel API. New code should include the narrowest focused header
-that provides its required declarations.
-
 Runtime block assets are loaded only after path validation and are capped at
 `TERRAIN_RUNTIME_MAX_ASSET_SIZE`, currently 4 MiB per face asset, to bound
 filesystem reads and memory use.
+
+Runtime block registry entries can be acquired through
+`terrain_acquire_block(...)` into a `terrain_runtime_block_handle`. The handle
+keeps the block and its loaded asset bytes alive while a registry entry is
+unregistered. Legacy raw-pointer accessors remain borrowed views and must not
+outlive the registry entry.

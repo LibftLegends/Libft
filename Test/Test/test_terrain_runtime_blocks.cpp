@@ -99,4 +99,53 @@ FT_TEST(test_terrain_runtime_block_registration_rejects_missing_asset)
     return (1);
 }
 
+FT_TEST(test_terrain_runtime_block_handle_survives_unregister)
+{
+    terrain_block_registration registration;
+    terrain_runtime_block_handle block_handle;
+    uint32_t block_id;
+    ft_size_t asset_size;
+    const uint8_t *asset_data;
+    uint32_t face_index;
+
+    terrain_runtime_reset_for_tests();
+    registration.name = "test:shared_handle_block";
+    registration.metadata.solid = FT_TRUE;
+    registration.metadata.transparent = FT_FALSE;
+    registration.metadata.liquid = FT_FALSE;
+    registration.metadata.replaceable = FT_FALSE;
+    registration.metadata.can_host_ore = FT_TRUE;
+    registration.metadata.is_ore = FT_FALSE;
+    registration.metadata.light_emitting = FT_FALSE;
+    registration.metadata.occludes_faces = FT_TRUE;
+    registration.metadata.hardness = 1U;
+    registration.metadata.breakable = FT_TRUE;
+    face_index = 0U;
+    while (face_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
+    {
+        registration.asset_paths[face_index] =
+            "Scripting/export_values.asset";
+        face_index += 1U;
+    }
+    block_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_register_block(registration,
+        &block_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_acquire_block(block_id,
+        block_handle));
+    FT_ASSERT_EQ(FT_TRUE, block_handle.is_valid());
+    FT_ASSERT_EQ(block_id, block_handle.get_id());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_unregister_block(block_id));
+    FT_ASSERT_EQ(FT_FALSE, terrain_block_is_known(block_id));
+    FT_ASSERT_EQ(FT_TRUE, block_handle.is_valid());
+    asset_data = block_handle.get_asset_data(
+        TERRAIN_BLOCK_ASSET_FACE_TOP, &asset_size);
+    FT_ASSERT(asset_data != ft_nullptr);
+    FT_ASSERT(asset_size > 0U);
+    FT_ASSERT_EQ(static_cast<uint8_t>('b'), asset_data[0]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, block_handle.destroy());
+    FT_ASSERT_EQ(FT_FALSE, block_handle.is_valid());
+    terrain_runtime_reset_for_tests();
+    return (1);
+}
+
 #endif
