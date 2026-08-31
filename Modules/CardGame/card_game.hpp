@@ -15,6 +15,7 @@ static const uint32_t CARD_GAME_BOARD_ZONE_ID = 1U;
 static const uint32_t FT_CARD_GAME_MAX_EVENTS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = 256U;
 static const uint32_t FT_CARD_GAME_MAX_COMMAND_RECORDS = 256U;
+static const uint32_t FT_CARD_GAME_MAX_MODIFIERS = 256U;
 static const uint32_t FT_CARD_GAME_REPLAY_MAGIC = 0x43475231U;
 static const uint32_t FT_CARD_GAME_REPLAY_VERSION = 1U;
 static const uint32_t FT_CARD_GAME_REPLAY_HEADER_BYTES = 12U;
@@ -63,6 +64,18 @@ enum card_game_card_type : uint8_t
     CARD_GAME_ENCHANTMENT = 3U
 };
 
+enum card_game_modifier_duration : uint8_t
+{
+    CARD_GAME_MODIFIER_PERMANENT = 0U,
+    CARD_GAME_MODIFIER_UNTIL_END_TURN = 1U
+};
+
+enum card_game_combat_mode : uint8_t
+{
+    CARD_GAME_COMBAT_ORDERED = 0U,
+    CARD_GAME_COMBAT_SIMULTANEOUS = 1U
+};
+
 struct card_game_card_type_definition
 {
     uint32_t type_id;
@@ -98,13 +111,33 @@ struct card_game_card_definition
     uint32_t effect_id;
 };
 
+struct card_game_deck_card
+{
+    uint32_t instance_id;
+    uint32_t card_id;
+};
+
 struct card_game_card_instance
 {
     uint32_t definition_id;
     uint32_t owner_id;
     int32_t attack;
     int32_t health;
+    int32_t damage_taken;
     ft_bool on_board;
+};
+
+struct card_game_card_modifier
+{
+    uint32_t modifier_id;
+    uint32_t source_effect_id;
+    uint32_t target_player_id;
+    uint32_t target_instance_index;
+    int32_t attack_delta;
+    int32_t health_delta;
+    card_game_modifier_duration duration;
+    uint32_t created_turn;
+    uint32_t created_phase_id;
 };
 
 enum card_game_operation_type : uint8_t
@@ -158,6 +191,7 @@ struct card_game_player_snapshot
     uint32_t mana;
     uint32_t board[FT_CARD_GAME_MAX_CARDS];
     uint32_t deck[FT_CARD_GAME_MAX_CARDS];
+    uint32_t deck_instance_ids[FT_CARD_GAME_MAX_CARDS];
     card_game_card_instance instances[FT_CARD_GAME_MAX_CARDS];
 };
 
@@ -171,6 +205,8 @@ struct card_game_snapshot
     uint32_t current_phase_id;
     uint32_t event_count;
     uint64_t event_sequence;
+    uint32_t modifier_count;
+    card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     card_game_event events[FT_CARD_GAME_MAX_EVENTS];
     card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
 };
@@ -188,6 +224,8 @@ struct card_game_delta
     uint32_t current_phase_id;
     uint32_t event_count;
     uint64_t event_sequence;
+    uint32_t modifier_count;
+    card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     card_game_event events[FT_CARD_GAME_MAX_EVENTS];
     card_game_player_snapshot players[FT_CARD_GAME_MAX_PLAYERS];
 };
@@ -250,6 +288,10 @@ class card_game_engine
         uint32_t _turn_number;
         uint32_t _active_player;
         uint32_t _player_count;
+        uint32_t _next_deck_instance_id;
+        card_game_card_modifier _modifiers[FT_CARD_GAME_MAX_MODIFIERS];
+        uint32_t _modifier_count;
+        uint32_t _next_modifier_id;
         uint64_t _state_sequence;
         uint64_t _last_command_sequence;
         card_game_command_record _command_records[
@@ -272,6 +314,12 @@ class card_game_engine
             uint32_t type_id) noexcept;
         ft_bool is_command_allowed(uint32_t command_mask) const noexcept;
         int32_t apply_operation(const card_game_operation &operation) noexcept;
+        int32_t allocate_deck_instance_id(uint32_t *instance_id) noexcept;
+        ft_bool deck_instance_exists(uint32_t instance_id) const noexcept;
+        int32_t allocate_modifier_id(uint32_t *modifier_id) noexcept;
+        int32_t expire_turn_modifiers() noexcept;
+        int32_t remove_board_instance(uint32_t player_id,
+            uint32_t instance_index) noexcept;
 
     public:
         card_game_engine() noexcept;
@@ -312,16 +360,46 @@ class card_game_engine
         int32_t deck_push_bottom(uint32_t player_id, uint32_t card_id) noexcept;
         int32_t deck_insert_at(uint32_t player_id, uint32_t index,
             uint32_t card_id) noexcept;
+        int32_t deck_push_top_instance(uint32_t player_id,
+            uint32_t instance_id, uint32_t card_id) noexcept;
+        int32_t deck_push_bottom_instance(uint32_t player_id,
+            uint32_t instance_id, uint32_t card_id) noexcept;
+        int32_t deck_insert_instance_at(uint32_t player_id, uint32_t index,
+            uint32_t instance_id, uint32_t card_id) noexcept;
+        int32_t deck_inspect(uint32_t player_id, uint32_t index,
+            card_game_deck_card *card) const noexcept;
+        int32_t deck_get_instance(uint32_t player_id, uint32_t instance_id,
+            card_game_deck_card *card) const noexcept;
+        int32_t deck_draw_instance(uint32_t player_id, uint32_t instance_id,
+            card_game_deck_card *card) noexcept;
         int32_t deck_peek_top(uint32_t player_id, uint32_t *card_id) const noexcept;
         int32_t deck_peek_bottom(uint32_t player_id,
             uint32_t *card_id) const noexcept;
         int32_t deck_draw_top(uint32_t player_id, uint32_t *card_id) noexcept;
+        int32_t deck_draw_top(uint32_t player_id,
+            card_game_deck_card *card) noexcept;
         int32_t deck_draw_bottom(uint32_t player_id, uint32_t *card_id) noexcept;
         int32_t deck_remove(uint32_t player_id, uint32_t card_id) noexcept;
         int32_t shuffle_deck(uint32_t player_id, uint64_t *random_state) noexcept;
         int32_t get_turn(uint32_t *turn_number, uint32_t *active_player) const noexcept;
+        int32_t get_current_phase(uint32_t *phase_id) const noexcept;
+        int32_t get_phase(uint32_t phase_id,
+            card_game_phase_definition *phase) const noexcept;
         int32_t get_instance(uint32_t player_id, uint32_t index,
             card_game_card_instance *instance) const noexcept;
+        int32_t add_card_modifier(uint32_t player_id, uint32_t instance_index,
+            int32_t attack_delta, int32_t health_delta,
+            card_game_modifier_duration duration, uint32_t source_effect_id,
+            uint32_t *modifier_id) noexcept;
+        int32_t remove_card_modifier(uint32_t modifier_id) noexcept;
+        int32_t get_card_modifier(uint32_t modifier_id,
+            card_game_card_modifier *modifier) const noexcept;
+        int32_t get_effective_instance_stats(uint32_t player_id,
+            uint32_t instance_index, int32_t *attack,
+            int32_t *health) const noexcept;
+        int32_t resolve_combat(uint32_t attacking_player,
+            uint32_t attacker_index, uint32_t defending_player,
+            uint32_t defender_index, card_game_combat_mode mode) noexcept;
         int32_t get_snapshot(card_game_snapshot *snapshot) const noexcept;
         int32_t get_rules_hash(uint64_t *hash) const noexcept;
         int32_t get_state_hash(uint64_t *hash) const noexcept;

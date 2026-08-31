@@ -65,3 +65,22 @@ without mutation when an operation is rejected.
 `shuffle_deck`. Deck order is part of snapshots, authoritative deltas, and
 state hashes, so a replicated match preserves the exact order rather than only
 the set of cards.
+
+Deck entries also expose a unique physical-copy ID through `deck_inspect`,
+`deck_get_instance`, `deck_draw_instance`, and the entry-returning
+`deck_draw_top` overload. Copies with the same definition ID remain distinct
+through shuffle, snapshots, deltas, and replay.
+
+Per-instance stat modifiers are tracked separately from immutable definitions.
+`add_card_modifier`, `get_card_modifier`, `remove_card_modifier`, and
+`get_effective_instance_stats` support permanent and end-of-turn modifiers;
+the modifier records are replicated so expiration remains deterministic.
+
+Turn and phase state is queryable with `get_turn` and `get_current_phase`.
+Games register a phase graph with `register_phase`, inspect definitions with
+`get_phase`, and advance it with `advance_phase`; allowed commands and entry or
+exit events are enforced by the engine.
+
+`resolve_combat` provides deterministic ordered or simultaneous creature
+combat, applies effective stats, handles retaliation and deaths, and commits
+only after the complete transaction succeeds.
