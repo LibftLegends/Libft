@@ -73,3 +73,30 @@ FT_TEST(test_card_game_resolution_stack_enforces_admission_and_capacity)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, deferred.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_resolution_stack_supports_large_configured_capacity)
+{
+    card_game_resolution_stack stack;
+    card_game_resolution_entry entry;
+    uint32_t index;
+    int32_t push_error;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stack.initialize(
+        1024U, CARD_GAME_RESOLUTION_LIFO,
+        CARD_GAME_RESOLUTION_OPEN_CURRENT_BATCH));
+    index = 0U;
+    while (index < 1024U)
+    {
+        push_error = stack.push(
+            static_cast<uint64_t>(index + 1U), index + 1U, 0U, 0U);
+        if (push_error != FT_ERR_SUCCESS)
+            FT_ASSERT_EQ(1024U, index);
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_FULL, stack.push(2048U, 1U, 0U, 0U));
+    FT_ASSERT_EQ(1024U, stack.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stack.pop_next(&entry));
+    FT_ASSERT_EQ(1024U, entry.entry_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stack.destroy());
+    return (1);
+}

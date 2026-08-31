@@ -17,6 +17,9 @@ enum card_game_resolution_admission : uint8_t
     CARD_GAME_RESOLUTION_OPEN_DEFERRED = 2U
 };
 
+static const uint32_t FT_CARD_GAME_MAX_RESOLUTION_ENTRIES =
+    FT_CARD_GAME_MAX_EVENT_RECORDS;
+
 struct card_game_resolution_entry
 {
     uint64_t entry_id;
@@ -37,8 +40,8 @@ class card_game_resolution_stack
         uint64_t _next_sequence;
         uint32_t _count;
         uint32_t _deferred_count;
-        card_game_resolution_entry _entries[FT_CARD_GAME_MAX_OPERATIONS];
-        card_game_resolution_entry _deferred[FT_CARD_GAME_MAX_OPERATIONS];
+        card_game_resolution_entry *_entries;
+        card_game_resolution_entry *_deferred;
 
         card_game_resolution_stack(const card_game_resolution_stack &other) = delete;
         card_game_resolution_stack(card_game_resolution_stack &&other) = delete;

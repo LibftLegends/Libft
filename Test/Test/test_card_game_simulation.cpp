@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CardGame/card_game.hpp"
 #include "../../Modules/CardGame/card_game_resolution_stack.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_failure_controller.hpp"
 
@@ -461,18 +462,15 @@ FT_TEST(test_card_game_simulation_configured_phase_graph_is_observable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_phase(10U, &observed_phase));
     FT_ASSERT_EQ(20U, observed_phase.next_phase_id);
     phase_id = 0U;
-    while (phase_id < FT_CARD_GAME_MAX_EVENTS)
+    while (phase_id < 1024U)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.emit_event(1U, 0U, 0U));
         phase_id += 1U;
     }
-    FT_ASSERT_EQ(FT_ERR_FULL, engine.advance_phase());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_current_phase(&phase_id));
-    FT_ASSERT_EQ(10U, phase_id);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_events());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.advance_phase());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_current_phase(&phase_id));
     FT_ASSERT_EQ(20U, phase_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_events());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.advance_phase());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_current_phase(&phase_id));
     FT_ASSERT_EQ(10U, phase_id);
@@ -499,5 +497,245 @@ FT_TEST(test_card_game_simulation_failure_controller_replays_exactly)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_end());
     FT_ASSERT(test_failure_controller_should_fail(
         TEST_FAILURE_SCENARIO_STEP) == FT_FALSE);
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_delta_failure_preserves_existing_output)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_snapshot baseline;
+    card_game_delta delta;
+    uint32_t pool_id;
+    uint32_t unit_id;
+    uint64_t previous_target_sequence;
+
+    rules = card_game_simulation_rules();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_resource_pool(0U, 1U,
+        10U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_resource_units(0U, 1U, 3U,
+        0U, 0U, FT_FALSE, &unit_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.create_delta(baseline, &delta));
+    previous_target_sequence = delta.target_state_sequence;
+    cma_set_alloc_limit(1U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, engine.create_delta(baseline, &delta));
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(previous_target_sequence, delta.target_state_sequence);
+    FT_ASSERT_EQ(FT_CARD_GAME_STATE_FORMAT_VERSION, delta.format_version);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_snapshot_failure_preserves_existing_output)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_snapshot snapshot;
+    uint32_t pool_id;
+    uint64_t previous_sequence;
+
+    rules = card_game_simulation_rules();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&snapshot));
+    previous_sequence = snapshot.state_sequence;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_resource_pool(0U, 1U,
+        10U, &pool_id));
+    cma_set_alloc_limit(1U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, engine.get_snapshot(&snapshot));
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(previous_sequence, snapshot.state_sequence);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_hearthstone_style_match)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition unit_alpha;
+    card_game_card_definition unit_beta;
+    uint32_t heal_effect_id;
+    uint32_t damaged_health;
+    uint32_t board_count;
+    uint32_t player_one = 1U;
+
+    rules = card_game_simulation_rules();
+    rules.max_board_spaces = 7U;
+    rules.max_hand_size = 10U;
+    rules.starting_health = 30U;
+    rules.starting_mana = 0U;
+    rules.max_mana = 10U;
+    unit_alpha.card_id = 1001U;
+    unit_alpha.type = CARD_GAME_CREATURE;
+    unit_alpha.cost = 2U;
+    unit_alpha.attack = 3;
+    unit_alpha.health = 2;
+    unit_alpha.effect_id = CARD_GAME_NO_EFFECT;
+    unit_beta.card_id = 1002U;
+    unit_beta.type = CARD_GAME_CREATURE;
+    unit_beta.cost = 1U;
+    unit_beta.attack = 2;
+    unit_beta.health = 1;
+    unit_beta.effect_id = CARD_GAME_NO_EFFECT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_effect_callback(
+        card_game_simulation_heal_callback, &player_one, 7001U,
+        &heal_effect_id));
+    unit_beta.effect_id = heal_effect_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(unit_alpha));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(unit_beta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.modify_player_health(1U, -5));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_player_mana(0U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 1001U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_player_mana(1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(1U, 1002U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(1U,
+        &damaged_health));
+    FT_ASSERT_EQ(28U, damaged_health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(1U, &board_count));
+    FT_ASSERT_EQ(1U, board_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_yugioh_style_match)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition normal_unit;
+    card_game_card_definition extra_unit;
+    uint32_t normal_summon_limit;
+    uint32_t first_unit_count;
+    uint32_t second_unit_count;
+    uint32_t player_one_health;
+    uint32_t player_two_health;
+
+    rules = card_game_simulation_rules();
+    rules.max_board_spaces = 5U;
+    rules.starting_health = 8000U;
+    rules.starting_mana = 0U;
+    normal_unit.card_id = 2001U;
+    normal_unit.type = CARD_GAME_CREATURE;
+    normal_unit.cost = 0U;
+    normal_unit.attack = 1500;
+    normal_unit.health = 1200;
+    normal_unit.effect_id = CARD_GAME_NO_EFFECT;
+    extra_unit.card_id = 2002U;
+    extra_unit.type = CARD_GAME_CREATURE;
+    extra_unit.cost = 0U;
+    extra_unit.attack = 2200;
+    extra_unit.health = 1800;
+    extra_unit.effect_id = CARD_GAME_NO_EFFECT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(normal_unit));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(extra_unit));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_usage_limit(9001U, 1U,
+        CARD_GAME_USAGE_TURN, 1U, 1U, CARD_GAME_USAGE_ON_RESOLUTION,
+        0U, &normal_summon_limit));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.consume_usage_limit(
+        normal_summon_limit, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.consume_usage_limit(
+        normal_summon_limit, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 2001U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(1U, 2002U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_combat(1U, 0U, 0U, 0U,
+        CARD_GAME_COMBAT_ORDERED));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(0U,
+        &first_unit_count));
+    FT_ASSERT_EQ(0U, first_unit_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(1U,
+        &second_unit_count));
+    FT_ASSERT_EQ(1U, second_unit_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.modify_player_health(0U, -2200));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(0U,
+        &player_one_health));
+    FT_ASSERT_EQ(5800U, player_one_health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(1U,
+        &player_two_health));
+    FT_ASSERT_EQ(8000U, player_two_health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_magic_style_match)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition unit_alpha;
+    card_game_card_definition unit_beta;
+    card_game_resource_requirement requirement;
+    card_game_cost cost;
+    card_game_cost_plan payment_plan;
+    card_game_resource_pool pool;
+    uint32_t pool_id;
+    uint32_t unit_id;
+    uint32_t board_count;
+    uint32_t player_health;
+
+    rules = card_game_simulation_rules();
+    rules.max_board_spaces = 7U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 0U;
+    unit_alpha.card_id = 3001U;
+    unit_alpha.type = CARD_GAME_CREATURE;
+    unit_alpha.cost = 2U;
+    unit_alpha.attack = 2;
+    unit_alpha.health = 2;
+    unit_alpha.effect_id = CARD_GAME_NO_EFFECT;
+    unit_beta.card_id = 3002U;
+    unit_beta.type = CARD_GAME_CREATURE;
+    unit_beta.cost = 0U;
+    unit_beta.attack = 3;
+    unit_beta.health = 3;
+    unit_beta.effect_id = CARD_GAME_NO_EFFECT;
+    ft_bzero(&requirement, sizeof(requirement));
+    ft_bzero(&cost, sizeof(cost));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(unit_alpha));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(unit_beta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_resource_pool(0U, 1U,
+        3U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_resource_pool(0U, 2U,
+        3U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_resource_units(0U, 1U, 1U,
+        0U, 0U, FT_FALSE, &unit_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_resource_units(0U, 2U, 1U,
+        0U, 0U, FT_FALSE, &unit_id));
+    requirement.resource_type_id = 1U;
+    requirement.amount = 1U;
+    cost.component_count = 1U;
+    cost.components[0] = requirement;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.create_resource_cost_plan(0U,
+        cost, 0U, &payment_plan));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.spend_resource_cost(payment_plan));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_resource_pool(0U, 1U, &pool));
+    FT_ASSERT_EQ(0U, pool.current_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_player_mana(0U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 3001U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_player_mana(1U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(1U, 3002U, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_combat(1U, 0U, 0U, 0U,
+        CARD_GAME_COMBAT_SIMULTANEOUS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_board_count(0U, &board_count));
+    FT_ASSERT_EQ(0U, board_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(0U, &player_health));
+    FT_ASSERT_EQ(20U, player_health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

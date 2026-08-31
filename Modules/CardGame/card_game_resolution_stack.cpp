@@ -2,13 +2,14 @@
 
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno_internal.hpp"
+#include "../CMA/CMA.hpp"
 
 card_game_resolution_stack::card_game_resolution_stack() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _capacity(0U),
       _order(CARD_GAME_RESOLUTION_LIFO),
       _admission(CARD_GAME_RESOLUTION_CLOSED), _resolving(FT_FALSE),
-      _next_sequence(0U), _count(0U), _deferred_count(0U), _entries(),
-      _deferred()
+      _next_sequence(0U), _count(0U), _deferred_count(0U),
+      _entries(ft_nullptr), _deferred(ft_nullptr)
 {
     return ;
 }
@@ -30,13 +31,27 @@ int32_t card_game_resolution_stack::initialize(uint32_t capacity,
             "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    if (capacity == 0U || capacity > FT_CARD_GAME_MAX_OPERATIONS
+    if (capacity == 0U || capacity > FT_CARD_GAME_MAX_RESOLUTION_ENTRIES
         || (order != CARD_GAME_RESOLUTION_LIFO
             && order != CARD_GAME_RESOLUTION_FIFO)
         || (admission != CARD_GAME_RESOLUTION_CLOSED
             && admission != CARD_GAME_RESOLUTION_OPEN_CURRENT_BATCH
             && admission != CARD_GAME_RESOLUTION_OPEN_DEFERRED))
         return (FT_ERR_INVALID_ARGUMENT);
+    this->_entries = static_cast<card_game_resolution_entry *>(cma_malloc(
+        static_cast<ft_size_t>(capacity)
+            * sizeof(card_game_resolution_entry)));
+    if (this->_entries == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    this->_deferred = static_cast<card_game_resolution_entry *>(cma_malloc(
+        static_cast<ft_size_t>(capacity)
+            * sizeof(card_game_resolution_entry)));
+    if (this->_deferred == ft_nullptr)
+    {
+        cma_free(this->_entries);
+        this->_entries = ft_nullptr;
+        return (FT_ERR_NO_MEMORY);
+    }
     this->_capacity = capacity;
     this->_order = order;
     this->_admission = admission;
@@ -56,6 +71,12 @@ int32_t card_game_resolution_stack::destroy() noexcept
     this->_resolving = FT_FALSE;
     this->_count = 0U;
     this->_deferred_count = 0U;
+    if (this->_entries != ft_nullptr)
+        cma_free(this->_entries);
+    if (this->_deferred != ft_nullptr)
+        cma_free(this->_deferred);
+    this->_entries = ft_nullptr;
+    this->_deferred = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -75,9 +96,11 @@ int32_t card_game_resolution_stack::move(
     this->_next_sequence = other._next_sequence;
     this->_count = other._count;
     this->_deferred_count = other._deferred_count;
-    ft_memcpy(this->_entries, other._entries, sizeof(this->_entries));
-    ft_memcpy(this->_deferred, other._deferred, sizeof(this->_deferred));
+    this->_entries = other._entries;
+    this->_deferred = other._deferred;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    other._entries = ft_nullptr;
+    other._deferred = ft_nullptr;
     (void)other.destroy();
     return (FT_ERR_SUCCESS);
 }
