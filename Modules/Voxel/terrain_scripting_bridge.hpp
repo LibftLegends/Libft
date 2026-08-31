@@ -12,7 +12,8 @@ int32_t terrain_script_register_api(game_script_bridge &bridge) noexcept;
 int32_t terrain_script_execute(game_script_bridge &bridge,
     const ft_string &script, game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, terrain_generation_config &config) noexcept;
+    const char *seed_string, terrain_generation_config &config,
+    const char *asset_root) noexcept;
 
 #endif
 

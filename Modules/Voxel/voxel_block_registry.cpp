@@ -7,6 +7,7 @@
 #include "../Errno/errno.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../Buffer/byte_buffer.hpp"
+#include "../File/file_utils.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
@@ -148,16 +149,21 @@ static terrain_runtime_block *terrain_runtime_find_block(
 }
 
 static void terrain_runtime_destroy_block(terrain_runtime_block *block_pointer,
-    uint32_t initialized_asset_count) noexcept
+    uint32_t initialized_path_count, uint32_t initialized_data_count) noexcept
 {
     uint32_t index;
 
     if (block_pointer == ft_nullptr)
         return ;
     index = 0U;
-    while (index < initialized_asset_count)
+    while (index < initialized_data_count)
     {
         (void)block_pointer->asset_data[index].destroy();
+        index += 1U;
+    }
+    index = 0U;
+    while (index < initialized_path_count)
+    {
         (void)block_pointer->asset_paths[index].destroy();
         index += 1U;
     }
@@ -168,7 +174,7 @@ static void terrain_runtime_destroy_block(terrain_runtime_block *block_pointer,
 }
 
 static int32_t terrain_runtime_load_asset(const char *path,
-    ft_byte_buffer &asset_data) noexcept
+    const char *asset_root, ft_byte_buffer &asset_data) noexcept
 {
     su_file *file_stream;
     int64_t file_size_long;
@@ -179,6 +185,19 @@ static int32_t terrain_runtime_load_asset(const char *path,
 
     if (path == ft_nullptr || path[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
+    if (file_get_type(path) != FILE_TYPE_REGULAR)
+        return (FT_ERR_INVALID_PATH);
+    if (asset_root != ft_nullptr)
+    {
+        error_code = file_validate_regular_file_inside_root(asset_root, path);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    error_code = file_get_size(path, &file_size);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (file_size > TERRAIN_RUNTIME_MAX_ASSET_SIZE)
+        return (FT_ERR_OUT_OF_RANGE);
     file_stream = su_fopen(path);
     if (file_stream == ft_nullptr)
         return (FT_ERR_FILE_OPEN_FAILED);
@@ -199,7 +218,11 @@ static int32_t terrain_runtime_load_asset(const char *path,
     temporary_data = ft_nullptr;
     if (error_code == FT_ERR_SUCCESS)
     {
-        file_size = static_cast<ft_size_t>(file_size_long);
+        if (static_cast<uint64_t>(file_size_long)
+            > static_cast<uint64_t>(TERRAIN_RUNTIME_MAX_ASSET_SIZE))
+            error_code = FT_ERR_OUT_OF_RANGE;
+        if (error_code == FT_ERR_SUCCESS)
+            file_size = static_cast<ft_size_t>(file_size_long);
         if (file_size > 0U)
             temporary_data = std::malloc(file_size);
         if (file_size > 0U && temporary_data == ft_nullptr)
@@ -218,6 +241,8 @@ static int32_t terrain_runtime_load_asset(const char *path,
     if (error_code == FT_ERR_SUCCESS && file_size > 0U)
         error_code = asset_data.append(temporary_data, file_size);
     std::free(temporary_data);
+    if (error_code != FT_ERR_SUCCESS)
+        (void)asset_data.destroy();
     return (error_code);
 }
 
@@ -239,7 +264,8 @@ ft_bool terrain_runtime_block_is_known(uint32_t block_id) noexcept
     return (FT_TRUE);
 }
 
-int32_t terrain_register_block(const terrain_block_registration &registration,
+static int32_t terrain_register_block_internal(
+    const terrain_block_registration &registration, const char *asset_root,
     uint32_t *block_id_out) noexcept
 {
     terrain_runtime_block *created_block;
@@ -248,6 +274,8 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
     uint32_t existing_index;
     uint32_t index;
     uint32_t asset_index;
+    uint32_t initialized_path_count;
+    uint32_t initialized_data_count;
     int32_t error_code;
 
     if (block_id_out == ft_nullptr
@@ -282,11 +310,49 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
             return (FT_ERR_INVALID_ARGUMENT);
         asset_index += 1U;
     }
+    memory_pointer = std::malloc(sizeof(terrain_runtime_block));
+    if (memory_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    created_block = new (memory_pointer) terrain_runtime_block();
+    created_block->metadata = registration.metadata;
+    error_code = created_block->name.initialize(registration.name);
+    asset_index = 0U;
+    initialized_path_count = 0U;
+    initialized_data_count = 0U;
+    while (error_code == FT_ERR_SUCCESS
+        && asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
+    {
+        error_code = created_block->asset_paths[asset_index].initialize(
+            registration.asset_paths[asset_index]);
+        if (error_code == FT_ERR_SUCCESS)
+            initialized_path_count += 1U;
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = terrain_runtime_load_asset(
+                registration.asset_paths[asset_index], asset_root,
+                created_block->asset_data[asset_index]);
+        if (error_code == FT_ERR_SUCCESS)
+            initialized_data_count += 1U;
+        asset_index += 1U;
+    }
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        terrain_runtime_destroy_block(created_block, initialized_path_count,
+            initialized_data_count);
+        return (error_code);
+    }
     mutex_pointer = terrain_runtime_get_mutex();
     if (mutex_pointer == ft_nullptr)
+    {
+        terrain_runtime_destroy_block(created_block, initialized_path_count,
+            initialized_data_count);
         return (FT_ERR_NO_MEMORY);
+    }
     if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+    {
+        terrain_runtime_destroy_block(created_block, initialized_path_count,
+            initialized_data_count);
         return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    }
     existing_index = 0U;
     while (existing_index < TERRAIN_RUNTIME_BLOCK_CAPACITY)
     {
@@ -296,6 +362,8 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
                 registration.name) == 0)
         {
             (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+            terrain_runtime_destroy_block(created_block,
+                initialized_path_count, initialized_data_count);
             return (FT_ERR_ALREADY_EXISTS);
         }
         existing_index += 1U;
@@ -307,39 +375,57 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
     if (index == TERRAIN_RUNTIME_BLOCK_CAPACITY)
     {
         (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        terrain_runtime_destroy_block(created_block,
+            initialized_path_count, initialized_data_count);
         return (FT_ERR_OUT_OF_RANGE);
     }
-    memory_pointer = std::malloc(sizeof(terrain_runtime_block));
-    if (memory_pointer == ft_nullptr)
-    {
-        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-        return (FT_ERR_NO_MEMORY);
-    }
-    created_block = new (memory_pointer) terrain_runtime_block();
     created_block->block_id = TERRAIN_RUNTIME_BLOCK_ID_BASE + index;
-    created_block->metadata = registration.metadata;
-    error_code = created_block->name.initialize(registration.name);
-    asset_index = 0U;
-    while (error_code == FT_ERR_SUCCESS
-        && asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
-    {
-        error_code = created_block->asset_paths[asset_index].initialize(
-            registration.asset_paths[asset_index]);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = terrain_runtime_load_asset(
-                registration.asset_paths[asset_index],
-                created_block->asset_data[asset_index]);
-        asset_index += 1U;
-    }
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-        terrain_runtime_destroy_block(created_block, asset_index);
-        return (error_code);
-    }
     g_terrain_runtime_blocks[index] = created_block;
     *block_id_out = created_block->block_id;
     (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t terrain_register_block(const terrain_block_registration &registration,
+    uint32_t *block_id_out) noexcept
+{
+    return (terrain_register_block_internal(registration, ft_nullptr,
+        block_id_out));
+}
+
+int32_t terrain_register_block_from_root(
+    const terrain_block_registration &registration, const char *asset_root,
+    uint32_t *block_id_out) noexcept
+{
+    if (asset_root == ft_nullptr || asset_root[0] == '\0')
+        return (FT_ERR_INVALID_PATH);
+    return (terrain_register_block_internal(registration, asset_root,
+        block_id_out));
+}
+
+int32_t terrain_unregister_block(uint32_t block_id) noexcept
+{
+    uint32_t index;
+    pt_mutex *mutex_pointer;
+    terrain_runtime_block *block_pointer;
+
+    if (block_id < TERRAIN_RUNTIME_BLOCK_ID_BASE)
+        return (FT_ERR_NOT_FOUND);
+    index = block_id - TERRAIN_RUNTIME_BLOCK_ID_BASE;
+    if (index >= TERRAIN_RUNTIME_BLOCK_CAPACITY)
+        return (FT_ERR_NOT_FOUND);
+    mutex_pointer = terrain_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    block_pointer = g_terrain_runtime_blocks[index];
+    g_terrain_runtime_blocks[index] = ft_nullptr;
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    if (block_pointer == ft_nullptr)
+        return (FT_ERR_NOT_FOUND);
+    terrain_runtime_destroy_block(block_pointer,
+        TERRAIN_BLOCK_ASSET_FACE_COUNT, TERRAIN_BLOCK_ASSET_FACE_COUNT);
     return (FT_ERR_SUCCESS);
 }
 

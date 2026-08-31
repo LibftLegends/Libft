@@ -8,12 +8,14 @@
 #include "../Errno/errno.hpp"
 #include "../Template/function.hpp"
 #include "../Template/vector.hpp"
+#include "../File/file_utils.hpp"
 
 struct terrain_script_execution_context
 {
     game_voxel_chunk *chunk;
     terrain_generation_config *config;
     const char *seed_string;
+    const char *asset_root;
     int32_t world_block_origin_x;
     int32_t world_block_origin_z;
 };
@@ -363,6 +365,7 @@ static int32_t terrain_script_register_block(game_script_context &context,
     uint32_t argument_index;
     uint32_t asset_index;
     int32_t error_code;
+    terrain_script_execution_context *terrain_context;
 
     if (arguments.size() != 15U && arguments.size() != 17U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -426,7 +429,11 @@ static int32_t terrain_script_register_block(game_script_context &context,
             argument_index + asset_index].c_str();
         asset_index += 1U;
     }
-    error_code = terrain_register_block(registration, &block_id);
+    terrain_context = terrain_script_get_context(context);
+    if (terrain_context == ft_nullptr || terrain_context->asset_root == ft_nullptr)
+        return (FT_ERR_INVALID_PATH);
+    error_code = terrain_register_block_from_root(registration,
+        terrain_context->asset_root, &block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     context.set_result_integer(static_cast<int64_t>(block_id));
@@ -497,17 +504,20 @@ int32_t terrain_script_register_api(game_script_bridge &bridge) noexcept
 int32_t terrain_script_execute(game_script_bridge &bridge,
     const ft_string &script, game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, terrain_generation_config &config) noexcept
+    const char *seed_string, terrain_generation_config &config,
+    const char *asset_root) noexcept
 {
     terrain_script_execution_context terrain_context;
     ft_string normalized_script;
     int32_t normalize_error;
 
-    if (seed_string == ft_nullptr)
+    if (seed_string == ft_nullptr || asset_root == ft_nullptr
+        || asset_root[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
     terrain_context.chunk = &chunk;
     terrain_context.config = &config;
     terrain_context.seed_string = seed_string;
+    terrain_context.asset_root = asset_root;
     terrain_context.world_block_origin_x = world_block_origin_x;
     terrain_context.world_block_origin_z = world_block_origin_z;
     normalize_error = terrain_script_normalize_custom_source(script,

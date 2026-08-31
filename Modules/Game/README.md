@@ -154,6 +154,8 @@ General rules for these orchestration classes:
   operation and resource limits.
   Filesystem, operating-system, package-loading, debug, and dynamic-code
   libraries are not exposed to scripts.
+- Registered callback failures are raised immediately inside Lua, so later
+  callbacks in the same script do not run after a failed host operation.
 - `game_data_catalog` - Registry for item definitions, recipes, loadouts, and other static catalog records.
 
 ## Serialization and Persistence

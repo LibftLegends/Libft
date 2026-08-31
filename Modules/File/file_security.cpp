@@ -245,6 +245,36 @@ int32_t file_validate_path_inside_root(const char *root_path,
     return (FT_ERR_INVALID_PATH);
 }
 
+int32_t file_validate_regular_file_inside_root(const char *root_path,
+    const char *candidate_path)
+{
+    char *canonical_root;
+    char *canonical_candidate;
+    int32_t error_code;
+
+    if (root_path == ft_nullptr || candidate_path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (file_get_type(candidate_path) != FILE_TYPE_REGULAR)
+        return (FT_ERR_INVALID_PATH);
+    canonical_root = ft_nullptr;
+    error_code = cmp_path_canonical(root_path, &canonical_root);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    canonical_candidate = ft_nullptr;
+    error_code = cmp_path_canonical(candidate_path, &canonical_candidate);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        cma_free(canonical_root);
+        return (error_code);
+    }
+    if (file_security_has_root_boundary(canonical_root,
+            canonical_candidate) == FT_FALSE)
+        error_code = FT_ERR_INVALID_PATH;
+    cma_free(canonical_root);
+    cma_free(canonical_candidate);
+    return (error_code);
+}
+
 static int32_t file_security_write_descriptor(int32_t file_descriptor,
     const char *data, ft_size_t size)
 {

@@ -30,3 +30,18 @@ FT_TEST(test_file_path_is_inside_root_rejects_escape)
             "safe/root/../outside.txt"));
     return (1);
 }
+
+FT_TEST(test_file_validate_regular_file_inside_root)
+{
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_validate_regular_file_inside_root(
+            "Test/Lua", "Test/Lua/export_values.lua"));
+    FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
+            file_validate_regular_file_inside_root("Test/Lua",
+                "Test/Lua/../test_terrain_runtime_blocks.cpp"));
+    FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
+            file_validate_regular_file_inside_root("Test/Lua", "Test/Lua"));
+    FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
+            file_validate_regular_file_inside_root("Test/Lua",
+                "Test/Lua/missing_asset.bin"));
+    return (1);
+}

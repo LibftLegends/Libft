@@ -64,7 +64,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Threading` | `Basic`, `CMA`, `Errno`, `PThread`, `System_utils`, `Template`, `Time` |
 | `Time` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
 | `URI` | `Basic`, `CMA`, `Errno` |
-| `Voxel` | `Basic`, `Buffer`, `Errno`, `Game`, `Geometry`, `Math`, `PThread`, `RNG`, `System_utils`, `Template` |
+| `Voxel` | `Basic`, `Buffer`, `Errno`, `File`, `Game`, `Geometry`, `Math`, `PThread`, `RNG`, `System_utils`, `Template` |
 | `XML` | `Basic`, `CMA`, `Errno`, `PThread`, `Parser`, `Template` |
 | `YAML` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `Parser`, `System_utils`, `Template` |
 
@@ -422,6 +422,7 @@ graph TD
     Voxel --> Basic
     Voxel --> Buffer
     Voxel --> Errno
+    Voxel --> File
     Voxel --> Game
     Voxel --> Geometry
     Voxel --> Math
