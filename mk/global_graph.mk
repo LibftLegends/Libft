@@ -21,7 +21,7 @@ LIBFT_GLOBAL_CC ?= gcc
 LIBFT_GLOBAL_MV ?= mv
 
 
-LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
+LIBFT_GLOBAL_MODULE_NAMES := Basic BMP Advanced Compatebility Debug Errno CMA SCMA \
     GetNextLine DUMB Math Geometry System_utils Printf ReadLine Regex PThread \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
     Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \

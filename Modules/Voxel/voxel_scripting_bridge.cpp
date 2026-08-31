@@ -1,5 +1,5 @@
-#include "terrain_scripting_bridge.hpp"
-#include "terrain_api.hpp"
+#include "voxel_scripting_bridge.hpp"
+#include "voxel_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
@@ -10,17 +10,17 @@
 #include "../Template/vector.hpp"
 #include "../File/file_utils.hpp"
 
-struct terrain_script_execution_context
+struct voxel_script_execution_context
 {
     game_voxel_chunk *chunk;
-    terrain_generation_config *config;
+    voxel_generation_config *config;
     const char *seed_string;
     const char *asset_root;
     int32_t world_block_origin_x;
     int32_t world_block_origin_z;
 };
 
-static int32_t terrain_script_normalize_custom_source(
+static int32_t voxel_script_normalize_custom_source(
     const ft_string &script, ft_string &normalized) noexcept
 {
     const char *data;
@@ -63,14 +63,14 @@ static int32_t terrain_script_normalize_custom_source(
     return (FT_ERR_SUCCESS);
 }
 
-static terrain_script_execution_context *terrain_script_get_context(
+static voxel_script_execution_context *voxel_script_get_context(
     game_script_context &context) noexcept
 {
-    return (static_cast<terrain_script_execution_context *>(
+    return (static_cast<voxel_script_execution_context *>(
         context.get_user_data()));
 }
 
-static int32_t terrain_script_parse_int32(const ft_string &argument,
+static int32_t voxel_script_parse_int32(const ft_string &argument,
     int32_t *value) noexcept
 {
     int64_t parsed_value;
@@ -91,7 +91,7 @@ static int32_t terrain_script_parse_int32(const ft_string &argument,
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t terrain_script_parse_uint32(const ft_string &argument,
+static int32_t voxel_script_parse_uint32(const ft_string &argument,
     uint32_t *value) noexcept
 {
     char *end_pointer;
@@ -108,28 +108,28 @@ static int32_t terrain_script_parse_uint32(const ft_string &argument,
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t terrain_script_set_sea_level(game_script_context &context,
+static int32_t voxel_script_set_sea_level(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     int32_t sea_level;
     int32_t error_code;
 
     if (arguments.size() != 1U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_int32(arguments[0], &sea_level);
+    error_code = voxel_script_parse_int32(arguments[0], &sea_level);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_sea_level(sea_level));
+    return (voxel_context->config->set_sea_level(sea_level));
 }
 
-static int32_t terrain_script_set_noise_scales(game_script_context &context,
+static int32_t voxel_script_set_noise_scales(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     int32_t large_scale;
     int32_t detail_scale;
     int32_t detail_percent;
@@ -137,69 +137,69 @@ static int32_t terrain_script_set_noise_scales(game_script_context &context,
 
     if (arguments.size() != 3U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_int32(arguments[0], &large_scale);
+    error_code = voxel_script_parse_int32(arguments[0], &large_scale);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &detail_scale);
+        error_code = voxel_script_parse_int32(arguments[1], &detail_scale);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[2], &detail_percent);
+        error_code = voxel_script_parse_int32(arguments[2], &detail_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_noise_scales(large_scale,
+    return (voxel_context->config->set_noise_scales(large_scale,
         detail_scale, detail_percent));
 }
 
-static int32_t terrain_script_set_biome_size_control(
+static int32_t voxel_script_set_biome_size_control(
     game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     uint32_t enabled;
     int32_t error_code;
 
     if (arguments.size() != 1U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_uint32(arguments[0], &enabled);
+    error_code = voxel_script_parse_uint32(arguments[0], &enabled);
     if (error_code != FT_ERR_SUCCESS || enabled > 1U)
         return (error_code == FT_ERR_SUCCESS ? FT_ERR_INVALID_ARGUMENT
             : error_code);
-    return (terrain_context->config->set_biome_size_control_enabled(
+    return (voxel_context->config->set_biome_size_control_enabled(
         static_cast<ft_bool>(enabled)));
 }
 
-static int32_t terrain_script_set_biome_size_range(
+static int32_t voxel_script_set_biome_size_range(
     game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     int32_t minimum_size;
     int32_t maximum_size;
     int32_t error_code;
 
     if (arguments.size() != 2U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_int32(arguments[0], &minimum_size);
+    error_code = voxel_script_parse_int32(arguments[0], &minimum_size);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &maximum_size);
+        error_code = voxel_script_parse_int32(arguments[1], &maximum_size);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_biome_size_range(minimum_size,
+    return (voxel_context->config->set_biome_size_range(minimum_size,
         maximum_size));
 }
 
-static int32_t terrain_script_set_biome_size_range_for_biome(
+static int32_t voxel_script_set_biome_size_range_for_biome(
     game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     uint32_t biome_index;
     int32_t minimum_size;
     int32_t maximum_size;
@@ -207,24 +207,24 @@ static int32_t terrain_script_set_biome_size_range_for_biome(
 
     if (arguments.size() != 3U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_uint32(arguments[0], &biome_index);
+    error_code = voxel_script_parse_uint32(arguments[0], &biome_index);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &minimum_size);
+        error_code = voxel_script_parse_int32(arguments[1], &minimum_size);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[2], &maximum_size);
+        error_code = voxel_script_parse_int32(arguments[2], &maximum_size);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_biome_size_range_for_biome(
+    return (voxel_context->config->set_biome_size_range_for_biome(
         biome_index, minimum_size, maximum_size));
 }
 
-static int32_t terrain_script_set_biome_height(game_script_context &context,
+static int32_t voxel_script_set_biome_height(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     uint32_t biome_index;
     int32_t surface_height;
     int32_t height_variation;
@@ -233,26 +233,26 @@ static int32_t terrain_script_set_biome_height(game_script_context &context,
 
     if (arguments.size() != 4U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_uint32(arguments[0], &biome_index);
+    error_code = voxel_script_parse_uint32(arguments[0], &biome_index);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &surface_height);
+        error_code = voxel_script_parse_int32(arguments[1], &surface_height);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[2], &height_variation);
+        error_code = voxel_script_parse_int32(arguments[2], &height_variation);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[3], &topsoil_depth);
+        error_code = voxel_script_parse_int32(arguments[3], &topsoil_depth);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_biome_height_profile(biome_index,
+    return (voxel_context->config->set_biome_height_profile(biome_index,
         surface_height, height_variation, topsoil_depth));
 }
 
-static int32_t terrain_script_set_biome_blocks(game_script_context &context,
+static int32_t voxel_script_set_biome_blocks(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     uint32_t biome_index;
     uint32_t surface_block;
     uint32_t subsurface_block;
@@ -261,27 +261,27 @@ static int32_t terrain_script_set_biome_blocks(game_script_context &context,
 
     if (arguments.size() != 4U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_uint32(arguments[0], &biome_index);
+    error_code = voxel_script_parse_uint32(arguments[0], &biome_index);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_uint32(arguments[1], &surface_block);
+        error_code = voxel_script_parse_uint32(arguments[1], &surface_block);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_uint32(arguments[2], &subsurface_block);
+        error_code = voxel_script_parse_uint32(arguments[2], &subsurface_block);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_uint32(arguments[3], &deep_block);
+        error_code = voxel_script_parse_uint32(arguments[3], &deep_block);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_biome_block_palette(biome_index,
+    return (voxel_context->config->set_biome_block_palette(biome_index,
         surface_block, subsurface_block, deep_block));
 }
 
-static int32_t terrain_script_set_biome_transitions(
+static int32_t voxel_script_set_biome_transitions(
     game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     uint32_t enabled;
     int32_t noise_scale;
     uint32_t noise_strength;
@@ -289,49 +289,49 @@ static int32_t terrain_script_set_biome_transitions(
 
     if (arguments.size() != 3U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->config == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->config == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_uint32(arguments[0], &enabled);
+    error_code = voxel_script_parse_uint32(arguments[0], &enabled);
     if (error_code == FT_ERR_SUCCESS && enabled > 1U)
         error_code = FT_ERR_INVALID_ARGUMENT;
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &noise_scale);
+        error_code = voxel_script_parse_int32(arguments[1], &noise_scale);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_uint32(arguments[2], &noise_strength);
+        error_code = voxel_script_parse_uint32(arguments[2], &noise_strength);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = terrain_context->config->set_biome_transitions_enabled(
+    error_code = voxel_context->config->set_biome_transitions_enabled(
         static_cast<ft_bool>(enabled));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->config->set_biome_transition_settings(
+    return (voxel_context->config->set_biome_transition_settings(
         noise_scale, noise_strength));
 }
 
-static int32_t terrain_script_generate_chunk(game_script_context &context,
+static int32_t voxel_script_generate_chunk(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
 
     if (arguments.size() != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->chunk == ft_nullptr
-        || terrain_context->config == ft_nullptr
-        || terrain_context->seed_string == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->chunk == ft_nullptr
+        || voxel_context->config == ft_nullptr
+        || voxel_context->seed_string == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    return (terrain_generate_chunk(*terrain_context->chunk,
-        terrain_context->world_block_origin_x,
-        terrain_context->world_block_origin_z,
-        terrain_context->seed_string, *terrain_context->config));
+    return (voxel_generate_chunk(*voxel_context->chunk,
+        voxel_context->world_block_origin_x,
+        voxel_context->world_block_origin_z,
+        voxel_context->seed_string, *voxel_context->config));
 }
 
-static int32_t terrain_script_write_generated_block(
+static int32_t voxel_script_write_generated_block(
     game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
     int32_t local_x;
     int32_t local_y;
     int32_t local_z;
@@ -340,32 +340,32 @@ static int32_t terrain_script_write_generated_block(
 
     if (arguments.size() != 4U)
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->chunk == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->chunk == ft_nullptr)
         return (FT_ERR_INVALID_STATE);
-    error_code = terrain_script_parse_int32(arguments[0], &local_x);
+    error_code = voxel_script_parse_int32(arguments[0], &local_x);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[1], &local_y);
+        error_code = voxel_script_parse_int32(arguments[1], &local_y);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_int32(arguments[2], &local_z);
+        error_code = voxel_script_parse_int32(arguments[2], &local_z);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_parse_uint32(arguments[3], &block_id);
+        error_code = voxel_script_parse_uint32(arguments[3], &block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (terrain_context->chunk->write_generated_block(local_x, local_y,
+    return (voxel_context->chunk->write_generated_block(local_x, local_y,
         local_z, block_id));
 }
 
-static int32_t terrain_script_register_block(game_script_context &context,
+static int32_t voxel_script_register_block(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
-    terrain_block_registration registration;
+    voxel_block_registration registration;
     uint32_t metadata_values[9];
     uint32_t block_id;
     uint32_t argument_index;
     uint32_t asset_index;
     int32_t error_code;
-    terrain_script_execution_context *terrain_context;
+    voxel_script_execution_context *voxel_context;
 
     if (arguments.size() != 15U && arguments.size() != 17U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -373,7 +373,7 @@ static int32_t terrain_script_register_block(game_script_context &context,
     argument_index = 0U;
     while (argument_index < 7U)
     {
-        error_code = terrain_script_parse_uint32(
+        error_code = voxel_script_parse_uint32(
             arguments[argument_index + 1U], &metadata_values[argument_index]);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
@@ -390,11 +390,11 @@ static int32_t terrain_script_register_block(game_script_context &context,
     registration.metadata.hardness = metadata_values[6];
     if (arguments.size() == 17U)
     {
-        error_code = terrain_script_parse_uint32(arguments[8],
+        error_code = voxel_script_parse_uint32(arguments[8],
             &metadata_values[7]);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        error_code = terrain_script_parse_uint32(arguments[9],
+        error_code = voxel_script_parse_uint32(arguments[9],
             &metadata_values[8]);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
@@ -414,7 +414,7 @@ static int32_t terrain_script_register_block(game_script_context &context,
         registration.metadata.is_ore = FT_FALSE;
         argument_index = 8U;
     }
-    error_code = terrain_script_parse_uint32(arguments[argument_index],
+    error_code = voxel_script_parse_uint32(arguments[argument_index],
         &metadata_values[0]);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -423,24 +423,24 @@ static int32_t terrain_script_register_block(game_script_context &context,
     registration.metadata.breakable = static_cast<ft_bool>(metadata_values[0]);
     argument_index += 1U;
     asset_index = 0U;
-    while (asset_index < TERRAIN_BLOCK_ASSET_FACE_COUNT)
+    while (asset_index < VOXEL_BLOCK_ASSET_FACE_COUNT)
     {
         registration.asset_paths[asset_index] = arguments[
             argument_index + asset_index].c_str();
         asset_index += 1U;
     }
-    terrain_context = terrain_script_get_context(context);
-    if (terrain_context == ft_nullptr || terrain_context->asset_root == ft_nullptr)
+    voxel_context = voxel_script_get_context(context);
+    if (voxel_context == ft_nullptr || voxel_context->asset_root == ft_nullptr)
         return (FT_ERR_INVALID_PATH);
-    error_code = terrain_register_block_from_root(registration,
-        terrain_context->asset_root, &block_id);
+    error_code = voxel_register_block_from_root(registration,
+        voxel_context->asset_root, &block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     context.set_result_integer(static_cast<int64_t>(block_id));
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t terrain_script_register_function(game_script_bridge &bridge,
+static int32_t voxel_script_register_function(game_script_bridge &bridge,
     const char *name, int32_t (*callback)(game_script_context &,
         const ft_vector<ft_string> &)) noexcept
 {
@@ -457,75 +457,75 @@ static int32_t terrain_script_register_function(game_script_bridge &bridge,
     return (bridge.register_function(function_name, function));
 }
 
-int32_t terrain_script_register_api(game_script_bridge &bridge) noexcept
+int32_t voxel_script_register_api(game_script_bridge &bridge) noexcept
 {
     int32_t error_code;
 
-    error_code = terrain_script_register_function(bridge,
-        "terrain_set_sea_level", terrain_script_set_sea_level);
+    error_code = voxel_script_register_function(bridge,
+        "voxel_set_sea_level", voxel_script_set_sea_level);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_noise_scales", terrain_script_set_noise_scales);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_noise_scales", voxel_script_set_noise_scales);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_size_control",
-            terrain_script_set_biome_size_control);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_size_control",
+            voxel_script_set_biome_size_control);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_size_range",
-            terrain_script_set_biome_size_range);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_size_range",
+            voxel_script_set_biome_size_range);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_size_range_for_biome",
-            terrain_script_set_biome_size_range_for_biome);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_size_range_for_biome",
+            voxel_script_set_biome_size_range_for_biome);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_height", terrain_script_set_biome_height);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_height", voxel_script_set_biome_height);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_blocks", terrain_script_set_biome_blocks);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_blocks", voxel_script_set_biome_blocks);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_set_biome_transitions",
-            terrain_script_set_biome_transitions);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_set_biome_transitions",
+            voxel_script_set_biome_transitions);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_generate_chunk", terrain_script_generate_chunk);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_generate_chunk", voxel_script_generate_chunk);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_write_generated_block",
-            terrain_script_write_generated_block);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_write_generated_block",
+            voxel_script_write_generated_block);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = terrain_script_register_function(bridge,
-            "terrain_register_block", terrain_script_register_block);
+        error_code = voxel_script_register_function(bridge,
+            "voxel_register_block", voxel_script_register_block);
     return (error_code);
 }
 
-int32_t terrain_script_execute(game_script_bridge &bridge,
+int32_t voxel_script_execute(game_script_bridge &bridge,
     const ft_string &script, game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, terrain_generation_config &config,
+    const char *seed_string, voxel_generation_config &config,
     const char *asset_root) noexcept
 {
-    terrain_script_execution_context terrain_context;
+    voxel_script_execution_context voxel_context;
     ft_string normalized_script;
     int32_t normalize_error;
 
     if (seed_string == ft_nullptr || asset_root == ft_nullptr
         || asset_root[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    terrain_context.chunk = &chunk;
-    terrain_context.config = &config;
-    terrain_context.seed_string = seed_string;
-    terrain_context.asset_root = asset_root;
-    terrain_context.world_block_origin_x = world_block_origin_x;
-    terrain_context.world_block_origin_z = world_block_origin_z;
-    normalize_error = terrain_script_normalize_custom_source(script,
+    voxel_context.chunk = &chunk;
+    voxel_context.config = &config;
+    voxel_context.seed_string = seed_string;
+    voxel_context.asset_root = asset_root;
+    voxel_context.world_block_origin_x = world_block_origin_x;
+    voxel_context.world_block_origin_z = world_block_origin_z;
+    normalize_error = voxel_script_normalize_custom_source(script,
         normalized_script);
     if (normalize_error != FT_ERR_SUCCESS)
         return (normalize_error);
     return (bridge.execute_custom_with_user_data(normalized_script,
-        ft_nullptr, &terrain_context));
+        ft_nullptr, &voxel_context));
 }
 
 #endif

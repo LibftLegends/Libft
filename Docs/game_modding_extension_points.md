@@ -69,7 +69,7 @@ native-module APIs. The legacy line-command execution path remains available
 separately for compatibility.
 
 The Voxel module adds terrain callbacks through
-`terrain_script_register_api(...)`. Scripts can tune sea level, noise, biome
+`voxel_script_register_api(...)`. Scripts can tune sea level, noise, biome
 heights and palettes, noisy biome transitions, run deterministic chunk
 generation, and perform generator-owned block writes. The terrain execution
 context supplies the chunk origin and seed so callbacks remain deterministic.

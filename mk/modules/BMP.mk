@@ -1,8 +1,6 @@
-TARGET         := bmp.a
-DEBUG_TARGET   := bmp_debug.a
+BMP_TARGET := bmp.a
+BMP_DEBUG_TARGET := bmp_debug.a
 
-SRCS := bmp.cpp
+BMP_SOURCES := bmp.cpp
 
-HEADERS := bmp.hpp
-
-include $(dir $(lastword $(MAKEFILE_LIST)))common/module_defaults.mk
+BMP_HEADERS := bmp.hpp

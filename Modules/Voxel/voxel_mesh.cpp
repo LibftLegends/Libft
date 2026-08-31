@@ -2,7 +2,7 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "terrain_api.hpp"
+#include "voxel_api.hpp"
 #include "../Errno/errno.hpp"
 #include "../Game/game_voxel_chunk.hpp"
 #include "../Template/vector.hpp"
@@ -174,7 +174,7 @@ static int32_t chunk_mesh_face_is_visible(const game_voxel_chunk &chunk,
         neighbor_z, &neighbor_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (terrain_block_occludes_faces(neighbor_block_id) == FT_FALSE)
+    if (voxel_block_occludes_faces(neighbor_block_id) == FT_FALSE)
         *visible = FT_TRUE;
     else
         *visible = FT_FALSE;
@@ -458,7 +458,7 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
             mask[(row_value * column_count) + column_value] = 0U;
             if (block_id != GAME_VOXEL_AIR_BLOCK)
             {
-                if (terrain_block_is_liquid(block_id) == FT_FALSE
+                if (voxel_block_is_liquid(block_id) == FT_FALSE
                     || face == CHUNK_MESH_FACE_UP)
                 {
                     error_code = chunk_mesh_face_is_visible(chunk, local_x,
@@ -466,12 +466,12 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                     if (visible == FT_TRUE
-                        && terrain_block_is_liquid(block_id) == FT_TRUE)
+                        && voxel_block_is_liquid(block_id) == FT_TRUE)
                     {
                         uint32_t above_id = 0U;
                         (void)chunk_mesh_read_or_air(chunk, local_x,
                             local_y + 1, local_z, &above_id);
-                        if (terrain_block_is_liquid(above_id) == FT_TRUE)
+                        if (voxel_block_is_liquid(above_id) == FT_TRUE)
                             visible = FT_FALSE;
                     }
                     if (visible == FT_TRUE)
@@ -765,7 +765,7 @@ static int32_t chunk_mesh_face_is_visible_nb(const chunk_neighbor_ctx &ctx,
         neighbor_z, &neighbor_block_id);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (terrain_block_occludes_faces(neighbor_block_id) == FT_FALSE)
+    if (voxel_block_occludes_faces(neighbor_block_id) == FT_FALSE)
         *visible = FT_TRUE;
     else
         *visible = FT_FALSE;
@@ -803,7 +803,7 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
             mask[(row_value * column_count) + column_value] = 0U;
             if (block_id != GAME_VOXEL_AIR_BLOCK)
             {
-                if (terrain_block_is_liquid(block_id) == FT_FALSE
+                if (voxel_block_is_liquid(block_id) == FT_FALSE
                     || face == CHUNK_MESH_FACE_UP)
                 {
                     error_code = chunk_mesh_face_is_visible_nb(ctx, local_x,
@@ -811,12 +811,12 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                     if (visible == FT_TRUE
-                        && terrain_block_is_liquid(block_id) == FT_TRUE)
+                        && voxel_block_is_liquid(block_id) == FT_TRUE)
                     {
                         uint32_t above_id = 0U;
                         (void)chunk_mesh_read_or_air(*ctx.chunk, local_x,
                             local_y + 1, local_z, &above_id);
-                        if (terrain_block_is_liquid(above_id) == FT_TRUE)
+                        if (voxel_block_is_liquid(above_id) == FT_TRUE)
                             visible = FT_FALSE;
                     }
                     if (visible == FT_TRUE)

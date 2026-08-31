@@ -219,7 +219,7 @@ crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
 		Modules/Crypto/crypto.a Modules/Basic/Basic.a $(LINK_OPT_FLAGS)
 
 terrain-persistence-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && FT_TEST_NAME_FILTER="test_terrain_json_unsigned_boundaries_and_transaction,test_terrain_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+	@cd Test && FT_TEST_NAME_FILTER="test_voxel_json_unsigned_boundaries_and_transaction,test_voxel_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 crypto-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 	@cd Test && FT_TEST_NAME_FILTER="test_crypto_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))

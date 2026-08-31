@@ -37,7 +37,7 @@ FT_TEST(test_file_validate_regular_file_inside_root)
             "Test/Lua", "Test/Lua/export_values.lua"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
             file_validate_regular_file_inside_root("Test/Lua",
-                "Test/Lua/../test_terrain_runtime_blocks.cpp"));
+                "Test/Lua/../test_voxel_runtime_blocks.cpp"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
             file_validate_regular_file_inside_root("Test/Lua", "Test/Lua"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,

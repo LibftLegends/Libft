@@ -1,52 +1,28 @@
-TARGET         := bmp.a
-DEBUG_TARGET   := bmp_debug.a
+# Compatibility wrapper for the canonical root GNU Make graph.
 
-SRCS := bmp.cpp
+MODULE_NAME := $(notdir $(CURDIR))
+include ../../mk/modules/$(MODULE_NAME).mk
 
-HEADERS := bmp.hpp
+MODULE_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_TARGET)
+MODULE_DEBUG_ARCHIVE := Modules/$(MODULE_NAME)/$($(MODULE_NAME)_DEBUG_TARGET)
+MODULE_TEST_ARCHIVE := Modules/$(MODULE_NAME)/$(patsubst %.a,%_test.a,$($(MODULE_NAME)_TARGET))
 
-include ../../mk/compiler_flags.mk
-include ../../mk/modules/BMP.mk
+.PHONY: all debug test clean fclean re
 
-all: $(TARGET)
+all:
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)
 
-$(TARGET): $(OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-	@printf '        [%s] Module archive ready (%d files)\n' "$(MODULE_NAME)" "$(TOTAL_SRCS)"
+debug:
+	+$(MAKE) -C ../.. $(MODULE_DEBUG_ARCHIVE)
 
-$(OBJDIR)/%.o: %.cpp $(HEADERS) | $(OBJDIR)
-	@$(CXX) $(CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-
-debug: CXXFLAGS += -DDEBUG=1
-debug: $(DEBUG_TARGET)
-
-$(DEBUG_TARGET): $(DEBUG_OBJS)
-	@$(RM) $@
-	@$(AR) $(ARFLAGS) $@ $^
-
-$(DEBUG_OBJDIR)/%.o: %.cpp $(HEADERS) | $(DEBUG_OBJDIR)
-	@$(CXX) $(CFLAGS) -MMD -MP -c $< -o $@
-	@$(FIXDEP)
-
-$(OBJDIR) $(DEBUG_OBJDIR):
-	@$(MKDIR) $@
+test:
+	+$(MAKE) -C ../.. $(MODULE_TEST_ARCHIVE)
 
 clean:
-	@$(RM) $(CLEAN_FILES)
-	@$(RMDIR) $(CLEAN_DIRS)
+	+$(MAKE) -C ../.. clean
 
 fclean: clean
-	@$(RM) $(TARGET) $(DEBUG_TARGET) $(TEST_ARCHIVES)
 
-re: fclean all
-
-both: all debug
-
-%_test.a: FORCE
-	@$(MAKE) TARGET="$@" $(SUBMAKE_OVERRIDES) COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_TEST_BUILD" all
-
--include $(DEPS) $(DEBUG_DEPS)
-
-.PHONY: all clean fclean re debug both FORCE
+re:
+	+$(MAKE) -C ../.. clean
+	+$(MAKE) -C ../.. $(MODULE_ARCHIVE)

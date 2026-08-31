@@ -1,5 +1,5 @@
 #include "../test_internal.hpp"
-#include "../../Modules/Voxel/terrain_api.hpp"
+#include "../../Modules/Voxel/voxel_api.hpp"
 #include "../../Modules/Game/game_voxel_chunk.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
@@ -25,7 +25,7 @@ static int32_t voxel_transition_surface_height(game_voxel_chunk &chunk,
 }
 
 static void voxel_transition_disable_decorations(
-    terrain_generation_config &config)
+    voxel_generation_config &config)
 {
     uint32_t biome_index;
 
@@ -46,9 +46,9 @@ static void voxel_transition_disable_decorations(
     return ;
 }
 
-FT_TEST(test_terrain_transition_border_is_generation_order_independent)
+FT_TEST(test_voxel_transition_border_is_generation_order_independent)
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
     game_voxel_chunk left_chunk;
     game_voxel_chunk right_chunk;
     game_voxel_chunk reversed_left_chunk;
@@ -60,7 +60,7 @@ FT_TEST(test_terrain_transition_border_is_generation_order_independent)
     int32_t reversed_left_height;
     int32_t reversed_right_height;
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     voxel_transition_disable_decorations(config);
     config.enable_mountain_ridges = FT_TRUE;
     config.mountain_ridge_strength = 18U;
@@ -68,13 +68,13 @@ FT_TEST(test_terrain_transition_border_is_generation_order_independent)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reversed_left_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reversed_right_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(left_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(left_chunk, 0, 0,
         "transition-order-seed", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(right_chunk, 16, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(right_chunk, 16, 0,
         "transition-order-seed", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(reversed_right_chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(reversed_right_chunk,
         16, 0, "transition-order-seed", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(reversed_left_chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(reversed_left_chunk,
         0, 0, "transition-order-seed", config));
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
@@ -108,9 +108,9 @@ FT_TEST(test_terrain_transition_border_is_generation_order_independent)
     return (1);
 }
 
-FT_TEST(test_terrain_mountain_height_is_deterministic_with_warped_ranges)
+FT_TEST(test_voxel_mountain_height_is_deterministic_with_warped_ranges)
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
     game_voxel_chunk first_chunk;
     game_voxel_chunk second_chunk;
     int32_t local_x;
@@ -118,16 +118,16 @@ FT_TEST(test_terrain_mountain_height_is_deterministic_with_warped_ranges)
     int32_t first_height;
     int32_t second_height;
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     voxel_transition_disable_decorations(config);
     config.enable_mountain_ridges = FT_TRUE;
     config.mountain_ridge_scale = 22;
     config.mountain_ridge_strength = 24U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(first_chunk, 32, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(first_chunk, 32, 0,
         "mountain-range-seed", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(second_chunk, 32, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(second_chunk, 32, 0,
         "mountain-range-seed", config));
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)

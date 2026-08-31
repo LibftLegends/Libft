@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "terrain_api.hpp"
+#include "voxel_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
@@ -8,43 +8,43 @@
 #include "../Game/game_voxel_chunk.hpp"
 #include "../Game/game_voxel_region.hpp"
 
-static const int32_t TERRAIN_HEIGHTMAP_LARGE_SCALE = 32;
-static const int32_t TERRAIN_HEIGHTMAP_DETAIL_SCALE = 8;
-static const int32_t TERRAIN_HEIGHTMAP_SMOOTH_RADIUS = 1;
-static const int32_t TERRAIN_MOUNTAIN_CLIFF_SLOPE = 7;
-static const int32_t TERRAIN_MOUNTAIN_SNOW_SLOPE_LIMIT = 5;
-static const uint64_t TERRAIN_FEATURE_SHRUB_SALT = UINT64_C(0x2D9C1F4E8B3A6071);
-static const int32_t TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET = 1;
-static const uint64_t TERRAIN_FEATURE_GROUND_COVER_VARIANT_SALT =
+static const int32_t VOXEL_HEIGHTMAP_LARGE_SCALE = 32;
+static const int32_t VOXEL_HEIGHTMAP_DETAIL_SCALE = 8;
+static const int32_t VOXEL_HEIGHTMAP_SMOOTH_RADIUS = 1;
+static const int32_t VOXEL_MOUNTAIN_CLIFF_SLOPE = 7;
+static const int32_t VOXEL_MOUNTAIN_SNOW_SLOPE_LIMIT = 5;
+static const uint64_t VOXEL_FEATURE_SHRUB_SALT = UINT64_C(0x2D9C1F4E8B3A6071);
+static const int32_t VOXEL_FEATURE_SHRUB_HEIGHT_OFFSET = 1;
+static const uint64_t VOXEL_FEATURE_GROUND_COVER_VARIANT_SALT =
     UINT64_C(0x1A2B3C4D5E6F7081);
-static const uint64_t TERRAIN_FEATURE_TREE_SALT = UINT64_C(0x4F1E2D3C5B6A7980);
-static const uint64_t TERRAIN_FEATURE_WATER_SALT = UINT64_C(0x9182736455463728);
-static const uint64_t TERRAIN_FEATURE_AQUATIC_PLANT_SALT =
+static const uint64_t VOXEL_FEATURE_TREE_SALT = UINT64_C(0x4F1E2D3C5B6A7980);
+static const uint64_t VOXEL_FEATURE_WATER_SALT = UINT64_C(0x9182736455463728);
+static const uint64_t VOXEL_FEATURE_AQUATIC_PLANT_SALT =
     UINT64_C(0x2F4E6D8C0A1B3547);
-static const uint64_t TERRAIN_BIOME_SURFACE_TRANSITION_SALT = UINT64_C(0xBB67AE8584CAA73B);
-static const uint64_t TERRAIN_BIOME_SUBSURFACE_TRANSITION_SALT = UINT64_C(0x3C6EF372FE94F82B);
-static const uint64_t TERRAIN_CAVE_PRIMARY_SALT = UINT64_C(0x7C3A91E2D4B8560F);
-static const uint64_t TERRAIN_CAVE_DETAIL_SALT = UINT64_C(0x1D6F80B3C9274A55);
-static const int32_t TERRAIN_CAVE_PRIMARY_SCALE = 24;
-static const int32_t TERRAIN_CAVE_DETAIL_SCALE = 9;
-static const int32_t TERRAIN_BEDROCK_FLOOR_Y = 0;
-static const int32_t TERRAIN_CAVE_SURFACE_MARGIN = 7;
-static const int32_t TERRAIN_CAVE_CELL_SIZE = 12;
-static const int32_t TERRAIN_COLUMN_CACHE_COUNT =
+static const uint64_t VOXEL_BIOME_SURFACE_TRANSITION_SALT = UINT64_C(0xBB67AE8584CAA73B);
+static const uint64_t VOXEL_BIOME_SUBSURFACE_TRANSITION_SALT = UINT64_C(0x3C6EF372FE94F82B);
+static const uint64_t VOXEL_CAVE_PRIMARY_SALT = UINT64_C(0x7C3A91E2D4B8560F);
+static const uint64_t VOXEL_CAVE_DETAIL_SALT = UINT64_C(0x1D6F80B3C9274A55);
+static const int32_t VOXEL_CAVE_PRIMARY_SCALE = 24;
+static const int32_t VOXEL_CAVE_DETAIL_SCALE = 9;
+static const int32_t VOXEL_BEDROCK_FLOOR_Y = 0;
+static const int32_t VOXEL_CAVE_SURFACE_MARGIN = 7;
+static const int32_t VOXEL_CAVE_CELL_SIZE = 12;
+static const int32_t VOXEL_COLUMN_CACHE_COUNT =
     GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH;
 
-struct terrain_biome_sample
+struct voxel_biome_sample
 {
     uint32_t biome_indices[4];
     double weights[4];
     uint32_t count;
 };
 
-struct terrain_column_cache
+struct voxel_column_cache
 {
     uint32_t biome;
-    terrain_biome_sample biome_sample;
-    terrain_biome_profile biome_profile;
+    voxel_biome_sample biome_sample;
+    voxel_biome_profile biome_profile;
     int32_t column_height;
     int32_t slope_height;
     uint32_t deep_block_id;
@@ -56,19 +56,19 @@ struct terrain_column_cache
     uint32_t tree_chance_percent;
 };
 
-static int32_t terrain_sample_height(uint64_t seed_value,
+static int32_t voxel_sample_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_generation_config &config) noexcept;
+    const voxel_generation_config &config) noexcept;
 
-static void terrain_sample_biomes(const terrain_generation_config &config,
+static void voxel_sample_biomes(const voxel_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z,
-    terrain_biome_sample *sample) noexcept;
+    voxel_biome_sample *sample) noexcept;
 
-static int32_t terrain_estimate_slope(uint64_t seed_value,
+static int32_t voxel_estimate_slope(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_generation_config &config) noexcept;
+    const voxel_generation_config &config) noexcept;
 
-static int32_t terrain_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
+static int32_t voxel_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
 {
     int32_t local_x;
     int32_t local_y;
@@ -97,10 +97,10 @@ static int32_t terrain_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-static void terrain_stage_prepare_columns(uint64_t seed_value,
+static void voxel_stage_prepare_columns(uint64_t seed_value,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const terrain_generation_config &config,
-    terrain_column_cache *column_cache) noexcept
+    const voxel_generation_config &config,
+    voxel_column_cache *column_cache) noexcept
 {
     int32_t local_x;
     int32_t local_z;
@@ -122,7 +122,7 @@ static void terrain_stage_prepare_columns(uint64_t seed_value,
         {
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
             world_block_x = world_block_origin_x + local_x;
-            terrain_sample_biomes(config, seed_value, world_block_x,
+            voxel_sample_biomes(config, seed_value, world_block_x,
                 world_block_z, &column_cache[column_index].biome_sample);
             column_cache[column_index].biome = column_cache[column_index]
                 .biome_sample.biome_indices[0];
@@ -163,10 +163,10 @@ static void terrain_stage_prepare_columns(uint64_t seed_value,
                 sample_index += 1U;
             }
             column_cache[column_index].column_height
-                = terrain_sample_height(seed_value, world_block_x,
+                = voxel_sample_height(seed_value, world_block_x,
                     world_block_z, config);
             column_cache[column_index].slope_height
-                = terrain_estimate_slope(seed_value, world_block_x,
+                = voxel_estimate_slope(seed_value, world_block_x,
                     world_block_z, config);
             column_cache[column_index].deep_block_id = config.biomes[
                 column_cache[column_index].biome].deep_block_id;
@@ -206,10 +206,10 @@ static void terrain_stage_prepare_columns(uint64_t seed_value,
     return ;
 }
 
-static ft_bool terrain_can_place_tree_with_writer(game_voxel_chunk &chunk,
+static ft_bool voxel_can_place_tree_with_writer(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
-    const terrain_tree_template &tree_template,
-    const terrain_generation_config &config) noexcept
+    const voxel_tree_template &tree_template,
+    const voxel_generation_config &config) noexcept
 {
     uint32_t block_index;
     int32_t target_x;
@@ -237,7 +237,7 @@ static ft_bool terrain_can_place_tree_with_writer(game_voxel_chunk &chunk,
         {
             if (chunk.read_block(target_x, target_y, target_z, &block_id)
                 != FT_ERR_SUCCESS
-                || terrain_block_is_replaceable(block_id) == FT_FALSE)
+                || voxel_block_is_replaceable(block_id) == FT_FALSE)
                 return (FT_FALSE);
         }
         block_index += 1U;
@@ -245,11 +245,11 @@ static ft_bool terrain_can_place_tree_with_writer(game_voxel_chunk &chunk,
     return (FT_TRUE);
 }
 
-static int32_t terrain_place_tree_with_writer(game_voxel_chunk &chunk,
+static int32_t voxel_place_tree_with_writer(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const terrain_tree_template &tree_template,
-    const terrain_generation_config &config) noexcept
+    const voxel_tree_template &tree_template,
+    const voxel_generation_config &config) noexcept
 {
     uint32_t block_index;
     int32_t target_x;
@@ -281,7 +281,7 @@ static int32_t terrain_place_tree_with_writer(game_voxel_chunk &chunk,
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t terrain_region_cross_chunk_block_writer(int32_t world_block_x,
+static int32_t voxel_region_cross_chunk_block_writer(int32_t world_block_x,
     int32_t world_block_y, int32_t world_block_z, uint32_t block_id,
     void *user_data) noexcept
 {
@@ -294,11 +294,11 @@ static int32_t terrain_region_cross_chunk_block_writer(int32_t world_block_x,
         world_block_z, block_id));
 }
 
-static int32_t terrain_column_height(uint64_t seed_value,
+static int32_t voxel_column_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_biome_profile &biome_profile,
+    const voxel_biome_profile &biome_profile,
     ft_bool allow_mountain_ridges,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     double large_noise;
     double detail_noise;
@@ -306,11 +306,11 @@ static int32_t terrain_column_height(uint64_t seed_value,
     int32_t surface_height;
     int32_t variation;
 
-    large_noise = terrain_value_noise(seed_value, world_block_x, world_block_z,
-        config.large_noise_scale > 0 ? config.large_noise_scale : TERRAIN_HEIGHTMAP_LARGE_SCALE);
-    detail_noise = terrain_value_noise(seed_value ^ UINT64_C(0xA5A5A5A5A5A5A5A5),
+    large_noise = voxel_value_noise(seed_value, world_block_x, world_block_z,
+        config.large_noise_scale > 0 ? config.large_noise_scale : VOXEL_HEIGHTMAP_LARGE_SCALE);
+    detail_noise = voxel_value_noise(seed_value ^ UINT64_C(0xA5A5A5A5A5A5A5A5),
         world_block_x, world_block_z,
-        config.detail_noise_scale > 0 ? config.detail_noise_scale : TERRAIN_HEIGHTMAP_DETAIL_SCALE);
+        config.detail_noise_scale > 0 ? config.detail_noise_scale : VOXEL_HEIGHTMAP_DETAIL_SCALE);
     variation = biome_profile.height_variation;
     total_noise = (large_noise * static_cast<double>(variation))
         + (detail_noise * static_cast<double>(variation)
@@ -343,15 +343,15 @@ static int32_t terrain_column_height(uint64_t seed_value,
         warp_scale = mountain_region_scale / 2;
         if (warp_scale < 1)
             warp_scale = 1;
-        warp_offset_x = static_cast<int32_t>(terrain_value_noise(
+        warp_offset_x = static_cast<int32_t>(voxel_value_noise(
             seed_value ^ UINT64_C(0x243F6A8885A308D3), world_block_x,
             world_block_z, warp_scale) * static_cast<double>(warp_scale * 2));
-        warp_offset_z = static_cast<int32_t>(terrain_value_noise(
+        warp_offset_z = static_cast<int32_t>(voxel_value_noise(
             seed_value ^ UINT64_C(0x13198A2E03707344), world_block_x,
             world_block_z, warp_scale) * static_cast<double>(warp_scale * 2));
         warped_x = world_block_x + warp_offset_x;
         warped_z = world_block_z + warp_offset_z;
-        region_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        region_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0x510E527FADE682D1), warped_x, warped_z,
             mountain_region_scale);
         region_noise = (region_noise + 1.0) * 0.5;
@@ -360,14 +360,14 @@ static int32_t terrain_column_height(uint64_t seed_value,
             region_mask = 0.0;
         if (region_mask > 1.0)
             region_mask = 1.0;
-        region_mask = terrain_smooth_factor(region_mask);
-        ridge_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        region_mask = voxel_smooth_factor(region_mask);
+        ridge_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0x6A09E667F3BCC909), warped_x, warped_z,
             config.mountain_ridge_scale);
-        detail_ridge_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        detail_ridge_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0x3C6EF372FE94F82B), warped_x, warped_z,
             mountain_detail_scale);
-        valley_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        valley_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0x1D6F80B3C9274A55), warped_x, warped_z,
             config.mountain_ridge_scale * 2);
         if (ridge_noise < 0.0)
@@ -389,7 +389,7 @@ static int32_t terrain_column_height(uint64_t seed_value,
     {
         double erosion_noise;
 
-        erosion_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        erosion_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0xBB67AE8584CAA73B), world_block_x, world_block_z,
             config.erosion_noise_scale);
         if (erosion_noise > 0.0)
@@ -401,7 +401,7 @@ static int32_t terrain_column_height(uint64_t seed_value,
     return (surface_height);
 }
 
-static void terrain_add_biome_sample(terrain_biome_sample *sample,
+static void voxel_add_biome_sample(voxel_biome_sample *sample,
     uint32_t biome, double weight) noexcept
 {
     uint32_t index;
@@ -426,9 +426,9 @@ static void terrain_add_biome_sample(terrain_biome_sample *sample,
     return ;
 }
 
-static void terrain_sample_biomes(const terrain_generation_config &config,
+static void voxel_sample_biomes(const voxel_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z,
-    terrain_biome_sample *sample) noexcept
+    voxel_biome_sample *sample) noexcept
 {
     int32_t cell_x;
     int32_t cell_z;
@@ -457,15 +457,15 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
     sample->count = 0U;
     if (config.biome_count == 0U)
         return ;
-    biome_zone_width = terrain_get_biome_zone_width(config, seed_value);
-    cell_x = terrain_floor_div(world_block_x,
+    biome_zone_width = voxel_get_biome_zone_width(config, seed_value);
+    cell_x = voxel_floor_div(world_block_x,
         biome_zone_width);
-    cell_z = terrain_floor_div(world_block_z,
+    cell_z = voxel_floor_div(world_block_z,
         biome_zone_width);
     if (config.enable_biome_transitions == FT_FALSE
         || config.biome_transition_noise_strength == 0U)
     {
-        terrain_add_biome_sample(sample, terrain_select_biome(config,
+        voxel_add_biome_sample(sample, voxel_select_biome(config,
             seed_value, world_block_x, world_block_z), 1.0);
         return ;
     }
@@ -481,12 +481,12 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
             cell_origin_z = (cell_z + neighbour_z)
                 * biome_zone_width;
             site_x = cell_origin_x + biome_zone_width / 2
-                + static_cast<int32_t>(terrain_signed_unit_noise(
+                + static_cast<int32_t>(voxel_signed_unit_noise(
                     seed_value ^ UINT64_C(0xA24BAED4963EE407),
                     cell_x + neighbour_x, cell_z + neighbour_z)
                     * static_cast<double>(biome_zone_width) * 0.35);
             site_z = cell_origin_z + biome_zone_width / 2
-                + static_cast<int32_t>(terrain_signed_unit_noise(
+                + static_cast<int32_t>(voxel_signed_unit_noise(
                     seed_value ^ UINT64_C(0x9FB21C651E98DF25),
                     cell_x + neighbour_x, cell_z + neighbour_z)
                     * static_cast<double>(biome_zone_width) * 0.35);
@@ -495,7 +495,7 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
             distance_squared = (distance_x * distance_x)
                 + (distance_z * distance_z);
             site_weight = 1.0 / (distance_squared + 64.0);
-            site_biome = terrain_select_biome(config, seed_value,
+            site_biome = voxel_select_biome(config, seed_value,
                 cell_origin_x, cell_origin_z);
             candidate_index = 0U;
             while (candidate_index < selected_count
@@ -524,7 +524,7 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
     index = 0U;
     while (index < selected_count)
     {
-        terrain_add_biome_sample(sample, selected_biomes[index],
+        voxel_add_biome_sample(sample, selected_biomes[index],
             selected_weights[index]);
         index += 1U;
     }
@@ -538,7 +538,7 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
     if (weight_total <= 0.0)
     {
         sample->count = 1U;
-        sample->biome_indices[0] = terrain_select_biome(config, seed_value,
+        sample->biome_indices[0] = voxel_select_biome(config, seed_value,
             world_block_x, world_block_z);
         sample->weights[0] = 1.0;
         return ;
@@ -552,9 +552,9 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
     return ;
 }
 
-static uint32_t terrain_sample_biome_block(
-    const terrain_generation_config &config,
-    const terrain_biome_sample &sample, uint64_t seed_value,
+static uint32_t voxel_sample_biome_block(
+    const voxel_generation_config &config,
+    const voxel_biome_sample &sample, uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     uint64_t material_salt, ft_bool subsurface) noexcept
 {
@@ -571,7 +571,7 @@ static uint32_t terrain_sample_biome_block(
             * UINT64_C(0x9FB21C651E98DF25))
         ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_z))
             * UINT64_C(0xC13FA9A902A6328F));
-    sample_value = static_cast<double>(terrain_mix_u64(sample_seed)
+    sample_value = static_cast<double>(voxel_mix_u64(sample_seed)
         % 100000U) / 100000.0;
     accumulated_weight = 0.0;
     index = 0U;
@@ -590,16 +590,16 @@ static uint32_t terrain_sample_biome_block(
     return (config.biomes[sample.biome_indices[0]].surface_block_id);
 }
 
-static const terrain_tree_template *terrain_sample_tree_template(
-    const terrain_generation_config &config,
-    const terrain_biome_sample &sample, uint64_t seed_value)
+static const voxel_tree_template *voxel_sample_tree_template(
+    const voxel_generation_config &config,
+    const voxel_biome_sample &sample, uint64_t seed_value)
 {
     uint32_t index;
     uint32_t selected_biome;
     double tree_weight_total;
     double sample_value;
     double accumulated_weight;
-    const terrain_tree_template *tree_template;
+    const voxel_tree_template *tree_template;
 
     tree_weight_total = 0.0;
     index = 0U;
@@ -615,7 +615,7 @@ static const terrain_tree_template *terrain_sample_tree_template(
     if (tree_weight_total <= 0.0)
         return (ft_nullptr);
     selected_biome = sample.biome_indices[0];
-    sample_value = static_cast<double>(terrain_mix_u64(seed_value)
+    sample_value = static_cast<double>(voxel_mix_u64(seed_value)
         % 100000U) / 100000.0 * tree_weight_total;
     accumulated_weight = 0.0;
     index = 0U;
@@ -637,31 +637,31 @@ static const terrain_tree_template *terrain_sample_tree_template(
     if (tree_template == ft_nullptr
         && config.biomes[selected_biome].tree_template_count > 0U)
     {
-        tree_template = terrain_generation_config_get_tree_template(config,
+        tree_template = voxel_generation_config_get_tree_template(config,
             config.biomes[selected_biome].tree_template_indices[
-                terrain_mix_u64(seed_value ^ TERRAIN_FEATURE_TREE_SALT)
+                voxel_mix_u64(seed_value ^ VOXEL_FEATURE_TREE_SALT)
                     % config.biomes[selected_biome].tree_template_count]);
     }
     return (tree_template);
 }
 
-static int32_t terrain_smooth_biome_height(uint64_t seed_value,
+static int32_t voxel_smooth_biome_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_biome_definition &biome_definition,
-    const terrain_generation_config &config) noexcept
+    const voxel_biome_definition &biome_definition,
+    const voxel_generation_config &config) noexcept
 {
-    terrain_biome_sample sample;
+    voxel_biome_sample sample;
     int32_t height;
     uint32_t index;
 
     (void)biome_definition;
-    terrain_sample_biomes(config, seed_value, world_block_x, world_block_z,
+    voxel_sample_biomes(config, seed_value, world_block_x, world_block_z,
         &sample);
     height = 0;
     index = 0U;
     while (index < sample.count)
     {
-        height += static_cast<int32_t>(terrain_column_height(seed_value,
+        height += static_cast<int32_t>(voxel_column_height(seed_value,
             world_block_x, world_block_z,
             config.biomes[sample.biome_indices[index]].profile,
             config.biomes[sample.biome_indices[index]].allow_mountain_ridges,
@@ -671,9 +671,9 @@ static int32_t terrain_smooth_biome_height(uint64_t seed_value,
     return (height);
 }
 
-static int32_t terrain_estimate_slope(uint64_t seed_value,
+static int32_t voxel_estimate_slope(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     int32_t height_west;
     int32_t height_east;
@@ -682,13 +682,13 @@ static int32_t terrain_estimate_slope(uint64_t seed_value,
     int32_t slope_x;
     int32_t slope_z;
 
-    height_west = terrain_sample_height(seed_value, world_block_x - 1,
+    height_west = voxel_sample_height(seed_value, world_block_x - 1,
         world_block_z, config);
-    height_east = terrain_sample_height(seed_value, world_block_x + 1,
+    height_east = voxel_sample_height(seed_value, world_block_x + 1,
         world_block_z, config);
-    height_north = terrain_sample_height(seed_value, world_block_x,
+    height_north = voxel_sample_height(seed_value, world_block_x,
         world_block_z - 1, config);
-    height_south = terrain_sample_height(seed_value, world_block_x,
+    height_south = voxel_sample_height(seed_value, world_block_x,
         world_block_z + 1, config);
     slope_x = height_east - height_west;
     if (slope_x < 0)
@@ -699,8 +699,8 @@ static int32_t terrain_estimate_slope(uint64_t seed_value,
     return (slope_x + slope_z);
 }
 
-static int32_t terrain_sample_height(uint64_t seed_value, int32_t world_block_x,
-    int32_t world_block_z, const terrain_generation_config &config) noexcept
+static int32_t voxel_sample_height(uint64_t seed_value, int32_t world_block_x,
+    int32_t world_block_z, const voxel_generation_config &config) noexcept
 {
     uint32_t biome;
     uint32_t biome_index;
@@ -710,8 +710,8 @@ static int32_t terrain_sample_height(uint64_t seed_value, int32_t world_block_x,
     int32_t candidate_maximum;
     int32_t height;
 
-    biome = terrain_select_biome(config, seed_value, world_block_x, world_block_z);
-    height = terrain_smooth_biome_height(seed_value, world_block_x,
+    biome = voxel_select_biome(config, seed_value, world_block_x, world_block_z);
+    height = voxel_smooth_biome_height(seed_value, world_block_x,
         world_block_z, config.biomes[biome], config);
     minimum_height = config.biomes[0].profile.surface_height
         - config.biomes[0].profile.height_variation
@@ -741,9 +741,9 @@ static int32_t terrain_sample_height(uint64_t seed_value, int32_t world_block_x,
     return (height);
 }
 
-static int32_t terrain_smooth_heightfield(uint64_t seed_value,
+static int32_t voxel_smooth_heightfield(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     int32_t offset_x;
     int32_t offset_z;
@@ -752,15 +752,15 @@ static int32_t terrain_smooth_heightfield(uint64_t seed_value,
     int32_t sample_height;
     int32_t sample_weight;
 
-    offset_z = -TERRAIN_HEIGHTMAP_SMOOTH_RADIUS;
+    offset_z = -VOXEL_HEIGHTMAP_SMOOTH_RADIUS;
     sample_count = 0;
     weighted_height = 0;
-    while (offset_z <= TERRAIN_HEIGHTMAP_SMOOTH_RADIUS)
+    while (offset_z <= VOXEL_HEIGHTMAP_SMOOTH_RADIUS)
     {
-        offset_x = -TERRAIN_HEIGHTMAP_SMOOTH_RADIUS;
-        while (offset_x <= TERRAIN_HEIGHTMAP_SMOOTH_RADIUS)
+        offset_x = -VOXEL_HEIGHTMAP_SMOOTH_RADIUS;
+        while (offset_x <= VOXEL_HEIGHTMAP_SMOOTH_RADIUS)
         {
-            sample_height = terrain_sample_height(seed_value,
+            sample_height = voxel_sample_height(seed_value,
                 world_block_x + offset_x, world_block_z + offset_z, config);
             if (offset_x == 0 && offset_z == 0)
                 sample_weight = 4;
@@ -775,76 +775,76 @@ static int32_t terrain_smooth_heightfield(uint64_t seed_value,
         offset_z += 1;
     }
     if (sample_count <= 0)
-        return (terrain_sample_height(seed_value, world_block_x,
+        return (voxel_sample_height(seed_value, world_block_x,
             world_block_z, config));
     return (weighted_height / sample_count);
 }
 
-static ft_bool terrain_should_place_feature(uint64_t seed_value,
+static ft_bool voxel_should_place_feature(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z, uint64_t salt,
     uint64_t threshold) noexcept
 {
     uint64_t feature_seed;
 
-    feature_seed = terrain_feature_seed(seed_value, world_block_x,
+    feature_seed = voxel_feature_seed(seed_value, world_block_x,
         world_block_z, salt);
     if ((feature_seed % 100U) < threshold)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-static uint32_t terrain_ground_cover_block_for_biome(uint32_t biome,
+static uint32_t voxel_ground_cover_block_for_biome(uint32_t biome,
     uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z) noexcept
 {
     uint64_t variant_seed;
     uint32_t variant;
 
-    variant_seed = terrain_feature_seed(seed_value, world_block_x,
-        world_block_z, TERRAIN_FEATURE_GROUND_COVER_VARIANT_SALT);
+    variant_seed = voxel_feature_seed(seed_value, world_block_x,
+        world_block_z, VOXEL_FEATURE_GROUND_COVER_VARIANT_SALT);
     variant = static_cast<uint32_t>(variant_seed % 100U);
-    if (biome == TERRAIN_BIOME_DESERT)
+    if (biome == VOXEL_BIOME_DESERT)
     {
         if (variant < 60U)
-            return (TERRAIN_GENERATOR_DEAD_BUSH_BLOCK);
-        return (TERRAIN_GENERATOR_SHRUB_BLOCK);
+            return (VOXEL_GENERATOR_DEAD_BUSH_BLOCK);
+        return (VOXEL_GENERATOR_SHRUB_BLOCK);
     }
-    if (biome == TERRAIN_BIOME_SNOW || biome == TERRAIN_BIOME_MOUNTAINS)
-        return (TERRAIN_GENERATOR_DEAD_BUSH_BLOCK);
+    if (biome == VOXEL_BIOME_SNOW || biome == VOXEL_BIOME_MOUNTAINS)
+        return (VOXEL_GENERATOR_DEAD_BUSH_BLOCK);
     if (variant < 25U)
-        return (TERRAIN_GENERATOR_RED_FLOWER_BLOCK);
+        return (VOXEL_GENERATOR_RED_FLOWER_BLOCK);
     if (variant < 45U)
-        return (TERRAIN_GENERATOR_YELLOW_FLOWER_BLOCK);
+        return (VOXEL_GENERATOR_YELLOW_FLOWER_BLOCK);
     if (variant < 65U)
-        return (TERRAIN_GENERATOR_TALL_GRASS_BLOCK);
+        return (VOXEL_GENERATOR_TALL_GRASS_BLOCK);
     if (variant < 80U)
-        return (TERRAIN_GENERATOR_FERN_BLOCK);
+        return (VOXEL_GENERATOR_FERN_BLOCK);
     if (variant < 88U)
-        return (TERRAIN_GENERATOR_RED_MUSHROOM_BLOCK);
+        return (VOXEL_GENERATOR_RED_MUSHROOM_BLOCK);
     if (variant < 96U)
-        return (TERRAIN_GENERATOR_BROWN_MUSHROOM_BLOCK);
-    return (TERRAIN_GENERATOR_SHRUB_BLOCK);
+        return (VOXEL_GENERATOR_BROWN_MUSHROOM_BLOCK);
+    return (VOXEL_GENERATOR_SHRUB_BLOCK);
 }
 
-static double terrain_cave_noise(uint64_t seed_value,
+static double voxel_cave_noise(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     int32_t scale, uint64_t salt) noexcept
 {
     uint64_t layer_seed;
     int32_t layer_y;
 
-    layer_y = terrain_floor_div(world_block_y, scale);
+    layer_y = voxel_floor_div(world_block_y, scale);
     layer_seed = seed_value ^ salt
         ^ (static_cast<uint64_t>(layer_y) * UINT64_C(0x9E3779B97F4A7C15));
-    return (terrain_value_noise(layer_seed,
+    return (voxel_value_noise(layer_seed,
         world_block_x + (world_block_y * 13),
         world_block_z - (world_block_y * 7), scale));
 }
 
-static ft_bool terrain_should_carve_cave(uint64_t seed_value,
+static ft_bool voxel_should_carve_cave(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     int32_t surface_height,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     double primary_noise;
     double detail_noise;
@@ -877,7 +877,7 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
         return (FT_FALSE);
     if (config.underground_structures.enable_ravines == FT_TRUE)
     {
-        cave_surface_margin = TERRAIN_CAVE_SURFACE_MARGIN;
+        cave_surface_margin = VOXEL_CAVE_SURFACE_MARGIN;
         if (config.underground_structures.ravine_depth > 0U)
             cave_surface_margin = static_cast<int32_t>(
                 config.underground_structures.ravine_depth);
@@ -885,16 +885,16 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
             && world_block_y <= config.underground_structures.maximum_height
             && world_block_y < surface_height - cave_surface_margin)
         {
-            primary_noise = terrain_cave_noise(seed_value, world_block_x,
-                world_block_y, world_block_z, TERRAIN_CAVE_PRIMARY_SCALE,
-                TERRAIN_CAVE_PRIMARY_SALT);
-            detail_noise = terrain_cave_noise(seed_value, world_block_x,
-                world_block_y, world_block_z, TERRAIN_CAVE_DETAIL_SCALE,
-                TERRAIN_CAVE_DETAIL_SALT);
+            primary_noise = voxel_cave_noise(seed_value, world_block_x,
+                world_block_y, world_block_z, VOXEL_CAVE_PRIMARY_SCALE,
+                VOXEL_CAVE_PRIMARY_SALT);
+            detail_noise = voxel_cave_noise(seed_value, world_block_x,
+                world_block_y, world_block_z, VOXEL_CAVE_DETAIL_SCALE,
+                VOXEL_CAVE_DETAIL_SALT);
             ravine_detail_threshold = -0.12
                 + (static_cast<double>(config.underground_structures
                     .ravine_width) * 0.04);
-            if (terrain_should_place_feature(seed_value, world_block_x,
+            if (voxel_should_place_feature(seed_value, world_block_x,
                     world_block_z, UINT64_C(0xD1CEB00C),
                     config.underground_structures.ravine_chance_percent)
                     == FT_TRUE
@@ -907,9 +907,9 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
         || config.underground_structures.cave_room_chance_percent == 0U
         || config.underground_structures.cave_small_radius == 0U)
         return (FT_FALSE);
-    cell_x = terrain_floor_div(world_block_x, TERRAIN_CAVE_CELL_SIZE);
-    cell_y = terrain_floor_div(world_block_y, TERRAIN_CAVE_CELL_SIZE);
-    cell_z = terrain_floor_div(world_block_z, TERRAIN_CAVE_CELL_SIZE);
+    cell_x = voxel_floor_div(world_block_x, VOXEL_CAVE_CELL_SIZE);
+    cell_y = voxel_floor_div(world_block_y, VOXEL_CAVE_CELL_SIZE);
+    cell_z = voxel_floor_div(world_block_z, VOXEL_CAVE_CELL_SIZE);
     offset_x = -1;
     while (offset_x <= 1)
     {
@@ -922,7 +922,7 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
                 candidate_cell_x = cell_x + offset_x;
                 candidate_cell_y = cell_y + offset_y;
                 candidate_cell_z = cell_z + offset_z;
-                candidate_seed = terrain_mix_u64(seed_value
+                candidate_seed = voxel_mix_u64(seed_value
                     ^ static_cast<uint64_t>(static_cast<int64_t>(
                         candidate_cell_x)) * UINT64_C(0x9E3779B97F4A7C15)
                     ^ static_cast<uint64_t>(static_cast<int64_t>(
@@ -933,12 +933,12 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
                 if ((candidate_seed % 100U)
                     < config.underground_structures.cave_room_chance_percent)
                 {
-                    center_x = candidate_cell_x * TERRAIN_CAVE_CELL_SIZE
+                    center_x = candidate_cell_x * VOXEL_CAVE_CELL_SIZE
                         + 2 + static_cast<int32_t>((candidate_seed >> 8)
-                            % (TERRAIN_CAVE_CELL_SIZE - 4));
-                    center_z = candidate_cell_z * TERRAIN_CAVE_CELL_SIZE
+                            % (VOXEL_CAVE_CELL_SIZE - 4));
+                    center_z = candidate_cell_z * VOXEL_CAVE_CELL_SIZE
                         + 2 + static_cast<int32_t>((candidate_seed >> 16)
-                            % (TERRAIN_CAVE_CELL_SIZE - 4));
+                            % (VOXEL_CAVE_CELL_SIZE - 4));
                     height_range = config.underground_structures.maximum_height
                         - config.underground_structures.minimum_height + 1;
                     if (height_range < 1)
@@ -969,7 +969,7 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
                     if (distance_x * distance_x + distance_y * distance_y
                         + distance_z * distance_z <= radius * radius
                         && world_block_y < surface_height
-                            - TERRAIN_CAVE_SURFACE_MARGIN)
+                            - VOXEL_CAVE_SURFACE_MARGIN)
                         return (FT_TRUE);
                     entrance_candidate = ((candidate_seed >> 40) % 100U
                         < config.underground_structures
@@ -995,20 +995,20 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
     return (FT_FALSE);
 }
 
-static ft_bool terrain_should_fill_water(uint64_t seed_value,
+static ft_bool voxel_should_fill_water(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     double river_noise;
     double lake_noise;
 
-    if (terrain_should_place_feature(seed_value, world_block_x, world_block_z,
-            TERRAIN_FEATURE_WATER_SALT, config.water_chance_percent)
+    if (voxel_should_place_feature(seed_value, world_block_x, world_block_z,
+            VOXEL_FEATURE_WATER_SALT, config.water_chance_percent)
         == FT_TRUE)
         return (FT_TRUE);
     if (config.fluids.enable_rivers == FT_TRUE)
     {
-        river_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        river_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0x3C6EF372FE94F82B), world_block_x, world_block_z,
             config.fluids.river_noise_scale);
         if (river_noise < 0.0)
@@ -1019,14 +1019,14 @@ static ft_bool terrain_should_fill_water(uint64_t seed_value,
     }
     if (config.fluids.enable_lakes == FT_TRUE)
     {
-        lake_noise = terrain_value_noise(seed_value ^ UINT64_C(
+        lake_noise = voxel_value_noise(seed_value ^ UINT64_C(
             0xA54FF53A5F1D36F1), world_block_x, world_block_z,
             config.fluids.lake_noise_scale);
         if (lake_noise < 0.0)
             lake_noise = -lake_noise;
         if (lake_noise < 0.08
-            && terrain_should_place_feature(seed_value, world_block_x,
-                world_block_z, TERRAIN_FEATURE_WATER_SALT
+            && voxel_should_place_feature(seed_value, world_block_x,
+                world_block_z, VOXEL_FEATURE_WATER_SALT
                     ^ UINT64_C(0xA11CE), config.fluids.lake_chance_percent)
                 == FT_TRUE)
             return (FT_TRUE);
@@ -1034,12 +1034,12 @@ static ft_bool terrain_should_fill_water(uint64_t seed_value,
     return (FT_FALSE);
 }
 
-static ft_bool terrain_block_is_ore_host(uint32_t block_id,
-    const terrain_generation_config &config) noexcept
+static ft_bool voxel_block_is_ore_host(uint32_t block_id,
+    const voxel_generation_config &config) noexcept
 {
-    if (terrain_block_is_solid(block_id) == FT_FALSE)
+    if (voxel_block_is_solid(block_id) == FT_FALSE)
         return (FT_FALSE);
-    if (block_id == TERRAIN_GENERATOR_BEDROCK_BLOCK)
+    if (block_id == VOXEL_GENERATOR_BEDROCK_BLOCK)
         return (FT_FALSE);
     if (config.layers.enable_snow_caps == FT_TRUE
         && block_id == config.layers.snow_cap_block_id)
@@ -1051,7 +1051,7 @@ static ft_bool terrain_block_is_ore_host(uint32_t block_id,
     return (FT_TRUE);
 }
 
-static int32_t terrain_find_surface_height(const game_voxel_chunk &chunk,
+static int32_t voxel_find_surface_height(const game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept
 {
     int32_t local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
@@ -1062,18 +1062,18 @@ static int32_t terrain_find_surface_height(const game_voxel_chunk &chunk,
         if (chunk.read_block(local_x, local_y, local_z, &block_id)
             != FT_ERR_SUCCESS)
             return (-1);
-        if (terrain_block_is_solid(block_id) == FT_TRUE)
+        if (voxel_block_is_solid(block_id) == FT_TRUE)
             return (local_y);
         local_y -= 1;
     }
     return (-1);
 }
 
-static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
+static int32_t voxel_place_ore_vein(game_voxel_chunk &chunk,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_y,
     int32_t world_block_z, int32_t local_x, int32_t local_y, int32_t local_z,
-    const terrain_ore_rule &ore_rule, uint32_t vein_size,
-    const terrain_generation_config &config) noexcept
+    const voxel_ore_rule &ore_rule, uint32_t vein_size,
+    const voxel_generation_config &config) noexcept
 {
     uint32_t vein_index;
     uint64_t vein_seed;
@@ -1088,7 +1088,7 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     vein_index = 0U;
     while (vein_index < vein_size)
     {
-        vein_seed = terrain_mix_u64(seed_value
+        vein_seed = voxel_mix_u64(seed_value
             ^ static_cast<uint64_t>(world_block_x)
             ^ (static_cast<uint64_t>(world_block_y) << 21)
             ^ (static_cast<uint64_t>(world_block_z) << 42)
@@ -1104,15 +1104,15 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
                 &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            target_surface = terrain_find_surface_height(chunk,
+            target_surface = voxel_find_surface_height(chunk,
                 target_x, target_z);
             target_depth = target_surface - target_y;
             if (target_surface >= 0
                 && target_depth >= ore_rule.minimum_depth
                 && target_depth <= ore_rule.maximum_depth
-                && (terrain_block_is_ore_host(block_id, config) == FT_TRUE
+                && (voxel_block_is_ore_host(block_id, config) == FT_TRUE
                     || (ore_rule.allow_ore_replacement == FT_TRUE
-                        && terrain_block_is_ore(block_id) == FT_TRUE)))
+                        && voxel_block_is_ore(block_id) == FT_TRUE)))
             {
                 error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
@@ -1125,10 +1125,10 @@ static int32_t terrain_place_ore_vein(game_voxel_chunk &chunk,
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
+static int32_t voxel_generate_ores(game_voxel_chunk &chunk,
     uint64_t seed_value, int32_t world_block_origin_x,
     int32_t world_block_origin_z,
-    const terrain_generation_config &config) noexcept
+    const voxel_generation_config &config) noexcept
 {
     uint32_t ore_index;
     int32_t local_x;
@@ -1144,7 +1144,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
 
     ore_index = 0U;
     while (ore_index < config.ore_rule_count
-        && ore_index < TERRAIN_MAX_ORE_RULES)
+        && ore_index < VOXEL_MAX_ORE_RULES)
     {
         if (config.ores[ore_index].enabled == FT_TRUE)
         {
@@ -1156,7 +1156,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                 ore_index += 1U;
                 continue ;
             }
-            ore_seed = terrain_mix_u64(seed_value
+            ore_seed = voxel_mix_u64(seed_value
                 ^ static_cast<uint64_t>(ore_index)
                     * UINT64_C(0x9E3779B97F4A7C15));
             vein_count = config.ores[ore_index].veins_per_chunk_min;
@@ -1168,13 +1168,13 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
             vein_index = 0U;
             while (vein_index < vein_count)
             {
-                vein_seed = terrain_mix_u64(ore_seed
+                vein_seed = voxel_mix_u64(ore_seed
                     ^ static_cast<uint64_t>(vein_index));
                 local_x = static_cast<int32_t>((vein_seed >> 8)
                     % GAME_VOXEL_CHUNK_WIDTH);
                 local_z = static_cast<int32_t>((vein_seed >> 24)
                     % GAME_VOXEL_CHUNK_DEPTH);
-                surface_height = terrain_find_surface_height(chunk,
+                surface_height = voxel_find_surface_height(chunk,
                     local_x, local_z);
                 if (surface_height >= 0)
                 {
@@ -1191,7 +1191,7 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
                         vein_size += static_cast<uint32_t>((vein_seed >> 52)
                             % (config.ores[ore_index].vein_size_max
                                 - config.ores[ore_index].vein_size_min + 1U));
-                    error_code = terrain_place_ore_vein(chunk, seed_value,
+                    error_code = voxel_place_ore_vein(chunk, seed_value,
                         world_block_origin_x + local_x, local_y,
                         world_block_origin_z + local_z, local_x, local_y,
                         local_z, config.ores[ore_index], vein_size, config);
@@ -1206,33 +1206,33 @@ static int32_t terrain_generate_ores(game_voxel_chunk &chunk,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generate_chunk(game_voxel_chunk &chunk,
+int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
     const char *seed_string) noexcept
 {
-    return (terrain_generate_chunk(chunk, 0, 0, seed_string));
+    return (voxel_generate_chunk(chunk, 0, 0, seed_string));
 }
 
-int32_t terrain_generate_chunk(game_voxel_chunk &chunk,
+int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const char *seed_string) noexcept
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
 
-    if (terrain_default_generation_config(config) != FT_ERR_SUCCESS)
+    if (voxel_default_generation_config(config) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    return (terrain_generate_chunk(chunk, world_block_origin_x,
+    return (voxel_generate_chunk(chunk, world_block_origin_x,
         world_block_origin_z, seed_string, config));
 }
 
-static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
+static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const char *seed_string,
-    const terrain_generation_config &requested_config,
+    const voxel_generation_config &requested_config,
     ft_bool configuration_validated, ft_bool signature_precomputed,
     uint32_t precomputed_signature, ft_bool coordinate_seed_overridden,
     uint64_t coordinate_seed, uint32_t requested_stage_mask) noexcept
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
 
     if (config.initialize(requested_config) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -1245,46 +1245,46 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     int32_t world_block_x;
     int32_t world_block_z;
     uint32_t biome;
-    terrain_biome_profile biome_profile;
+    voxel_biome_profile biome_profile;
     uint32_t deep_block_id;
     uint64_t seed_value;
     uint32_t configuration_signature;
     ft_bool place_shrub;
     ft_bool mountain_active;
-    const terrain_tree_template *tree_template;
+    const voxel_tree_template *tree_template;
     uint64_t tree_feature_seed;
     uint32_t feature_index;
     uint64_t feature_seed;
-    const terrain_feature_rule *feature_rule;
+    const voxel_feature_rule *feature_rule;
     game_voxel_generation_metadata generation_metadata;
-    terrain_column_cache column_cache[TERRAIN_COLUMN_CACHE_COUNT];
+    voxel_column_cache column_cache[VOXEL_COLUMN_CACHE_COUNT];
     int32_t column_index;
     int32_t feature_margin;
     uint32_t previous_stage_mask;
-    const uint32_t all_stage_mask = TERRAIN_STAGE_BASE_TERRAIN
-        | TERRAIN_STAGE_CAVES | TERRAIN_STAGE_FLUIDS
-        | TERRAIN_STAGE_DECORATION | TERRAIN_STAGE_STRUCTURES
-        | TERRAIN_STAGE_ORES;
+    const uint32_t all_stage_mask = VOXEL_STAGE_BASE_TERRAIN
+        | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
+        | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES
+        | VOXEL_STAGE_ORES;
 
     if (chunk.is_generation_protected() == FT_TRUE)
         return (FT_ERR_SUCCESS);
     if (requested_stage_mask == 0U || (requested_stage_mask & ~all_stage_mask) != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (configuration_validated == FT_FALSE
-        && terrain_generation_config_is_valid(config) == FT_FALSE)
+        && voxel_generation_config_is_valid(config) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
 
-    seed_value = terrain_seed_value(seed_string);
+    seed_value = voxel_seed_value(seed_string);
     if (coordinate_seed_overridden == FT_TRUE)
-        seed_value = terrain_mix_u64(seed_value ^ coordinate_seed);
+        seed_value = voxel_mix_u64(seed_value ^ coordinate_seed);
     if (signature_precomputed == FT_TRUE)
         configuration_signature = precomputed_signature;
     else
-        configuration_signature = terrain_generation_config_signature(config);
+        configuration_signature = voxel_generation_config_signature(config);
     previous_stage_mask = 0U;
     if (chunk.generation_metadata_matches(seed_value, world_block_origin_x,
             world_block_origin_z, configuration_signature) == FT_TRUE
-        && chunk.get_generation_metadata().generator_version == TERRAIN_GENERATOR_VERSION)
+        && chunk.get_generation_metadata().generator_version == VOXEL_GENERATOR_VERSION)
     {
         previous_stage_mask = chunk.get_generation_metadata().completed_stage_mask;
         if ((previous_stage_mask & requested_stage_mask) == requested_stage_mask)
@@ -1293,14 +1293,14 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             return (FT_ERR_SUCCESS);
         }
     }
-    if ((requested_stage_mask & TERRAIN_STAGE_BASE_TERRAIN) != 0U)
+    if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U)
     {
-        error_code = terrain_stage_clear_chunk(chunk);
+        error_code = voxel_stage_clear_chunk(chunk);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         previous_stage_mask = 0U;
     }
-    terrain_stage_prepare_columns(seed_value, world_block_origin_x,
+    voxel_stage_prepare_columns(seed_value, world_block_origin_x,
         world_block_origin_z, config, column_cache);
     /* Stage: base terrain, caves, terrain-aware layers, and fluids. */
     local_z = 0;
@@ -1316,7 +1316,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             biome_profile = column_cache[column_index].biome_profile;
             deep_block_id = column_cache[column_index].deep_block_id;
             place_shrub = column_cache[column_index].can_place_shrubs;
-            column_height = terrain_smooth_heightfield(seed_value,
+            column_height = voxel_smooth_heightfield(seed_value,
                 world_block_x, world_block_z, config);
             column_cache[column_index].column_height = column_height;
             if (column_height < 0)
@@ -1332,41 +1332,41 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             local_y = 0;
             while (local_y <= column_height)
             {
-                if ((requested_stage_mask & TERRAIN_STAGE_CAVES) != 0U
-                    && local_y > TERRAIN_BEDROCK_FLOOR_Y
-                    && terrain_should_carve_cave(seed_value, world_block_x,
+                if ((requested_stage_mask & VOXEL_STAGE_CAVES) != 0U
+                    && local_y > VOXEL_BEDROCK_FLOOR_Y
+                    && voxel_should_carve_cave(seed_value, world_block_x,
                         local_y, world_block_z, column_height, config)
                     == FT_TRUE)
                 {
                     error_code = chunk.write_generated_block(local_x, local_y,
-                        local_z, TERRAIN_GENERATOR_AIR_BLOCK);
+                        local_z, VOXEL_GENERATOR_AIR_BLOCK);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                     local_y += 1;
                     continue ;
                 }
-                if ((requested_stage_mask & TERRAIN_STAGE_BASE_TERRAIN) == 0U)
+                if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) == 0U)
                 {
                     local_y += 1;
                     continue ;
                 }
-                if (local_y <= TERRAIN_BEDROCK_FLOOR_Y)
-                    block_id = TERRAIN_GENERATOR_BEDROCK_BLOCK;
+                if (local_y <= VOXEL_BEDROCK_FLOOR_Y)
+                    block_id = VOXEL_GENERATOR_BEDROCK_BLOCK;
                 else if (local_y == column_height)
-                    block_id = terrain_sample_biome_block(config,
+                    block_id = voxel_sample_biome_block(config,
                         column_cache[column_index].biome_sample, seed_value,
                         world_block_x, local_y, world_block_z,
-                        TERRAIN_BIOME_SURFACE_TRANSITION_SALT, FT_FALSE);
+                        VOXEL_BIOME_SURFACE_TRANSITION_SALT, FT_FALSE);
                 else if (local_y >= column_height - biome_profile.topsoil_depth)
-                    block_id = terrain_sample_biome_block(config,
+                    block_id = voxel_sample_biome_block(config,
                         column_cache[column_index].biome_sample, seed_value,
                         world_block_x, local_y, world_block_z,
-                        TERRAIN_BIOME_SUBSURFACE_TRANSITION_SALT, FT_TRUE);
+                        VOXEL_BIOME_SUBSURFACE_TRANSITION_SALT, FT_TRUE);
                 else
                     block_id = deep_block_id;
                 if (mountain_active == FT_TRUE
                     && column_cache[column_index].slope_height
-                        >= TERRAIN_MOUNTAIN_CLIFF_SLOPE
+                        >= VOXEL_MOUNTAIN_CLIFF_SLOPE
                     && local_y >= column_height
                         - biome_profile.topsoil_depth)
                     block_id = deep_block_id;
@@ -1376,7 +1376,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     return (error_code);
                 local_y += 1;
             }
-            if ((requested_stage_mask & TERRAIN_STAGE_BASE_TERRAIN) != 0U
+            if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U
                 && config.layers.enable_beaches == FT_TRUE
                 && column_height < config.sea_level)
             {
@@ -1403,14 +1403,14 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     local_y -= 1;
                 }
             }
-            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
+            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
                 && config.layers.enable_snow_caps == FT_TRUE
                 && column_cache[column_index].can_place_snow == FT_TRUE
                 && column_height >= config.layers.snow_cap_minimum_height
                 && (mountain_active == FT_FALSE
                     || (column_cache[column_index].slope_height
-                        <= TERRAIN_MOUNTAIN_SNOW_SLOPE_LIMIT
-                        && terrain_value_noise(seed_value ^ UINT64_C(
+                        <= VOXEL_MOUNTAIN_SNOW_SLOPE_LIMIT
+                        && voxel_value_noise(seed_value ^ UINT64_C(
                             0xD1B54A32D192ED03), world_block_x,
                             world_block_z, config.detail_noise_scale) > -0.35)))
             {
@@ -1425,62 +1425,62 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     local_y -= 1;
                 }
             }
-            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
-                && column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET
+            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
+                && column_height + VOXEL_FEATURE_SHRUB_HEIGHT_OFFSET
                 < GAME_VOXEL_CHUNK_HEIGHT
                 && place_shrub == FT_TRUE
                 && (mountain_active == FT_FALSE
                     || column_cache[column_index].slope_height <= 4)
-                && terrain_should_place_feature(seed_value, world_block_x,
-                    world_block_z, TERRAIN_FEATURE_SHRUB_SALT,
+                && voxel_should_place_feature(seed_value, world_block_x,
+                    world_block_z, VOXEL_FEATURE_SHRUB_SALT,
                     column_cache[column_index].shrub_chance_percent) == FT_TRUE)
             {
                 error_code = chunk.write_generated_block(local_x,
-                    column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET,
-                    local_z, terrain_ground_cover_block_for_biome(biome,
+                    column_height + VOXEL_FEATURE_SHRUB_HEIGHT_OFFSET,
+                    local_z, voxel_ground_cover_block_for_biome(biome,
                         seed_value, world_block_x, world_block_z));
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
             }
-            if ((requested_stage_mask & TERRAIN_STAGE_FLUIDS) != 0U
+            if ((requested_stage_mask & VOXEL_STAGE_FLUIDS) != 0U
                 && column_height < config.sea_level
-                && terrain_should_fill_water(seed_value, world_block_x,
+                && voxel_should_fill_water(seed_value, world_block_x,
                     world_block_z, config) == FT_TRUE)
             {
                 local_y = column_height + 1;
                 while (local_y <= config.sea_level
                     && local_y < GAME_VOXEL_CHUNK_HEIGHT)
                 {
-                    block_id = TERRAIN_GENERATOR_WATER_BLOCK;
+                    block_id = VOXEL_GENERATOR_WATER_BLOCK;
                     if (local_y == config.sea_level
-                        && biome == TERRAIN_BIOME_SNOW)
-                        block_id = TERRAIN_GENERATOR_ICE_BLOCK;
+                        && biome == VOXEL_BIOME_SNOW)
+                        block_id = VOXEL_GENERATOR_ICE_BLOCK;
                     error_code = chunk.write_generated_block(local_x, local_y, local_z,
                         block_id);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                     local_y += 1;
                 }
-                if ((biome == TERRAIN_BIOME_PLAINS || biome == TERRAIN_BIOME_HILLS)
+                if ((biome == VOXEL_BIOME_PLAINS || biome == VOXEL_BIOME_HILLS)
                     && config.sea_level + 1 < GAME_VOXEL_CHUNK_HEIGHT
-                    && terrain_should_place_feature(seed_value, world_block_x,
-                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 10U)
+                    && voxel_should_place_feature(seed_value, world_block_x,
+                        world_block_z, VOXEL_FEATURE_AQUATIC_PLANT_SALT, 10U)
                         == FT_TRUE)
                 {
                     error_code = chunk.write_generated_block(local_x,
                         config.sea_level + 1, local_z,
-                        TERRAIN_GENERATOR_LILY_PAD_BLOCK);
+                        VOXEL_GENERATOR_LILY_PAD_BLOCK);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                 }
                 else if (column_height + 1 < config.sea_level
-                    && terrain_should_place_feature(seed_value, world_block_x,
-                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 15U)
+                    && voxel_should_place_feature(seed_value, world_block_x,
+                        world_block_z, VOXEL_FEATURE_AQUATIC_PLANT_SALT, 15U)
                         == FT_TRUE)
                 {
                     error_code = chunk.write_generated_block(local_x,
                         column_height + 1, local_z,
-                        TERRAIN_GENERATOR_SEAGRASS_BLOCK);
+                        VOXEL_GENERATOR_SEAGRASS_BLOCK);
                     if (error_code != FT_ERR_SUCCESS)
                         return (error_code);
                 }
@@ -1504,24 +1504,24 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
             world_block_x = world_block_origin_x + local_x;
             biome = column_cache[column_index].biome;
-            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
+            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
                 && column_cache[column_index].can_place_trees == FT_TRUE)
             {
-                tree_feature_seed = terrain_feature_seed(seed_value,
-                    world_block_x, world_block_z, TERRAIN_FEATURE_TREE_SALT);
+                tree_feature_seed = voxel_feature_seed(seed_value,
+                    world_block_x, world_block_z, VOXEL_FEATURE_TREE_SALT);
                 if ((tree_feature_seed % 100U)
                     < column_cache[column_index].tree_chance_percent)
                 {
-                    tree_template = terrain_sample_tree_template(config,
+                    tree_template = voxel_sample_tree_template(config,
                         column_cache[column_index].biome_sample,
                         tree_feature_seed);
                     column_height = column_cache[column_index].column_height;
                     if (tree_template != ft_nullptr
-                        && terrain_can_place_tree_with_writer(chunk, local_x,
+                        && voxel_can_place_tree_with_writer(chunk, local_x,
                             column_height + 1, local_z, *tree_template,
                             config) == FT_TRUE)
                     {
-                        error_code = terrain_place_tree_with_writer(chunk,
+                        error_code = voxel_place_tree_with_writer(chunk,
                             local_x, column_height + 1, local_z,
                             world_block_origin_x, world_block_origin_z,
                             *tree_template, config);
@@ -1536,10 +1536,10 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     }
     feature_index = 0U;
     while (feature_index < config.feature_count
-        && feature_index < TERRAIN_MAX_FEATURE_RULES)
+        && feature_index < VOXEL_MAX_FEATURE_RULES)
     {
         feature_rule = &config.features[feature_index];
-        if ((requested_stage_mask & TERRAIN_STAGE_STRUCTURES) != 0U
+        if ((requested_stage_mask & VOXEL_STAGE_STRUCTURES) != 0U
             && feature_rule->template_data != ft_nullptr)
         {
             local_z = feature_margin;
@@ -1559,19 +1559,19 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                         && (feature_rule->requires_dry_land == FT_FALSE
                             || column_height >= config.sea_level))
                     {
-                        feature_seed = terrain_feature_seed(seed_value,
+                        feature_seed = voxel_feature_seed(seed_value,
                             world_block_origin_x + local_x,
                             world_block_origin_z + local_z,
-                            TERRAIN_FEATURE_TREE_SALT
+                            VOXEL_FEATURE_TREE_SALT
                                 ^ static_cast<uint64_t>(feature_index + 1U));
                         if ((feature_seed % 100U)
                             < feature_rule->chance_percent
-                            && terrain_can_place_tree_with_writer(chunk,
+                            && voxel_can_place_tree_with_writer(chunk,
                                 local_x, column_height + 1, local_z,
                                 *feature_rule->template_data, config)
                                 == FT_TRUE)
                         {
-                            error_code = terrain_place_tree_with_writer(chunk,
+                            error_code = voxel_place_tree_with_writer(chunk,
                                 local_x, column_height + 1, local_z,
                                 world_block_origin_x, world_block_origin_z,
                                 *feature_rule->template_data, config);
@@ -1587,9 +1587,9 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
         feature_index += 1U;
     }
     /* Stage: configured underground ore deposits. */
-    if ((requested_stage_mask & TERRAIN_STAGE_ORES) != 0U)
+    if ((requested_stage_mask & VOXEL_STAGE_ORES) != 0U)
     {
-        error_code = terrain_generate_ores(chunk, seed_value,
+        error_code = voxel_generate_ores(chunk, seed_value,
             world_block_origin_x, world_block_origin_z, config);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
@@ -1601,7 +1601,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     generation_metadata.configuration_signature = configuration_signature;
     generation_metadata.completed_stage_mask = previous_stage_mask
         | requested_stage_mask;
-    generation_metadata.generator_version = TERRAIN_GENERATOR_VERSION;
+    generation_metadata.generator_version = VOXEL_GENERATOR_VERSION;
     generation_metadata.valid = FT_TRUE;
     error_code = chunk.set_generation_metadata(generation_metadata);
     if (error_code != FT_ERR_SUCCESS)
@@ -1609,78 +1609,78 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generate_chunk(game_voxel_chunk &chunk,
+int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, const terrain_generation_config &config) noexcept
+    const char *seed_string, const voxel_generation_config &config) noexcept
 {
-    return (terrain_generate_chunk_snapshot(chunk, world_block_origin_x,
+    return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
         world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U,
-        FT_FALSE, 0U, TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES
-        | TERRAIN_STAGE_FLUIDS | TERRAIN_STAGE_DECORATION
-        | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES));
+        FT_FALSE, 0U, VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
+        | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
 
-int32_t terrain_generate_chunk_with_stage_mask(
+int32_t voxel_generate_chunk_with_stage_mask(
     game_voxel_chunk &chunk, int32_t world_block_origin_x,
     int32_t world_block_origin_z, const char *seed_string,
-    const terrain_generation_config &config, uint32_t stage_mask) noexcept
+    const voxel_generation_config &config, uint32_t stage_mask) noexcept
 {
-    return (terrain_generate_chunk_snapshot(chunk, world_block_origin_x,
+    return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
         world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U,
         FT_FALSE, 0U, stage_mask));
 }
 
-int32_t terrain_generate_chunk_with_context(game_voxel_chunk &chunk,
+int32_t voxel_generate_chunk_with_context(game_voxel_chunk &chunk,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, const terrain_generation_context &context) noexcept
+    const char *seed_string, const voxel_generation_context &context) noexcept
 {
     if (context.is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_OPERATION);
-    return (terrain_generate_chunk_snapshot(chunk, world_block_origin_x,
+    return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
         world_block_origin_z, seed_string, context.config(), FT_TRUE, FT_TRUE,
         context.configuration_signature(), FT_FALSE, 0U,
-        TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES | TERRAIN_STAGE_FLUIDS
-        | TERRAIN_STAGE_DECORATION | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES));
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
+        | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
 
-int32_t terrain_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
-    const terrain_world_chunk_coordinate &coordinate,
-    const char *seed_string, const terrain_generation_config &config) noexcept
+int32_t voxel_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
+    const voxel_world_chunk_coordinate &coordinate,
+    const char *seed_string, const voxel_generation_config &config) noexcept
 {
     if (coordinate.is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
-    return (terrain_generate_chunk_snapshot(chunk, 0, 0, seed_string, config,
+    return (voxel_generate_chunk_snapshot(chunk, 0, 0, seed_string, config,
         FT_FALSE, FT_FALSE, 0U, FT_TRUE, coordinate.hash(),
-        TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES | TERRAIN_STAGE_FLUIDS
-        | TERRAIN_STAGE_DECORATION | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES));
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
+        | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
 
-int32_t terrain_generate_chunk_in_region(game_voxel_region &region,
+int32_t voxel_generate_chunk_in_region(game_voxel_region &region,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string, const terrain_generation_config &config) noexcept
+    const char *seed_string, const voxel_generation_config &config) noexcept
 {
-    terrain_generation_context context;
+    voxel_generation_context context;
 
-    if (terrain_generation_context_initialize(context, config)
+    if (voxel_generation_context_initialize(context, config)
         != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    return (terrain_generate_chunk_in_region_with_context(region,
+    return (voxel_generate_chunk_in_region_with_context(region,
         world_block_origin_x, world_block_origin_z, seed_string, context));
 }
 
-int32_t terrain_generate_chunk_in_region_with_context(
+int32_t voxel_generate_chunk_in_region_with_context(
     game_voxel_region &region, int32_t world_block_origin_x,
     int32_t world_block_origin_z, const char *seed_string,
-    const terrain_generation_context &context) noexcept
+    const voxel_generation_context &context) noexcept
 {
-    terrain_generation_config region_config;
+    voxel_generation_config region_config;
     game_voxel_chunk *chunk;
     int32_t error_code;
 
     if (context.is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_OPERATION);
-    error_code = region.load_chunk(terrain_floor_div(world_block_origin_x,
-            GAME_VOXEL_CHUNK_WIDTH), terrain_floor_div(world_block_origin_z,
+    error_code = region.load_chunk(voxel_floor_div(world_block_origin_x,
+            GAME_VOXEL_CHUNK_WIDTH), voxel_floor_div(world_block_origin_z,
             GAME_VOXEL_CHUNK_DEPTH), &chunk);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -1690,14 +1690,14 @@ int32_t terrain_generate_chunk_in_region_with_context(
             != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
     if (region_config.set_cross_chunk_writer(
-            &terrain_region_cross_chunk_block_writer, &region)
+            &voxel_region_cross_chunk_block_writer, &region)
         != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    return (terrain_generate_chunk_snapshot(*chunk, world_block_origin_x,
+    return (voxel_generate_chunk_snapshot(*chunk, world_block_origin_x,
         world_block_origin_z, seed_string, region_config, FT_TRUE, FT_FALSE,
-        0U, FT_FALSE, 0U, TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES
-        | TERRAIN_STAGE_FLUIDS | TERRAIN_STAGE_DECORATION
-        | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES));
+        0U, FT_FALSE, 0U, VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
+        | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
 
 #endif
