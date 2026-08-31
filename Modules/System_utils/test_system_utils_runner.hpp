@@ -20,6 +20,11 @@ int32_t ft_register_test(t_test_func func, const char *description, const char *
 void ft_test_fail(const char *expression, const char *file, int32_t line);
 void ft_test_fail_values(const char *expression, const char *file, int32_t line,
     const char *expected_value, const char *actual_value);
+ft_bool ft_test_assert_condition(ft_bool condition, const char *expression,
+    const char *file, int32_t line);
+ft_bool ft_test_assert_values_condition(ft_bool condition,
+    const char *expression, const char *file, int32_t line,
+    const char *expected_value, const char *actual_value);
 int32_t ft_run_registered_tests(void);
 
 #ifdef LIBFT_TEST_BUILD
@@ -183,6 +188,73 @@ static bool ft_test_values_equal(const LeftType &left_value,
         return (left_value == right_value);
 }
 
+template <typename ExpectedType, typename ActualType>
+static ft_bool ft_test_assert_equal_values(const char *expression,
+    const char *file, int32_t line, const ExpectedType &expected_value,
+    const ActualType &actual_value)
+{
+    char expected_buffer[128];
+    char actual_buffer[128];
+
+    if (ft_test_values_equal(expected_value, actual_value))
+        return (FT_TRUE);
+    return (ft_test_assert_values_condition(FT_FALSE, expression, file, line,
+        ft_test_value_to_string(expected_buffer, sizeof(expected_buffer),
+            expected_value),
+        ft_test_value_to_string(actual_buffer, sizeof(actual_buffer),
+            actual_value)));
+}
+
+template <typename ExpectedType, typename ActualType>
+static ft_bool ft_test_assert_not_equal_values(const char *expression,
+    const char *file, int32_t line, const ExpectedType &expected_value,
+    const ActualType &actual_value)
+{
+    char expected_buffer[128];
+    char actual_buffer[128];
+
+    if (!ft_test_values_equal(expected_value, actual_value))
+        return (FT_TRUE);
+    return (ft_test_assert_values_condition(FT_FALSE, expression, file, line,
+        ft_test_value_to_string(expected_buffer, sizeof(expected_buffer),
+            expected_value),
+        ft_test_value_to_string(actual_buffer, sizeof(actual_buffer),
+            actual_value)));
+}
+
+template <typename ExpectedType, typename ActualType>
+static ft_bool ft_test_assert_double_equal_values(const char *expression,
+    const char *file, int32_t line, const ExpectedType &expected_value,
+    const ActualType &actual_value)
+{
+    char expected_buffer[128];
+    char actual_buffer[128];
+
+    if (std::fabs(expected_value - actual_value) <= 0.0000001)
+        return (FT_TRUE);
+    return (ft_test_assert_values_condition(FT_FALSE, expression, file, line,
+        ft_test_value_to_string(expected_buffer, sizeof(expected_buffer),
+            expected_value),
+        ft_test_value_to_string(actual_buffer, sizeof(actual_buffer),
+            actual_value)));
+}
+
+static inline ft_bool ft_test_assert_string_equal_values(const char *expression,
+    const char *file, int32_t line, const char *expected_value,
+    const char *actual_value)
+{
+    char expected_buffer[128];
+    char actual_buffer[128];
+
+    if (std::strcmp(expected_value, actual_value) == 0)
+        return (FT_TRUE);
+    return (ft_test_assert_values_condition(FT_FALSE, expression, file, line,
+        ft_test_value_to_string(expected_buffer, sizeof(expected_buffer),
+            expected_value),
+        ft_test_value_to_string(actual_buffer, sizeof(actual_buffer),
+            actual_value)));
+}
+
 #define FT_TEST(name) \
     static int32_t name(void); \
     static void register_##name(void) __attribute__((constructor)); \
@@ -196,91 +268,49 @@ static bool ft_test_values_equal(const LeftType &left_value,
 #define FT_ASSERT(expression) \
     do \
     { \
-        if (!(expression)) \
-        { \
-            ft_test_fail(#expression, __FILE__, __LINE__); \
+        if (ft_test_assert_condition((expression) ? FT_TRUE : FT_FALSE, \
+                #expression, __FILE__, __LINE__) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_EQ(expected, actual) \
     do \
     { \
-        auto ft_expected_value = (expected); \
-        auto ft_actual_value = (actual); \
-        if (!ft_test_values_equal(ft_expected_value, ft_actual_value)) \
-        { \
-            char ft_expected_buffer[128]; \
-            char ft_actual_buffer[128]; \
-            ft_test_fail_values(#expected " == " #actual, __FILE__, __LINE__, \
-                ft_test_value_to_string(ft_expected_buffer, sizeof(ft_expected_buffer), ft_expected_value), \
-                ft_test_value_to_string(ft_actual_buffer, sizeof(ft_actual_buffer), ft_actual_value)); \
+        if (ft_test_assert_equal_values(#expected " == " #actual, \
+                __FILE__, __LINE__, (expected), (actual)) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_DOUBLE_EQ(expected, actual) \
     do \
     { \
-        double ft_expected_value = (expected); \
-        double ft_actual_value = (actual); \
-        if (std::fabs(ft_expected_value - ft_actual_value) > 0.0000001) \
-        { \
-            char ft_expected_buffer[128]; \
-            char ft_actual_buffer[128]; \
-            ft_test_fail_values(#expected " ~= " #actual, __FILE__, __LINE__, \
-                ft_test_value_to_string(ft_expected_buffer, sizeof(ft_expected_buffer), ft_expected_value), \
-                ft_test_value_to_string(ft_actual_buffer, sizeof(ft_actual_buffer), ft_actual_value)); \
+        if (ft_test_assert_double_equal_values(#expected " ~= " #actual, \
+                __FILE__, __LINE__, (expected), (actual)) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_NEQ(expected, actual) \
     do \
     { \
-        auto ft_expected_value = (expected); \
-        auto ft_actual_value = (actual); \
-        if (ft_test_values_equal(ft_expected_value, ft_actual_value)) \
-        { \
-            char ft_expected_buffer[128]; \
-            char ft_actual_buffer[128]; \
-            ft_test_fail_values(#expected " != " #actual, __FILE__, __LINE__, \
-                ft_test_value_to_string(ft_expected_buffer, sizeof(ft_expected_buffer), ft_expected_value), \
-                ft_test_value_to_string(ft_actual_buffer, sizeof(ft_actual_buffer), ft_actual_value)); \
+        if (ft_test_assert_not_equal_values(#expected " != " #actual, \
+                __FILE__, __LINE__, (expected), (actual)) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_NE(unexpected, actual) \
     do \
     { \
-        auto ft_unexpected_value = (unexpected); \
-        auto ft_actual_value = (actual); \
-        if (ft_test_values_equal(ft_unexpected_value, ft_actual_value)) \
-        { \
-            char ft_unexpected_buffer[128]; \
-            char ft_actual_buffer[128]; \
-            ft_test_fail_values(#unexpected " != " #actual, __FILE__, __LINE__, \
-                ft_test_value_to_string(ft_unexpected_buffer, sizeof(ft_unexpected_buffer), ft_unexpected_value), \
-                ft_test_value_to_string(ft_actual_buffer, sizeof(ft_actual_buffer), ft_actual_value)); \
+        if (ft_test_assert_not_equal_values(#unexpected " != " #actual, \
+                __FILE__, __LINE__, (unexpected), (actual)) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_STR_EQ(expected, actual) \
     do \
     { \
-        const char *ft_expected_value = (expected); \
-        const char *ft_actual_value = (actual); \
-        if (std::strcmp(ft_expected_value, ft_actual_value) != 0) \
-        { \
-            char ft_expected_buffer[128]; \
-            char ft_actual_buffer[128]; \
-            ft_test_fail_values(#expected " == " #actual, __FILE__, __LINE__, \
-                ft_test_value_to_string(ft_expected_buffer, sizeof(ft_expected_buffer), ft_expected_value), \
-                ft_test_value_to_string(ft_actual_buffer, sizeof(ft_actual_buffer), ft_actual_value)); \
+        if (ft_test_assert_string_equal_values(#expected " == " #actual, \
+                __FILE__, __LINE__, (expected), (actual)) == FT_FALSE) \
             return (0); \
-        } \
     } while (0)
 
 #define FT_ASSERT_SINGLE_GLOBAL_ERROR(expression) \
