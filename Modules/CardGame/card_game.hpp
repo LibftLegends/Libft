@@ -31,6 +31,7 @@ static const uint32_t FT_CARD_GAME_MAX_REPLAY_BYTES = 65536U;
 # include "card_game_choices.hpp"
 # include "card_game_zone_store.hpp"
 # include "card_game_usage_limits.hpp"
+# include "card_game_format.hpp"
 static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;

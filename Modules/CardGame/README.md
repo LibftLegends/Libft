@@ -102,6 +102,12 @@ without mutation when an operation is rejected.
 state hashes, so a replicated match preserves the exact order rather than only
 the set of cards.
 
+`card_game_format` provides an immutable, configuration-driven legality layer.
+It validates stable profile and corpus identity, legal card rules, banlists,
+copy limits, and typed card exceptions before commit. It computes a SHA-256
+format identity and validates deck zones with structured diagnostics, allowing
+network matches and replays to bind to one exact rules revision.
+
 Deck entries also expose a unique physical-copy ID through `deck_inspect`,
 `deck_get_instance`, `deck_draw_instance`, and the entry-returning
 `deck_draw_top` overload. Copies with the same definition ID remain distinct

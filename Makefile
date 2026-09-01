@@ -41,7 +41,7 @@ LIBFT_GLOBAL_TEST_DEBUG_TARGET := $(TEST_DEBUG_TARGET)
 LIBFT_LEGACY_OBJECT_ROOTS := $(wildcard Modules/*/objs_* Test/objs_*)
 
 define LIBFT_GLOBAL_ARCHIVE_RULE
-$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/global_graph.mk
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
 	@$(MKDIR) $(dir $$@)
 	@$(RM) $$@.tmp
@@ -72,8 +72,22 @@ ssh:
 	git remote set-url origin git@github.com:Adyem/Libft.git
 	git remote -v
 
-all:
+all: normal analytics
+
+normal:
 	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
+
+analytics:
+	@$(MAKE) --no-print-directory BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-all
+
+analytics-debug:
+	@$(MAKE) --no-print-directory BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-debug
 
 plan:
 	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
@@ -342,7 +356,8 @@ clean:
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a
 
 fclean:
 	@$(RMDIR) build/libft
@@ -351,9 +366,10 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a
 
-.PHONY: all plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
+.PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
           run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
           run-tsan-tests asan asan-tests ubsan ubsan-tests tsan tsan-tests \
           asan-ubsan asan-ubsan-tests
