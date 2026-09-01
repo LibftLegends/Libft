@@ -168,7 +168,11 @@ int32_t analytics_end_frame(analytics_session *session) noexcept;
 int32_t analytics_end_thread_frame(analytics_session *session) noexcept;
 int32_t analytics_begin_scope(analytics_session *session, uint32_t region_id)
     noexcept;
+int32_t analytics_begin_scope_at(analytics_session *session, uint32_t region_id,
+    uint64_t start_nanoseconds) noexcept;
 int32_t analytics_end_scope(analytics_session *session) noexcept;
+int32_t analytics_end_scope_at(analytics_session *session,
+    uint64_t end_nanoseconds) noexcept;
 int32_t analytics_begin_flow(analytics_session *session, uint64_t flow_id,
     uint32_t region_id, analytics_flow_token *token) noexcept;
 int32_t analytics_end_flow(const analytics_flow_token &token) noexcept;
