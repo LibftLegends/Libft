@@ -28,10 +28,10 @@ The `File` module provides filesystem operations, directory iteration, path help
 - `file_hash_sha1(...)` / `file_hash_sha256(...)` - Hash a file's contents into a raw digest buffer.
 - `file_metadata_diff(...)` - Compares file type, size, permissions, and missing-state metadata into a bitmask.
 - `file_write_all(...)` - Writes a full buffer to a file.
-- `file_write_all_atomic(...)` - Writes data through a temporary file and replaces the target.
+- `file_write_all_atomic(...)` - Writes data through a unique temporary file in the target directory and replaces the target atomically where supported; this provides atomic visibility, not crash durability.
 - `file_secure_temp_file(...)` - Creates a temporary file and returns both path and descriptor.
 - `file_close_descriptor(...)` - Closes a raw file descriptor.
-- `file_replace_safe(...)` - Safely replaces file content with caller data.
+- `file_replace_safe(...)` - Safely replaces file content with caller data, flushing the temporary file and destination directory before reporting durable replacement success. Directory-sync failures are returned to the caller.
 
 ## Root Safety and Paths
 

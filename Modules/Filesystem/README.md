@@ -10,7 +10,7 @@ The `Filesystem` module provides path manipulation, safety checks, glob matching
 
 - `filesystem_normalize_path(const char *path)` - Returns a normalized copy of a path with redundant separators and path components cleaned up.
 - `filesystem_join_path(const char *path_left, const char *path_right)` - Joins two path fragments into one allocated path string.
-- `filesystem_safe_join_path(const char *root_path, const char *relative_path)` - Joins a root with a relative path while rejecting traversal outside the root.
+- `filesystem_safe_join_path(const char *root_path, const char *relative_path)` - Joins a root with a relative path while rejecting lexical traversal outside the root. This is not a symlink/junction sandbox; use canonical containment validation before security-sensitive access.
 - `filesystem_canonical_path(const char *path)` - Resolves a path to its canonical form where the platform can provide one.
 
 ## Path Components
@@ -38,5 +38,5 @@ The `Filesystem` module provides path manipulation, safety checks, glob matching
 ## File Operations
 
 - `filesystem_temp_path(const char *prefix, const char *extension, ft_string *output)` - Creates a temporary path string in `output`, using the compatibility temp-directory helper and portable separators in the returned path.
-- `filesystem_atomic_write(const char *path, const void *data, ft_size_t size)` - Writes data through a temporary file and replaces the target atomically where supported.
+- `filesystem_atomic_write(const char *path, const void *data, ft_size_t size)` - Writes data through a unique temporary file in the target directory and replaces the target atomically where supported. It guarantees atomic visibility, not crash durability.
 - `filesystem_walk_recursive(const char *root_path, filesystem_walk_callback callback, void *user_context)` - Visits files and directories under a root and calls the callback for each entry.

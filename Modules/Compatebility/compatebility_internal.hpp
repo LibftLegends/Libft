@@ -115,6 +115,11 @@ int32_t cmp_file_set_permissions(const char *path, int32_t owner_permissions,
     int32_t group_permissions, int32_t other_permissions, int32_t *error_code_out);
 int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out);
 int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out);
+#if defined(LIBFT_TEST_BUILD)
+void cmp_test_set_file_sync_failure(int32_t error_code);
+void cmp_test_set_directory_sync_failure(int32_t error_code);
+void cmp_test_clear_sync_failures(void);
+#endif
 int32_t cmp_path_canonical(const char *path, char **output_path);
 int32_t cmp_storage_write_memory_mapped_file(const char *location,
     const char *buffer, ft_size_t length);

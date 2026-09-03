@@ -78,13 +78,13 @@ normal:
 	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
 
 analytics:
-	@$(MAKE) --no-print-directory BUILD_OUTPUT_SUFFIX=_analytics \
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
 		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
 		DEBUG_TARGET=Full_Libft_analytics_debug.a \
 		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-all
 
 analytics-debug:
-	@$(MAKE) --no-print-directory BUILD_OUTPUT_SUFFIX=_analytics \
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
 		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
 		DEBUG_TARGET=Full_Libft_analytics_debug.a \
 		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-debug

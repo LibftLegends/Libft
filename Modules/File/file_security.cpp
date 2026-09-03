@@ -175,6 +175,27 @@ int32_t file_secure_temp_file(const char *directory_path, const char *prefix,
             (void)candidate_path.destroy();
             return (FT_ERR_SUCCESS);
         }
+        /* A random-name collision is the only failure that is safe to
+         * retry.  Propagate permission, path, descriptor, and filesystem
+         * failures immediately instead of masking them as a collision after
+         * 64 needless RNG/open attempts. */
+        {
+            const int32_t open_error = cmp_get_last_open_error();
+#if defined(_WIN32) || defined(_WIN64)
+            if (open_error != ERROR_FILE_EXISTS
+                && open_error != ERROR_ALREADY_EXISTS)
+            {
+                (void)candidate_path.destroy();
+                return (cmp_file_error_to_errno(open_error));
+            }
+#else
+            if (open_error != EEXIST)
+            {
+                (void)candidate_path.destroy();
+                return (cmp_file_error_to_errno(open_error));
+            }
+#endif
+        }
         ++attempt_count;
     }
     (void)candidate_path.destroy();
@@ -327,7 +348,7 @@ int32_t file_replace_safe(const char *path, const char *data, ft_size_t size)
     {
         sync_error = FT_ERR_SUCCESS;
         error_code = cmp_file_sync(file_descriptor, &sync_error);
-        if (error_code != FT_ERR_SUCCESS && sync_error != FT_ERR_SUCCESS)
+        if (sync_error != FT_ERR_SUCCESS)
             error_code = sync_error;
     }
     if (file_descriptor >= 0)
@@ -335,7 +356,13 @@ int32_t file_replace_safe(const char *path, const char *data, ft_size_t size)
     if (error_code == FT_ERR_SUCCESS)
         error_code = file_move(temporary_path.c_str(), path);
     if (error_code == FT_ERR_SUCCESS)
-        (void)cmp_file_sync_directory(directory_name->c_str(), &sync_error);
+    {
+        sync_error = FT_ERR_SUCCESS;
+        error_code = cmp_file_sync_directory(directory_name->c_str(),
+            &sync_error);
+        if (sync_error != FT_ERR_SUCCESS)
+            error_code = sync_error;
+    }
     if (error_code != FT_ERR_SUCCESS)
         (void)file_delete(temporary_path.c_str());
     (void)temporary_path.destroy();

@@ -45,6 +45,8 @@ struct chunk_mesh
 {
     ft_vector<chunk_mesh_vertex> vertices;
     ft_vector<uint32_t>          indices;
+    ft_vector<uint32_t>          solid_indices;
+    ft_vector<uint32_t>          water_indices;
     chunk_mesh_bounds            bounds;
     chunk_mesh_bounds            occupied_bounds;
     ft_bool                      has_occupied_bounds;

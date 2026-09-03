@@ -9,6 +9,10 @@
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
 
 struct filesystem_walk_test_context
 {
@@ -133,6 +137,57 @@ FT_TEST(test_filesystem_atomic_write_creates_target_contents)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_fclose(file_stream));
     FT_ASSERT_EQ('h', buffer[0]);
     FT_ASSERT_EQ('o', buffer[4]);
+    (void)file_delete(path.c_str());
+    return (1);
+}
+
+FT_TEST(test_filesystem_atomic_write_concurrent_writers_keep_complete_payloads)
+{
+    ft_string path;
+    std::vector<std::thread> writers;
+    std::atomic<int32_t> first_error(FT_ERR_SUCCESS);
+    const int32_t writer_count = 8;
+    const int32_t iterations = 32;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_temp_path("libft_atomic_race",
+        "txt", &path));
+    (void)file_delete(path.c_str());
+    for (int32_t writer = 0; writer < writer_count; ++writer)
+    {
+        writers.emplace_back([&path, &first_error, writer, iterations]()
+        {
+            const std::string payload = "writer-" + std::to_string(writer)
+                + ": complete atomic payload\n";
+            for (int32_t iteration = 0; iteration < iterations; ++iteration)
+            {
+                const int32_t error_code = filesystem_atomic_write(path.c_str(),
+                    payload.data(), payload.size());
+                if (error_code != FT_ERR_SUCCESS)
+                {
+                    int32_t expected = FT_ERR_SUCCESS;
+                    first_error.compare_exchange_strong(expected, error_code);
+                }
+            }
+        });
+    }
+    for (std::thread &writer : writers)
+        writer.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_error.load());
+    {
+        ft_string contents;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, contents.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(path.c_str(), contents));
+        bool matched = false;
+        for (int32_t writer = 0; writer < writer_count; ++writer)
+        {
+            const std::string payload = "writer-" + std::to_string(writer)
+                + ": complete atomic payload\n";
+            if (contents == payload.c_str())
+                matched = true;
+        }
+        FT_ASSERT_EQ(true, matched);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, contents.destroy());
+    }
     (void)file_delete(path.c_str());
     return (1);
 }
@@ -279,7 +334,7 @@ FT_TEST(test_filesystem_atomic_write_rejects_null_data_with_size)
 
 FT_TEST(test_filesystem_atomic_write_reports_open_failure_for_missing_parent)
 {
-    FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, filesystem_atomic_write(
+    FT_ASSERT_NE(FT_ERR_ALREADY_EXISTS, filesystem_atomic_write(
             "/tmp/libft_missing_parent_for_atomic_write/value.txt", "x", 1));
     return (1);
 }

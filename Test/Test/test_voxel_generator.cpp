@@ -1595,6 +1595,7 @@ FT_TEST(test_voxel_generation_config_controls_tree_and_water_density)
     const voxel_tree_template &oak = voxel_small_oak_tree_template();
     uint32_t block_id;
     int32_t tree_count = 0;
+    int32_t shrub_count = 0;
     int32_t dense_tree_count = 0;
     int32_t water_count = 0;
     int32_t x;
@@ -1605,13 +1606,13 @@ FT_TEST(test_voxel_generation_config_controls_tree_and_water_density)
     config.set_sea_level(50);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 40, 0, 0);
-    config.set_biome_decoration_policy(0U, FT_FALSE, FT_TRUE, 6U, 0U);
+    config.set_biome_decoration_policy(0U, FT_TRUE, FT_TRUE, 100U, 0U);
     config.set_biome_tree_template_override(0U, &oak);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(dry_chunk, 0, 0,
         "density-config", config));
     config.set_water_chance_percent(100U);
-    config.set_biome_decoration_policy(0U, FT_FALSE, FT_TRUE, 6U, 100U);
+    config.set_biome_decoration_policy(0U, FT_TRUE, FT_TRUE, 100U, 100U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(wet_chunk, 0, 0,
         "density-config", config));
@@ -1632,6 +1633,8 @@ FT_TEST(test_voxel_generation_config_controls_tree_and_water_density)
                     &block_id));
                 if (block_id == VOXEL_GENERATOR_OAK_LOG_BLOCK)
                     dense_tree_count += 1;
+                if (block_id == VOXEL_GENERATOR_SHRUB_BLOCK)
+                    shrub_count += 1;
                 if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
                     water_count += 1;
                 x += 1;
@@ -1641,10 +1644,217 @@ FT_TEST(test_voxel_generation_config_controls_tree_and_water_density)
         z += 1;
     }
     FT_ASSERT_EQ(0, tree_count);
-    FT_ASSERT_NEQ(0, dense_tree_count);
+    /* A fully flooded column must not receive ordinary vegetation. */
+    FT_ASSERT_EQ(0, dense_tree_count);
+    FT_ASSERT_EQ(0, shrub_count);
     FT_ASSERT_NEQ(0, water_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_columns_are_connected)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    ft_bool water_columns[GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH];
+    uint32_t block_id;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    int32_t water_column_count;
+    int32_t connected_column_count;
+    int32_t index;
+    ft_bool connected;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(25U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+        "connected-water", config));
+    x = 0;
+    while (x < GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH)
+    {
+        water_columns[x] = FT_FALSE;
+        x += 1;
+    }
+    water_column_count = 0;
+    z = 0;
+    while (z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 0;
+        while (x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z,
+                    &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    FT_ASSERT(y > 0);
+                    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y - 1,
+                        z, &block_id));
+					if (block_id == VOXEL_GENERATOR_SEAGRASS_BLOCK)
+					{
+						/* Seagrass replaces the lowest water voxel. It is valid only
+						 * when its own support is solid; it must not be floating in
+						 * the middle of a pond. */
+						FT_ASSERT(y > 1);
+						FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y - 2,
+							z, &block_id));
+						if (voxel_block_is_solid(block_id) == FT_FALSE)
+							std::fprintf(stderr,
+								"seagrass-support failure x=%d y=%d z=%d "
+								"support=%u\n", x, y, z, block_id);
+						FT_ASSERT(voxel_block_is_solid(block_id) == FT_TRUE);
+					}
+					else if (block_id != VOXEL_GENERATOR_WATER_BLOCK
+						&& voxel_block_is_solid(block_id) == FT_FALSE)
+					{
+						std::fprintf(stderr,
+							"water-support failure x=%d y=%d z=%d "
+							"below=%u\n", x, y, z, block_id);
+						FT_ASSERT(FT_FALSE);
+					}
+					else
+						FT_ASSERT(block_id == VOXEL_GENERATOR_WATER_BLOCK
+							|| voxel_block_is_solid(block_id) == FT_TRUE);
+                    water_columns[z * GAME_VOXEL_CHUNK_WIDTH + x] = FT_TRUE;
+                }
+                y += 1;
+            }
+            if (water_columns[z * GAME_VOXEL_CHUNK_WIDTH + x] == FT_TRUE)
+                water_column_count += 1;
+            x += 1;
+        }
+        z += 1;
+    }
+    connected_column_count = 0;
+    z = 1;
+    while (z + 1 < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 1;
+        while (x + 1 < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            index = z * GAME_VOXEL_CHUNK_WIDTH + x;
+            if (water_columns[index] == FT_TRUE)
+            {
+						connected = water_columns[index - 1]
+							|| water_columns[index + 1]
+							|| water_columns[index - GAME_VOXEL_CHUNK_WIDTH]
+							|| water_columns[index + GAME_VOXEL_CHUNK_WIDTH];
+						if (connected == FT_FALSE)
+							std::fprintf(stderr,
+								"isolated-water-column x=%d z=%d\n", x, z);
+						FT_ASSERT(connected == FT_TRUE);
+                connected_column_count += 1;
+            }
+            x += 1;
+        }
+        z += 1;
+    }
+    FT_ASSERT_NEQ(0, water_column_count);
+    FT_ASSERT_NEQ(0, connected_column_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_columns_reach_configured_level)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    uint32_t block_id;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    ft_bool found_water;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+        "water-level", config));
+    z = 0;
+    while (z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 0;
+        while (x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            found_water = FT_FALSE;
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z,
+                    &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    found_water = FT_TRUE;
+                    FT_ASSERT(y <= config.sea_level);
+                }
+                y += 1;
+            }
+            FT_ASSERT_EQ(FT_TRUE, found_water);
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x,
+                config.sea_level, z, &block_id));
+            FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, block_id);
+            x += 1;
+        }
+        z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_continues_across_chunk_border)
+{
+    game_voxel_chunk left_chunk;
+    game_voxel_chunk right_chunk;
+    voxel_generation_config config;
+    uint32_t left_block_id;
+    uint32_t right_block_id;
+    int32_t local_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(left_chunk, 0, 0,
+        "border-water", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(right_chunk,
+        GAME_VOXEL_CHUNK_WIDTH, 0, "border-water", config));
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(
+            GAME_VOXEL_CHUNK_WIDTH - 1, config.sea_level, local_z,
+            &left_block_id));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
+            config.sea_level, local_z, &right_block_id));
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, left_block_id);
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, right_block_id);
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.destroy());
     return (1);
 }
 

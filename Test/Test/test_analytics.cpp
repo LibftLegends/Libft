@@ -1,11 +1,27 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Analytics/analytics.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include "test_cma_failure_injection.hpp"
+#include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
 static uint32_t g_analytics_exported_frame = 0U;
 static uint32_t g_analytics_trace_events = 0U;
+
+struct analytics_test_manual_clock
+{
+    uint64_t now_nanoseconds;
+};
+
+static uint64_t analytics_test_manual_clock_now(void *user_data) noexcept
+{
+    analytics_test_manual_clock *clock;
+
+    clock = static_cast<analytics_test_manual_clock *>(user_data);
+    return (clock->now_nanoseconds);
+}
 
 static void analytics_test_export_callback(
     const analytics_frame_statistics &frame, void *user_data)
@@ -29,6 +45,17 @@ static void analytics_test_trace_callback(const analytics_trace_event &event,
     if (event_counter != ft_nullptr)
         *event_counter += 1U;
     g_analytics_trace_events += 1U;
+    return ;
+}
+
+static void analytics_test_atomic_trace_callback(
+    const analytics_trace_event &event, void *user_data)
+{
+    std::atomic<uint32_t> *event_count;
+
+    (void)event;
+    event_count = static_cast<std::atomic<uint32_t> *>(user_data);
+    event_count->fetch_add(1U, std::memory_order_relaxed);
     return ;
 }
 
@@ -140,7 +167,8 @@ FT_TEST(test_analytics_trace_queue_reports_overflow_and_flushes)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_trace_callback(
         analytics_test_trace_callback, &trace_events));
     event_index = 0U;
-    while (event_index < FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS)
+    while (event_index < FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS
+        * FT_ANALYTICS_EXPORT_BUFFER_COUNT)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_trace(event));
         event_index += 1U;
@@ -149,7 +177,8 @@ FT_TEST(test_analytics_trace_queue_reports_overflow_and_flushes)
     FT_ASSERT_EQ(1U, session.get_dropped_trace_count());
     FT_ASSERT_EQ(0U, trace_events);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
-    FT_ASSERT_EQ(FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS, trace_events);
+    FT_ASSERT_EQ(FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS
+        * FT_ANALYTICS_EXPORT_BUFFER_COUNT, trace_events);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }
@@ -285,5 +314,488 @@ FT_TEST(test_analytics_exporters_are_transactional_and_valid)
     FT_ASSERT_EQ(FT_TRUE, output == preserved);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, output.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_libft_owns_file_exporter_and_copies_region_names)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    const char *region_name;
+    uint32_t region_id;
+    std::FILE *file;
+    char buffer[512];
+    ft_size_t bytes_read;
+
+    region_id = 0U;
+    region_name = "analytics.region";
+    configuration.output_path = "analytics_session_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.start_exporter = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region(region_name,
+        "test", &region_id));
+    region_name = "caller.storage.changed";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_name(region_id,
+        &region_name));
+    FT_ASSERT(ft_str_contains(region_name, "analytics.region"));
+    frame = {};
+    frame.frame_number = 7U;
+    frame.duration_nanoseconds = 100U;
+    frame.breakdown_count = 1U;
+    frame.breakdown[0].region_id = region_id;
+    frame.breakdown[0].invocation_count = 1U;
+    frame.breakdown[0].inclusive_nanoseconds = 100U;
+    frame.breakdown[0].exclusive_nanoseconds = 100U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    file = std::fopen("analytics_session_test.jsonl", "rb");
+    FT_ASSERT(file != ft_nullptr);
+    bytes_read = std::fread(buffer, 1U, sizeof(buffer) - 1U, file);
+    buffer[bytes_read] = '\0';
+    FT_ASSERT(ft_str_contains(buffer, "\"frame\":7"));
+    FT_ASSERT_EQ(0, std::fclose(file));
+    FT_ASSERT_EQ(0, std::remove("analytics_session_test.jsonl"));
+    return (1);
+}
+
+FT_TEST(test_analytics_frame_export_interval_samples_file_output)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    std::FILE *file;
+    char buffer[1024];
+    ft_size_t bytes_read;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.output_path = "analytics_frame_interval_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.frame_export_interval = 2U;
+    configuration.start_exporter = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    frame = {};
+    frame.frame_number = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    frame.frame_number = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    frame.frame_number = 3U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    file = std::fopen(configuration.output_path, "rb");
+    FT_ASSERT(file != ft_nullptr);
+    bytes_read = std::fread(buffer, 1U, sizeof(buffer) - 1U, file);
+    buffer[bytes_read] = '\0';
+    FT_ASSERT(!ft_str_contains(buffer, "\"frame\":1"));
+    FT_ASSERT(ft_str_contains(buffer, "\"frame\":2"));
+    FT_ASSERT(!ft_str_contains(buffer, "\"frame\":3"));
+    FT_ASSERT(ft_str_contains(buffer, "\n"));
+    FT_ASSERT_EQ(0, std::fclose(file));
+    FT_ASSERT_EQ(0, std::remove(configuration.output_path));
+    return (1);
+}
+
+FT_TEST(test_analytics_oldest_export_queue_age_uses_handoff_time)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_test_manual_clock clock;
+    analytics_frame_statistics frame;
+
+    clock.now_nanoseconds = 1000U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    configuration.buffer_count = 3U;
+    configuration.reserved_frame_exports = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    frame = {};
+    frame.frame_number = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    clock.now_nanoseconds = 2500U;
+    frame.frame_number = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(1U, session.get_export_queue_depth());
+    clock.now_nanoseconds = 4000U;
+    FT_ASSERT_EQ(1500U,
+        session.get_oldest_export_queue_age_nanoseconds());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
+    FT_ASSERT_EQ(0U, session.get_oldest_export_queue_age_nanoseconds());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_world_output_is_separate_from_menu_output)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    analytics_trace_event menu_trace;
+    analytics_trace_event world_trace;
+    uint32_t menu_region_id;
+    uint32_t world_region_id;
+    std::FILE *menu_file;
+    std::FILE *world_file;
+    char menu_buffer[512];
+    char world_buffer[512];
+    ft_size_t menu_size;
+    ft_size_t world_size;
+
+    configuration.output_path = "analytics_menu_test.jsonl";
+    configuration.world_output_path = "analytics_world_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.start_exporter = FT_TRUE;
+    frame = {};
+    menu_trace = {};
+    world_trace = {};
+    frame.duration_nanoseconds = 10U;
+    menu_region_id = 0U;
+    world_region_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("menu", "test",
+        &menu_region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("world", "test",
+        &world_region_id));
+    menu_trace.region_id = menu_region_id;
+    menu_trace.flow_id = 11U;
+    world_trace.region_id = world_region_id;
+    world_trace.flow_id = 12U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_trace(menu_trace));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_world_active(FT_TRUE));
+    frame.frame_number = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_trace(world_trace));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_world_active(FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    menu_file = std::fopen("analytics_menu_test.jsonl", "rb");
+    world_file = std::fopen("analytics_world_test.jsonl", "rb");
+    FT_ASSERT(menu_file != ft_nullptr);
+    FT_ASSERT(world_file != ft_nullptr);
+    menu_size = std::fread(menu_buffer, 1U, sizeof(menu_buffer) - 1U,
+        menu_file);
+    world_size = std::fread(world_buffer, 1U, sizeof(world_buffer) - 1U,
+        world_file);
+    menu_buffer[menu_size] = '\0';
+    world_buffer[world_size] = '\0';
+    FT_ASSERT(ft_str_contains(menu_buffer, "\"frame\":0"));
+    FT_ASSERT(!ft_str_contains(menu_buffer, "\"frame\":2"));
+    FT_ASSERT(ft_str_contains(menu_buffer, "\"region-0\""));
+    FT_ASSERT(!ft_str_contains(menu_buffer, "\"region-1\""));
+    FT_ASSERT(ft_str_contains(world_buffer, "\"frame\":2"));
+    FT_ASSERT(ft_str_contains(world_buffer, "\"region-1\""));
+    FT_ASSERT(!ft_str_contains(world_buffer, "\"region-0\""));
+    FT_ASSERT_EQ(0, std::fclose(menu_file));
+    FT_ASSERT_EQ(0, std::fclose(world_file));
+    FT_ASSERT_EQ(0, std::remove("analytics_menu_test.jsonl"));
+    FT_ASSERT_EQ(0, std::remove("analytics_world_test.jsonl"));
+    return (1);
+}
+
+FT_TEST(test_analytics_world_classification_is_captured_at_scope_start)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    analytics_test_manual_clock clock;
+    uint32_t menu_region_id;
+    uint32_t world_region_id;
+    std::FILE *menu_file;
+    std::FILE *world_file;
+    char menu_buffer[1024];
+    char world_buffer[1024];
+    ft_size_t menu_size;
+    ft_size_t world_size;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.output_path = "analytics_scope_menu_test.jsonl";
+    configuration.world_output_path = "analytics_scope_world_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    clock.now_nanoseconds = 100U;
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("menu_scope", "test",
+        &menu_region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("world_scope", "test",
+        &world_region_id));
+    frame = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 9U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session,
+        menu_region_id));
+    clock.now_nanoseconds = 110U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_world_active(FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session,
+        world_region_id));
+    clock.now_nanoseconds = 120U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    clock.now_nanoseconds = 130U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_world_active(FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    menu_file = std::fopen(configuration.output_path, "rb");
+    world_file = std::fopen(configuration.world_output_path, "rb");
+    FT_ASSERT(menu_file != ft_nullptr);
+    FT_ASSERT(world_file != ft_nullptr);
+    menu_size = std::fread(menu_buffer, 1U, sizeof(menu_buffer) - 1U,
+        menu_file);
+    world_size = std::fread(world_buffer, 1U, sizeof(world_buffer) - 1U,
+        world_file);
+    menu_buffer[menu_size] = '\0';
+    world_buffer[world_size] = '\0';
+    FT_ASSERT(ft_str_contains(menu_buffer, "\"name\":\"region-0\""));
+    FT_ASSERT(!ft_str_contains(menu_buffer, "\"name\":\"region-1\""));
+    FT_ASSERT(ft_str_contains(menu_buffer, "\"frame\":9"));
+    FT_ASSERT(ft_str_contains(world_buffer, "\"name\":\"region-1\""));
+    FT_ASSERT(!ft_str_contains(world_buffer, "\"name\":\"region-0\""));
+    FT_ASSERT(!ft_str_contains(world_buffer, "\"frame\":9"));
+    FT_ASSERT_EQ(0, std::fclose(menu_file));
+    FT_ASSERT_EQ(0, std::fclose(world_file));
+    FT_ASSERT_EQ(0, std::remove(configuration.output_path));
+    FT_ASSERT_EQ(0, std::remove(configuration.world_output_path));
+    return (1);
+}
+
+FT_TEST(test_analytics_configuration_capacity_and_world_transitions)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.reserved_frame_exports = 1U;
+    configuration.reserved_trace_events = 1U;
+    configuration.buffer_count = 4U;
+    frame = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_FULL, session.publish_frame(frame));
+    FT_ASSERT_EQ(1U, session.get_dropped_frame_export_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_trace_frame_interval_samples_without_losing_frames)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    uint32_t region_id;
+    uint32_t trace_count;
+    uint32_t frame_count;
+
+    trace_count = 0U;
+    frame_count = 0U;
+    frame = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.trace_frame_interval = 3U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("sampled", "test",
+        &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_trace_callback(
+        analytics_test_trace_callback, &trace_count));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_export_callback(
+        analytics_test_export_callback, &frame_count));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.flush_exports());
+    FT_ASSERT_EQ(3U, frame_count);
+    FT_ASSERT_EQ(1U, trace_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_manual_clock_is_used_by_frame_and_scope_helpers)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_test_manual_clock clock;
+    analytics_frame_statistics frame;
+    analytics_region_statistics statistics;
+    uint32_t region_id;
+
+    clock.now_nanoseconds = 100U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    region_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("manual", "test",
+        &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 4U));
+    clock.now_nanoseconds = 120U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    clock.now_nanoseconds = 170U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    clock.now_nanoseconds = 200U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&frame));
+    FT_ASSERT_EQ(100U, frame.duration_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
+        &statistics));
+    FT_ASSERT_EQ(1U, statistics.invocation_count);
+    FT_ASSERT_EQ(50U, statistics.inclusive_nanoseconds);
+    FT_ASSERT_EQ(50U, statistics.exclusive_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_recording_does_not_allocate_after_initialization)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_test_manual_clock clock;
+    test_cma_failure_controller controller;
+    uint32_t region_id;
+
+    clock.now_nanoseconds = 100U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    region_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("allocation-free",
+        "test", &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 1U));
+    clock.now_nanoseconds = 120U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    clock.now_nanoseconds = 160U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    clock.now_nanoseconds = 200U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(0U, test_cma_failure_controller_attempt_count(controller,
+        TEST_CMA_FAILURE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_destroy(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_concurrent_producers_and_exporter_drain)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_trace_event first_event;
+    analytics_trace_event second_event;
+    std::atomic<uint32_t> exported_count(0U);
+    std::atomic<int32_t> first_error(FT_ERR_SUCCESS);
+    std::thread first_producer;
+    std::thread second_producer;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.output_path = "analytics_concurrent_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.start_exporter = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.set_trace_callback(
+        analytics_test_atomic_trace_callback, &exported_count));
+    first_event = {};
+    first_event.flow_id = 1U;
+    first_event.thread_id = 1U;
+    second_event = {};
+    second_event.flow_id = 2U;
+    second_event.thread_id = 2U;
+    first_producer = std::thread([&session, &first_event, &first_error]()
+    {
+        uint32_t index;
+        int32_t error_code;
+
+        index = 0U;
+        while (index < 100U)
+        {
+            first_event.frame_number = index;
+            error_code = session.publish_trace(first_event);
+            if (error_code != FT_ERR_SUCCESS)
+                first_error.store(error_code, std::memory_order_relaxed);
+            index += 1U;
+        }
+    });
+    second_producer = std::thread([&session, &second_event, &first_error]()
+    {
+        uint32_t index;
+        int32_t error_code;
+
+        index = 0U;
+        while (index < 100U)
+        {
+            second_event.frame_number = index;
+            error_code = session.publish_trace(second_event);
+            if (error_code != FT_ERR_SUCCESS)
+                first_error.store(error_code, std::memory_order_relaxed);
+            index += 1U;
+        }
+    });
+    first_producer.join();
+    second_producer.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_error.load(std::memory_order_relaxed));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    FT_ASSERT_EQ(200U, exported_count.load(std::memory_order_relaxed));
+    FT_ASSERT_EQ(0, std::remove("analytics_concurrent_test.jsonl"));
+    return (1);
+}
+
+FT_TEST(test_analytics_overflow_policies_preserve_buffer_ownership)
+{
+    analytics_session session;
+    analytics_session failed_session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.reserved_frame_exports = 1U;
+    configuration.buffer_count = 3U;
+    configuration.overflow_policy = analytics_overflow_policy::
+        DROP_OLDEST_COMPLETED_WITH_COUNTER;
+    frame = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(1U, session.get_dropped_frame_export_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+
+    configuration.overflow_policy = analytics_overflow_policy::FAIL_SESSION;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_FULL, failed_session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_FULL, failed_session.get_export_error());
+    FT_ASSERT_EQ(FT_FALSE, failed_session.is_enabled());
+    FT_ASSERT_EQ(FT_ERR_FULL, failed_session.destroy());
     return (1);
 }
