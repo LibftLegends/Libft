@@ -295,6 +295,43 @@ FT_TEST(test_csv_document_handles_tab_delimiter)
     return (1);
 }
 
+FT_TEST(test_csv_document_preserves_trailing_empty_fields)
+{
+    ft_csv_document document;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize("a,b,"));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), document.column_count(0));
+    FT_ASSERT(document.get_field(0, 2) != ft_nullptr);
+    FT_ASSERT_EQ(FT_TRUE, *document.get_field(0, 2) == "");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.destroy());
+    return (1);
+}
+
+FT_TEST(test_csv_split_line_preserves_consecutive_empty_fields)
+{
+    ft_vector<ft_string> fields;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fields.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, csv_split_line(",", fields));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(2), fields.size());
+    FT_ASSERT_EQ(FT_TRUE, fields[0] == "");
+    FT_ASSERT_EQ(FT_TRUE, fields[1] == "");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fields.destroy());
+    return (1);
+}
+
+FT_TEST(test_csv_rejects_structural_delimiters)
+{
+    ft_csv_document document;
+    ft_vector<ft_string> fields;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize("a,b"));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, document.initialize("a\nb", '\n'));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, csv_split_line("a,b", fields, '"'));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.destroy());
+    return (1);
+}
+
 FT_TEST(test_csv_document_supports_header_lookup_typed_access_and_row_iteration)
 {
     ft_csv_document document;
