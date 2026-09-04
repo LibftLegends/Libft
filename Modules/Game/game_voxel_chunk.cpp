@@ -1661,8 +1661,8 @@ int32_t game_voxel_chunk::serialize(ft_byte_buffer &buffer) const noexcept
     ft_byte_buffer temporary_buffer;
     int32_t error_code;
 
-    errno_abort_if_uninitialised(this->_initialised_state,
-        "game_voxel_chunk::serialize");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (this->set_error(FT_ERR_NOT_INITIALISED));
     if (this->_access_lock == ft_nullptr)
         return (this->set_error(FT_ERR_INVALID_STATE));
     error_code = temporary_buffer.initialize(buffer);
