@@ -789,6 +789,44 @@ static int32_t chunk_mesh_emit_visible_faces(chunk_mesh &mesh,
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t chunk_mesh_partition_indices(chunk_mesh &mesh) noexcept
+{
+    ft_vector<uint32_t> *destination;
+    uint32_t vertex_index;
+    ft_size_t index;
+    int32_t error_code;
+
+    mesh.solid_indices.clear();
+    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.solid_indices.get_error());
+    mesh.water_indices.clear();
+    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.water_indices.get_error());
+    mesh.solid_indices.reserve(mesh.indices.size());
+    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.solid_indices.get_error());
+    mesh.water_indices.reserve(mesh.indices.size());
+    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.water_indices.get_error());
+    index = 0U;
+    while (index < mesh.indices.size())
+    {
+        vertex_index = mesh.indices[index];
+        if (vertex_index >= mesh.vertices.size())
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (mesh.vertices[vertex_index].block_id
+            == VOXEL_GENERATOR_WATER_BLOCK)
+            destination = &mesh.water_indices;
+        else
+            destination = &mesh.solid_indices;
+        error_code = destination->push_back(vertex_index);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t chunk_mesh_generate_from_chunk(chunk_mesh &mesh,
     const game_voxel_chunk &chunk) noexcept
 {
@@ -804,7 +842,10 @@ int32_t chunk_mesh_generate_from_chunk(chunk_mesh &mesh,
     if (mesh.indices.get_error() != FT_ERR_SUCCESS)
         return (mesh.indices.get_error());
     chunk_mesh_reset_occupied_bounds(mesh);
-    return (chunk_mesh_emit_visible_faces(mesh, chunk));
+    error_code = chunk_mesh_emit_visible_faces(mesh, chunk);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (chunk_mesh_partition_indices(mesh));
 }
 
 int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
@@ -821,7 +862,10 @@ int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
     if (mesh.indices.get_error() != FT_ERR_SUCCESS)
         return (mesh.indices.get_error());
     chunk_mesh_reset_occupied_bounds(mesh);
-    return (chunk_mesh_emit_visible_faces(mesh, chunk, &light));
+    error_code = chunk_mesh_emit_visible_faces(mesh, chunk, &light);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (chunk_mesh_partition_indices(mesh));
 }
 
 int32_t chunk_mesh_apply_light(chunk_mesh &mesh,
@@ -1068,7 +1112,10 @@ int32_t chunk_mesh_generate_from_chunk_with_neighbors(chunk_mesh &mesh,
     ctx.lookup_block = lookup_block;
     ctx.user_data = user_data;
     ctx.light = light;
-    return (chunk_mesh_emit_visible_faces_nb(mesh, ctx));
+    error_code = chunk_mesh_emit_visible_faces_nb(mesh, ctx);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (chunk_mesh_partition_indices(mesh));
 }
 
 #endif
