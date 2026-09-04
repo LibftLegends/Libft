@@ -81,7 +81,7 @@
 # define TERRAIN_MAX_TREE_TEMPLATES 64U
 # define TERRAIN_MAX_BIOME_TREE_TEMPLATES 16U
 # define TERRAIN_MAX_TREE_TEMPLATE_BLOCKS 32U
-# define TERRAIN_GENERATOR_VERSION 5U
+# define TERRAIN_GENERATOR_VERSION 7U
 # define TERRAIN_STAGE_BASE_TERRAIN 1U
 # define TERRAIN_STAGE_CAVES 2U
 # define TERRAIN_STAGE_FLUIDS 4U
@@ -214,6 +214,8 @@ struct terrain_block_metadata
     ft_bool breakable;
     ft_bool can_host_ore = FT_FALSE;
     ft_bool is_ore = FT_FALSE;
+    uint8_t emitted_light_level = 0U;
+    uint8_t light_attenuation = 0U;
 };
 
 enum terrain_block_asset_face

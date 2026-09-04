@@ -494,10 +494,17 @@ int32_t terrain_fluid_config::serialize_json(ft_string &output) const noexcept
         "terrain_fluids");
     TERRAIN_JSON_BOOL(staging_output, "enable_rivers", this->enable_rivers);
     TERRAIN_JSON_BOOL(staging_output, "enable_lakes", this->enable_lakes);
+    TERRAIN_JSON_BOOL(staging_output, "enable_underground_lakes", this->enable_underground_lakes);
     TERRAIN_JSON_I32(staging_output, "river_noise_scale", this->river_noise_scale);
     TERRAIN_JSON_I32(staging_output, "river_width", this->river_width);
     TERRAIN_JSON_I32(staging_output, "lake_noise_scale", this->lake_noise_scale);
     TERRAIN_JSON_U32(staging_output, "lake_chance_percent", this->lake_chance_percent);
+    TERRAIN_JSON_U32(staging_output, "underground_lake_chance_percent", this->underground_lake_chance_percent);
+    TERRAIN_JSON_I32(staging_output, "underground_lake_minimum_y", this->underground_lake_minimum_y);
+    TERRAIN_JSON_I32(staging_output, "underground_lake_maximum_y", this->underground_lake_maximum_y);
+    TERRAIN_JSON_U32(staging_output, "underground_lake_depth", this->underground_lake_depth);
+    TERRAIN_JSON_U32(staging_output, "underground_lake_floor_thickness", this->underground_lake_floor_thickness);
+    TERRAIN_JSON_U32(staging_output, "underground_lake_roof_thickness", this->underground_lake_roof_thickness);
     if (error_code == FT_ERR_SUCCESS)
         error_code = terrain_json_finish(staging_output);
     return (terrain_json_commit(output, staging_output, error_code));

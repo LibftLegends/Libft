@@ -30,3 +30,7 @@ The `CSV` module provides a lightweight CSV document wrapper plus field escaping
 
 - `csv_split_line(const char *line, ft_vector<ft_string> &fields, char delimiter = ',')` - Splits one CSV record into fields.
 - `csv_escape_field(const char *field, char delimiter = ',')` - Returns an allocated escaped CSV field string.
+
+Delimiters must not be NUL, a quote, LF, or CR because those characters are
+reserved by the CSV grammar. Empty fields, including fields after a trailing
+delimiter, are preserved.

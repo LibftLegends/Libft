@@ -4,9 +4,47 @@
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
 #include "../../Modules/Voxel/terrain_api.hpp"
+#include "../../Modules/Voxel/voxel_lighting.hpp"
+#include "../../Modules/Voxel/voxel_shadow.hpp"
+#include "../../Modules/Voxel/voxel_mesh.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include <stdio.h>
+
+static_assert(sizeof(chunk_mesh_vertex) == 16U,
+    "packed voxel lighting must fit existing mesh vertex stride");
+
+struct test_light_world
+{
+    uint32_t blocks[16 * 16 * 256];
+};
+
+static uint32_t test_light_world_index(int32_t x, int32_t y, int32_t z)
+{
+    return static_cast<uint32_t>((y * 16 + z) * 16 + x);
+}
+
+static int32_t test_light_world_lookup(void *user_data, int32_t x,
+    int32_t y, int32_t z, uint32_t *block_id) noexcept
+{
+    test_light_world *world = static_cast<test_light_world *>(user_data);
+    if (block_id == ft_nullptr || world == ft_nullptr
+        || y < 0 || y >= 256)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (x < 0 || x >= 16 || z < 0 || z >= 16)
+    {
+        *block_id = TERRAIN_GENERATOR_STONE_BLOCK;
+        return (FT_ERR_SUCCESS);
+    }
+    *block_id = world->blocks[test_light_world_index(x, y, z)];
+    return (FT_ERR_SUCCESS);
+}
+
+static void test_light_world_clear(test_light_world &world)
+{
+    for (uint32_t index = 0U; index < 16U * 16U * 256U; ++index)
+        world.blocks[index] = GAME_VOXEL_AIR_BLOCK;
+}
 
 static int32_t test_terrain_surface_height(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept
@@ -1645,6 +1683,229 @@ FT_TEST(test_terrain_generation_config_controls_tree_and_water_density)
     FT_ASSERT_NEQ(0, water_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_pack_round_trip)
+{
+    for (uint8_t sky = 0U; sky < 16U; ++sky)
+        for (uint8_t block = 0U; block < 16U; ++block)
+        {
+            uint8_t packed = voxel_light_pack(sky, block);
+            FT_ASSERT_EQ(sky, voxel_light_sky(packed));
+            FT_ASSERT_EQ(block, voxel_light_block(packed));
+        }
+    FT_ASSERT_EQ(15U, voxel_light_sky(voxel_light_pack(255U, 0U)));
+    FT_ASSERT_EQ(15U, voxel_light_block(voxel_light_pack(0U, 255U)));
+    FT_ASSERT_EQ(10U, voxel_light_combined(voxel_light_pack(12U, 10U), 2U));
+    return (1);
+}
+
+FT_TEST(test_voxel_light_section_stays_uniform_until_needed)
+{
+    voxel_light_section section;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, section.initialize(0x2FU));
+    FT_ASSERT_EQ(FT_TRUE, section.is_uniform());
+    FT_ASSERT_EQ(0x2FU, section.get(37U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, section.set(37U, 0x21U));
+    FT_ASSERT_EQ(FT_FALSE, section.is_uniform());
+    FT_ASSERT_EQ(0x21U, section.get(37U));
+    FT_ASSERT_EQ(0x2FU, section.get(36U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, section.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_direct_sky_and_block_falloff)
+{
+    test_light_world world;
+    voxel_light_chunk light;
+
+    test_light_world_clear(world);
+    world.blocks[test_light_world_index(8, 120, 8)] =
+        TERRAIN_GENERATOR_STONE_BLOCK;
+    world.blocks[test_light_world_index(8, 121, 8)] =
+        TERRAIN_GENERATOR_FROST_CRYSTAL_BLOCK;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(light, 0, 0,
+        test_light_world_lookup, &world));
+    FT_ASSERT_EQ(15U, voxel_light_sky(light.get(0, 100, 0)));
+    FT_ASSERT_EQ(15U, voxel_light_block(light.get(8, 121, 8)));
+    FT_ASSERT_EQ(14U, voxel_light_block(light.get(9, 121, 8)));
+    FT_ASSERT_EQ(13U, voxel_light_block(light.get(10, 121, 8)));
+    FT_ASSERT_EQ(14U, voxel_light_sky(light.get(8, 119, 8)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_sideways_cave_fades_under_roof)
+{
+    test_light_world world;
+    voxel_light_chunk light;
+
+    test_light_world_clear(world);
+    for (int32_t x = 1; x < 16; ++x)
+        for (int32_t z = 0; z < 16; ++z)
+            world.blocks[test_light_world_index(x, 11, z)] =
+                TERRAIN_GENERATOR_STONE_BLOCK;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(light, 0, 0,
+        test_light_world_lookup, &world));
+    FT_ASSERT_EQ(15U, voxel_light_sky(light.get(0, 10, 8)));
+    FT_ASSERT_EQ(7U, voxel_light_sky(light.get(8, 10, 8)));
+    FT_ASSERT_NEQ(15U, voxel_light_sky(light.get(8, 9, 8)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.destroy());
+    return (1);
+}
+
+static ft_bool test_shadow_lookup(void *user_data, int32_t world_x,
+    int32_t world_y, int32_t world_z) noexcept
+{
+    (void)world_x;
+    (void)world_z;
+    const int32_t *receiver = static_cast<const int32_t *>(user_data);
+    return world_y == *receiver ? FT_TRUE : FT_FALSE;
+}
+
+FT_TEST(test_voxel_shadow_receiver_and_height_fade)
+{
+    int32_t receiver = 20;
+    int32_t found = -1;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_shadow_find_receiver(4, 25, 7, 8,
+        test_shadow_lookup, &receiver, &found));
+    FT_ASSERT_EQ(receiver, found);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, voxel_shadow_find_receiver(4, 25, 7, 3,
+        test_shadow_lookup, &receiver, &found));
+    FT_ASSERT_EQ(1.0, voxel_shadow_height_fade(21.0, receiver, 8.0));
+    FT_ASSERT_EQ(0.0, voxel_shadow_height_fade(29.0, receiver, 8.0));
+    return (1);
+}
+
+FT_TEST(test_voxel_light_prevents_greedy_gradient_flattening)
+{
+    game_voxel_chunk chunk;
+    voxel_light_chunk light;
+    chunk_mesh mesh;
+    size_t up_vertices = 0U;
+    ft_bool found_dark = FT_FALSE;
+    ft_bool found_bright = FT_FALSE;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 10, 0,
+        TERRAIN_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 10, 0,
+        TERRAIN_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.initialize(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(0, 11, 0, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(1, 11, 0, voxel_light_pack(5U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(mesh,
+        chunk, light));
+    for (size_t index = 0U; index < mesh.vertices.size(); ++index)
+    {
+        const chunk_mesh_vertex &vertex = mesh.vertices[index];
+        if (vertex.face != CHUNK_MESH_FACE_UP)
+            continue;
+        ++up_vertices;
+        if (voxel_light_sky(vertex.packed_light) == 15U)
+            found_bright = FT_TRUE;
+        if (voxel_light_sky(vertex.packed_light) == 5U)
+            found_dark = FT_TRUE;
+    }
+    FT_ASSERT_EQ(FT_TRUE, found_bright);
+    FT_ASSERT_EQ(FT_TRUE, found_dark);
+    FT_ASSERT_EQ(FT_TRUE, up_vertices >= 8U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_reaches_all_visible_side_faces)
+{
+    game_voxel_chunk chunk;
+    voxel_light_chunk light;
+    chunk_mesh mesh;
+    bool seen[6] = {false, false, false, false, false, false};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(8, 10, 8,
+        TERRAIN_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.initialize(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(7, 10, 8, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(9, 10, 8, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(8, 9, 8, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(8, 11, 8, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(8, 10, 7, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.set(8, 10, 9, voxel_light_pack(15U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(mesh,
+        chunk, light));
+    for (size_t index = 0U; index < mesh.vertices.size(); ++index)
+    {
+        const chunk_mesh_vertex &vertex = mesh.vertices[index];
+        const uint8_t face = vertex.face;
+        if (face < 6U)
+        {
+            seen[face] = true;
+            FT_ASSERT_EQ(15U, voxel_light_sky(vertex.packed_light));
+        }
+    }
+    for (bool face_seen : seen)
+        FT_ASSERT_EQ(true, face_seen);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_keeps_exposed_chunk_edge_faces_bright)
+{
+    game_voxel_chunk chunk;
+    voxel_light_chunk light;
+    chunk_mesh mesh;
+    bool saw_west = false;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 10, 8,
+        TERRAIN_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.initialize(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(
+        mesh, chunk, light));
+    for (size_t index = 0U; index < mesh.vertices.size(); ++index)
+    {
+        const chunk_mesh_vertex &vertex = mesh.vertices[index];
+        if (vertex.face == CHUNK_MESH_FACE_WEST)
+        {
+            saw_west = true;
+            FT_ASSERT_EQ(15U, voxel_light_sky(vertex.packed_light));
+        }
+    }
+    FT_ASSERT_EQ(true, saw_west);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_light_update_config_defaults_and_validation)
+{
+    voxel_light_update_config config;
+
+    voxel_light_update_config_defaults(config);
+    FT_ASSERT_EQ(32U, config.min_nodes_per_frame);
+    FT_ASSERT_EQ(128U, config.target_nodes_per_frame);
+    FT_ASSERT_EQ(512U, config.max_nodes_per_frame);
+    FT_ASSERT_EQ(1000U, config.time_budget_microseconds);
+    FT_ASSERT_EQ(FT_TRUE, voxel_light_update_config_is_valid(config));
+    config.min_nodes_per_frame = 0U;
+    FT_ASSERT_EQ(FT_FALSE, voxel_light_update_config_is_valid(config));
+    voxel_light_update_config_defaults(config);
+    config.min_nodes_per_frame = config.target_nodes_per_frame + 1U;
+    FT_ASSERT_EQ(FT_FALSE, voxel_light_update_config_is_valid(config));
+    voxel_light_update_config_defaults(config);
+    config.time_budget_microseconds = 0U;
+    FT_ASSERT_EQ(FT_FALSE, voxel_light_update_config_is_valid(config));
     return (1);
 }
 

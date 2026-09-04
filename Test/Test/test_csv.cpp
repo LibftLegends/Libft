@@ -36,6 +36,48 @@ FT_TEST(test_csv_split_line_rejects_unclosed_quote)
     return (1);
 }
 
+FT_TEST(test_csv_trailing_empty_fields_are_preserved)
+{
+    ft_csv_document document;
+    const char *values[] = {"a,b,", ",", "a,,", "\"a\",", ",\n"};
+    const ft_size_t expected[] = {3U, 2U, 3U, 2U, 2U};
+    for (size_t index = 0U; index < 5U; ++index)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize(values[index]));
+        FT_ASSERT_EQ(expected[index], document.column_count(0U));
+        FT_ASSERT_EQ(FT_TRUE, *document.get_field(0U,
+            expected[index] - 1U) == "");
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, document.destroy());
+    }
+    return (1);
+}
+
+FT_TEST(test_csv_split_line_preserves_trailing_empty_fields)
+{
+    ft_vector<ft_string> fields;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, csv_split_line("a,b,", fields));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), fields.size());
+    FT_ASSERT_EQ(FT_TRUE, fields[2] == "");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, csv_split_line(",", fields));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(2), fields.size());
+    FT_ASSERT_EQ(FT_TRUE, fields[0] == "");
+    FT_ASSERT_EQ(FT_TRUE, fields[1] == "");
+    return (1);
+}
+
+FT_TEST(test_csv_rejects_structural_delimiters)
+{
+    ft_csv_document document;
+    ft_vector<ft_string> fields;
+
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, document.initialize("a,b", '"'));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, document.initialize("a,b", '\n'));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, csv_split_line("a,b", fields, '\0'));
+    FT_ASSERT(csv_escape_field("a,b", '\r') == ft_nullptr);
+    return (1);
+}
+
 FT_TEST(test_csv_escape_field_quotes_when_needed)
 {
     char *escaped_field;

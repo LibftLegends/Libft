@@ -68,6 +68,8 @@ ft_bool terrain_block_is_replaceable(uint32_t block_id) noexcept;
 ft_bool terrain_block_can_host_ore(uint32_t block_id) noexcept;
 ft_bool terrain_block_is_ore(uint32_t block_id) noexcept;
 ft_bool terrain_block_emits_light(uint32_t block_id) noexcept;
+uint8_t terrain_block_emitted_light_level(uint32_t block_id) noexcept;
+uint8_t terrain_block_light_attenuation(uint32_t block_id) noexcept;
 ft_bool terrain_block_occludes_faces(uint32_t block_id) noexcept;
 uint32_t terrain_block_hardness(uint32_t block_id) noexcept;
 ft_bool terrain_block_is_breakable(uint32_t block_id) noexcept;

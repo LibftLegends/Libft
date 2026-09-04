@@ -261,7 +261,9 @@ int32_t terrain_register_block(const terrain_block_registration &registration,
         || registration.metadata.is_ore > FT_TRUE
         || registration.metadata.light_emitting > FT_TRUE
         || registration.metadata.occludes_faces > FT_TRUE
-        || registration.metadata.breakable > FT_TRUE)
+        || registration.metadata.breakable > FT_TRUE
+        || registration.metadata.emitted_light_level > 15U
+        || registration.metadata.light_attenuation > 15U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (registration.metadata.is_ore == FT_TRUE
         && registration.metadata.can_host_ore == FT_TRUE)

@@ -8,6 +8,8 @@
 # include "terrain_config.hpp"
 # include "terrain_generation.hpp"
 # include "terrain_api.hpp"
+# include "voxel_lighting.hpp"
+# include "voxel_shadow.hpp"
 
 #endif
 

@@ -215,18 +215,29 @@ class terrain_fluid_config
         uint32_t move(terrain_fluid_config &other) noexcept;
         ft_bool is_initialised() const noexcept;
         int32_t set_enabled(ft_bool rivers, ft_bool lakes) noexcept;
+        int32_t set_underground_lakes_enabled(ft_bool enabled) noexcept;
         int32_t set_river_settings(int32_t scale, int32_t width) noexcept;
         int32_t set_lake_settings(int32_t scale, uint32_t chance) noexcept;
+        int32_t set_underground_lake_settings(uint32_t chance,
+            int32_t minimum_y, int32_t maximum_y, uint32_t depth,
+            uint32_t floor_thickness, uint32_t roof_thickness) noexcept;
         int32_t serialize_json(ft_string &output) const noexcept;
         int32_t save_json_file(const char *file_path,
             terrain_json_file_mode mode) const noexcept;
 
         ft_bool enable_rivers;
         ft_bool enable_lakes;
+        ft_bool enable_underground_lakes;
         int32_t river_noise_scale;
         int32_t river_width;
         int32_t lake_noise_scale;
         uint32_t lake_chance_percent;
+        uint32_t underground_lake_chance_percent;
+        int32_t underground_lake_minimum_y;
+        int32_t underground_lake_maximum_y;
+        uint32_t underground_lake_depth;
+        uint32_t underground_lake_floor_thickness;
+        uint32_t underground_lake_roof_thickness;
 };
 
 class terrain_layer_config
@@ -273,6 +284,10 @@ typedef int32_t (*terrain_cross_chunk_block_writer)(int32_t world_block_x,
     int32_t world_block_y, int32_t world_block_z, uint32_t block_id,
     void *user_data) noexcept;
 
+typedef int32_t (*terrain_cross_chunk_block_reader)(int32_t world_block_x,
+    int32_t world_block_y, int32_t world_block_z, uint32_t *block_id,
+    void *user_data) noexcept;
+
 typedef uint32_t (*terrain_biome_selector)(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z, uint32_t biome_count,
     void *user_data) noexcept;
@@ -317,6 +332,8 @@ class terrain_generation_config
             void *user_data) noexcept;
         int32_t set_cross_chunk_writer(
             terrain_cross_chunk_block_writer writer, void *user_data) noexcept;
+        int32_t set_cross_chunk_reader(
+            terrain_cross_chunk_block_reader reader, void *user_data) noexcept;
         int32_t set_biome(uint32_t biome_index,
             const terrain_biome_definition &biome) noexcept;
         int32_t set_biome_profile(uint32_t biome_index,
@@ -398,6 +415,8 @@ class terrain_generation_config
         ft_bool allow_cross_chunk_features;
         terrain_cross_chunk_block_writer cross_chunk_block_writer;
         void *cross_chunk_block_writer_user_data;
+        terrain_cross_chunk_block_reader cross_chunk_block_reader;
+        void *cross_chunk_block_reader_user_data;
 };
 
 #endif

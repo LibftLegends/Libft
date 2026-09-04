@@ -62,6 +62,12 @@ static ft_bool csv_field_needs_quotes(const char *field, char delimiter)
     return (FT_FALSE);
 }
 
+static ft_bool csv_delimiter_is_valid(char delimiter) noexcept
+{
+    return (delimiter != '\0' && delimiter != '"' && delimiter != '\n'
+        && delimiter != '\r') ? FT_TRUE : FT_FALSE;
+}
+
 static int32_t csv_append_escaped_field(ft_string &output, const char *field,
     char delimiter)
 {
@@ -124,7 +130,10 @@ static int32_t csv_finalize_row(ft_vector<ft_size_t> &row_offsets,
         return (error_code);
     error_code = row_lengths.push_back(row_length);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        row_offsets.pop_back();
         return (error_code);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -209,6 +218,8 @@ int32_t ft_csv_document::parse_content(const char *content, char delimiter,
 
     if (content == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    if (csv_delimiter_is_valid(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     error_code = current_field.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -361,7 +372,8 @@ int32_t ft_csv_document::parse_content(const char *content, char delimiter,
         (void)current_field.destroy();
         return (FT_ERR_INVALID_OPERATION);
     }
-    if (field_started == FT_TRUE || current_field.size() > 0)
+    if (field_started == FT_TRUE || current_field.size() > 0
+        || row_field_count > 0)
     {
         error_code = csv_finalize_field(this->_fields, current_field);
         if (error_code != FT_ERR_SUCCESS)
@@ -1097,6 +1109,8 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
 
     if (line == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    if (csv_delimiter_is_valid(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (fields.is_initialised() == FT_FALSE)
     {
         error_code = fields.initialize();
@@ -1226,7 +1240,8 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
         fields.clear();
         return (FT_ERR_INVALID_OPERATION);
     }
-    if (field_started == FT_TRUE || current_field.size() > 0)
+    if (field_started == FT_TRUE || current_field.size() > 0
+        || fields.size() > 0)
     {
         error_code = fields.push_back(current_field);
         if (error_code != FT_ERR_SUCCESS)
@@ -1249,6 +1264,8 @@ char *csv_escape_field(const char *field, char delimiter) noexcept
     ft_bool needs_quotes;
 
     if (field == ft_nullptr)
+        return (ft_nullptr);
+    if (csv_delimiter_is_valid(delimiter) == FT_FALSE)
         return (ft_nullptr);
     needs_quotes = csv_field_needs_quotes(field, delimiter);
     if (needs_quotes == FT_FALSE)

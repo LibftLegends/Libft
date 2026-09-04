@@ -315,13 +315,14 @@ static int32_t terrain_script_register_block(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
     terrain_block_registration registration;
-    uint32_t metadata_values[9];
+    uint32_t metadata_values[11];
     uint32_t block_id;
     uint32_t argument_index;
     uint32_t asset_index;
     int32_t error_code;
 
-    if (arguments.size() != 15U && arguments.size() != 17U)
+    if (arguments.size() != 15U && arguments.size() != 17U
+        && arguments.size() != 19U)
         return (FT_ERR_INVALID_ARGUMENT);
     registration.name = arguments[0].c_str();
     argument_index = 0U;
@@ -342,7 +343,7 @@ static int32_t terrain_script_register_block(game_script_context &context,
     registration.metadata.light_emitting = static_cast<ft_bool>(metadata_values[4]);
     registration.metadata.occludes_faces = static_cast<ft_bool>(metadata_values[5]);
     registration.metadata.hardness = metadata_values[6];
-    if (arguments.size() == 17U)
+    if (arguments.size() == 17U || arguments.size() == 19U)
     {
         error_code = terrain_script_parse_uint32(arguments[8],
             &metadata_values[7]);
@@ -367,6 +368,23 @@ static int32_t terrain_script_register_block(game_script_context &context,
             && registration.metadata.replaceable == FT_FALSE);
         registration.metadata.is_ore = FT_FALSE;
         argument_index = 8U;
+    }
+    if (arguments.size() == 19U)
+    {
+        error_code = terrain_script_parse_uint32(arguments[10],
+            &metadata_values[9]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = terrain_script_parse_uint32(arguments[11],
+            &metadata_values[10]);
+        if (error_code != FT_ERR_SUCCESS || metadata_values[9] > 15U
+            || metadata_values[10] > 15U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        registration.metadata.emitted_light_level =
+            static_cast<uint8_t>(metadata_values[9]);
+        registration.metadata.light_attenuation =
+            static_cast<uint8_t>(metadata_values[10]);
+        argument_index = 12U;
     }
     error_code = terrain_script_parse_uint32(arguments[argument_index],
         &metadata_values[0]);

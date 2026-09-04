@@ -32,6 +32,35 @@ static const int32_t TERRAIN_CAVE_SURFACE_MARGIN = 7;
 static const int32_t TERRAIN_CAVE_CELL_SIZE = 12;
 static const int32_t TERRAIN_COLUMN_CACHE_COUNT =
     GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH;
+static const uint8_t TERRAIN_SURFACE_WATER_NONE = 0U;
+static const uint8_t TERRAIN_SURFACE_WATER_RIVER = 1U;
+static const uint8_t TERRAIN_SURFACE_WATER_LAKE = 2U;
+static const uint8_t TERRAIN_SURFACE_WATER_LEGACY = 3U;
+
+static ft_bool terrain_world_coordinate_on_grid(int32_t coordinate,
+    int32_t spacing, int32_t offset) noexcept
+{
+    int32_t remainder;
+
+    if (spacing <= 0)
+        return (FT_FALSE);
+    remainder = (coordinate - offset) % spacing;
+    if (remainder < 0)
+        remainder += spacing;
+    return (remainder == 0 ? FT_TRUE : FT_FALSE);
+}
+
+static int32_t terrain_floor_division(int32_t value, int32_t divisor) noexcept
+{
+    int32_t quotient;
+
+    if (divisor <= 0)
+        return (0);
+    quotient = value / divisor;
+    if (value < 0 && value % divisor != 0)
+        quotient -= 1;
+    return (quotient);
+}
 
 struct terrain_biome_sample
 {
@@ -47,6 +76,12 @@ struct terrain_column_cache
     terrain_biome_profile biome_profile;
     int32_t column_height;
     int32_t slope_height;
+    ft_bool has_surface_water;
+    uint8_t surface_water_kind;
+    uint64_t surface_water_feature_id;
+    int32_t surface_water_level;
+    uint32_t surface_water_depth;
+    uint32_t surface_water_bank_distance;
     uint32_t deep_block_id;
     ft_bool can_place_shrubs;
     ft_bool can_place_trees;
@@ -67,6 +102,165 @@ static void terrain_sample_biomes(const terrain_generation_config &config,
 static int32_t terrain_estimate_slope(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
     const terrain_generation_config &config) noexcept;
+
+static int32_t terrain_smooth_heightfield(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z,
+    const terrain_generation_config &config) noexcept;
+
+static uint8_t terrain_surface_water_kind(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z,
+    const terrain_generation_config &config) noexcept;
+
+static int32_t terrain_surface_water_bed_height(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z, int32_t column_height,
+    const terrain_generation_config &config) noexcept;
+
+static ft_bool terrain_stage_dependencies_are_met(uint32_t requested_mask,
+    uint32_t previous_mask) noexcept;
+
+static ft_bool terrain_underground_lake_geometry_is_valid(
+    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
+    int32_t local_z, int32_t world_block_origin_x,
+    int32_t world_block_origin_z,
+    const terrain_generation_config &config) noexcept;
+
+static int32_t terrain_read_generation_block(game_voxel_chunk &chunk,
+    int32_t local_x, int32_t local_y, int32_t local_z,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    const terrain_generation_config &config, uint32_t *block_id) noexcept
+{
+    if (local_x >= 0 && local_x < GAME_VOXEL_CHUNK_WIDTH
+        && local_y >= 0 && local_y < GAME_VOXEL_CHUNK_HEIGHT
+        && local_z >= 0 && local_z < GAME_VOXEL_CHUNK_DEPTH)
+        return (chunk.read_block(local_x, local_y, local_z, block_id));
+    if (config.cross_chunk_block_reader == ft_nullptr)
+        return (FT_ERR_OUT_OF_RANGE);
+    return (config.cross_chunk_block_reader(world_block_origin_x + local_x,
+        local_y, world_block_origin_z + local_z, block_id,
+        config.cross_chunk_block_reader_user_data));
+}
+
+static int32_t terrain_write_generation_block(game_voxel_chunk &chunk,
+    int32_t local_x, int32_t local_y, int32_t local_z,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    const terrain_generation_config &config, uint32_t block_id) noexcept
+{
+    if (local_x >= 0 && local_x < GAME_VOXEL_CHUNK_WIDTH
+        && local_y >= 0 && local_y < GAME_VOXEL_CHUNK_HEIGHT
+        && local_z >= 0 && local_z < GAME_VOXEL_CHUNK_DEPTH)
+        return (chunk.write_generated_block(local_x, local_y, local_z,
+            block_id));
+    if (config.cross_chunk_block_writer == ft_nullptr)
+        return (FT_ERR_OUT_OF_RANGE);
+    return (config.cross_chunk_block_writer(world_block_origin_x + local_x,
+        local_y, world_block_origin_z + local_z, block_id,
+        config.cross_chunk_block_writer_user_data));
+}
+
+static ft_bool terrain_underground_lake_geometry_is_valid(
+    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
+    int32_t local_z, int32_t world_block_origin_x,
+    int32_t world_block_origin_z,
+    const terrain_generation_config &config) noexcept
+{
+    int32_t offset;
+    int32_t level;
+    uint32_t block_id;
+
+    offset = 0;
+    while (offset < static_cast<int32_t>(
+        config.fluids.underground_lake_floor_thickness))
+    {
+        int32_t z = -1;
+        while (z <= 1)
+        {
+            int32_t x = -1;
+            while (x <= 1)
+            {
+                if (terrain_read_generation_block(chunk, local_x + x,
+                        local_y - 1 - offset, local_z + z,
+                        world_block_origin_x, world_block_origin_z, config,
+                        &block_id) != FT_ERR_SUCCESS
+                    || terrain_block_is_solid(block_id) == FT_FALSE)
+                    return (FT_FALSE);
+                x += 1;
+            }
+            z += 1;
+        }
+        offset += 1;
+    }
+    level = 0;
+    while (level <= static_cast<int32_t>(config.fluids
+            .underground_lake_depth))
+    {
+        int32_t z = -2;
+        while (z <= 2)
+        {
+            int32_t x = -2;
+            while (x <= 2)
+            {
+                if (std::abs(x) == 2 || std::abs(z) == 2)
+                {
+                    if (terrain_read_generation_block(chunk, local_x + x,
+                            local_y + level, local_z + z,
+                            world_block_origin_x, world_block_origin_z,
+                            config, &block_id) != FT_ERR_SUCCESS
+                        || terrain_block_is_solid(block_id) == FT_FALSE)
+                        return (FT_FALSE);
+                }
+                x += 1;
+            }
+            z += 1;
+        }
+        level += 1;
+    }
+    level = 0;
+    while (level <= static_cast<int32_t>(config.fluids
+            .underground_lake_depth))
+    {
+        int32_t z = -1;
+        while (z <= 1)
+        {
+            int32_t x = -1;
+            while (x <= 1)
+            {
+                if (terrain_read_generation_block(chunk, local_x + x,
+                        local_y + level, local_z + z, world_block_origin_x,
+                        world_block_origin_z, config, &block_id)
+                        != FT_ERR_SUCCESS
+                    || block_id != TERRAIN_GENERATOR_AIR_BLOCK)
+                    return (FT_FALSE);
+                x += 1;
+            }
+            z += 1;
+        }
+        level += 1;
+    }
+    offset = 1;
+    while (offset <= static_cast<int32_t>(
+        config.fluids.underground_lake_roof_thickness))
+    {
+        int32_t z = -1;
+        while (z <= 1)
+        {
+            int32_t x = -1;
+            while (x <= 1)
+            {
+                if (terrain_read_generation_block(chunk, local_x + x,
+                        local_y + static_cast<int32_t>(config.fluids
+                            .underground_lake_depth) + offset, local_z + z,
+                        world_block_origin_x, world_block_origin_z, config,
+                        &block_id) != FT_ERR_SUCCESS
+                    || terrain_block_is_solid(block_id) == FT_FALSE)
+                    return (FT_FALSE);
+                x += 1;
+            }
+            z += 1;
+        }
+        offset += 1;
+    }
+    return (FT_TRUE);
+}
 
 static int32_t terrain_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
 {
@@ -163,8 +357,71 @@ static void terrain_stage_prepare_columns(uint64_t seed_value,
                 sample_index += 1U;
             }
             column_cache[column_index].column_height
-                = terrain_sample_height(seed_value, world_block_x,
+                = terrain_smooth_heightfield(seed_value, world_block_x,
                     world_block_z, config);
+            column_cache[column_index].surface_water_kind =
+                terrain_surface_water_kind(seed_value, world_block_x,
+                    world_block_z, config);
+            column_cache[column_index].has_surface_water =
+                column_cache[column_index].surface_water_kind
+                    != TERRAIN_SURFACE_WATER_NONE ? FT_TRUE : FT_FALSE;
+            column_cache[column_index].surface_water_feature_id = 0U;
+            column_cache[column_index].surface_water_bank_distance = 0U;
+            column_cache[column_index].surface_water_level = config.sea_level;
+            if (column_cache[column_index].surface_water_kind
+                    == TERRAIN_SURFACE_WATER_RIVER)
+                column_cache[column_index].surface_water_level -= 1;
+            else if (column_cache[column_index].surface_water_kind
+                    == TERRAIN_SURFACE_WATER_LAKE)
+                column_cache[column_index].surface_water_level -= 2;
+            if (column_cache[column_index].has_surface_water == FT_TRUE)
+            {
+                const int32_t original_height =
+                    column_cache[column_index].column_height;
+                if (original_height > column_cache[column_index]
+                        .surface_water_level + 4)
+                    column_cache[column_index].has_surface_water = FT_FALSE;
+                else
+                    column_cache[column_index].column_height =
+                        terrain_surface_water_bed_height(seed_value,
+                            world_block_x, world_block_z, original_height,
+                            config);
+                if (column_cache[column_index].column_height
+                        >= column_cache[column_index].surface_water_level)
+                    column_cache[column_index].has_surface_water = FT_FALSE;
+            }
+            if (column_cache[column_index].has_surface_water == FT_TRUE)
+            {
+                const int32_t feature_cell_size =
+                    column_cache[column_index].surface_water_kind
+                        == TERRAIN_SURFACE_WATER_RIVER
+                        ? config.fluids.river_noise_scale
+                        : config.fluids.lake_noise_scale;
+                const int32_t feature_cell_x = feature_cell_size > 0
+                    ? terrain_floor_division(world_block_x,
+                        feature_cell_size) * feature_cell_size
+                    : world_block_x;
+                const int32_t feature_cell_z = feature_cell_size > 0
+                    ? terrain_floor_division(world_block_z,
+                        feature_cell_size) * feature_cell_size
+                    : world_block_z;
+                column_cache[column_index].surface_water_feature_id =
+                    terrain_feature_seed(seed_value, feature_cell_x,
+                        feature_cell_z, TERRAIN_FEATURE_WATER_SALT
+                            ^ static_cast<uint64_t>(column_cache[column_index]
+                                .surface_water_kind));
+                column_cache[column_index].surface_water_depth =
+                    static_cast<uint32_t>(column_cache[column_index]
+                        .surface_water_level
+                        - column_cache[column_index].column_height);
+                column_cache[column_index].surface_water_bank_distance =
+                    column_cache[column_index].surface_water_kind
+                        == TERRAIN_SURFACE_WATER_RIVER ? 1U : 2U;
+            }
+            else
+            {
+                column_cache[column_index].surface_water_depth = 0U;
+            }
             column_cache[column_index].slope_height
                 = terrain_estimate_slope(seed_value, world_block_x,
                     world_block_z, config);
@@ -292,6 +549,19 @@ static int32_t terrain_region_cross_chunk_block_writer(int32_t world_block_x,
         return (FT_ERR_INVALID_ARGUMENT);
     return (region->write_generated_block(world_block_x, world_block_y,
         world_block_z, block_id));
+}
+
+static int32_t terrain_region_cross_chunk_block_reader(int32_t world_block_x,
+    int32_t world_block_y, int32_t world_block_z, uint32_t *block_id,
+    void *user_data) noexcept
+{
+    game_voxel_region *region;
+
+    region = static_cast<game_voxel_region *>(user_data);
+    if (region == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (region->read_block(world_block_x, world_block_y, world_block_z,
+        block_id));
 }
 
 static int32_t terrain_column_height(uint64_t seed_value,
@@ -995,17 +1265,26 @@ static ft_bool terrain_should_carve_cave(uint64_t seed_value,
     return (FT_FALSE);
 }
 
-static ft_bool terrain_should_fill_water(uint64_t seed_value,
+static uint8_t terrain_surface_water_kind(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
     const terrain_generation_config &config) noexcept
 {
     double river_noise;
-    double lake_noise;
+    uint64_t lake_region_seed;
+    int32_t lake_region_size;
+    int32_t lake_region_x;
+    int32_t lake_region_z;
+    int32_t lake_center_x;
+    int32_t lake_center_z;
+    int32_t lake_radius;
+    int32_t lake_jitter_range;
+    int32_t distance_x;
+    int32_t distance_z;
 
     if (terrain_should_place_feature(seed_value, world_block_x, world_block_z,
             TERRAIN_FEATURE_WATER_SALT, config.water_chance_percent)
         == FT_TRUE)
-        return (FT_TRUE);
+        return (TERRAIN_SURFACE_WATER_LEGACY);
     if (config.fluids.enable_rivers == FT_TRUE)
     {
         river_noise = terrain_value_noise(seed_value ^ UINT64_C(
@@ -1015,23 +1294,251 @@ static ft_bool terrain_should_fill_water(uint64_t seed_value,
             river_noise = -river_noise;
         if (river_noise < (0.04 + (static_cast<double>(
                 config.fluids.river_width) * 0.01)))
-            return (FT_TRUE);
+            return (TERRAIN_SURFACE_WATER_RIVER);
     }
     if (config.fluids.enable_lakes == FT_TRUE)
     {
-        lake_noise = terrain_value_noise(seed_value ^ UINT64_C(
-            0xA54FF53A5F1D36F1), world_block_x, world_block_z,
-            config.fluids.lake_noise_scale);
-        if (lake_noise < 0.0)
-            lake_noise = -lake_noise;
-        if (lake_noise < 0.08
-            && terrain_should_place_feature(seed_value, world_block_x,
-                world_block_z, TERRAIN_FEATURE_WATER_SALT
-                    ^ UINT64_C(0xA11CE), config.fluids.lake_chance_percent)
-                == FT_TRUE)
-            return (FT_TRUE);
+        lake_region_size = config.fluids.lake_noise_scale;
+        if (lake_region_size < 8)
+            lake_region_size = 8;
+        lake_region_x = terrain_floor_division(world_block_x,
+            lake_region_size) * lake_region_size;
+        lake_region_z = terrain_floor_division(world_block_z,
+            lake_region_size) * lake_region_size;
+        lake_region_seed = terrain_feature_seed(seed_value, lake_region_x,
+            lake_region_z, TERRAIN_FEATURE_WATER_SALT
+                ^ UINT64_C(0xA54FF53A5F1D36F1));
+        if ((lake_region_seed % 100U) < config.fluids.lake_chance_percent)
+        {
+            lake_jitter_range = lake_region_size / 5;
+            if (lake_jitter_range < 1)
+                lake_jitter_range = 1;
+            lake_center_x = lake_region_x + (lake_region_size / 2)
+                + static_cast<int32_t>((lake_region_seed >> 8)
+                    % static_cast<uint64_t>(lake_jitter_range * 2 + 1))
+                - lake_jitter_range;
+            lake_center_z = lake_region_z + (lake_region_size / 2)
+                + static_cast<int32_t>((lake_region_seed >> 16)
+                    % static_cast<uint64_t>(lake_jitter_range * 2 + 1))
+                - lake_jitter_range;
+            lake_radius = lake_region_size / 4
+                + static_cast<int32_t>((lake_region_seed >> 24) % 3U);
+            if (lake_radius < 3)
+                lake_radius = 3;
+            distance_x = world_block_x - lake_center_x;
+            distance_z = world_block_z - lake_center_z;
+            if (distance_x * distance_x + distance_z * distance_z
+                    <= lake_radius * lake_radius)
+                return (TERRAIN_SURFACE_WATER_LAKE);
+        }
     }
-    return (FT_FALSE);
+    return (TERRAIN_SURFACE_WATER_NONE);
+}
+
+static int32_t terrain_surface_water_bed_height(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z, int32_t column_height,
+    const terrain_generation_config &config) noexcept
+{
+    uint8_t kind;
+    int32_t bed_height;
+
+    kind = terrain_surface_water_kind(seed_value, world_block_x,
+        world_block_z, config);
+    bed_height = column_height;
+    if (kind == TERRAIN_SURFACE_WATER_RIVER)
+    {
+        /* A river is a channel feature, not a random low-column fill. Keep
+         * the carve bounded so it cannot flatten mountains or expose the
+         * bottom of the world. */
+        bed_height = config.sea_level - 3;
+    }
+    else if (kind == TERRAIN_SURFACE_WATER_LAKE)
+    {
+        bed_height = config.sea_level - 4;
+    }
+    else if (kind == TERRAIN_SURFACE_WATER_LEGACY)
+        bed_height = config.sea_level - 3;
+    if (bed_height < TERRAIN_BEDROCK_FLOOR_Y + 1)
+        bed_height = TERRAIN_BEDROCK_FLOOR_Y + 1;
+    return (bed_height);
+}
+
+static ft_bool terrain_stage_dependencies_are_met(uint32_t requested_mask,
+    uint32_t previous_mask) noexcept
+{
+    uint32_t available_mask = requested_mask | previous_mask;
+    const uint32_t base_and_caves = TERRAIN_STAGE_BASE_TERRAIN
+        | TERRAIN_STAGE_CAVES;
+
+    if ((requested_mask & TERRAIN_STAGE_FLUIDS) != 0U
+        && (available_mask & TERRAIN_STAGE_BASE_TERRAIN) == 0U)
+        return (FT_FALSE);
+    if ((requested_mask & TERRAIN_STAGE_FLUIDS) != 0U
+        && (previous_mask & (TERRAIN_STAGE_DECORATION
+            | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES)) != 0U)
+        return (FT_FALSE);
+    if ((requested_mask & TERRAIN_STAGE_DECORATION) != 0U
+        && (available_mask & (base_and_caves | TERRAIN_STAGE_FLUIDS))
+            != (base_and_caves | TERRAIN_STAGE_FLUIDS))
+        return (FT_FALSE);
+    if ((requested_mask & TERRAIN_STAGE_STRUCTURES) != 0U
+        && (available_mask & base_and_caves) != base_and_caves)
+        return (FT_FALSE);
+    if ((requested_mask & TERRAIN_STAGE_ORES) != 0U
+        && (available_mask & base_and_caves) != base_and_caves)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static ft_bool terrain_is_enclosed_underground_lake_site(
+    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
+    int32_t local_z, int32_t world_block_origin_x,
+    int32_t world_block_origin_z,
+    const terrain_generation_config &config) noexcept
+{
+    if (terrain_underground_lake_geometry_is_valid(chunk, local_x, local_y,
+            local_z, world_block_origin_x, world_block_origin_z,
+            config) == FT_FALSE)
+        return (FT_FALSE);
+    if (config.cross_chunk_block_reader != ft_nullptr)
+        return (FT_TRUE);
+    if (config.fluids.underground_lake_depth != 1U)
+        return (FT_TRUE);
+    int32_t boundary_z = -2;
+    while (boundary_z <= 2)
+    {
+        int32_t boundary_x = -2;
+        while (boundary_x <= 2)
+        {
+            if (std::abs(boundary_x) == 2 || std::abs(boundary_z) == 2)
+            {
+                uint32_t boundary_block;
+                if (chunk.read_block(local_x + boundary_x, local_y,
+                        local_z + boundary_z, &boundary_block)
+                        != FT_ERR_SUCCESS
+                    || terrain_block_is_solid(boundary_block) == FT_FALSE)
+                    return (FT_FALSE);
+            }
+            boundary_x += 1;
+        }
+        boundary_z += 1;
+    }
+    int32_t offset_z = -1;
+    while (offset_z <= 1)
+    {
+        int32_t offset_x = -1;
+        while (offset_x <= 1)
+        {
+            uint32_t block_id;
+            uint32_t upper_block_id;
+            if (chunk.read_block(local_x + offset_x, local_y,
+                    local_z + offset_z, &block_id) != FT_ERR_SUCCESS
+                || chunk.read_block(local_x + offset_x, local_y + 1,
+                    local_z + offset_z, &upper_block_id) != FT_ERR_SUCCESS
+                || block_id != TERRAIN_GENERATOR_AIR_BLOCK
+                || upper_block_id != TERRAIN_GENERATOR_AIR_BLOCK)
+                return (FT_FALSE);
+            offset_x += 1;
+        }
+        offset_z += 1;
+    }
+    offset_z = -1;
+    while (offset_z <= 1)
+    {
+        int32_t offset_x = -1;
+        while (offset_x <= 1)
+        {
+            uint32_t floor_block;
+            uint32_t roof_block;
+            if (chunk.read_block(local_x + offset_x, local_y - 1,
+                    local_z + offset_z, &floor_block) != FT_ERR_SUCCESS
+                || chunk.read_block(local_x + offset_x, local_y + 2,
+                    local_z + offset_z, &roof_block) != FT_ERR_SUCCESS
+                || terrain_block_is_solid(floor_block) == FT_FALSE
+                || terrain_block_is_solid(roof_block) == FT_FALSE)
+                return (FT_FALSE);
+            offset_x += 1;
+        }
+        offset_z += 1;
+    }
+    return (FT_TRUE);
+}
+
+static ft_bool terrain_can_create_underground_lake_site(
+    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
+    int32_t local_z, int32_t world_block_origin_x,
+    int32_t world_block_origin_z,
+    const terrain_generation_config &config) noexcept
+{
+    if (terrain_underground_lake_geometry_is_valid(chunk, local_x, local_y,
+            local_z, world_block_origin_x, world_block_origin_z,
+            config) == FT_FALSE)
+        return (FT_FALSE);
+    if (config.cross_chunk_block_reader != ft_nullptr)
+        return (FT_TRUE);
+    if (config.fluids.underground_lake_depth != 1U)
+        return (FT_TRUE);
+    int32_t offset_z = -2;
+    while (offset_z <= 2)
+    {
+        int32_t offset_x = -2;
+        while (offset_x <= 2)
+        {
+            if (std::abs(offset_x) == 2 || std::abs(offset_z) == 2)
+            {
+                uint32_t wall_block;
+                uint32_t upper_wall_block;
+                if (chunk.read_block(local_x + offset_x, local_y,
+                        local_z + offset_z, &wall_block) != FT_ERR_SUCCESS
+                    || chunk.read_block(local_x + offset_x, local_y + 1,
+                        local_z + offset_z, &upper_wall_block) != FT_ERR_SUCCESS
+                    || terrain_block_is_solid(wall_block) == FT_FALSE
+                    || terrain_block_is_solid(upper_wall_block) == FT_FALSE)
+                    return (FT_FALSE);
+            }
+            offset_x += 1;
+        }
+        offset_z += 1;
+    }
+    offset_z = -1;
+    while (offset_z <= 1)
+    {
+        int32_t offset_x = -1;
+        while (offset_x <= 1)
+        {
+            uint32_t lower_block;
+            uint32_t upper_block;
+            if (chunk.read_block(local_x + offset_x, local_y,
+                    local_z + offset_z, &lower_block) != FT_ERR_SUCCESS
+                || chunk.read_block(local_x + offset_x, local_y + 1,
+                    local_z + offset_z, &upper_block) != FT_ERR_SUCCESS
+                || lower_block != TERRAIN_GENERATOR_AIR_BLOCK
+                || upper_block != TERRAIN_GENERATOR_AIR_BLOCK)
+                return (FT_FALSE);
+            offset_x += 1;
+        }
+        offset_z += 1;
+    }
+    offset_z = -1;
+    while (offset_z <= 1)
+    {
+        int32_t offset_x = -1;
+        while (offset_x <= 1)
+        {
+            uint32_t floor_block;
+            uint32_t roof_block;
+            if (chunk.read_block(local_x + offset_x, local_y - 1,
+                    local_z + offset_z, &floor_block) != FT_ERR_SUCCESS
+                || chunk.read_block(local_x + offset_x, local_y + 2,
+                    local_z + offset_z, &roof_block) != FT_ERR_SUCCESS
+                || terrain_block_is_solid(floor_block) == FT_FALSE
+                || terrain_block_is_solid(roof_block) == FT_FALSE)
+                return (FT_FALSE);
+            offset_x += 1;
+        }
+        offset_z += 1;
+    }
+    return (FT_TRUE);
 }
 
 static ft_bool terrain_block_is_ore_host(uint32_t block_id,
@@ -1293,6 +1800,9 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             return (FT_ERR_SUCCESS);
         }
     }
+    if (terrain_stage_dependencies_are_met(requested_stage_mask,
+            previous_stage_mask) == FT_FALSE)
+        return (FT_ERR_INVALID_OPERATION);
     if ((requested_stage_mask & TERRAIN_STAGE_BASE_TERRAIN) != 0U)
     {
         error_code = terrain_stage_clear_chunk(chunk);
@@ -1316,9 +1826,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             biome_profile = column_cache[column_index].biome_profile;
             deep_block_id = column_cache[column_index].deep_block_id;
             place_shrub = column_cache[column_index].can_place_shrubs;
-            column_height = terrain_smooth_heightfield(seed_value,
-                world_block_x, world_block_z, config);
-            column_cache[column_index].column_height = column_height;
+            column_height = column_cache[column_index].column_height;
             if (column_height < 0)
                 column_height = 0;
             if (column_height >= GAME_VOXEL_CHUNK_HEIGHT)
@@ -1378,6 +1886,7 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             }
             if ((requested_stage_mask & TERRAIN_STAGE_BASE_TERRAIN) != 0U
                 && config.layers.enable_beaches == FT_TRUE
+                && column_cache[column_index].has_surface_water == FT_TRUE
                 && column_height < config.sea_level)
             {
                 local_y = column_height;
@@ -1403,6 +1912,39 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     local_y -= 1;
                 }
             }
+            if ((requested_stage_mask & TERRAIN_STAGE_FLUIDS) != 0U
+                && column_cache[column_index].has_surface_water == FT_TRUE
+                && column_height < column_cache[column_index].surface_water_level)
+            {
+                uint32_t bed_block;
+                if (chunk.read_block(local_x, column_height, local_z,
+                        &bed_block) != FT_ERR_SUCCESS
+                    || terrain_block_is_solid(bed_block) == FT_FALSE)
+                {
+                    local_x += 1;
+                    continue ;
+                }
+                local_y = column_height + 1;
+                while (local_y <= column_cache[column_index].surface_water_level
+                    && local_y < GAME_VOXEL_CHUNK_HEIGHT)
+                {
+                    uint32_t existing_block;
+                    if (chunk.read_block(local_x, local_y, local_z,
+                            &existing_block) != FT_ERR_SUCCESS
+                        || (existing_block != TERRAIN_GENERATOR_AIR_BLOCK
+                            && terrain_block_is_liquid(existing_block) == FT_FALSE))
+                        break ;
+                    block_id = TERRAIN_GENERATOR_WATER_BLOCK;
+                    if (local_y == config.sea_level
+                        && biome == TERRAIN_BIOME_SNOW)
+                        block_id = TERRAIN_GENERATOR_ICE_BLOCK;
+                    error_code = chunk.write_generated_block(local_x, local_y,
+                        local_z, block_id);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                    local_y += 1;
+                }
+            }
             if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
                 && config.layers.enable_snow_caps == FT_TRUE
                 && column_cache[column_index].can_place_snow == FT_TRUE
@@ -1425,69 +1967,115 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     local_y -= 1;
                 }
             }
-            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
-                && column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET
-                < GAME_VOXEL_CHUNK_HEIGHT
-                && place_shrub == FT_TRUE
-                && (mountain_active == FT_FALSE
-                    || column_cache[column_index].slope_height <= 4)
-                && terrain_should_place_feature(seed_value, world_block_x,
-                    world_block_z, TERRAIN_FEATURE_SHRUB_SALT,
-                    column_cache[column_index].shrub_chance_percent) == FT_TRUE)
-            {
-                error_code = chunk.write_generated_block(local_x,
-                    column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET,
-                    local_z, terrain_ground_cover_block_for_biome(biome,
-                        seed_value, world_block_x, world_block_z));
-                if (error_code != FT_ERR_SUCCESS)
-                    return (error_code);
-            }
-            if ((requested_stage_mask & TERRAIN_STAGE_FLUIDS) != 0U
-                && column_height < config.sea_level
-                && terrain_should_fill_water(seed_value, world_block_x,
-                    world_block_z, config) == FT_TRUE)
-            {
-                local_y = column_height + 1;
-                while (local_y <= config.sea_level
-                    && local_y < GAME_VOXEL_CHUNK_HEIGHT)
-                {
-                    block_id = TERRAIN_GENERATOR_WATER_BLOCK;
-                    if (local_y == config.sea_level
-                        && biome == TERRAIN_BIOME_SNOW)
-                        block_id = TERRAIN_GENERATOR_ICE_BLOCK;
-                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                        block_id);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
-                    local_y += 1;
-                }
-                if ((biome == TERRAIN_BIOME_PLAINS || biome == TERRAIN_BIOME_HILLS)
-                    && config.sea_level + 1 < GAME_VOXEL_CHUNK_HEIGHT
-                    && terrain_should_place_feature(seed_value, world_block_x,
-                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 10U)
-                        == FT_TRUE)
-                {
-                    error_code = chunk.write_generated_block(local_x,
-                        config.sea_level + 1, local_z,
-                        TERRAIN_GENERATOR_LILY_PAD_BLOCK);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
-                }
-                else if (column_height + 1 < config.sea_level
-                    && terrain_should_place_feature(seed_value, world_block_x,
-                        world_block_z, TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 15U)
-                        == FT_TRUE)
-                {
-                    error_code = chunk.write_generated_block(local_x,
-                        column_height + 1, local_z,
-                        TERRAIN_GENERATOR_SEAGRASS_BLOCK);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
-                }
-            }
             local_x += 1;
         }
         local_z += 1;
+    }
+    /* Stage: underground fluids. Surface fluids were planned from the final
+     * heightfield and committed with each terrain column above. */
+    if ((requested_stage_mask & TERRAIN_STAGE_FLUIDS) != 0U
+        && config.fluids.enable_underground_lakes == FT_TRUE
+        && config.fluids.underground_lake_chance_percent > 0U)
+    {
+        /* Fill only air pockets with a solid floor and roof: small enclosed
+         * underground lakes, rather than exposed water hanging in terrain. */
+        local_z = 2;
+        while (local_z + 2 < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            local_x = 2;
+            while (local_x + 2 < GAME_VOXEL_CHUNK_WIDTH)
+            {
+                column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
+                column_height = column_cache[column_index].column_height;
+        local_y = config.fluids.underground_lake_minimum_y;
+        while (local_y + 3 < column_height
+            && local_y <= config.fluids.underground_lake_maximum_y
+            && local_y + 3 < GAME_VOXEL_CHUNK_HEIGHT)
+                {
+                    if (local_y % (static_cast<int32_t>(config.fluids
+                            .underground_lake_depth) + 7) == 4
+                        && terrain_world_coordinate_on_grid(
+                            world_block_origin_x + local_x, 4, 2) == FT_TRUE
+                        && terrain_world_coordinate_on_grid(
+                            world_block_origin_z + local_z, 4, 2) == FT_TRUE
+                        && terrain_should_place_feature(seed_value
+                            ^ static_cast<uint64_t>(local_y),
+                            world_block_origin_x + local_x,
+                            world_block_origin_z + local_z,
+                            TERRAIN_FEATURE_WATER_SALT
+                                ^ UINT64_C(0x6A09E667F3BCC909),
+                            config.fluids.underground_lake_chance_percent) == FT_TRUE
+                    )
+                    {
+                        const ft_bool can_create_lake =
+                            terrain_can_create_underground_lake_site(chunk,
+                            local_x, local_y, local_z, world_block_origin_x,
+                            world_block_origin_z, config);
+                        const ft_bool is_enclosed_lake =
+                            terrain_is_enclosed_underground_lake_site(chunk,
+                            local_x, local_y, local_z, world_block_origin_x,
+                            world_block_origin_z, config);
+                        if (can_create_lake == FT_FALSE
+                            && is_enclosed_lake == FT_FALSE)
+                        {
+                            local_y += 1;
+                            continue ;
+                        }
+                        if (can_create_lake == FT_TRUE)
+                        {
+                            int32_t clear_z = -1;
+                            while (clear_z <= 1)
+                            {
+                                int32_t clear_x = -1;
+                                while (clear_x <= 1)
+                                {
+                                    error_code = terrain_write_generation_block(
+                                        chunk, local_x + clear_x, local_y
+                                            + static_cast<int32_t>(config.fluids
+                                                .underground_lake_depth),
+                                        local_z + clear_z, world_block_origin_x,
+                                        world_block_origin_z, config,
+                                        TERRAIN_GENERATOR_AIR_BLOCK);
+                                    if (error_code != FT_ERR_SUCCESS)
+                                        return (error_code);
+                                    clear_x += 1;
+                                }
+                                clear_z += 1;
+                            }
+                        }
+                        int32_t fill_depth = 0;
+                        while (fill_depth < static_cast<int32_t>(config.fluids
+                                .underground_lake_depth))
+                        {
+                            int32_t fill_z = -1;
+                            while (fill_z <= 1)
+                            {
+                                int32_t fill_x = -1;
+                                while (fill_x <= 1)
+                                {
+                                    error_code = terrain_write_generation_block(
+                                        chunk, local_x + fill_x,
+                                        local_y + fill_depth, local_z + fill_z,
+                                        world_block_origin_x,
+                                        world_block_origin_z, config,
+                                        TERRAIN_GENERATOR_WATER_BLOCK);
+                                    if (error_code != FT_ERR_SUCCESS)
+                                        return (error_code);
+                                    fill_x += 1;
+                                }
+                                fill_z += 1;
+                            }
+                            fill_depth += 1;
+                        }
+                        local_y += static_cast<int32_t>(config.fluids
+                            .underground_lake_depth) + 1;
+                    }
+                    local_y += 1;
+                }
+                local_x += 1;
+            }
+            local_z += 1;
+        }
     }
     /* Stage: biome decorations and configured structures. */
     feature_margin = 2;
@@ -1504,9 +2092,82 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
             world_block_x = world_block_origin_x + local_x;
             biome = column_cache[column_index].biome;
+            column_height = column_cache[column_index].column_height;
+            place_shrub = column_cache[column_index].can_place_shrubs;
+            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
+                && column_cache[column_index].has_surface_water == FT_TRUE)
+            {
+                const int32_t water_level =
+                    column_cache[column_index].surface_water_level;
+                uint32_t above_water_block;
+                if (water_level + 1 < GAME_VOXEL_CHUNK_HEIGHT
+                    && chunk.read_block(local_x, water_level + 1, local_z,
+                        &above_water_block) != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if ((biome == TERRAIN_BIOME_PLAINS
+                        || biome == TERRAIN_BIOME_HILLS)
+                    && water_level + 1 < GAME_VOXEL_CHUNK_HEIGHT
+                    && terrain_should_place_feature(seed_value,
+                        world_block_x, world_block_z,
+                        TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 10U) == FT_TRUE
+                    && above_water_block == TERRAIN_GENERATOR_AIR_BLOCK)
+                {
+                    error_code = chunk.write_generated_block(local_x,
+                        water_level + 1, local_z,
+                        TERRAIN_GENERATOR_LILY_PAD_BLOCK);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                }
+                else if (column_height + 1 < water_level
+                    && terrain_should_place_feature(seed_value,
+                        world_block_x, world_block_z,
+                        TERRAIN_FEATURE_AQUATIC_PLANT_SALT, 15U) == FT_TRUE)
+                {
+                    uint32_t submerged_block;
+                    if (chunk.read_block(local_x, column_height + 1,
+                            local_z, &submerged_block) != FT_ERR_SUCCESS)
+                        return (FT_ERR_INVALID_OPERATION);
+                    if (terrain_block_is_liquid(submerged_block) == FT_TRUE)
+                    {
+                        error_code = chunk.write_generated_block(local_x,
+                            column_height + 1, local_z,
+                            TERRAIN_GENERATOR_SEAGRASS_BLOCK);
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                    }
+                }
+            }
+            if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
+                && place_shrub == FT_TRUE
+                && column_cache[column_index].has_surface_water == FT_FALSE
+                && column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET
+                    < GAME_VOXEL_CHUNK_HEIGHT
+                && terrain_should_place_feature(seed_value, world_block_x,
+                    world_block_z, TERRAIN_FEATURE_SHRUB_SALT,
+                    column_cache[column_index].shrub_chance_percent) == FT_TRUE)
+            {
+                uint32_t above_surface_block;
+                if (chunk.read_block(local_x, column_height + 1, local_z,
+                        &above_surface_block) != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (terrain_block_is_replaceable(above_surface_block) == FT_TRUE)
+                {
+                    error_code = chunk.write_generated_block(local_x,
+                        column_height + TERRAIN_FEATURE_SHRUB_HEIGHT_OFFSET,
+                        local_z, terrain_ground_cover_block_for_biome(biome,
+                            seed_value, world_block_x, world_block_z));
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                }
+            }
             if ((requested_stage_mask & TERRAIN_STAGE_DECORATION) != 0U
                 && column_cache[column_index].can_place_trees == FT_TRUE)
             {
+                if (column_cache[column_index].has_surface_water == FT_TRUE)
+                {
+                    local_x += 4;
+                    continue ;
+                }
                 tree_feature_seed = terrain_feature_seed(seed_value,
                     world_block_x, world_block_z, TERRAIN_FEATURE_TREE_SALT);
                 if ((tree_feature_seed % 100U)
@@ -1557,7 +2218,8 @@ static int32_t terrain_generate_chunk_snapshot(game_voxel_chunk &chunk,
                         && column_height >= feature_rule->minimum_height
                         && column_height <= feature_rule->maximum_height
                         && (feature_rule->requires_dry_land == FT_FALSE
-                            || column_height >= config.sea_level))
+                            || (column_cache[column_index].has_surface_water
+                                == FT_FALSE)))
                     {
                         feature_seed = terrain_feature_seed(seed_value,
                             world_block_origin_x + local_x,
@@ -1691,6 +2353,10 @@ int32_t terrain_generate_chunk_in_region_with_context(
         return (FT_ERR_INVALID_ARGUMENT);
     if (region_config.set_cross_chunk_writer(
             &terrain_region_cross_chunk_block_writer, &region)
+        != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (region_config.set_cross_chunk_reader(
+            &terrain_region_cross_chunk_block_reader, &region)
         != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
     return (terrain_generate_chunk_snapshot(*chunk, world_block_origin_x,
