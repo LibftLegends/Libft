@@ -68,6 +68,8 @@ ft_bool voxel_block_is_replaceable(uint32_t block_id) noexcept;
 ft_bool voxel_block_can_host_ore(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_ore(uint32_t block_id) noexcept;
 ft_bool voxel_block_emits_light(uint32_t block_id) noexcept;
+uint8_t voxel_block_emitted_light_level(uint32_t block_id) noexcept;
+uint8_t voxel_block_light_attenuation(uint32_t block_id) noexcept;
 ft_bool voxel_block_occludes_faces(uint32_t block_id) noexcept;
 uint32_t voxel_block_hardness(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_breakable(uint32_t block_id) noexcept;
@@ -76,7 +78,6 @@ int32_t voxel_register_block(const voxel_block_registration &registration,
 int32_t voxel_register_block_from_root(
     const voxel_block_registration &registration, const char *asset_root,
     uint32_t *block_id_out) noexcept;
-int32_t voxel_unregister_block(uint32_t block_id) noexcept;
 const char *voxel_get_block_name(uint32_t block_id) noexcept;
 int32_t voxel_find_block_id_by_name(const char *name,
     uint32_t *block_id_out) noexcept;

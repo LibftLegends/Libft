@@ -9,7 +9,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t VOXEL_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t VOXEL_SAVE_VERSION = 10U;
+static const uint32_t VOXEL_SAVE_VERSION = 11U;
 
 static int32_t voxel_save_append_block_reference(ft_byte_buffer &buffer,
     uint32_t block_id) noexcept
@@ -642,6 +642,29 @@ int32_t voxel_generation_config_serialize(
     error_code = buffer.append_u32_le(config.fluids.lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u8(config.fluids.enable_underground_lakes);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.underground_lake_chance_percent);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = voxel_save_append_i32(buffer,
+        config.fluids.underground_lake_minimum_y);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = voxel_save_append_i32(buffer,
+        config.fluids.underground_lake_maximum_y);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.underground_lake_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.underground_lake_floor_thickness);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.underground_lake_roof_thickness);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u8(config.layers.enable_beaches);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -739,6 +762,13 @@ int32_t voxel_generation_config_deserialize(
     int32_t river_width;
     int32_t lake_noise_scale;
     uint32_t lake_chance_percent;
+    uint8_t enable_underground_lakes;
+    uint32_t underground_lake_chance_percent;
+    int32_t underground_lake_minimum_y;
+    int32_t underground_lake_maximum_y;
+    uint32_t underground_lake_depth;
+    uint32_t underground_lake_floor_thickness;
+    uint32_t underground_lake_roof_thickness;
     uint8_t enable_beaches;
     uint8_t enable_snow_caps;
     uint32_t beach_depth;
@@ -763,8 +793,8 @@ int32_t voxel_generation_config_deserialize(
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = buffer.read_u32_le(&version);
     if (error_code != FT_ERR_SUCCESS
-        || (version != VOXEL_SAVE_VERSION && version != 9U && version != 8U
-            && version != 7U))
+        || (version != VOXEL_SAVE_VERSION && version != 10U && version != 9U
+            && version != 8U && version != 7U))
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = voxel_save_read_i32(buffer, &loaded_config.sea_level);
     if (error_code != FT_ERR_SUCCESS)
@@ -1055,6 +1085,30 @@ int32_t voxel_generation_config_deserialize(
     error_code = buffer.read_u32_le(&lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (version >= 11U)
+    {
+        error_code = buffer.read_u8(&enable_underground_lakes);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.read_u32_le(&underground_lake_chance_percent);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = voxel_save_read_i32(buffer, &underground_lake_minimum_y);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = voxel_save_read_i32(buffer, &underground_lake_maximum_y);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.read_u32_le(&underground_lake_depth);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.read_u32_le(&underground_lake_floor_thickness);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.read_u32_le(&underground_lake_roof_thickness);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     error_code = buffer.read_u8(&enable_beaches);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -1127,6 +1181,19 @@ int32_t voxel_generation_config_deserialize(
         lake_noise_scale, lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (version >= 11U)
+    {
+        error_code = loaded_config.fluids.set_underground_lakes_enabled(
+            ft_platform_cast<ft_bool>(enable_underground_lakes));
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = loaded_config.fluids.set_underground_lake_settings(
+            underground_lake_chance_percent, underground_lake_minimum_y,
+            underground_lake_maximum_y, underground_lake_depth,
+            underground_lake_floor_thickness, underground_lake_roof_thickness);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     error_code = loaded_config.layers.set_enabled(
         ft_platform_cast<ft_bool>(enable_beaches),
         ft_platform_cast<ft_bool>(enable_snow_caps));

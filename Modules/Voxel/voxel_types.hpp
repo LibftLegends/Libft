@@ -72,7 +72,6 @@
 # define VOXEL_GENERATOR_FROST_CRYSTAL_BLOCK 62U
 # define VOXEL_GENERATOR_SHIMMER_STONE_BLOCK 63U
 # define VOXEL_RUNTIME_BLOCK_CAPACITY 256U
-# define VOXEL_RUNTIME_MAX_ASSET_SIZE (4U * 1024U * 1024U)
 # define VOXEL_BIOME_ZONE_WIDTH 128
 # define VOXEL_BIOME_SIZE_MINIMUM 16
 # define VOXEL_BIOME_SIZE_MAXIMUM 32768
@@ -82,7 +81,7 @@
 # define VOXEL_MAX_TREE_TEMPLATES 64U
 # define VOXEL_MAX_BIOME_TREE_TEMPLATES 16U
 # define VOXEL_MAX_TREE_TEMPLATE_BLOCKS 32U
-# define VOXEL_GENERATOR_VERSION 5U
+# define VOXEL_GENERATOR_VERSION 7U
 # define VOXEL_STAGE_BASE_TERRAIN 1U
 # define VOXEL_STAGE_CAVES 2U
 # define VOXEL_STAGE_FLUIDS 4U
@@ -162,7 +161,7 @@ enum voxel_builtin_block_id : uint32_t
 static_assert(static_cast<uint64_t>(VOXEL_BUILTIN_BLOCK_COUNT)
         + static_cast<uint64_t>(VOXEL_RUNTIME_BLOCK_CAPACITY)
         <= static_cast<uint64_t>(UINT32_MAX),
-    "terrain block ID range exceeds uint32_t");
+    "voxel block ID range exceeds uint32_t");
 
 enum voxel_biome
 {
@@ -195,7 +194,6 @@ int32_t voxel_json_test_fail_file_operation(
     ft_size_t partial_write_after) noexcept;
 void voxel_json_test_clear_file_failure(void) noexcept;
 #endif
-
 struct voxel_biome_profile
 {
     int32_t surface_height;
@@ -215,6 +213,8 @@ struct voxel_block_metadata
     ft_bool breakable;
     ft_bool can_host_ore = FT_FALSE;
     ft_bool is_ore = FT_FALSE;
+    uint8_t emitted_light_level = 0U;
+    uint8_t light_attenuation = 0U;
 };
 
 enum voxel_block_asset_face

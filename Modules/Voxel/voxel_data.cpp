@@ -738,8 +738,12 @@ int32_t voxel_underground_structure_config::set_cavern_rooms(
 
 voxel_fluid_config::voxel_fluid_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
-      enable_rivers(FT_FALSE), enable_lakes(FT_FALSE), river_noise_scale(0),
-      river_width(0), lake_noise_scale(0), lake_chance_percent(0U)
+      enable_rivers(FT_FALSE), enable_lakes(FT_FALSE),
+      enable_underground_lakes(FT_FALSE), river_noise_scale(0),
+      river_width(0), lake_noise_scale(0), lake_chance_percent(0U),
+      underground_lake_chance_percent(0U), underground_lake_minimum_y(0),
+      underground_lake_maximum_y(0), underground_lake_depth(0U),
+      underground_lake_floor_thickness(0U), underground_lake_roof_thickness(0U)
 {
     return ;
 }
@@ -756,10 +760,17 @@ int32_t voxel_fluid_config::initialize() noexcept
         return (FT_ERR_INVALID_OPERATION);
     this->enable_rivers = FT_FALSE;
     this->enable_lakes = FT_FALSE;
+    this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
+    this->underground_lake_chance_percent = 0U;
+    this->underground_lake_minimum_y = 0;
+    this->underground_lake_maximum_y = 0;
+    this->underground_lake_depth = 0U;
+    this->underground_lake_floor_thickness = 0U;
+    this->underground_lake_roof_thickness = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -775,10 +786,17 @@ int32_t voxel_fluid_config::initialize(
         this->destroy();
     this->enable_rivers = other.enable_rivers;
     this->enable_lakes = other.enable_lakes;
+    this->enable_underground_lakes = other.enable_underground_lakes;
     this->river_noise_scale = other.river_noise_scale;
     this->river_width = other.river_width;
     this->lake_noise_scale = other.lake_noise_scale;
     this->lake_chance_percent = other.lake_chance_percent;
+    this->underground_lake_chance_percent = other.underground_lake_chance_percent;
+    this->underground_lake_minimum_y = other.underground_lake_minimum_y;
+    this->underground_lake_maximum_y = other.underground_lake_maximum_y;
+    this->underground_lake_depth = other.underground_lake_depth;
+    this->underground_lake_floor_thickness = other.underground_lake_floor_thickness;
+    this->underground_lake_roof_thickness = other.underground_lake_roof_thickness;
     this->_initialised_state = other._initialised_state;
     return (FT_ERR_SUCCESS);
 }
@@ -790,10 +808,17 @@ uint32_t voxel_fluid_config::destroy() noexcept
         return (FT_ERR_SUCCESS);
     this->enable_rivers = FT_FALSE;
     this->enable_lakes = FT_FALSE;
+    this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
+    this->underground_lake_chance_percent = 0U;
+    this->underground_lake_minimum_y = 0;
+    this->underground_lake_maximum_y = 0;
+    this->underground_lake_depth = 0U;
+    this->underground_lake_floor_thickness = 0U;
+    this->underground_lake_roof_thickness = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -826,6 +851,14 @@ int32_t voxel_fluid_config::set_enabled(ft_bool rivers,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t voxel_fluid_config::set_underground_lakes_enabled(ft_bool enabled) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    this->enable_underground_lakes = enabled;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t voxel_fluid_config::set_river_settings(int32_t scale,
     int32_t width) noexcept
 {
@@ -847,6 +880,25 @@ int32_t voxel_fluid_config::set_lake_settings(int32_t scale,
         return (FT_ERR_INVALID_ARGUMENT);
     this->lake_noise_scale = scale;
     this->lake_chance_percent = chance;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_fluid_config::set_underground_lake_settings(uint32_t chance,
+    int32_t minimum_y, int32_t maximum_y, uint32_t depth,
+    uint32_t floor_thickness, uint32_t roof_thickness) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (chance > 100U || minimum_y < 1 || maximum_y < minimum_y
+        || maximum_y >= GAME_VOXEL_CHUNK_HEIGHT || depth == 0U
+        || depth > 8U || floor_thickness == 0U || roof_thickness == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->underground_lake_chance_percent = chance;
+    this->underground_lake_minimum_y = minimum_y;
+    this->underground_lake_maximum_y = maximum_y;
+    this->underground_lake_depth = depth;
+    this->underground_lake_floor_thickness = floor_thickness;
+    this->underground_lake_roof_thickness = roof_thickness;
     return (FT_ERR_SUCCESS);
 }
 
@@ -990,7 +1042,7 @@ static void voxel_abort_unknown_block_id(uint32_t block_id,
     ft_size_t digit_count;
     int32_t write_error;
 
-    write_error = errno_write_stderr("terrain error: method=");
+    write_error = errno_write_stderr("voxel error: method=");
     if (write_error != FT_ERR_SUCCESS)
     {
         su_abort();
@@ -1116,7 +1168,7 @@ static const voxel_block_metadata VOXEL_BLOCK_REGISTRY[] =
 static_assert(sizeof(VOXEL_BLOCK_REGISTRY)
         / sizeof(VOXEL_BLOCK_REGISTRY[0])
         == static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT),
-    "terrain metadata must cover every built-in block ID");
+    "voxel metadata must cover every built-in block ID");
 
 static const voxel_tree_template_block VOXEL_SMALL_OAK_TREE_BLOCKS[] =
 {
@@ -1872,6 +1924,21 @@ ft_bool voxel_block_emits_light(uint32_t block_id) noexcept
     return (voxel_get_block_metadata(block_id).light_emitting);
 }
 
+uint8_t voxel_block_emitted_light_level(uint32_t block_id) noexcept
+{
+    const voxel_block_metadata &metadata = voxel_get_block_metadata(block_id);
+    if (metadata.emitted_light_level > 15U)
+        return (15U);
+    if (metadata.light_emitting == FT_TRUE && metadata.emitted_light_level == 0U)
+        return (15U);
+    return (metadata.emitted_light_level);
+}
+
+uint8_t voxel_block_light_attenuation(uint32_t block_id) noexcept
+{
+    return (voxel_get_block_metadata(block_id).light_attenuation);
+}
+
 ft_bool voxel_block_occludes_faces(uint32_t block_id) noexcept
 {
     return (voxel_get_block_metadata(block_id).occludes_faces);
@@ -2057,7 +2124,9 @@ voxel_generation_config::voxel_generation_config() noexcept
       enable_erosion(FT_FALSE), mountain_ridge_scale(0),
       mountain_ridge_strength(0U), erosion_noise_scale(0), erosion_strength(0U),
       allow_cross_chunk_features(FT_FALSE), cross_chunk_block_writer(ft_nullptr),
-      cross_chunk_block_writer_user_data(ft_nullptr)
+      cross_chunk_block_writer_user_data(ft_nullptr),
+      cross_chunk_block_reader(ft_nullptr),
+      cross_chunk_block_reader_user_data(ft_nullptr)
 {
     return ;
 }
@@ -2153,6 +2222,8 @@ int32_t voxel_generation_config::initialize(
     this->allow_cross_chunk_features = other.allow_cross_chunk_features;
     this->cross_chunk_block_writer = other.cross_chunk_block_writer;
     this->cross_chunk_block_writer_user_data = other.cross_chunk_block_writer_user_data;
+    this->cross_chunk_block_reader = other.cross_chunk_block_reader;
+    this->cross_chunk_block_reader_user_data = other.cross_chunk_block_reader_user_data;
     uint32_t index;
 
     index = 0U;
@@ -2270,6 +2341,8 @@ uint32_t voxel_generation_config::destroy() noexcept
     this->allow_cross_chunk_features = FT_FALSE;
     this->cross_chunk_block_writer = ft_nullptr;
     this->cross_chunk_block_writer_user_data = ft_nullptr;
+    this->cross_chunk_block_reader = ft_nullptr;
+    this->cross_chunk_block_reader_user_data = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -2425,8 +2498,10 @@ static int32_t voxel_apply_default_generation_config(
     config.underground_structures.set_cave_entrances(8U, 1U);
     config.underground_structures.set_cavern_rooms(FT_FALSE, 0U, 0U);
     config.fluids.set_enabled(FT_TRUE, FT_TRUE);
+    config.fluids.set_underground_lakes_enabled(FT_TRUE);
     config.fluids.set_river_settings(96, 3);
     config.fluids.set_lake_settings(48, 4U);
+    config.fluids.set_underground_lake_settings(4U, 8, 96, 1U, 1U, 1U);
     config.layers.set_enabled(FT_TRUE, FT_TRUE);
     config.layers.set_depths(3U, 2U, 2U);
     config.layers.set_snowline(84);
@@ -2444,6 +2519,8 @@ static int32_t voxel_apply_default_generation_config(
     config.allow_cross_chunk_features = FT_TRUE;
     config.cross_chunk_block_writer = ft_nullptr;
     config.cross_chunk_block_writer_user_data = ft_nullptr;
+    config.cross_chunk_block_reader = ft_nullptr;
+    config.cross_chunk_block_reader_user_data = ft_nullptr;
     index = 0U;
     while (index < config.biome_count)
     {
@@ -2697,6 +2774,16 @@ int32_t voxel_generation_config::set_cross_chunk_writer(
         return (FT_ERR_NOT_INITIALISED);
     this->cross_chunk_block_writer = writer;
     this->cross_chunk_block_writer_user_data = user_data;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_generation_config::set_cross_chunk_reader(
+    voxel_cross_chunk_block_reader reader, void *user_data) noexcept
+{
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_INITIALISED);
+    this->cross_chunk_block_reader = reader;
+    this->cross_chunk_block_reader_user_data = user_data;
     return (FT_ERR_SUCCESS);
 }
 
@@ -3167,6 +3254,7 @@ uint32_t voxel_generation_config_signature(
     signature ^= static_cast<uint64_t>(config.enable_erosion) << 2;
     signature ^= static_cast<uint64_t>(config.fluids.enable_rivers) << 3;
     signature ^= static_cast<uint64_t>(config.fluids.enable_lakes) << 4;
+    signature ^= static_cast<uint64_t>(config.fluids.enable_underground_lakes) << 5;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.fluids.river_noise_scale)) << 9;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
@@ -3175,6 +3263,15 @@ uint32_t voxel_generation_config_signature(
         config.fluids.lake_noise_scale)) << 17;
     signature ^= static_cast<uint64_t>(config.fluids.lake_chance_percent)
         << 21;
+    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_chance_percent)
+        << 27;
+    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+        config.fluids.underground_lake_minimum_y)) << 31;
+    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
+        config.fluids.underground_lake_maximum_y)) << 37;
+    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_depth) << 43;
+    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_floor_thickness) << 47;
+    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_roof_thickness) << 51;
     signature ^= static_cast<uint64_t>(config.underground_structures
         .enable_ravines) << 5;
     signature ^= static_cast<uint64_t>(config.underground_structures
@@ -3567,6 +3664,19 @@ ft_bool voxel_generation_config_is_valid(
         || config.fluids.lake_noise_scale <= 0
         || config.fluids.river_width < 0
         || config.fluids.lake_chance_percent > 100
+        || (config.fluids.enable_underground_lakes != FT_FALSE
+            && config.fluids.enable_underground_lakes != FT_TRUE)
+        || config.fluids.underground_lake_chance_percent > 100U
+        || (config.fluids.enable_underground_lakes == FT_TRUE
+            && (config.fluids.underground_lake_minimum_y < 1
+                || config.fluids.underground_lake_maximum_y
+                    < config.fluids.underground_lake_minimum_y
+                || config.fluids.underground_lake_maximum_y
+                    >= GAME_VOXEL_CHUNK_HEIGHT
+                || config.fluids.underground_lake_depth == 0U
+                || config.fluids.underground_lake_depth > 8U
+                || config.fluids.underground_lake_floor_thickness == 0U
+                || config.fluids.underground_lake_roof_thickness == 0U))
         || config.underground_structures.ravine_chance_percent > 100
         || config.underground_structures.cave_room_chance_percent > 100
         || config.underground_structures.minimum_height

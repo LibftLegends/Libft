@@ -119,12 +119,8 @@ int32_t chunk_mesh_destroy(chunk_mesh &mesh) noexcept
     error_code = mesh.indices.destroy();
     if (first_error == FT_ERR_SUCCESS)
         first_error = mesh.solid_indices.destroy();
-    else
-        (void)mesh.solid_indices.destroy();
     if (error_code == FT_ERR_SUCCESS)
         error_code = mesh.water_indices.destroy();
-    else
-        (void)mesh.water_indices.destroy();
     if (first_error != FT_ERR_SUCCESS)
         return (first_error);
     if (error_code != FT_ERR_SUCCESS)
@@ -222,8 +218,15 @@ static void chunk_mesh_fill_vertex(chunk_mesh_vertex *vertex,
     vertex->texture_v = texture_v;
     vertex->block_id = block_id;
     vertex->face = static_cast<uint8_t>(face);
+    vertex->packed_light = 0U;
     return ;
 }
+
+struct chunk_mesh_mask_cell
+{
+    uint32_t block_id;
+    uint8_t packed_light;
+};
 
 static void chunk_mesh_make_west_rectangle(chunk_mesh_vertex vertices[4],
     int32_t coordinate_x, int32_t minimum_y, int32_t minimum_z,
@@ -373,7 +376,8 @@ static int32_t chunk_mesh_push_index(chunk_mesh &mesh,
 
 static int32_t chunk_mesh_emit_rectangle(chunk_mesh &mesh, int32_t axis_value,
     int32_t minimum_column, int32_t minimum_row, int32_t maximum_column,
-    int32_t maximum_row, uint32_t block_id, chunk_mesh_face face) noexcept
+    int32_t maximum_row, uint32_t block_id, chunk_mesh_face face,
+    uint8_t packed_light = 0U) noexcept
 {
     chunk_mesh_vertex vertices[4];
     uint32_t base_vertex;
@@ -382,6 +386,10 @@ static int32_t chunk_mesh_emit_rectangle(chunk_mesh &mesh, int32_t axis_value,
     base_vertex = static_cast<uint32_t>(mesh.vertices.size());
     chunk_mesh_make_rectangle_vertices(vertices, axis_value, minimum_column,
         minimum_row, maximum_column, maximum_row, block_id, face);
+    vertices[0].packed_light = packed_light;
+    vertices[1].packed_light = packed_light;
+    vertices[2].packed_light = packed_light;
+    vertices[3].packed_light = packed_light;
     chunk_mesh_update_occupied_bounds(mesh, vertices);
     error_code = mesh.vertices.push_back(vertices[0]);
     if (error_code != FT_ERR_SUCCESS)
@@ -457,8 +465,65 @@ static void chunk_mesh_block_coordinates_for_plane(chunk_mesh_face face,
     return ;
 }
 
+static uint8_t chunk_mesh_face_light(const game_voxel_chunk &chunk,
+    const voxel_light_chunk *light, int32_t local_x, int32_t local_y,
+    int32_t local_z, chunk_mesh_face face) noexcept
+{
+    if (light == nullptr)
+        return (0U);
+    const int32_t sample_x = local_x + (face == CHUNK_MESH_FACE_WEST ? -1
+        : (face == CHUNK_MESH_FACE_EAST ? 1 : 0));
+    const int32_t sample_y = local_y + (face == CHUNK_MESH_FACE_DOWN ? -1
+        : (face == CHUNK_MESH_FACE_UP ? 1 : 0));
+    const int32_t sample_z = local_z + (face == CHUNK_MESH_FACE_NORTH ? -1
+        : (face == CHUNK_MESH_FACE_SOUTH ? 1 : 0));
+    const ft_bool outside = sample_x < 0 || sample_x >= GAME_VOXEL_CHUNK_WIDTH
+        || sample_y < 0 || sample_y >= GAME_VOXEL_CHUNK_HEIGHT
+        || sample_z < 0 || sample_z >= GAME_VOXEL_CHUNK_DEPTH;
+    if (outside && sample_y >= 0 && sample_y < GAME_VOXEL_CHUNK_HEIGHT)
+    {
+        /* A newly streamed chunk has no neighbour light field yet. Recover
+           direct sunlight for an exposed side column so surface faces do not
+           render black while the bounded neighbour relight is pending. */
+        ft_bool open_to_sky = FT_TRUE;
+        int32_t y = local_y + 1;
+        while (y < GAME_VOXEL_CHUNK_HEIGHT)
+        {
+            uint32_t block_id = GAME_VOXEL_AIR_BLOCK;
+            if (chunk.read_block(local_x, y, local_z, &block_id)
+                != FT_ERR_SUCCESS
+                || voxel_get_block_metadata(block_id).transparent == FT_FALSE)
+            {
+                open_to_sky = FT_FALSE;
+                break;
+            }
+            ++y;
+        }
+        if (open_to_sky == FT_TRUE)
+            return (voxel_light_pack(15U,
+                voxel_light_block(light->get(local_x, local_y, local_z))));
+    }
+    local_x = sample_x;
+    local_y = sample_y;
+    local_z = sample_z;
+    if (local_x < 0)
+        local_x = 0;
+    else if (local_x >= GAME_VOXEL_CHUNK_WIDTH)
+        local_x = GAME_VOXEL_CHUNK_WIDTH - 1;
+    if (local_y < 0)
+        local_y = 0;
+    else if (local_y >= GAME_VOXEL_CHUNK_HEIGHT)
+        local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
+    if (local_z < 0)
+        local_z = 0;
+    else if (local_z >= GAME_VOXEL_CHUNK_DEPTH)
+        local_z = GAME_VOXEL_CHUNK_DEPTH - 1;
+    return (light->get(local_x, local_y, local_z));
+}
+
 static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
-    chunk_mesh_face face, int32_t axis_value, uint32_t mask[4096]) noexcept
+    chunk_mesh_face face, int32_t axis_value, chunk_mesh_mask_cell mask[4096],
+    const voxel_light_chunk *light = nullptr) noexcept
 {
     int32_t column_count;
     int32_t row_count;
@@ -484,7 +549,8 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
                 local_z, &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            mask[(row_value * column_count) + column_value] = 0U;
+            mask[(row_value * column_count) + column_value].block_id = 0U;
+            mask[(row_value * column_count) + column_value].packed_light = 0U;
             if (block_id != GAME_VOXEL_AIR_BLOCK)
             {
                 if (voxel_block_is_liquid(block_id) == FT_FALSE
@@ -504,7 +570,12 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
                             visible = FT_FALSE;
                     }
                     if (visible == FT_TRUE)
-                        mask[(row_value * column_count) + column_value] = block_id;
+                    {
+                        mask[(row_value * column_count) + column_value].block_id = block_id;
+                        mask[(row_value * column_count) + column_value].packed_light =
+                            chunk_mesh_face_light(chunk, light, local_x,
+                                local_y, local_z, face);
+                    }
                 }
             }
             column_value += 1;
@@ -514,37 +585,40 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
     return (FT_ERR_SUCCESS);
 }
 
-static ft_bool chunk_mesh_mask_cell_matches(uint32_t mask[4096],
+static ft_bool chunk_mesh_mask_cell_matches(chunk_mesh_mask_cell mask[4096],
     ft_bool consumed[4096], int32_t column_count, int32_t column_value,
-    int32_t row_value, uint32_t block_id) noexcept
+    int32_t row_value, uint32_t block_id, uint8_t packed_light) noexcept
 {
     int32_t mask_index;
 
     mask_index = (row_value * column_count) + column_value;
     if (consumed[mask_index] == FT_TRUE)
         return (FT_FALSE);
-    if (mask[mask_index] != block_id)
+    if (mask[mask_index].block_id != block_id
+        || mask[mask_index].packed_light != packed_light)
         return (FT_FALSE);
     return (FT_TRUE);
 }
 
-static int32_t chunk_mesh_greedy_width(uint32_t mask[4096],
+static int32_t chunk_mesh_greedy_width(chunk_mesh_mask_cell mask[4096],
     ft_bool consumed[4096], int32_t column_count, int32_t row_value,
-    int32_t start_column, uint32_t block_id) noexcept
+    int32_t start_column, uint32_t block_id, uint8_t packed_light) noexcept
 {
     int32_t width_count;
 
     width_count = 0;
     while (start_column + width_count < column_count
         && chunk_mesh_mask_cell_matches(mask, consumed, column_count,
-            start_column + width_count, row_value, block_id) == FT_TRUE)
+            start_column + width_count, row_value, block_id,
+            packed_light) == FT_TRUE)
         width_count += 1;
     return (width_count);
 }
 
-static ft_bool chunk_mesh_greedy_row_matches(uint32_t mask[4096],
+static ft_bool chunk_mesh_greedy_row_matches(chunk_mesh_mask_cell mask[4096],
     ft_bool consumed[4096], int32_t column_count, int32_t row_value,
-    int32_t start_column, int32_t width_count, uint32_t block_id) noexcept
+    int32_t start_column, int32_t width_count, uint32_t block_id,
+    uint8_t packed_light) noexcept
 {
     int32_t width_index;
 
@@ -552,17 +626,18 @@ static ft_bool chunk_mesh_greedy_row_matches(uint32_t mask[4096],
     while (width_index < width_count)
     {
         if (chunk_mesh_mask_cell_matches(mask, consumed, column_count,
-                start_column + width_index, row_value, block_id) == FT_FALSE)
+                start_column + width_index, row_value, block_id,
+                packed_light) == FT_FALSE)
             return (FT_FALSE);
         width_index += 1;
     }
     return (FT_TRUE);
 }
 
-static int32_t chunk_mesh_greedy_height(uint32_t mask[4096],
+static int32_t chunk_mesh_greedy_height(chunk_mesh_mask_cell mask[4096],
     ft_bool consumed[4096], int32_t column_count, int32_t row_count,
     int32_t start_column, int32_t start_row, int32_t width_count,
-    uint32_t block_id) noexcept
+    uint32_t block_id, uint8_t packed_light) noexcept
 {
     int32_t height_count;
 
@@ -570,7 +645,7 @@ static int32_t chunk_mesh_greedy_height(uint32_t mask[4096],
     while (start_row + height_count < row_count
         && chunk_mesh_greedy_row_matches(mask, consumed, column_count,
             start_row + height_count, start_column, width_count,
-            block_id) == FT_TRUE)
+            block_id, packed_light) == FT_TRUE)
         height_count += 1;
     return (height_count);
 }
@@ -612,7 +687,7 @@ static void chunk_mesh_clear_consumed_mask(ft_bool consumed[4096],
 }
 
 static int32_t chunk_mesh_emit_greedy_mask(chunk_mesh &mesh,
-    uint32_t mask[4096], ft_bool consumed[4096], chunk_mesh_face face,
+    chunk_mesh_mask_cell mask[4096], ft_bool consumed[4096], chunk_mesh_face face,
     int32_t axis_value) noexcept
 {
     int32_t column_count;
@@ -632,19 +707,22 @@ static int32_t chunk_mesh_emit_greedy_mask(chunk_mesh &mesh,
         column_value = 0;
         while (column_value < column_count)
         {
-            block_id = mask[(row_value * column_count) + column_value];
+            block_id = mask[(row_value * column_count) + column_value].block_id;
             if (block_id != GAME_VOXEL_AIR_BLOCK
                 && consumed[(row_value * column_count)
                     + column_value] == FT_FALSE)
             {
                 width_count = chunk_mesh_greedy_width(mask, consumed,
-                    column_count, row_value, column_value, block_id);
+                    column_count, row_value, column_value, block_id,
+                    mask[(row_value * column_count) + column_value].packed_light);
                 height_count = chunk_mesh_greedy_height(mask, consumed,
                     column_count, row_count, column_value, row_value,
-                    width_count, block_id);
+                    width_count, block_id,
+                    mask[(row_value * column_count) + column_value].packed_light);
                 error_code = chunk_mesh_emit_rectangle(mesh, axis_value,
                     column_value, row_value, column_value + width_count,
-                    row_value + height_count, block_id, face);
+                    row_value + height_count, block_id, face,
+                    mask[(row_value * column_count) + column_value].packed_light);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
                 chunk_mesh_mark_rectangle_consumed(consumed, column_count,
@@ -667,9 +745,10 @@ static int32_t chunk_mesh_axis_count(chunk_mesh_face face) noexcept
 }
 
 static int32_t chunk_mesh_emit_greedy_faces_for_direction(chunk_mesh &mesh,
-    const game_voxel_chunk &chunk, chunk_mesh_face face) noexcept
+    const game_voxel_chunk &chunk, chunk_mesh_face face,
+    const voxel_light_chunk *light = nullptr) noexcept
 {
-    uint32_t mask[4096];
+    chunk_mesh_mask_cell mask[4096];
     ft_bool consumed[4096];
     int32_t axis_count;
     int32_t axis_value;
@@ -680,7 +759,7 @@ static int32_t chunk_mesh_emit_greedy_faces_for_direction(chunk_mesh &mesh,
     while (axis_value < axis_count)
     {
         error_code = chunk_mesh_fill_visible_face_mask(chunk, face,
-            axis_value, mask);
+            axis_value, mask, light);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         error_code = chunk_mesh_emit_greedy_mask(mesh, mask, consumed, face,
@@ -693,7 +772,7 @@ static int32_t chunk_mesh_emit_greedy_faces_for_direction(chunk_mesh &mesh,
 }
 
 static int32_t chunk_mesh_emit_visible_faces(chunk_mesh &mesh,
-    const game_voxel_chunk &chunk) noexcept
+    const game_voxel_chunk &chunk, const voxel_light_chunk *light = nullptr) noexcept
 {
     chunk_mesh_face face;
     int32_t error_code;
@@ -702,48 +781,10 @@ static int32_t chunk_mesh_emit_visible_faces(chunk_mesh &mesh,
     while (face <= CHUNK_MESH_FACE_SOUTH)
     {
         error_code = chunk_mesh_emit_greedy_faces_for_direction(mesh, chunk,
-            face);
+            face, light);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         face = static_cast<chunk_mesh_face>(static_cast<int32_t>(face) + 1);
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t chunk_mesh_partition_indices(chunk_mesh &mesh) noexcept
-{
-    ft_vector<uint32_t> *destination;
-    uint32_t vertex_index;
-    ft_size_t index;
-    int32_t error_code;
-
-    mesh.solid_indices.clear();
-    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.solid_indices.get_error());
-    mesh.water_indices.clear();
-    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.water_indices.get_error());
-    mesh.solid_indices.reserve(mesh.indices.size());
-    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.solid_indices.get_error());
-    mesh.water_indices.reserve(mesh.indices.size());
-    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.water_indices.get_error());
-    index = 0U;
-    while (index < mesh.indices.size())
-    {
-        vertex_index = mesh.indices[index];
-        if (vertex_index >= mesh.vertices.size())
-            return (FT_ERR_INVALID_ARGUMENT);
-        if (mesh.vertices[vertex_index].block_id
-            == VOXEL_GENERATOR_WATER_BLOCK)
-            destination = &mesh.water_indices;
-        else
-            destination = &mesh.solid_indices;
-        error_code = destination->push_back(vertex_index);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        index += 1U;
     }
     return (FT_ERR_SUCCESS);
 }
@@ -763,10 +804,62 @@ int32_t chunk_mesh_generate_from_chunk(chunk_mesh &mesh,
     if (mesh.indices.get_error() != FT_ERR_SUCCESS)
         return (mesh.indices.get_error());
     chunk_mesh_reset_occupied_bounds(mesh);
-    error_code = chunk_mesh_emit_visible_faces(mesh, chunk);
+    return (chunk_mesh_emit_visible_faces(mesh, chunk));
+}
+
+int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
+    const game_voxel_chunk &chunk, const voxel_light_chunk &light) noexcept
+{
+    int32_t error_code;
+    error_code = chunk_mesh_clear(mesh);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    mesh.vertices.reserve(4096U);
+    if (mesh.vertices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.vertices.get_error());
+    mesh.indices.reserve(6144U);
+    if (mesh.indices.get_error() != FT_ERR_SUCCESS)
+        return (mesh.indices.get_error());
+    chunk_mesh_reset_occupied_bounds(mesh);
+    return (chunk_mesh_emit_visible_faces(mesh, chunk, &light));
+}
+
+int32_t chunk_mesh_apply_light(chunk_mesh &mesh,
+    const voxel_light_chunk &light) noexcept
+{
+    for (size_t index = 0U; index < mesh.vertices.size(); ++index)
+    {
+        chunk_mesh_vertex &vertex = mesh.vertices[index];
+        int32_t x = static_cast<int32_t>(vertex.coordinate_x);
+        int32_t y = static_cast<int32_t>(vertex.coordinate_y);
+        int32_t z = static_cast<int32_t>(vertex.coordinate_z);
+        if (vertex.face == CHUNK_MESH_FACE_WEST)
+            --x;
+        else if (vertex.face == CHUNK_MESH_FACE_EAST)
+            x += 1;
+        else if (vertex.face == CHUNK_MESH_FACE_DOWN)
+            --y;
+        else if (vertex.face == CHUNK_MESH_FACE_UP)
+            y += 1;
+        else if (vertex.face == CHUNK_MESH_FACE_NORTH)
+            --z;
+        else if (vertex.face == CHUNK_MESH_FACE_SOUTH)
+            z += 1;
+        if (x < 0)
+            x = 0;
+        else if (x >= GAME_VOXEL_CHUNK_WIDTH)
+            x = GAME_VOXEL_CHUNK_WIDTH - 1;
+        if (y < 0)
+            y = 0;
+        else if (y >= GAME_VOXEL_CHUNK_HEIGHT)
+            y = GAME_VOXEL_CHUNK_HEIGHT - 1;
+        if (z < 0)
+            z = 0;
+        else if (z >= GAME_VOXEL_CHUNK_DEPTH)
+            z = GAME_VOXEL_CHUNK_DEPTH - 1;
+        vertex.packed_light = light.get(x, y, z);
+    }
+    return (FT_ERR_SUCCESS);
 }
 
 namespace
@@ -779,6 +872,7 @@ namespace
         int32_t (*lookup_block)(void *user_data, int32_t world_x,
             int32_t world_y, int32_t world_z, uint32_t *block_id);
         void *user_data;
+        const voxel_light_chunk *light;
     };
 }
 
@@ -844,7 +938,7 @@ static int32_t chunk_mesh_face_is_visible_nb(const chunk_neighbor_ctx &ctx,
 
 static int32_t chunk_mesh_fill_visible_face_mask_nb(
     const chunk_neighbor_ctx &ctx, chunk_mesh_face face,
-    int32_t axis_value, uint32_t mask[4096]) noexcept
+    int32_t axis_value, chunk_mesh_mask_cell mask[4096]) noexcept
 {
     int32_t column_count;
     int32_t row_count;
@@ -870,7 +964,8 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
                 local_z, &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            mask[(row_value * column_count) + column_value] = 0U;
+            mask[(row_value * column_count) + column_value].block_id = 0U;
+            mask[(row_value * column_count) + column_value].packed_light = 0U;
             if (block_id != GAME_VOXEL_AIR_BLOCK)
             {
                 if (voxel_block_is_liquid(block_id) == FT_FALSE
@@ -890,7 +985,12 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
                             visible = FT_FALSE;
                     }
                     if (visible == FT_TRUE)
-                        mask[(row_value * column_count) + column_value] = block_id;
+                    {
+                        mask[(row_value * column_count) + column_value].block_id = block_id;
+                        mask[(row_value * column_count) + column_value].packed_light =
+                            chunk_mesh_face_light(*ctx.chunk, ctx.light,
+                                local_x, local_y, local_z, face);
+                    }
                 }
             }
             column_value += 1;
@@ -903,7 +1003,7 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
 static int32_t chunk_mesh_emit_greedy_faces_nb(chunk_mesh &mesh,
     const chunk_neighbor_ctx &ctx, chunk_mesh_face face) noexcept
 {
-    uint32_t mask[4096];
+    chunk_mesh_mask_cell mask[4096];
     ft_bool consumed[4096];
     int32_t axis_count;
     int32_t axis_value;
@@ -947,7 +1047,7 @@ int32_t chunk_mesh_generate_from_chunk_with_neighbors(chunk_mesh &mesh,
     const game_voxel_chunk &chunk, int32_t chunk_x, int32_t chunk_z,
     int32_t (*lookup_block)(void *user_data, int32_t world_x, int32_t world_y,
         int32_t world_z, uint32_t *block_id),
-    void *user_data) noexcept
+    void *user_data, const voxel_light_chunk *light) noexcept
 {
     chunk_neighbor_ctx ctx;
     int32_t error_code;
@@ -967,10 +1067,8 @@ int32_t chunk_mesh_generate_from_chunk_with_neighbors(chunk_mesh &mesh,
     ctx.chunk_z = chunk_z;
     ctx.lookup_block = lookup_block;
     ctx.user_data = user_data;
-    error_code = chunk_mesh_emit_visible_faces_nb(mesh, ctx);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    ctx.light = light;
+    return (chunk_mesh_emit_visible_faces_nb(mesh, ctx));
 }
 
 #endif

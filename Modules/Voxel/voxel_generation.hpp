@@ -66,5 +66,4 @@ class voxel_world_chunk_coordinate
 };
 
 #endif
-
 #endif

@@ -494,10 +494,17 @@ int32_t voxel_fluid_config::serialize_json(ft_string &output) const noexcept
         "voxel_fluids");
     VOXEL_JSON_BOOL(staging_output, "enable_rivers", this->enable_rivers);
     VOXEL_JSON_BOOL(staging_output, "enable_lakes", this->enable_lakes);
+    VOXEL_JSON_BOOL(staging_output, "enable_underground_lakes", this->enable_underground_lakes);
     VOXEL_JSON_I32(staging_output, "river_noise_scale", this->river_noise_scale);
     VOXEL_JSON_I32(staging_output, "river_width", this->river_width);
     VOXEL_JSON_I32(staging_output, "lake_noise_scale", this->lake_noise_scale);
     VOXEL_JSON_U32(staging_output, "lake_chance_percent", this->lake_chance_percent);
+    VOXEL_JSON_U32(staging_output, "underground_lake_chance_percent", this->underground_lake_chance_percent);
+    VOXEL_JSON_I32(staging_output, "underground_lake_minimum_y", this->underground_lake_minimum_y);
+    VOXEL_JSON_I32(staging_output, "underground_lake_maximum_y", this->underground_lake_maximum_y);
+    VOXEL_JSON_U32(staging_output, "underground_lake_depth", this->underground_lake_depth);
+    VOXEL_JSON_U32(staging_output, "underground_lake_floor_thickness", this->underground_lake_floor_thickness);
+    VOXEL_JSON_U32(staging_output, "underground_lake_roof_thickness", this->underground_lake_roof_thickness);
     if (error_code == FT_ERR_SUCCESS)
         error_code = voxel_json_finish(staging_output);
     return (voxel_json_commit(output, staging_output, error_code));
