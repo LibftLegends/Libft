@@ -1,6 +1,6 @@
 #include "card_game_format.hpp"
 #include "../Crypto/crypto_primitives.hpp"
-#include "../CMA/cma.hpp"
+#include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 
 static void card_game_format_hash_u32(crypto_sha256 &hash,

@@ -1,7 +1,7 @@
 #include "card_game_deck_code.hpp"
 #include "../Encoding/encoding.hpp"
 #include "../Crypto/crypto_primitives.hpp"
-#include "../CMA/cma.hpp"
+#include "../CMA/CMA.hpp"
 
 static int32_t deck_code_write_u32(uint8_t *output, uint32_t capacity,
     uint32_t *offset, uint32_t value) noexcept
