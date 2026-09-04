@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "../Basic/class_nullptr.hpp"
-#include "terrain_api.hpp"
+#include "voxel_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
@@ -11,29 +11,29 @@
 #include "voxel_internal.hpp"
 #include "voxel_block_registry.hpp"
 
-static int32_t terrain_apply_default_generation_config(
-    terrain_generation_config &config) noexcept;
-static ft_bool terrain_template_is_valid(
-    const terrain_tree_template *tree_template) noexcept;
+static int32_t voxel_apply_default_generation_config(
+    voxel_generation_config &config) noexcept;
+static ft_bool voxel_template_is_valid(
+    const voxel_tree_template *tree_template) noexcept;
 
-static int32_t terrain_copy_tree_template(
-    const terrain_tree_template &source,
-    terrain_tree_template_block *destination_blocks,
-    terrain_tree_template *destination) noexcept
+static int32_t voxel_copy_tree_template(
+    const voxel_tree_template &source,
+    voxel_tree_template_block *destination_blocks,
+    voxel_tree_template *destination) noexcept
 {
     if (destination_blocks == ft_nullptr || destination == ft_nullptr
-        || source.block_count > TERRAIN_MAX_TREE_TEMPLATE_BLOCKS
+        || source.block_count > VOXEL_MAX_TREE_TEMPLATE_BLOCKS
         || (source.block_count != 0U && source.blocks == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
     if (source.block_count != 0U)
         ft_memcpy(destination_blocks, source.blocks,
-            sizeof(terrain_tree_template_block) * source.block_count);
+            sizeof(voxel_tree_template_block) * source.block_count);
     destination->blocks = destination_blocks;
     destination->block_count = source.block_count;
     return (FT_ERR_SUCCESS);
 }
 
-terrain_biome_definition::terrain_biome_definition() noexcept
+voxel_biome_definition::voxel_biome_definition() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), profile(),
       surface_block_id(0U), subsurface_block_id(0U), deep_block_id(0U),
       allow_shrubs(FT_FALSE), allow_trees(FT_FALSE),
@@ -44,13 +44,13 @@ terrain_biome_definition::terrain_biome_definition() noexcept
     return ;
 }
 
-terrain_biome_definition::~terrain_biome_definition() noexcept
+voxel_biome_definition::~voxel_biome_definition() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_biome_definition::initialize() noexcept
+int32_t voxel_biome_definition::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
@@ -74,8 +74,8 @@ int32_t terrain_biome_definition::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::initialize(
-    const terrain_biome_definition &other) noexcept
+int32_t voxel_biome_definition::initialize(
+    const voxel_biome_definition &other) noexcept
 {
     uint32_t index;
 
@@ -97,7 +97,7 @@ int32_t terrain_biome_definition::initialize(
     this->tree_chance_percent = other.tree_chance_percent;
     this->tree_template_count = other.tree_template_count;
     index = 0U;
-    while (index < TERRAIN_MAX_BIOME_TREE_TEMPLATES)
+    while (index < VOXEL_MAX_BIOME_TREE_TEMPLATES)
     {
         this->tree_template_indices[index]
             = other.tree_template_indices[index];
@@ -108,7 +108,7 @@ int32_t terrain_biome_definition::initialize(
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_biome_definition::destroy() noexcept
+uint32_t voxel_biome_definition::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -133,8 +133,8 @@ uint32_t terrain_biome_definition::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_biome_definition::move(
-    terrain_biome_definition &other) noexcept
+uint32_t voxel_biome_definition::move(
+    voxel_biome_definition &other) noexcept
 {
     int32_t error_code;
 
@@ -145,15 +145,15 @@ uint32_t terrain_biome_definition::move(
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_biome_definition::is_initialised() const noexcept
+ft_bool voxel_biome_definition::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_biome_definition::set_profile(
-    const terrain_biome_profile &value) noexcept
+int32_t voxel_biome_definition::set_profile(
+    const voxel_biome_profile &value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -163,7 +163,7 @@ int32_t terrain_biome_definition::set_profile(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::set_block_palette(uint32_t surface_block,
+int32_t voxel_biome_definition::set_block_palette(uint32_t surface_block,
     uint32_t subsurface_block, uint32_t deep_block) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -174,7 +174,7 @@ int32_t terrain_biome_definition::set_block_palette(uint32_t surface_block,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::set_decoration_policy(ft_bool shrubs,
+int32_t voxel_biome_definition::set_decoration_policy(ft_bool shrubs,
     ft_bool trees, uint32_t shrub_chance, uint32_t tree_chance) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -188,7 +188,7 @@ int32_t terrain_biome_definition::set_decoration_policy(ft_bool shrubs,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::set_snow_cap_policy(
+int32_t voxel_biome_definition::set_snow_cap_policy(
     ft_bool enabled) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -197,7 +197,7 @@ int32_t terrain_biome_definition::set_snow_cap_policy(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::set_mountain_ridge_policy(
+int32_t voxel_biome_definition::set_mountain_ridge_policy(
     ft_bool enabled) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -206,8 +206,8 @@ int32_t terrain_biome_definition::set_mountain_ridge_policy(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_biome_definition::set_tree_template_override(
-    const terrain_tree_template *value) noexcept
+int32_t voxel_biome_definition::set_tree_template_override(
+    const voxel_tree_template *value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -215,7 +215,7 @@ int32_t terrain_biome_definition::set_tree_template_override(
     return (FT_ERR_SUCCESS);
 }
 
-terrain_feature_rule::terrain_feature_rule() noexcept
+voxel_feature_rule::voxel_feature_rule() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       template_data(ft_nullptr), biome_index(-1), chance_percent(0U),
       minimum_height(0), maximum_height(0), requires_dry_land(FT_FALSE)
@@ -223,13 +223,13 @@ terrain_feature_rule::terrain_feature_rule() noexcept
     return ;
 }
 
-terrain_feature_rule::~terrain_feature_rule() noexcept
+voxel_feature_rule::~voxel_feature_rule() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_feature_rule::initialize() noexcept
+int32_t voxel_feature_rule::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
@@ -243,8 +243,8 @@ int32_t terrain_feature_rule::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_feature_rule::initialize(
-    const terrain_feature_rule &other) noexcept
+int32_t voxel_feature_rule::initialize(
+    const voxel_feature_rule &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -262,7 +262,7 @@ int32_t terrain_feature_rule::initialize(
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_feature_rule::destroy() noexcept
+uint32_t voxel_feature_rule::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -277,7 +277,7 @@ uint32_t terrain_feature_rule::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_feature_rule::move(terrain_feature_rule &other) noexcept
+uint32_t voxel_feature_rule::move(voxel_feature_rule &other) noexcept
 {
     int32_t error_code;
 
@@ -288,15 +288,15 @@ uint32_t terrain_feature_rule::move(terrain_feature_rule &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_feature_rule::is_initialised() const noexcept
+ft_bool voxel_feature_rule::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_feature_rule::set_template(
-    const terrain_tree_template *value) noexcept
+int32_t voxel_feature_rule::set_template(
+    const voxel_tree_template *value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -304,7 +304,7 @@ int32_t terrain_feature_rule::set_template(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_feature_rule::set_biome_range(int32_t biome,
+int32_t voxel_feature_rule::set_biome_range(int32_t biome,
     int32_t minimum, int32_t maximum) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -317,7 +317,7 @@ int32_t terrain_feature_rule::set_biome_range(int32_t biome,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_feature_rule::set_chance(uint32_t value) noexcept
+int32_t voxel_feature_rule::set_chance(uint32_t value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -327,7 +327,7 @@ int32_t terrain_feature_rule::set_chance(uint32_t value) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_feature_rule::set_requires_dry_land(ft_bool value) noexcept
+int32_t voxel_feature_rule::set_requires_dry_land(ft_bool value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -335,7 +335,7 @@ int32_t terrain_feature_rule::set_requires_dry_land(ft_bool value) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-terrain_ore_rule::terrain_ore_rule() noexcept
+voxel_ore_rule::voxel_ore_rule() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), block_id(0U),
       minimum_height(0), maximum_height(0), minimum_depth(0),
       maximum_depth(0), vein_size(0U), vein_size_min(0U), vein_size_max(0U),
@@ -345,13 +345,13 @@ terrain_ore_rule::terrain_ore_rule() noexcept
     return ;
 }
 
-terrain_ore_rule::~terrain_ore_rule() noexcept
+voxel_ore_rule::~voxel_ore_rule() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_ore_rule::initialize() noexcept
+int32_t voxel_ore_rule::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
@@ -372,7 +372,7 @@ int32_t terrain_ore_rule::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::initialize(const terrain_ore_rule &other) noexcept
+int32_t voxel_ore_rule::initialize(const voxel_ore_rule &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -397,7 +397,7 @@ int32_t terrain_ore_rule::initialize(const terrain_ore_rule &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_ore_rule::destroy() noexcept
+uint32_t voxel_ore_rule::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -419,7 +419,7 @@ uint32_t terrain_ore_rule::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_ore_rule::move(terrain_ore_rule &other) noexcept
+uint32_t voxel_ore_rule::move(voxel_ore_rule &other) noexcept
 {
     int32_t error_code;
 
@@ -430,14 +430,14 @@ uint32_t terrain_ore_rule::move(terrain_ore_rule &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_ore_rule::is_initialised() const noexcept
+ft_bool voxel_ore_rule::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_ore_rule::set_range(int32_t minimum,
+int32_t voxel_ore_rule::set_range(int32_t minimum,
     int32_t maximum) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -451,7 +451,7 @@ int32_t terrain_ore_rule::set_range(int32_t minimum,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_depth_range(int32_t minimum_depth_value,
+int32_t voxel_ore_rule::set_depth_range(int32_t minimum_depth_value,
     int32_t maximum_depth_value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -464,7 +464,7 @@ int32_t terrain_ore_rule::set_depth_range(int32_t minimum_depth_value,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_vein(uint32_t size,
+int32_t voxel_ore_rule::set_vein(uint32_t size,
     uint32_t chance) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -484,7 +484,7 @@ int32_t terrain_ore_rule::set_vein(uint32_t size,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_vein_size_range(uint32_t minimum_size,
+int32_t voxel_ore_rule::set_vein_size_range(uint32_t minimum_size,
     uint32_t maximum_size) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -497,7 +497,7 @@ int32_t terrain_ore_rule::set_vein_size_range(uint32_t minimum_size,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_frequency_range(uint32_t minimum_veins,
+int32_t voxel_ore_rule::set_frequency_range(uint32_t minimum_veins,
     uint32_t maximum_veins) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -509,7 +509,7 @@ int32_t terrain_ore_rule::set_frequency_range(uint32_t minimum_veins,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_enabled(ft_bool value) noexcept
+int32_t voxel_ore_rule::set_enabled(ft_bool value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -517,7 +517,7 @@ int32_t terrain_ore_rule::set_enabled(ft_bool value) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_ore_rule::set_ore_replacement(ft_bool value) noexcept
+int32_t voxel_ore_rule::set_ore_replacement(ft_bool value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -527,7 +527,7 @@ int32_t terrain_ore_rule::set_ore_replacement(ft_bool value) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-terrain_underground_structure_config::terrain_underground_structure_config()
+voxel_underground_structure_config::voxel_underground_structure_config()
     noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       enable_ravines(FT_FALSE), enable_cave_rooms(FT_FALSE),
@@ -541,14 +541,14 @@ terrain_underground_structure_config::terrain_underground_structure_config()
     return ;
 }
 
-terrain_underground_structure_config::~terrain_underground_structure_config()
+voxel_underground_structure_config::~voxel_underground_structure_config()
     noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_underground_structure_config::initialize() noexcept
+int32_t voxel_underground_structure_config::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
@@ -572,8 +572,8 @@ int32_t terrain_underground_structure_config::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::initialize(
-    const terrain_underground_structure_config &other) noexcept
+int32_t voxel_underground_structure_config::initialize(
+    const voxel_underground_structure_config &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -601,7 +601,7 @@ int32_t terrain_underground_structure_config::initialize(
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_underground_structure_config::destroy() noexcept
+uint32_t voxel_underground_structure_config::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -626,8 +626,8 @@ uint32_t terrain_underground_structure_config::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_underground_structure_config::move(
-    terrain_underground_structure_config &other) noexcept
+uint32_t voxel_underground_structure_config::move(
+    voxel_underground_structure_config &other) noexcept
 {
     int32_t error_code;
 
@@ -638,14 +638,14 @@ uint32_t terrain_underground_structure_config::move(
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_underground_structure_config::is_initialised() const noexcept
+ft_bool voxel_underground_structure_config::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_underground_structure_config::set_enabled(
+int32_t voxel_underground_structure_config::set_enabled(
     ft_bool ravines, ft_bool cave_rooms) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -655,7 +655,7 @@ int32_t terrain_underground_structure_config::set_enabled(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_chances(uint32_t ravine,
+int32_t voxel_underground_structure_config::set_chances(uint32_t ravine,
     uint32_t cave_room) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -667,7 +667,7 @@ int32_t terrain_underground_structure_config::set_chances(uint32_t ravine,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_height_range(
+int32_t voxel_underground_structure_config::set_height_range(
     int32_t minimum, int32_t maximum) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -679,7 +679,7 @@ int32_t terrain_underground_structure_config::set_height_range(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_shape(uint32_t width,
+int32_t voxel_underground_structure_config::set_shape(uint32_t width,
     uint32_t depth) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -689,7 +689,7 @@ int32_t terrain_underground_structure_config::set_shape(uint32_t width,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_cave_shape(
+int32_t voxel_underground_structure_config::set_cave_shape(
     uint32_t small_radius, uint32_t large_radius,
     uint32_t large_chance) noexcept
 {
@@ -704,7 +704,7 @@ int32_t terrain_underground_structure_config::set_cave_shape(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_cave_entrances(
+int32_t voxel_underground_structure_config::set_cave_entrances(
     uint32_t chance, uint32_t radius) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -716,7 +716,7 @@ int32_t terrain_underground_structure_config::set_cave_entrances(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_underground_structure_config::set_cavern_rooms(
+int32_t voxel_underground_structure_config::set_cavern_rooms(
     ft_bool enabled, uint32_t chance, uint32_t radius) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -736,47 +736,36 @@ int32_t terrain_underground_structure_config::set_cavern_rooms(
     return (FT_ERR_SUCCESS);
 }
 
-terrain_fluid_config::terrain_fluid_config() noexcept
+voxel_fluid_config::voxel_fluid_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
-      enable_rivers(FT_FALSE), enable_lakes(FT_FALSE),
-      enable_underground_lakes(FT_FALSE), river_noise_scale(0),
-      river_width(0), lake_noise_scale(0), lake_chance_percent(0U),
-      underground_lake_chance_percent(0U), underground_lake_minimum_y(0),
-      underground_lake_maximum_y(0), underground_lake_depth(0U),
-      underground_lake_floor_thickness(0U), underground_lake_roof_thickness(0U)
+      enable_rivers(FT_FALSE), enable_lakes(FT_FALSE), river_noise_scale(0),
+      river_width(0), lake_noise_scale(0), lake_chance_percent(0U)
 {
     return ;
 }
 
-terrain_fluid_config::~terrain_fluid_config() noexcept
+voxel_fluid_config::~voxel_fluid_config() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_fluid_config::initialize() noexcept
+int32_t voxel_fluid_config::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
     this->enable_rivers = FT_FALSE;
     this->enable_lakes = FT_FALSE;
-    this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
-    this->underground_lake_chance_percent = 0U;
-    this->underground_lake_minimum_y = 0;
-    this->underground_lake_maximum_y = 0;
-    this->underground_lake_depth = 0U;
-    this->underground_lake_floor_thickness = 0U;
-    this->underground_lake_roof_thickness = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_fluid_config::initialize(
-    const terrain_fluid_config &other) noexcept
+int32_t voxel_fluid_config::initialize(
+    const voxel_fluid_config &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -786,44 +775,30 @@ int32_t terrain_fluid_config::initialize(
         this->destroy();
     this->enable_rivers = other.enable_rivers;
     this->enable_lakes = other.enable_lakes;
-    this->enable_underground_lakes = other.enable_underground_lakes;
     this->river_noise_scale = other.river_noise_scale;
     this->river_width = other.river_width;
     this->lake_noise_scale = other.lake_noise_scale;
     this->lake_chance_percent = other.lake_chance_percent;
-    this->underground_lake_chance_percent = other.underground_lake_chance_percent;
-    this->underground_lake_minimum_y = other.underground_lake_minimum_y;
-    this->underground_lake_maximum_y = other.underground_lake_maximum_y;
-    this->underground_lake_depth = other.underground_lake_depth;
-    this->underground_lake_floor_thickness = other.underground_lake_floor_thickness;
-    this->underground_lake_roof_thickness = other.underground_lake_roof_thickness;
     this->_initialised_state = other._initialised_state;
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_fluid_config::destroy() noexcept
+uint32_t voxel_fluid_config::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
     this->enable_rivers = FT_FALSE;
     this->enable_lakes = FT_FALSE;
-    this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
-    this->underground_lake_chance_percent = 0U;
-    this->underground_lake_minimum_y = 0;
-    this->underground_lake_maximum_y = 0;
-    this->underground_lake_depth = 0U;
-    this->underground_lake_floor_thickness = 0U;
-    this->underground_lake_roof_thickness = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_fluid_config::move(terrain_fluid_config &other) noexcept
+uint32_t voxel_fluid_config::move(voxel_fluid_config &other) noexcept
 {
     int32_t error_code;
 
@@ -834,14 +809,14 @@ uint32_t terrain_fluid_config::move(terrain_fluid_config &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_fluid_config::is_initialised() const noexcept
+ft_bool voxel_fluid_config::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_fluid_config::set_enabled(ft_bool rivers,
+int32_t voxel_fluid_config::set_enabled(ft_bool rivers,
     ft_bool lakes) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -851,15 +826,7 @@ int32_t terrain_fluid_config::set_enabled(ft_bool rivers,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_fluid_config::set_underground_lakes_enabled(ft_bool enabled) noexcept
-{
-    if (this->is_initialised() == FT_FALSE)
-        return (FT_ERR_NOT_INITIALISED);
-    this->enable_underground_lakes = enabled;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t terrain_fluid_config::set_river_settings(int32_t scale,
+int32_t voxel_fluid_config::set_river_settings(int32_t scale,
     int32_t width) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -871,7 +838,7 @@ int32_t terrain_fluid_config::set_river_settings(int32_t scale,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_fluid_config::set_lake_settings(int32_t scale,
+int32_t voxel_fluid_config::set_lake_settings(int32_t scale,
     uint32_t chance) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -883,26 +850,7 @@ int32_t terrain_fluid_config::set_lake_settings(int32_t scale,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_fluid_config::set_underground_lake_settings(uint32_t chance,
-    int32_t minimum_y, int32_t maximum_y, uint32_t depth,
-    uint32_t floor_thickness, uint32_t roof_thickness) noexcept
-{
-    if (this->is_initialised() == FT_FALSE)
-        return (FT_ERR_NOT_INITIALISED);
-    if (chance > 100U || minimum_y < 1 || maximum_y < minimum_y
-        || maximum_y >= GAME_VOXEL_CHUNK_HEIGHT || depth == 0U
-        || depth > 8U || floor_thickness == 0U || roof_thickness == 0U)
-        return (FT_ERR_INVALID_ARGUMENT);
-    this->underground_lake_chance_percent = chance;
-    this->underground_lake_minimum_y = minimum_y;
-    this->underground_lake_maximum_y = maximum_y;
-    this->underground_lake_depth = depth;
-    this->underground_lake_floor_thickness = floor_thickness;
-    this->underground_lake_roof_thickness = roof_thickness;
-    return (FT_ERR_SUCCESS);
-}
-
-terrain_layer_config::terrain_layer_config() noexcept
+voxel_layer_config::voxel_layer_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       enable_beaches(FT_FALSE), enable_snow_caps(FT_FALSE), beach_depth(0U),
       underwater_depth(0U), snow_cap_depth(0U), snow_cap_minimum_height(0),
@@ -911,13 +859,13 @@ terrain_layer_config::terrain_layer_config() noexcept
     return ;
 }
 
-terrain_layer_config::~terrain_layer_config() noexcept
+voxel_layer_config::~voxel_layer_config() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_layer_config::initialize() noexcept
+int32_t voxel_layer_config::initialize() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
@@ -934,8 +882,8 @@ int32_t terrain_layer_config::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_layer_config::initialize(
-    const terrain_layer_config &other) noexcept
+int32_t voxel_layer_config::initialize(
+    const voxel_layer_config &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -956,7 +904,7 @@ int32_t terrain_layer_config::initialize(
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_layer_config::destroy() noexcept
+uint32_t voxel_layer_config::destroy() noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -974,7 +922,7 @@ uint32_t terrain_layer_config::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_layer_config::move(terrain_layer_config &other) noexcept
+uint32_t voxel_layer_config::move(voxel_layer_config &other) noexcept
 {
     int32_t error_code;
 
@@ -985,14 +933,14 @@ uint32_t terrain_layer_config::move(terrain_layer_config &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_layer_config::is_initialised() const noexcept
+ft_bool voxel_layer_config::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_layer_config::set_enabled(ft_bool beaches,
+int32_t voxel_layer_config::set_enabled(ft_bool beaches,
     ft_bool snow_caps) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -1002,7 +950,7 @@ int32_t terrain_layer_config::set_enabled(ft_bool beaches,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_layer_config::set_depths(uint32_t beach,
+int32_t voxel_layer_config::set_depths(uint32_t beach,
     uint32_t underwater, uint32_t snow) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -1013,7 +961,7 @@ int32_t terrain_layer_config::set_depths(uint32_t beach,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_layer_config::set_snowline(
+int32_t voxel_layer_config::set_snowline(
     int32_t minimum_height_value) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -1024,7 +972,7 @@ int32_t terrain_layer_config::set_snowline(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_layer_config::set_block_palette(uint32_t beach,
+int32_t voxel_layer_config::set_block_palette(uint32_t beach,
     uint32_t underwater, uint32_t snow) noexcept
 {
     if (this->is_initialised() == FT_FALSE)
@@ -1035,7 +983,7 @@ int32_t terrain_layer_config::set_block_palette(uint32_t beach,
     return (FT_ERR_SUCCESS);
 }
 
-static void terrain_abort_unknown_block_id(uint32_t block_id,
+static void voxel_abort_unknown_block_id(uint32_t block_id,
     const char *method_name) noexcept
 {
     char decimal_buffer[10];
@@ -1097,7 +1045,7 @@ static void terrain_abort_unknown_block_id(uint32_t block_id,
     return ;
 }
 
-static const terrain_block_metadata TERRAIN_BLOCK_REGISTRY[] =
+static const voxel_block_metadata VOXEL_BLOCK_REGISTRY[] =
 {
     {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_FALSE, 0U, FT_TRUE},
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 1U, FT_TRUE},
@@ -1165,367 +1113,367 @@ static const terrain_block_metadata TERRAIN_BLOCK_REGISTRY[] =
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE}
 };
 
-static_assert(sizeof(TERRAIN_BLOCK_REGISTRY)
-        / sizeof(TERRAIN_BLOCK_REGISTRY[0])
-        == static_cast<uint32_t>(TERRAIN_BUILTIN_BLOCK_COUNT),
+static_assert(sizeof(VOXEL_BLOCK_REGISTRY)
+        / sizeof(VOXEL_BLOCK_REGISTRY[0])
+        == static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT),
     "terrain metadata must cover every built-in block ID");
 
-static const terrain_tree_template_block TERRAIN_SMALL_OAK_TREE_BLOCKS[] =
+static const voxel_tree_template_block VOXEL_SMALL_OAK_TREE_BLOCKS[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {-1, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 3, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {-1, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 3, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_PINE_TREE_BLOCKS[] =
+static const voxel_tree_template_block VOXEL_SMALL_PINE_TREE_BLOCKS[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {-1, 3, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 3, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 3, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 3, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 3, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 3, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 3, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 3, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {-1, 3, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 3, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 3, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 3, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 3, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 3, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 3, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 3, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_CACTUS_TREE_BLOCKS[] =
+static const voxel_tree_template_block VOXEL_SMALL_CACTUS_TREE_BLOCKS[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_CACTUS_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_CACTUS_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_LARGE_OAK_TREE_BLOCKS[] =
+static const voxel_tree_template_block VOXEL_LARGE_OAK_TREE_BLOCKS[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {-2, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {2, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {-2, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {2, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_LARGE_OAK_TREE_BLOCKS_VARIANT_1[] =
+static const voxel_tree_template_block VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {-2, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {2, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 5, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {-2, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {2, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 5, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_LARGE_PINE_TREE_BLOCKS[] =
+static const voxel_tree_template_block VOXEL_LARGE_PINE_TREE_BLOCKS[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 6, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 6, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 6, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 6, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 7, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 6, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 6, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 6, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 6, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 7, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_LARGE_PINE_TREE_BLOCKS_VARIANT_1[] =
+static const voxel_tree_template_block VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {-1, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 7, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 8, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {-1, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 7, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 8, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template TERRAIN_SMALL_OAK_TREE_TEMPLATE =
+static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE =
 {
-    TERRAIN_SMALL_OAK_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS)
-        / sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS[0]))
+    VOXEL_SMALL_OAK_TREE_BLOCKS,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS)
+        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_PINE_TREE_TEMPLATE =
+static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE =
 {
-    TERRAIN_SMALL_PINE_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS)
-        / sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS[0]))
+    VOXEL_SMALL_PINE_TREE_BLOCKS,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS)
+        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_CACTUS_TREE_TEMPLATE =
+static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE =
 {
-    TERRAIN_SMALL_CACTUS_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS)
-        / sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS[0]))
+    VOXEL_SMALL_CACTUS_TREE_BLOCKS,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS)
+        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS[0]))
 };
 
-static const terrain_tree_template TERRAIN_LARGE_OAK_TREE_TEMPLATE =
+static const voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE =
 {
-    TERRAIN_LARGE_OAK_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(TERRAIN_LARGE_OAK_TREE_BLOCKS)
-        / sizeof(TERRAIN_LARGE_OAK_TREE_BLOCKS[0]))
+    VOXEL_LARGE_OAK_TREE_BLOCKS,
+    static_cast<uint32_t>(sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS)
+        / sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS[0]))
 };
 
-static const terrain_tree_template TERRAIN_LARGE_OAK_TREE_TEMPLATE_VARIANT_1 =
+static const voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE_VARIANT_1 =
 {
-    TERRAIN_LARGE_OAK_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(TERRAIN_LARGE_OAK_TREE_BLOCKS_VARIANT_1)
-        / sizeof(TERRAIN_LARGE_OAK_TREE_BLOCKS_VARIANT_1[0]))
+    VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1,
+    static_cast<uint32_t>(sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1)
+        / sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1[0]))
 };
 
-static const terrain_tree_template TERRAIN_LARGE_PINE_TREE_TEMPLATE =
+static const voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE =
 {
-    TERRAIN_LARGE_PINE_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(TERRAIN_LARGE_PINE_TREE_BLOCKS)
-        / sizeof(TERRAIN_LARGE_PINE_TREE_BLOCKS[0]))
+    VOXEL_LARGE_PINE_TREE_BLOCKS,
+    static_cast<uint32_t>(sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS)
+        / sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS[0]))
 };
 
-static const terrain_tree_template TERRAIN_LARGE_PINE_TREE_TEMPLATE_VARIANT_1 =
+static const voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE_VARIANT_1 =
 {
-    TERRAIN_LARGE_PINE_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(TERRAIN_LARGE_PINE_TREE_BLOCKS_VARIANT_1)
-        / sizeof(TERRAIN_LARGE_PINE_TREE_BLOCKS_VARIANT_1[0]))
+    VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1,
+    static_cast<uint32_t>(sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1)
+        / sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1[0]))
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_1[] =
+static const voxel_tree_template_block VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {-2, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, -2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 2, 2, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 2, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {2, 2, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {-2, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, -2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 2, 2, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 2, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {2, 2, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_2[] =
+static const voxel_tree_template_block VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK},
-    {-1, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 3, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 3, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+    {-1, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 3, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 3, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_1[] =
+static const voxel_tree_template_block VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {-1, 3, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 3, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 3, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 3, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {-1, 3, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 3, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 3, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 3, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_2[] =
+static const voxel_tree_template_block VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 4, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {0, 5, 0, TERRAIN_GENERATOR_PINE_LOG_BLOCK},
-    {-1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {1, 4, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, -1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 4, 1, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK},
-    {0, 6, 0, TERRAIN_GENERATOR_PINE_LEAVES_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 4, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {0, 5, 0, VOXEL_GENERATOR_PINE_LOG_BLOCK},
+    {-1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {1, 4, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, -1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 4, 1, VOXEL_GENERATOR_PINE_LEAVES_BLOCK},
+    {0, 6, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1[] =
+static const voxel_tree_template_block VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {1, 2, 0, TERRAIN_GENERATOR_CACTUS_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {1, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK}
 };
 
-static const terrain_tree_template_block TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[] =
+static const voxel_tree_template_block VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[] =
 {
-    {0, 0, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 1, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 2, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {0, 3, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {-1, 1, 0, TERRAIN_GENERATOR_CACTUS_BLOCK},
-    {1, 2, 0, TERRAIN_GENERATOR_CACTUS_BLOCK}
+    {0, 0, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 1, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {0, 3, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {-1, 1, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+    {1, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK}
 };
 
-static const terrain_tree_template TERRAIN_SMALL_OAK_TREE_TEMPLATE_VARIANT_1 =
+static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_1 =
 {
-    TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_1)
-        / sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_1[0]))
+    VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1)
+        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_OAK_TREE_TEMPLATE_VARIANT_2 =
+static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_2 =
 {
-    TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_2)
-        / sizeof(TERRAIN_SMALL_OAK_TREE_BLOCKS_VARIANT_2[0]))
+    VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2)
+        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_PINE_TREE_TEMPLATE_VARIANT_1 =
+static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_1 =
 {
-    TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_1)
-        / sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_1[0]))
+    VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1)
+        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_PINE_TREE_TEMPLATE_VARIANT_2 =
+static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_2 =
 {
-    TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_2)
-        / sizeof(TERRAIN_SMALL_PINE_TREE_BLOCKS_VARIANT_2[0]))
+    VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2)
+        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1 =
+static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1 =
 {
-    TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1)
-        / sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1[0]))
+    VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1)
+        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1[0]))
 };
 
-static const terrain_tree_template TERRAIN_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2 =
+static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2 =
 {
-    TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2)
-        / sizeof(TERRAIN_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[0]))
+    VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2,
+    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2)
+        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[0]))
 };
 
-int32_t terrain_floor_div(int32_t value, int32_t divisor) noexcept
+int32_t voxel_floor_div(int32_t value, int32_t divisor) noexcept
 {
     int32_t quotient;
     int32_t remainder;
@@ -1537,7 +1485,7 @@ int32_t terrain_floor_div(int32_t value, int32_t divisor) noexcept
     return (quotient);
 }
 
-uint64_t terrain_mix_u64(uint64_t value) noexcept
+uint64_t voxel_mix_u64(uint64_t value) noexcept
 {
     value ^= value >> 30;
     value *= UINT64_C(0xBF58476D1CE4E5B9);
@@ -1547,28 +1495,28 @@ uint64_t terrain_mix_u64(uint64_t value) noexcept
     return (value);
 }
 
-double terrain_lerp(double left_value, double right_value,
+double voxel_lerp(double left_value, double right_value,
     double factor) noexcept
 {
     return (left_value + ((right_value - left_value) * factor));
 }
 
-double terrain_smooth_factor(double factor) noexcept
+double voxel_smooth_factor(double factor) noexcept
 {
     return (factor * factor * (3.0 - (2.0 * factor)));
 }
 
-uint64_t terrain_seed_value(const char *seed_string) noexcept
+uint64_t voxel_seed_value(const char *seed_string) noexcept
 {
     return (static_cast<uint64_t>(rng_seed_value(seed_string)));
 }
 
-uint64_t terrain_feature_seed(uint64_t seed_value, int32_t world_block_x,
+uint64_t voxel_feature_seed(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, uint64_t salt) noexcept
 {
     uint64_t feature_seed;
 
-    feature_seed = terrain_mix_u64(seed_value ^ salt
+    feature_seed = voxel_mix_u64(seed_value ^ salt
         ^ (static_cast<uint64_t>(static_cast<int64_t>(world_block_x))
             * UINT64_C(0x9E3779B97F4A7C15))
         ^ (static_cast<uint64_t>(static_cast<int64_t>(world_block_z))
@@ -1576,22 +1524,22 @@ uint64_t terrain_feature_seed(uint64_t seed_value, int32_t world_block_x,
     return (feature_seed);
 }
 
-double terrain_signed_unit_noise(uint64_t seed_value, int32_t grid_x,
+double voxel_signed_unit_noise(uint64_t seed_value, int32_t grid_x,
     int32_t grid_z) noexcept
 {
     uint64_t mixed_value;
 
-    mixed_value = terrain_mix_u64(seed_value
+    mixed_value = voxel_mix_u64(seed_value
         ^ (static_cast<uint64_t>(static_cast<int64_t>(grid_x))
             * UINT64_C(0x9E3779B97F4A7C15))
         ^ (static_cast<uint64_t>(static_cast<int64_t>(grid_z))
             * UINT64_C(0xBF58476D1CE4E5B9)));
-    mixed_value = terrain_mix_u64(mixed_value);
+    mixed_value = voxel_mix_u64(mixed_value);
     return (static_cast<double>(mixed_value >> 11)
         * (1.0 / 9007199254740992.0) * 2.0 - 1.0);
 }
 
-double terrain_value_noise(uint64_t seed_value, int32_t world_block_x,
+double voxel_value_noise(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, int32_t scale) noexcept
 {
     int32_t grid_x0;
@@ -1610,27 +1558,27 @@ double terrain_value_noise(uint64_t seed_value, int32_t world_block_x,
     double noise_right;
     double noise_value;
 
-    grid_x0 = terrain_floor_div(world_block_x, scale);
-    grid_z0 = terrain_floor_div(world_block_z, scale);
+    grid_x0 = voxel_floor_div(world_block_x, scale);
+    grid_z0 = voxel_floor_div(world_block_z, scale);
     grid_x1 = grid_x0 + 1;
     grid_z1 = grid_z0 + 1;
     local_x = world_block_x - (grid_x0 * scale);
     local_z = world_block_z - (grid_z0 * scale);
     factor_x = static_cast<double>(local_x) / static_cast<double>(scale);
     factor_z = static_cast<double>(local_z) / static_cast<double>(scale);
-    smooth_x = terrain_smooth_factor(factor_x);
-    smooth_z = terrain_smooth_factor(factor_z);
-    noise_left = terrain_signed_unit_noise(seed_value, grid_x0, grid_z0);
-    noise_right = terrain_signed_unit_noise(seed_value, grid_x1, grid_z0);
-    noise_top = terrain_lerp(noise_left, noise_right, smooth_x);
-    noise_left = terrain_signed_unit_noise(seed_value, grid_x0, grid_z1);
-    noise_right = terrain_signed_unit_noise(seed_value, grid_x1, grid_z1);
-    noise_bottom = terrain_lerp(noise_left, noise_right, smooth_x);
-    noise_value = terrain_lerp(noise_top, noise_bottom, smooth_z);
+    smooth_x = voxel_smooth_factor(factor_x);
+    smooth_z = voxel_smooth_factor(factor_z);
+    noise_left = voxel_signed_unit_noise(seed_value, grid_x0, grid_z0);
+    noise_right = voxel_signed_unit_noise(seed_value, grid_x1, grid_z0);
+    noise_top = voxel_lerp(noise_left, noise_right, smooth_x);
+    noise_left = voxel_signed_unit_noise(seed_value, grid_x0, grid_z1);
+    noise_right = voxel_signed_unit_noise(seed_value, grid_x1, grid_z1);
+    noise_bottom = voxel_lerp(noise_left, noise_right, smooth_x);
+    noise_value = voxel_lerp(noise_top, noise_bottom, smooth_z);
     return (noise_value);
 }
 
-terrain_biome terrain_pick_biome(uint64_t seed_value,
+voxel_biome voxel_pick_biome(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
     int32_t biome_zone_width) noexcept
 {
@@ -1638,8 +1586,8 @@ terrain_biome terrain_pick_biome(uint64_t seed_value,
     int32_t biome_zone_z;
     int64_t biome_selector;
 
-    biome_zone_x = terrain_floor_div(world_block_x, biome_zone_width);
-    biome_zone_z = terrain_floor_div(world_block_z, biome_zone_width);
+    biome_zone_x = voxel_floor_div(world_block_x, biome_zone_width);
+    biome_zone_z = voxel_floor_div(world_block_z, biome_zone_width);
     biome_selector = static_cast<int64_t>(seed_value % 5U)
         + static_cast<int64_t>(biome_zone_x)
         + static_cast<int64_t>(biome_zone_z);
@@ -1647,18 +1595,18 @@ terrain_biome terrain_pick_biome(uint64_t seed_value,
     if (biome_selector < 0)
         biome_selector += 5;
     if (biome_selector == 0)
-        return (TERRAIN_BIOME_PLAINS);
+        return (VOXEL_BIOME_PLAINS);
     if (biome_selector == 1)
-        return (TERRAIN_BIOME_HILLS);
+        return (VOXEL_BIOME_HILLS);
     if (biome_selector == 2)
-        return (TERRAIN_BIOME_DESERT);
+        return (VOXEL_BIOME_DESERT);
     if (biome_selector == 3)
-        return (TERRAIN_BIOME_SNOW);
-    return (TERRAIN_BIOME_MOUNTAINS);
+        return (VOXEL_BIOME_SNOW);
+    return (VOXEL_BIOME_MOUNTAINS);
 }
 
-static uint32_t terrain_pick_biome_with_individual_sizes(
-    const terrain_generation_config &config, uint64_t seed_value,
+static uint32_t voxel_pick_biome_with_individual_sizes(
+    const voxel_generation_config &config, uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z) noexcept
 {
     uint32_t biome_index;
@@ -1669,12 +1617,12 @@ static uint32_t terrain_pick_biome_with_individual_sizes(
     best_score = 1.0e30;
     biome_index = 0U;
     while (biome_index < config.biome_count
-        && biome_index < TERRAIN_MAX_CUSTOM_BIOMES)
+        && biome_index < VOXEL_MAX_CUSTOM_BIOMES)
     {
-        const int32_t width = terrain_get_biome_zone_width_for_biome(
+        const int32_t width = voxel_get_biome_zone_width_for_biome(
             config, seed_value, biome_index);
-        const int32_t cell_x = terrain_floor_div(world_block_x, width);
-        const int32_t cell_z = terrain_floor_div(world_block_z, width);
+        const int32_t cell_x = voxel_floor_div(world_block_x, width);
+        const int32_t cell_z = voxel_floor_div(world_block_z, width);
         int32_t neighbour_z = -1;
         while (neighbour_z <= 1)
         {
@@ -1686,14 +1634,14 @@ static uint32_t terrain_pick_biome_with_individual_sizes(
                 const int32_t origin_x = candidate_cell_x * width;
                 const int32_t origin_z = candidate_cell_z * width;
                 const int32_t site_x = origin_x + width / 2
-                    + static_cast<int32_t>(terrain_signed_unit_noise(
+                    + static_cast<int32_t>(voxel_signed_unit_noise(
                         seed_value ^ UINT64_C(0xA24BAED4963EE407)
                             ^ (static_cast<uint64_t>(biome_index + 1U)
                                 * UINT64_C(0xD6E8FEB86659FD93)),
                         candidate_cell_x, candidate_cell_z)
                         * static_cast<double>(width) * 0.35);
                 const int32_t site_z = origin_z + width / 2
-                    + static_cast<int32_t>(terrain_signed_unit_noise(
+                    + static_cast<int32_t>(voxel_signed_unit_noise(
                         seed_value ^ UINT64_C(0x9FB21C651E98DF25)
                             ^ (static_cast<uint64_t>(biome_index + 1U)
                                 * UINT64_C(0x94D049BB133111EB)),
@@ -1705,7 +1653,7 @@ static uint32_t terrain_pick_biome_with_individual_sizes(
                     - site_z);
                 const double normaliser = static_cast<double>(width)
                     * static_cast<double>(width);
-                const double tie_break = (terrain_signed_unit_noise(
+                const double tie_break = (voxel_signed_unit_noise(
                     seed_value ^ UINT64_C(0xC6BC279692B5CC83),
                     candidate_cell_x + static_cast<int32_t>(biome_index),
                     candidate_cell_z - static_cast<int32_t>(biome_index))
@@ -1726,68 +1674,68 @@ static uint32_t terrain_pick_biome_with_individual_sizes(
     return (best_biome);
 }
 
-uint32_t terrain_surface_block_for_biome(terrain_biome biome) noexcept
+uint32_t voxel_surface_block_for_biome(voxel_biome biome) noexcept
 {
-    if (biome == TERRAIN_BIOME_DESERT)
-        return (TERRAIN_GENERATOR_SAND_BLOCK);
-    if (biome == TERRAIN_BIOME_SNOW)
-        return (TERRAIN_GENERATOR_SNOW_BLOCK);
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
-        return (TERRAIN_GENERATOR_SLATE_BLOCK);
-    return (TERRAIN_GENERATOR_GRASS_BLOCK);
+    if (biome == VOXEL_BIOME_DESERT)
+        return (VOXEL_GENERATOR_SAND_BLOCK);
+    if (biome == VOXEL_BIOME_SNOW)
+        return (VOXEL_GENERATOR_SNOW_BLOCK);
+    if (biome == VOXEL_BIOME_MOUNTAINS)
+        return (VOXEL_GENERATOR_SLATE_BLOCK);
+    return (VOXEL_GENERATOR_GRASS_BLOCK);
 }
 
-uint32_t terrain_subsurface_block_for_biome(terrain_biome biome) noexcept
+uint32_t voxel_subsurface_block_for_biome(voxel_biome biome) noexcept
 {
-    if (biome == TERRAIN_BIOME_DESERT)
-        return (TERRAIN_GENERATOR_CANYON_ROCK_BLOCK);
-    if (biome == TERRAIN_BIOME_SNOW)
-        return (TERRAIN_GENERATOR_PERMAFROST_BLOCK);
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
-        return (TERRAIN_GENERATOR_ANDESITE_BLOCK);
-    return (TERRAIN_GENERATOR_DIRT_BLOCK);
+    if (biome == VOXEL_BIOME_DESERT)
+        return (VOXEL_GENERATOR_CANYON_ROCK_BLOCK);
+    if (biome == VOXEL_BIOME_SNOW)
+        return (VOXEL_GENERATOR_PERMAFROST_BLOCK);
+    if (biome == VOXEL_BIOME_MOUNTAINS)
+        return (VOXEL_GENERATOR_ANDESITE_BLOCK);
+    return (VOXEL_GENERATOR_DIRT_BLOCK);
 }
 
-uint32_t terrain_deep_block_for_biome(terrain_biome biome) noexcept
+uint32_t voxel_deep_block_for_biome(voxel_biome biome) noexcept
 {
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
-        return (TERRAIN_GENERATOR_BASALT_BLOCK);
-    if (biome == TERRAIN_BIOME_DESERT)
-        return (TERRAIN_GENERATOR_LIMESTONE_BLOCK);
-    if (biome == TERRAIN_BIOME_SNOW)
-        return (TERRAIN_GENERATOR_FROZEN_STONE_BLOCK);
-    if (biome == TERRAIN_BIOME_HILLS)
-        return (TERRAIN_GENERATOR_GRANITE_BLOCK);
-    return (TERRAIN_GENERATOR_STONE_BLOCK);
+    if (biome == VOXEL_BIOME_MOUNTAINS)
+        return (VOXEL_GENERATOR_BASALT_BLOCK);
+    if (biome == VOXEL_BIOME_DESERT)
+        return (VOXEL_GENERATOR_LIMESTONE_BLOCK);
+    if (biome == VOXEL_BIOME_SNOW)
+        return (VOXEL_GENERATOR_FROZEN_STONE_BLOCK);
+    if (biome == VOXEL_BIOME_HILLS)
+        return (VOXEL_GENERATOR_GRANITE_BLOCK);
+    return (VOXEL_GENERATOR_STONE_BLOCK);
 }
 
-ft_bool terrain_biome_has_shrubs(terrain_biome biome) noexcept
+ft_bool voxel_biome_has_shrubs(voxel_biome biome) noexcept
 {
-    if (biome == TERRAIN_BIOME_PLAINS)
+    if (biome == VOXEL_BIOME_PLAINS)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_HILLS)
+    if (biome == VOXEL_BIOME_HILLS)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_DESERT)
+    if (biome == VOXEL_BIOME_DESERT)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-ft_bool terrain_biome_has_trees(terrain_biome biome) noexcept
+ft_bool voxel_biome_has_trees(voxel_biome biome) noexcept
 {
-    if (biome == TERRAIN_BIOME_PLAINS)
+    if (biome == VOXEL_BIOME_PLAINS)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_HILLS)
+    if (biome == VOXEL_BIOME_HILLS)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_DESERT)
+    if (biome == VOXEL_BIOME_DESERT)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_SNOW)
+    if (biome == VOXEL_BIOME_SNOW)
         return (FT_TRUE);
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
+    if (biome == VOXEL_BIOME_MOUNTAINS)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-static uint32_t terrain_normalise_tree_variant(uint32_t variant_index,
+static uint32_t voxel_normalise_tree_variant(uint32_t variant_index,
     uint32_t variant_count) noexcept
 {
     if (variant_count == 0U)
@@ -1795,77 +1743,77 @@ static uint32_t terrain_normalise_tree_variant(uint32_t variant_index,
     return (variant_index % variant_count);
 }
 
-const terrain_block_metadata &terrain_get_block_metadata(uint32_t block_id)
+const voxel_block_metadata &voxel_get_block_metadata(uint32_t block_id)
     noexcept
 {
-    const terrain_block_metadata *runtime_metadata;
+    const voxel_block_metadata *runtime_metadata;
 
-    runtime_metadata = terrain_runtime_find_block_metadata(block_id);
+    runtime_metadata = voxel_runtime_find_block_metadata(block_id);
     if (runtime_metadata != ft_nullptr)
         return (*runtime_metadata);
-    if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
-            / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
+    if (block_id >= static_cast<uint32_t>(sizeof(VOXEL_BLOCK_REGISTRY)
+            / sizeof(VOXEL_BLOCK_REGISTRY[0])))
     {
-        terrain_abort_unknown_block_id(block_id,
-            "terrain_get_block_metadata");
-        return (TERRAIN_BLOCK_REGISTRY[GAME_VOXEL_AIR_BLOCK]);
+        voxel_abort_unknown_block_id(block_id,
+            "voxel_get_block_metadata");
+        return (VOXEL_BLOCK_REGISTRY[GAME_VOXEL_AIR_BLOCK]);
     }
-    return (TERRAIN_BLOCK_REGISTRY[block_id]);
+    return (VOXEL_BLOCK_REGISTRY[block_id]);
 }
 
-ft_bool terrain_block_is_known(uint32_t block_id) noexcept
+ft_bool voxel_block_is_known(uint32_t block_id) noexcept
 {
-    if (terrain_runtime_block_is_known(block_id) == FT_TRUE)
+    if (voxel_runtime_block_is_known(block_id) == FT_TRUE)
         return (FT_TRUE);
-    if (block_id >= static_cast<uint32_t>(sizeof(TERRAIN_BLOCK_REGISTRY)
-            / sizeof(TERRAIN_BLOCK_REGISTRY[0])))
+    if (block_id >= static_cast<uint32_t>(sizeof(VOXEL_BLOCK_REGISTRY)
+            / sizeof(VOXEL_BLOCK_REGISTRY[0])))
         return (FT_FALSE);
     return (FT_TRUE);
 }
 
-ft_bool terrain_block_is_solid(uint32_t block_id) noexcept
+ft_bool voxel_block_is_solid(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).solid);
+    return (voxel_get_block_metadata(block_id).solid);
 }
 
-ft_bool terrain_block_is_transparent(uint32_t block_id) noexcept
+ft_bool voxel_block_is_transparent(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).transparent);
+    return (voxel_get_block_metadata(block_id).transparent);
 }
 
-ft_bool terrain_block_is_liquid(uint32_t block_id) noexcept
+ft_bool voxel_block_is_liquid(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).liquid);
+    return (voxel_get_block_metadata(block_id).liquid);
 }
 
-ft_bool terrain_block_is_replaceable(uint32_t block_id) noexcept
+ft_bool voxel_block_is_replaceable(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).replaceable);
+    return (voxel_get_block_metadata(block_id).replaceable);
 }
 
-ft_bool terrain_block_can_host_ore(uint32_t block_id) noexcept
+ft_bool voxel_block_can_host_ore(uint32_t block_id) noexcept
 {
-    if (terrain_get_block_metadata(block_id).can_host_ore == FT_TRUE)
+    if (voxel_get_block_metadata(block_id).can_host_ore == FT_TRUE)
         return (FT_TRUE);
-    if (block_id == TERRAIN_GENERATOR_STONE_BLOCK
-        || block_id == TERRAIN_GENERATOR_GRANITE_BLOCK
-        || block_id == TERRAIN_GENERATOR_ANDESITE_BLOCK
-        || block_id == TERRAIN_GENERATOR_DIORITE_BLOCK
-        || block_id == TERRAIN_GENERATOR_LIMESTONE_BLOCK
-        || block_id == TERRAIN_GENERATOR_BASALT_BLOCK)
+    if (block_id == VOXEL_GENERATOR_STONE_BLOCK
+        || block_id == VOXEL_GENERATOR_GRANITE_BLOCK
+        || block_id == VOXEL_GENERATOR_ANDESITE_BLOCK
+        || block_id == VOXEL_GENERATOR_DIORITE_BLOCK
+        || block_id == VOXEL_GENERATOR_LIMESTONE_BLOCK
+        || block_id == VOXEL_GENERATOR_BASALT_BLOCK)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-int32_t terrain_get_biome_zone_width(
-    const terrain_generation_config &config, uint64_t seed_value) noexcept
+int32_t voxel_get_biome_zone_width(
+    const voxel_generation_config &config, uint64_t seed_value) noexcept
 {
     int64_t range;
 
     if (config.enable_biome_size_control == FT_FALSE
-        || config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
+        || config.biome_size_min < VOXEL_BIOME_SIZE_MINIMUM
         || config.biome_size_max < config.biome_size_min)
-        return (TERRAIN_BIOME_ZONE_WIDTH);
+        return (VOXEL_BIOME_ZONE_WIDTH);
     range = static_cast<int64_t>(config.biome_size_max)
         - static_cast<int64_t>(config.biome_size_min) + 1;
     if (range <= 1)
@@ -1874,8 +1822,8 @@ int32_t terrain_get_biome_zone_width(
         % static_cast<uint64_t>(range)));
 }
 
-int32_t terrain_get_biome_zone_width_for_biome(
-    const terrain_generation_config &config, uint64_t seed_value,
+int32_t voxel_get_biome_zone_width_for_biome(
+    const voxel_generation_config &config, uint64_t seed_value,
     uint32_t biome_index) noexcept
 {
     int32_t minimum_size;
@@ -1883,8 +1831,8 @@ int32_t terrain_get_biome_zone_width_for_biome(
     int64_t range;
 
     if (config.enable_biome_size_control == FT_FALSE
-        || biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
-        return (TERRAIN_BIOME_ZONE_WIDTH);
+        || biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
+        return (VOXEL_BIOME_ZONE_WIDTH);
     minimum_size = config.biome_size_min;
     maximum_size = config.biome_size_max;
     if (config.biome_size_override_enabled[biome_index] == FT_TRUE)
@@ -1892,9 +1840,9 @@ int32_t terrain_get_biome_zone_width_for_biome(
         minimum_size = config.biome_size_min_by_biome[biome_index];
         maximum_size = config.biome_size_max_by_biome[biome_index];
     }
-    if (minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+    if (minimum_size < VOXEL_BIOME_SIZE_MINIMUM
         || maximum_size < minimum_size)
-        return (TERRAIN_BIOME_ZONE_WIDTH);
+        return (VOXEL_BIOME_ZONE_WIDTH);
     range = static_cast<int64_t>(maximum_size)
         - static_cast<int64_t>(minimum_size) + 1;
     if (range <= 1)
@@ -1905,181 +1853,166 @@ int32_t terrain_get_biome_zone_width_for_biome(
         % static_cast<uint64_t>(range)));
 }
 
-ft_bool terrain_block_is_ore(uint32_t block_id) noexcept
+ft_bool voxel_block_is_ore(uint32_t block_id) noexcept
 {
-    if (terrain_get_block_metadata(block_id).is_ore == FT_TRUE)
+    if (voxel_get_block_metadata(block_id).is_ore == FT_TRUE)
         return (FT_TRUE);
-    if (block_id == TERRAIN_GENERATOR_COAL_ORE_BLOCK
-        || block_id == TERRAIN_GENERATOR_IRON_ORE_BLOCK
-        || block_id == TERRAIN_GENERATOR_GOLD_ORE_BLOCK
-        || block_id == TERRAIN_GENERATOR_DIAMOND_ORE_BLOCK
-        || block_id == TERRAIN_GENERATOR_EMERALD_ORE_BLOCK
-        || block_id == TERRAIN_GENERATOR_COPPER_ORE_BLOCK)
+    if (block_id == VOXEL_GENERATOR_COAL_ORE_BLOCK
+        || block_id == VOXEL_GENERATOR_IRON_ORE_BLOCK
+        || block_id == VOXEL_GENERATOR_GOLD_ORE_BLOCK
+        || block_id == VOXEL_GENERATOR_DIAMOND_ORE_BLOCK
+        || block_id == VOXEL_GENERATOR_EMERALD_ORE_BLOCK
+        || block_id == VOXEL_GENERATOR_COPPER_ORE_BLOCK)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-ft_bool terrain_block_emits_light(uint32_t block_id) noexcept
+ft_bool voxel_block_emits_light(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).light_emitting);
+    return (voxel_get_block_metadata(block_id).light_emitting);
 }
 
-uint8_t terrain_block_emitted_light_level(uint32_t block_id) noexcept
+ft_bool voxel_block_occludes_faces(uint32_t block_id) noexcept
 {
-    const terrain_block_metadata &metadata = terrain_get_block_metadata(block_id);
-    if (metadata.emitted_light_level > 15U)
-        return (15U);
-    if (metadata.light_emitting == FT_TRUE && metadata.emitted_light_level == 0U)
-        return (15U);
-    return (metadata.emitted_light_level);
+    return (voxel_get_block_metadata(block_id).occludes_faces);
 }
 
-uint8_t terrain_block_light_attenuation(uint32_t block_id) noexcept
+uint32_t voxel_block_hardness(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).light_attenuation);
+    return (voxel_get_block_metadata(block_id).hardness);
 }
 
-ft_bool terrain_block_occludes_faces(uint32_t block_id) noexcept
+ft_bool voxel_block_is_breakable(uint32_t block_id) noexcept
 {
-    return (terrain_get_block_metadata(block_id).occludes_faces);
+    return (voxel_get_block_metadata(block_id).breakable);
 }
 
-uint32_t terrain_block_hardness(uint32_t block_id) noexcept
-{
-    return (terrain_get_block_metadata(block_id).hardness);
-}
-
-ft_bool terrain_block_is_breakable(uint32_t block_id) noexcept
-{
-    return (terrain_get_block_metadata(block_id).breakable);
-}
-
-const terrain_tree_template &terrain_small_oak_tree_template_variant(
+const voxel_tree_template &voxel_small_oak_tree_template_variant(
     uint32_t variant_index) noexcept
 {
-    variant_index = terrain_normalise_tree_variant(variant_index, 3U);
+    variant_index = voxel_normalise_tree_variant(variant_index, 3U);
     if (variant_index == 1U)
-        return (TERRAIN_SMALL_OAK_TREE_TEMPLATE_VARIANT_1);
+        return (VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_1);
     if (variant_index == 2U)
-        return (TERRAIN_SMALL_OAK_TREE_TEMPLATE_VARIANT_2);
-    return (TERRAIN_SMALL_OAK_TREE_TEMPLATE);
+        return (VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_2);
+    return (VOXEL_SMALL_OAK_TREE_TEMPLATE);
 }
 
-const terrain_tree_template &terrain_small_pine_tree_template_variant(
+const voxel_tree_template &voxel_small_pine_tree_template_variant(
     uint32_t variant_index) noexcept
 {
-    variant_index = terrain_normalise_tree_variant(variant_index, 3U);
+    variant_index = voxel_normalise_tree_variant(variant_index, 3U);
     if (variant_index == 1U)
-        return (TERRAIN_SMALL_PINE_TREE_TEMPLATE_VARIANT_1);
+        return (VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_1);
     if (variant_index == 2U)
-        return (TERRAIN_SMALL_PINE_TREE_TEMPLATE_VARIANT_2);
-    return (TERRAIN_SMALL_PINE_TREE_TEMPLATE);
+        return (VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_2);
+    return (VOXEL_SMALL_PINE_TREE_TEMPLATE);
 }
 
-const terrain_tree_template &terrain_small_cactus_tree_template_variant(
+const voxel_tree_template &voxel_small_cactus_tree_template_variant(
     uint32_t variant_index) noexcept
 {
-    variant_index = terrain_normalise_tree_variant(variant_index, 3U);
+    variant_index = voxel_normalise_tree_variant(variant_index, 3U);
     if (variant_index == 1U)
-        return (TERRAIN_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1);
+        return (VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1);
     if (variant_index == 2U)
-        return (TERRAIN_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2);
-    return (TERRAIN_SMALL_CACTUS_TREE_TEMPLATE);
+        return (VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2);
+    return (VOXEL_SMALL_CACTUS_TREE_TEMPLATE);
 }
 
-const terrain_tree_template &terrain_small_oak_tree_template(
+const voxel_tree_template &voxel_small_oak_tree_template(
     uint32_t variant_index) noexcept
 {
-    return (terrain_small_oak_tree_template_variant(variant_index));
+    return (voxel_small_oak_tree_template_variant(variant_index));
 }
 
-const terrain_tree_template &terrain_small_pine_tree_template(
+const voxel_tree_template &voxel_small_pine_tree_template(
     uint32_t variant_index) noexcept
 {
-    return (terrain_small_pine_tree_template_variant(variant_index));
+    return (voxel_small_pine_tree_template_variant(variant_index));
 }
 
-const terrain_tree_template &terrain_small_cactus_tree_template(
+const voxel_tree_template &voxel_small_cactus_tree_template(
     uint32_t variant_index) noexcept
 {
-    return (terrain_small_cactus_tree_template_variant(variant_index));
+    return (voxel_small_cactus_tree_template_variant(variant_index));
 }
 
-const terrain_tree_template &terrain_large_oak_tree_template(
+const voxel_tree_template &voxel_large_oak_tree_template(
     uint32_t variant_index) noexcept
 {
-    return (terrain_large_oak_tree_template_variant(variant_index));
+    return (voxel_large_oak_tree_template_variant(variant_index));
 }
 
-const terrain_tree_template &terrain_large_pine_tree_template(
+const voxel_tree_template &voxel_large_pine_tree_template(
     uint32_t variant_index) noexcept
 {
-    return (terrain_large_pine_tree_template_variant(variant_index));
+    return (voxel_large_pine_tree_template_variant(variant_index));
 }
 
-const terrain_tree_template &terrain_large_oak_tree_template_variant(
+const voxel_tree_template &voxel_large_oak_tree_template_variant(
     uint32_t variant_index) noexcept
 {
-    variant_index = terrain_normalise_tree_variant(variant_index, 2U);
+    variant_index = voxel_normalise_tree_variant(variant_index, 2U);
     if (variant_index == 1U)
-        return (TERRAIN_LARGE_OAK_TREE_TEMPLATE_VARIANT_1);
-    return (TERRAIN_LARGE_OAK_TREE_TEMPLATE);
+        return (VOXEL_LARGE_OAK_TREE_TEMPLATE_VARIANT_1);
+    return (VOXEL_LARGE_OAK_TREE_TEMPLATE);
 }
 
-const terrain_tree_template &terrain_large_pine_tree_template_variant(
+const voxel_tree_template &voxel_large_pine_tree_template_variant(
     uint32_t variant_index) noexcept
 {
-    variant_index = terrain_normalise_tree_variant(variant_index, 2U);
+    variant_index = voxel_normalise_tree_variant(variant_index, 2U);
     if (variant_index == 1U)
-        return (TERRAIN_LARGE_PINE_TREE_TEMPLATE_VARIANT_1);
-    return (TERRAIN_LARGE_PINE_TREE_TEMPLATE);
+        return (VOXEL_LARGE_PINE_TREE_TEMPLATE_VARIANT_1);
+    return (VOXEL_LARGE_PINE_TREE_TEMPLATE);
 }
 
-const terrain_tree_template &terrain_tree_template_for_biome(
-    terrain_biome biome) noexcept
+const voxel_tree_template &voxel_tree_template_for_biome(
+    voxel_biome biome) noexcept
 {
-    return (terrain_tree_template_for_biome(biome, 0U));
+    return (voxel_tree_template_for_biome(biome, 0U));
 }
 
-const terrain_tree_template &terrain_tree_template_for_biome(
-    terrain_biome biome, uint64_t seed_value) noexcept
+const voxel_tree_template &voxel_tree_template_for_biome(
+    voxel_biome biome, uint64_t seed_value) noexcept
 {
     uint32_t variant_index;
 
     variant_index = static_cast<uint32_t>(seed_value % 5U);
-    if (biome == TERRAIN_BIOME_DESERT)
-        return (terrain_small_cactus_tree_template(variant_index));
-    if (biome == TERRAIN_BIOME_SNOW)
+    if (biome == VOXEL_BIOME_DESERT)
+        return (voxel_small_cactus_tree_template(variant_index));
+    if (biome == VOXEL_BIOME_SNOW)
     {
         if (variant_index < 3U)
-            return (terrain_small_pine_tree_template(variant_index));
-        return (terrain_large_pine_tree_template(variant_index - 3U));
+            return (voxel_small_pine_tree_template(variant_index));
+        return (voxel_large_pine_tree_template(variant_index - 3U));
     }
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
+    if (biome == VOXEL_BIOME_MOUNTAINS)
     {
         if (variant_index < 3U)
-            return (terrain_small_pine_tree_template(variant_index));
-        return (terrain_large_pine_tree_template(variant_index - 3U));
+            return (voxel_small_pine_tree_template(variant_index));
+        return (voxel_large_pine_tree_template(variant_index - 3U));
     }
-    if (biome == TERRAIN_BIOME_HILLS)
+    if (biome == VOXEL_BIOME_HILLS)
     {
         if (variant_index < 3U)
-            return (terrain_small_oak_tree_template(variant_index));
-        return (terrain_large_oak_tree_template(variant_index - 3U));
+            return (voxel_small_oak_tree_template(variant_index));
+        return (voxel_large_oak_tree_template(variant_index - 3U));
     }
     if (variant_index < 3U)
-        return (terrain_small_oak_tree_template(variant_index));
-    return (terrain_large_oak_tree_template(variant_index - 3U));
+        return (voxel_small_oak_tree_template(variant_index));
+    return (voxel_large_oak_tree_template(variant_index - 3U));
 }
 
-terrain_biome terrain_get_biome(int32_t world_block_x, int32_t world_block_z,
+voxel_biome voxel_get_biome(int32_t world_block_x, int32_t world_block_z,
     const char *seed_string) noexcept
 {
-    return (terrain_pick_biome(terrain_seed_value(seed_string), world_block_x,
-        world_block_z, TERRAIN_BIOME_ZONE_WIDTH));
+    return (voxel_pick_biome(voxel_seed_value(seed_string), world_block_x,
+        world_block_z, VOXEL_BIOME_ZONE_WIDTH));
 }
 
-uint32_t terrain_select_biome(const terrain_generation_config &config,
+uint32_t voxel_select_biome(const voxel_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z) noexcept
 {
     uint32_t selected;
@@ -2090,24 +2023,24 @@ uint32_t terrain_select_biome(const terrain_generation_config &config,
         selected = config.biome_selector(seed_value, world_block_x,
             world_block_z, config.biome_count, config.biome_selector_user_data);
     else if (config.enable_biome_size_control == FT_TRUE)
-        selected = terrain_pick_biome_with_individual_sizes(config, seed_value,
+        selected = voxel_pick_biome_with_individual_sizes(config, seed_value,
             world_block_x, world_block_z);
     else
-        selected = static_cast<uint32_t>(terrain_pick_biome(seed_value,
+        selected = static_cast<uint32_t>(voxel_pick_biome(seed_value,
             world_block_x, world_block_z,
-            terrain_get_biome_zone_width(config, seed_value)));
+            voxel_get_biome_zone_width(config, seed_value)));
     return (selected % config.biome_count);
 }
 
-uint32_t terrain_get_biome_index(const terrain_generation_config &config,
+uint32_t voxel_get_biome_index(const voxel_generation_config &config,
     int32_t world_block_x, int32_t world_block_z,
     const char *seed_string) noexcept
 {
-    return (terrain_select_biome(config, terrain_seed_value(seed_string),
+    return (voxel_select_biome(config, voxel_seed_value(seed_string),
         world_block_x, world_block_z));
 }
 
-terrain_generation_config::terrain_generation_config() noexcept
+voxel_generation_config::voxel_generation_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), sea_level(0),
       large_noise_scale(0), detail_noise_scale(0), detail_noise_percent(0),
       enable_biome_size_control(FT_FALSE),
@@ -2124,39 +2057,37 @@ terrain_generation_config::terrain_generation_config() noexcept
       enable_erosion(FT_FALSE), mountain_ridge_scale(0),
       mountain_ridge_strength(0U), erosion_noise_scale(0), erosion_strength(0U),
       allow_cross_chunk_features(FT_FALSE), cross_chunk_block_writer(ft_nullptr),
-      cross_chunk_block_writer_user_data(ft_nullptr),
-      cross_chunk_block_reader(ft_nullptr),
-      cross_chunk_block_reader_user_data(ft_nullptr)
+      cross_chunk_block_writer_user_data(ft_nullptr)
 {
     return ;
 }
 
-terrain_generation_config::~terrain_generation_config() noexcept
+voxel_generation_config::~voxel_generation_config() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_generation_config::initialize() noexcept
+int32_t voxel_generation_config::initialize() noexcept
 {
     uint32_t index;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         this->biomes[index].initialize();
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         this->features[index].initialize();
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_ORE_RULES)
+    while (index < VOXEL_MAX_ORE_RULES)
     {
         this->ores[index].initialize();
         index += 1U;
@@ -2164,7 +2095,7 @@ int32_t terrain_generation_config::initialize() noexcept
     this->underground_structures.initialize();
     this->fluids.initialize();
     this->layers.initialize();
-    if (terrain_apply_default_generation_config(*this)
+    if (voxel_apply_default_generation_config(*this)
         != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -2174,8 +2105,8 @@ int32_t terrain_generation_config::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::initialize(
-    const terrain_generation_config &other) noexcept
+int32_t voxel_generation_config::initialize(
+    const voxel_generation_config &other) noexcept
 {
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -2222,12 +2153,10 @@ int32_t terrain_generation_config::initialize(
     this->allow_cross_chunk_features = other.allow_cross_chunk_features;
     this->cross_chunk_block_writer = other.cross_chunk_block_writer;
     this->cross_chunk_block_writer_user_data = other.cross_chunk_block_writer_user_data;
-    this->cross_chunk_block_reader = other.cross_chunk_block_reader;
-    this->cross_chunk_block_reader_user_data = other.cross_chunk_block_reader_user_data;
     uint32_t index;
 
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         this->biomes[index].initialize(other.biomes[index]);
         index += 1U;
@@ -2244,7 +2173,7 @@ int32_t terrain_generation_config::initialize(
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         uint32_t template_index;
 
@@ -2263,13 +2192,13 @@ int32_t terrain_generation_config::initialize(
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         this->features[index].initialize(other.features[index]);
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_ORE_RULES)
+    while (index < VOXEL_MAX_ORE_RULES)
     {
         this->ores[index].initialize(other.ores[index]);
         index += 1U;
@@ -2278,7 +2207,7 @@ int32_t terrain_generation_config::initialize(
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_generation_config::destroy() noexcept
+uint32_t voxel_generation_config::destroy() noexcept
 {
     uint32_t index;
 
@@ -2286,7 +2215,7 @@ uint32_t terrain_generation_config::destroy() noexcept
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         this->biomes[index].destroy();
         index += 1U;
@@ -2295,13 +2224,13 @@ uint32_t terrain_generation_config::destroy() noexcept
     ft_memset(this->tree_template_blocks, 0,
         sizeof(this->tree_template_blocks));
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         this->features[index].destroy();
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_ORE_RULES)
+    while (index < VOXEL_MAX_ORE_RULES)
     {
         this->ores[index].destroy();
         index += 1U;
@@ -2341,14 +2270,12 @@ uint32_t terrain_generation_config::destroy() noexcept
     this->allow_cross_chunk_features = FT_FALSE;
     this->cross_chunk_block_writer = ft_nullptr;
     this->cross_chunk_block_writer_user_data = ft_nullptr;
-    this->cross_chunk_block_reader = ft_nullptr;
-    this->cross_chunk_block_reader_user_data = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_generation_config::move(
-    terrain_generation_config &other) noexcept
+uint32_t voxel_generation_config::move(
+    voxel_generation_config &other) noexcept
 {
     int32_t error_code;
 
@@ -2359,27 +2286,27 @@ uint32_t terrain_generation_config::move(
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_generation_config::is_initialised() const noexcept
+ft_bool voxel_generation_config::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-static int32_t terrain_apply_default_generation_config(
-    terrain_generation_config &config) noexcept
+static int32_t voxel_apply_default_generation_config(
+    voxel_generation_config &config) noexcept
 {
     uint32_t index;
 
-    config.sea_level = TERRAIN_GENERATOR_SEA_LEVEL;
+    config.sea_level = VOXEL_GENERATOR_SEA_LEVEL;
     config.large_noise_scale = 32;
     config.detail_noise_scale = 8;
     config.detail_noise_percent = 50;
     config.enable_biome_size_control = FT_TRUE;
-    config.biome_size_min = TERRAIN_BIOME_ZONE_WIDTH;
-    config.biome_size_max = TERRAIN_BIOME_ZONE_WIDTH;
+    config.biome_size_min = VOXEL_BIOME_ZONE_WIDTH;
+    config.biome_size_max = VOXEL_BIOME_ZONE_WIDTH;
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         config.biome_size_min_by_biome[index] = config.biome_size_min;
         config.biome_size_max_by_biome[index] = config.biome_size_max;
@@ -2389,104 +2316,104 @@ static int32_t terrain_apply_default_generation_config(
     config.water_chance_percent = 0U;
     config.biome_count = 5U;
     config.tree_template_count = 13U;
-    terrain_copy_tree_template(terrain_small_oak_tree_template_variant(0U),
+    voxel_copy_tree_template(voxel_small_oak_tree_template_variant(0U),
         config.tree_template_blocks[0], &config.tree_templates[0]);
-    terrain_copy_tree_template(terrain_small_oak_tree_template_variant(1U),
+    voxel_copy_tree_template(voxel_small_oak_tree_template_variant(1U),
         config.tree_template_blocks[1], &config.tree_templates[1]);
-    terrain_copy_tree_template(terrain_small_oak_tree_template_variant(2U),
+    voxel_copy_tree_template(voxel_small_oak_tree_template_variant(2U),
         config.tree_template_blocks[2], &config.tree_templates[2]);
-    terrain_copy_tree_template(terrain_small_pine_tree_template_variant(0U),
+    voxel_copy_tree_template(voxel_small_pine_tree_template_variant(0U),
         config.tree_template_blocks[3], &config.tree_templates[3]);
-    terrain_copy_tree_template(terrain_small_pine_tree_template_variant(1U),
+    voxel_copy_tree_template(voxel_small_pine_tree_template_variant(1U),
         config.tree_template_blocks[4], &config.tree_templates[4]);
-    terrain_copy_tree_template(terrain_small_pine_tree_template_variant(2U),
+    voxel_copy_tree_template(voxel_small_pine_tree_template_variant(2U),
         config.tree_template_blocks[5], &config.tree_templates[5]);
-    terrain_copy_tree_template(terrain_small_cactus_tree_template_variant(0U),
+    voxel_copy_tree_template(voxel_small_cactus_tree_template_variant(0U),
         config.tree_template_blocks[6], &config.tree_templates[6]);
-    terrain_copy_tree_template(terrain_small_cactus_tree_template_variant(1U),
+    voxel_copy_tree_template(voxel_small_cactus_tree_template_variant(1U),
         config.tree_template_blocks[7], &config.tree_templates[7]);
-    terrain_copy_tree_template(terrain_small_cactus_tree_template_variant(2U),
+    voxel_copy_tree_template(voxel_small_cactus_tree_template_variant(2U),
         config.tree_template_blocks[8], &config.tree_templates[8]);
-    terrain_copy_tree_template(terrain_large_oak_tree_template_variant(0U),
+    voxel_copy_tree_template(voxel_large_oak_tree_template_variant(0U),
         config.tree_template_blocks[9], &config.tree_templates[9]);
-    terrain_copy_tree_template(terrain_large_oak_tree_template_variant(1U),
+    voxel_copy_tree_template(voxel_large_oak_tree_template_variant(1U),
         config.tree_template_blocks[10], &config.tree_templates[10]);
-    terrain_copy_tree_template(terrain_large_pine_tree_template_variant(0U),
+    voxel_copy_tree_template(voxel_large_pine_tree_template_variant(0U),
         config.tree_template_blocks[11], &config.tree_templates[11]);
-    terrain_copy_tree_template(terrain_large_pine_tree_template_variant(1U),
+    voxel_copy_tree_template(voxel_large_pine_tree_template_variant(1U),
         config.tree_template_blocks[12], &config.tree_templates[12]);
     config.biome_selector = ft_nullptr;
     config.biome_selector_user_data = ft_nullptr;
     config.ore_rule_count = 18U;
-    config.ores[0].block_id = TERRAIN_GENERATOR_COAL_ORE_BLOCK;
+    config.ores[0].block_id = VOXEL_GENERATOR_COAL_ORE_BLOCK;
     config.ores[0].set_range(8, 120);
     config.ores[0].set_vein(8U, 12U);
     config.ores[0].set_enabled(FT_TRUE);
-    config.ores[1].block_id = TERRAIN_GENERATOR_IRON_ORE_BLOCK;
+    config.ores[1].block_id = VOXEL_GENERATOR_IRON_ORE_BLOCK;
     config.ores[1].set_range(4, 80);
     config.ores[1].set_vein(6U, 8U);
     config.ores[1].set_enabled(FT_TRUE);
-    config.ores[2].block_id = TERRAIN_GENERATOR_GOLD_ORE_BLOCK;
+    config.ores[2].block_id = VOXEL_GENERATOR_GOLD_ORE_BLOCK;
     config.ores[2].set_range(4, 48);
     config.ores[2].set_vein(4U, 4U);
     config.ores[2].set_enabled(FT_TRUE);
-    config.ores[3].block_id = TERRAIN_GENERATOR_COPPER_ORE_BLOCK;
+    config.ores[3].block_id = VOXEL_GENERATOR_COPPER_ORE_BLOCK;
     config.ores[3].set_range(16, 90);
     config.ores[3].set_vein(6U, 10U);
     config.ores[3].set_enabled(FT_TRUE);
-    config.ores[4].block_id = TERRAIN_GENERATOR_DIAMOND_ORE_BLOCK;
+    config.ores[4].block_id = VOXEL_GENERATOR_DIAMOND_ORE_BLOCK;
     config.ores[4].set_range(4, 24);
     config.ores[4].set_vein(3U, 2U);
     config.ores[4].set_enabled(FT_TRUE);
-    config.ores[5].block_id = TERRAIN_GENERATOR_EMERALD_ORE_BLOCK;
+    config.ores[5].block_id = VOXEL_GENERATOR_EMERALD_ORE_BLOCK;
     config.ores[5].set_range(8, 36);
     config.ores[5].set_vein(2U, 2U);
     config.ores[5].set_enabled(FT_TRUE);
-    config.ores[6].block_id = TERRAIN_GENERATOR_DIORITE_BLOCK;
+    config.ores[6].block_id = VOXEL_GENERATOR_DIORITE_BLOCK;
     config.ores[6].set_range(4, 55);
     config.ores[6].set_vein(10U, 14U);
     config.ores[6].set_enabled(FT_TRUE);
-    config.ores[7].block_id = TERRAIN_GENERATOR_GRAVEL_BLOCK;
+    config.ores[7].block_id = VOXEL_GENERATOR_GRAVEL_BLOCK;
     config.ores[7].set_range(20, 55);
     config.ores[7].set_vein(10U, 14U);
     config.ores[7].set_enabled(FT_TRUE);
-    config.ores[8].block_id = TERRAIN_GENERATOR_CLAY_BLOCK;
+    config.ores[8].block_id = VOXEL_GENERATOR_CLAY_BLOCK;
     config.ores[8].set_range(40, 60);
     config.ores[8].set_vein(6U, 10U);
     config.ores[8].set_enabled(FT_TRUE);
-    config.ores[9].block_id = TERRAIN_GENERATOR_MOSSY_STONE_BLOCK;
+    config.ores[9].block_id = VOXEL_GENERATOR_MOSSY_STONE_BLOCK;
     config.ores[9].set_range(8, 55);
     config.ores[9].set_vein(5U, 6U);
     config.ores[9].set_enabled(FT_TRUE);
-    config.ores[10].block_id = TERRAIN_GENERATOR_CRACKED_STONE_BLOCK;
+    config.ores[10].block_id = VOXEL_GENERATOR_CRACKED_STONE_BLOCK;
     config.ores[10].set_range(4, 40);
     config.ores[10].set_vein(5U, 6U);
     config.ores[10].set_enabled(FT_TRUE);
-    config.ores[11].block_id = TERRAIN_GENERATOR_OBSIDIAN_BLOCK;
+    config.ores[11].block_id = VOXEL_GENERATOR_OBSIDIAN_BLOCK;
     config.ores[11].set_range(4, 16);
     config.ores[11].set_vein(2U, 2U);
     config.ores[11].set_enabled(FT_TRUE);
-    config.ores[12].block_id = TERRAIN_GENERATOR_QUARTZ_BLOCK;
+    config.ores[12].block_id = VOXEL_GENERATOR_QUARTZ_BLOCK;
     config.ores[12].set_range(4, 48);
     config.ores[12].set_vein(4U, 5U);
     config.ores[12].set_enabled(FT_TRUE);
-    config.ores[13].block_id = TERRAIN_GENERATOR_AMETHYST_BLOCK;
+    config.ores[13].block_id = VOXEL_GENERATOR_AMETHYST_BLOCK;
     config.ores[13].set_range(4, 32);
     config.ores[13].set_vein(3U, 2U);
     config.ores[13].set_enabled(FT_TRUE);
-    config.ores[14].block_id = TERRAIN_GENERATOR_VOLCANIC_ROCK_BLOCK;
+    config.ores[14].block_id = VOXEL_GENERATOR_VOLCANIC_ROCK_BLOCK;
     config.ores[14].set_range(4, 24);
     config.ores[14].set_vein(4U, 3U);
     config.ores[14].set_enabled(FT_TRUE);
-    config.ores[15].block_id = TERRAIN_GENERATOR_FROST_CRYSTAL_BLOCK;
+    config.ores[15].block_id = VOXEL_GENERATOR_FROST_CRYSTAL_BLOCK;
     config.ores[15].set_range(4, 32);
     config.ores[15].set_vein(3U, 2U);
     config.ores[15].set_enabled(FT_TRUE);
-    config.ores[16].block_id = TERRAIN_GENERATOR_SHIMMER_STONE_BLOCK;
+    config.ores[16].block_id = VOXEL_GENERATOR_SHIMMER_STONE_BLOCK;
     config.ores[16].set_range(4, 40);
     config.ores[16].set_vein(4U, 3U);
     config.ores[16].set_enabled(FT_TRUE);
-    config.ores[17].block_id = TERRAIN_GENERATOR_AMBER_BLOCK;
+    config.ores[17].block_id = VOXEL_GENERATOR_AMBER_BLOCK;
     config.ores[17].set_range(4, 36);
     config.ores[17].set_vein(3U, 2U);
     config.ores[17].set_enabled(FT_TRUE);
@@ -2498,15 +2425,13 @@ static int32_t terrain_apply_default_generation_config(
     config.underground_structures.set_cave_entrances(8U, 1U);
     config.underground_structures.set_cavern_rooms(FT_FALSE, 0U, 0U);
     config.fluids.set_enabled(FT_TRUE, FT_TRUE);
-    config.fluids.set_underground_lakes_enabled(FT_TRUE);
     config.fluids.set_river_settings(96, 3);
     config.fluids.set_lake_settings(48, 4U);
-    config.fluids.set_underground_lake_settings(4U, 8, 96, 1U, 1U, 1U);
     config.layers.set_enabled(FT_TRUE, FT_TRUE);
     config.layers.set_depths(3U, 2U, 2U);
     config.layers.set_snowline(84);
-    config.layers.set_block_palette(TERRAIN_GENERATOR_SAND_BLOCK,
-        TERRAIN_GENERATOR_SAND_BLOCK, TERRAIN_GENERATOR_SNOW_BLOCK);
+    config.layers.set_block_palette(VOXEL_GENERATOR_SAND_BLOCK,
+        VOXEL_GENERATOR_SAND_BLOCK, VOXEL_GENERATOR_SNOW_BLOCK);
     config.enable_biome_transitions = FT_TRUE;
     config.biome_transition_noise_scale = 8;
     config.biome_transition_noise_strength = 35U;
@@ -2519,25 +2444,23 @@ static int32_t terrain_apply_default_generation_config(
     config.allow_cross_chunk_features = FT_TRUE;
     config.cross_chunk_block_writer = ft_nullptr;
     config.cross_chunk_block_writer_user_data = ft_nullptr;
-    config.cross_chunk_block_reader = ft_nullptr;
-    config.cross_chunk_block_reader_user_data = ft_nullptr;
     index = 0U;
     while (index < config.biome_count)
     {
-        terrain_biome biome = static_cast<terrain_biome>(index);
-        config.biomes[index].profile = terrain_get_biome_profile(biome);
-        config.biomes[index].surface_block_id = terrain_surface_block_for_biome(biome);
-        config.biomes[index].subsurface_block_id = terrain_subsurface_block_for_biome(biome);
-        config.biomes[index].deep_block_id = terrain_deep_block_for_biome(biome);
-        config.biomes[index].allow_shrubs = terrain_biome_has_shrubs(biome);
-        config.biomes[index].allow_trees = terrain_biome_has_trees(biome);
+        voxel_biome biome = static_cast<voxel_biome>(index);
+        config.biomes[index].profile = voxel_get_biome_profile(biome);
+        config.biomes[index].surface_block_id = voxel_surface_block_for_biome(biome);
+        config.biomes[index].subsurface_block_id = voxel_subsurface_block_for_biome(biome);
+        config.biomes[index].deep_block_id = voxel_deep_block_for_biome(biome);
+        config.biomes[index].allow_shrubs = voxel_biome_has_shrubs(biome);
+        config.biomes[index].allow_trees = voxel_biome_has_trees(biome);
         config.biomes[index].allow_snow_caps = FT_TRUE;
         config.biomes[index].allow_mountain_ridges = FT_TRUE;
         config.biomes[index].shrub_chance_percent = 6U;
         config.biomes[index].tree_chance_percent = 18U;
         config.biomes[index].tree_template_count = 0U;
         while (config.biomes[index].tree_template_count
-            < TERRAIN_MAX_BIOME_TREE_TEMPLATES)
+            < VOXEL_MAX_BIOME_TREE_TEMPLATES)
         {
             config.biomes[index].tree_template_indices[
                 config.biomes[index].tree_template_count] = 0U;
@@ -2549,55 +2472,55 @@ static int32_t terrain_apply_default_generation_config(
         config.biome_size_override_enabled[index] = FT_FALSE;
         index += 1U;
     }
-    config.biomes[TERRAIN_BIOME_PLAINS].tree_template_count = 5U;
-    config.biomes[TERRAIN_BIOME_HILLS].tree_template_count = 5U;
-    config.biomes[TERRAIN_BIOME_DESERT].tree_template_count = 3U;
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_count = 5U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_count = 5U;
+    config.biomes[VOXEL_BIOME_PLAINS].tree_template_count = 5U;
+    config.biomes[VOXEL_BIOME_HILLS].tree_template_count = 5U;
+    config.biomes[VOXEL_BIOME_DESERT].tree_template_count = 3U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_count = 5U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_count = 5U;
     index = 0U;
     while (index < 5U)
     {
-        config.biomes[TERRAIN_BIOME_PLAINS].tree_template_indices[index] = index;
-        config.biomes[TERRAIN_BIOME_HILLS].tree_template_indices[index] = index;
+        config.biomes[VOXEL_BIOME_PLAINS].tree_template_indices[index] = index;
+        config.biomes[VOXEL_BIOME_HILLS].tree_template_indices[index] = index;
         index += 1U;
     }
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_indices[0] = 3U;
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_indices[1] = 4U;
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_indices[2] = 5U;
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_indices[3] = 11U;
-    config.biomes[TERRAIN_BIOME_SNOW].tree_template_indices[4] = 12U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_indices[0] = 3U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_indices[1] = 4U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_indices[2] = 5U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_indices[3] = 11U;
-    config.biomes[TERRAIN_BIOME_MOUNTAINS].tree_template_indices[4] = 12U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_indices[0] = 3U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_indices[1] = 4U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_indices[2] = 5U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_indices[3] = 11U;
+    config.biomes[VOXEL_BIOME_SNOW].tree_template_indices[4] = 12U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_indices[0] = 3U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_indices[1] = 4U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_indices[2] = 5U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_indices[3] = 11U;
+    config.biomes[VOXEL_BIOME_MOUNTAINS].tree_template_indices[4] = 12U;
     index = 0U;
     while (index < 3U)
     {
-        config.biomes[TERRAIN_BIOME_DESERT].tree_template_indices[index]
+        config.biomes[VOXEL_BIOME_DESERT].tree_template_indices[index]
             = index + 6U;
         index += 1U;
     }
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_default_generation_config(
-    terrain_generation_config &config) noexcept
+int32_t voxel_default_generation_config(
+    voxel_generation_config &config) noexcept
 {
     return (config.initialize());
 }
 
-static int32_t terrain_config_require_initialised(
-    const terrain_generation_config &config) noexcept
+static int32_t voxel_config_require_initialised(
+    const voxel_generation_config &config) noexcept
 {
     if (config.is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
     return (FT_ERR_SUCCESS);
 }
 
-static uint32_t terrain_generation_config_count_template_references(
-    const terrain_generation_config &config,
-    const terrain_tree_template *tree_template) noexcept
+static uint32_t voxel_generation_config_count_template_references(
+    const voxel_generation_config &config,
+    const voxel_tree_template *tree_template) noexcept
 {
     uint32_t reference_count;
     uint32_t index;
@@ -2613,14 +2536,14 @@ static uint32_t terrain_generation_config_count_template_references(
         template_index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         if (config.biomes[index].tree_template == tree_template)
             reference_count += 1U;
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         if (config.features[index].template_data == tree_template)
             reference_count += 1U;
@@ -2629,7 +2552,7 @@ static uint32_t terrain_generation_config_count_template_references(
     if (template_index < config.tree_template_count)
     {
         index = 0U;
-        while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+        while (index < VOXEL_MAX_CUSTOM_BIOMES)
         {
             biome_template_index = 0U;
             while (biome_template_index
@@ -2646,18 +2569,18 @@ static uint32_t terrain_generation_config_count_template_references(
     return (reference_count);
 }
 
-int32_t terrain_generation_config::set_sea_level(int32_t value) noexcept
+int32_t voxel_generation_config::set_sea_level(int32_t value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->sea_level = value;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_noise_scales(int32_t large_scale,
+int32_t voxel_generation_config::set_noise_scales(int32_t large_scale,
     int32_t detail_scale, int32_t detail_percent) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (large_scale <= 0 || detail_scale <= 0 || detail_percent < 0
         || detail_percent > 100)
@@ -2668,24 +2591,24 @@ int32_t terrain_generation_config::set_noise_scales(int32_t large_scale,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_size_range(
+int32_t voxel_generation_config::set_biome_size_range(
     int32_t minimum_size, int32_t maximum_size) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+    if (minimum_size < VOXEL_BIOME_SIZE_MINIMUM
         || maximum_size < minimum_size
-        || maximum_size > TERRAIN_BIOME_SIZE_MAXIMUM)
+        || maximum_size > VOXEL_BIOME_SIZE_MAXIMUM)
         return (FT_ERR_INVALID_ARGUMENT);
     this->biome_size_min = minimum_size;
     this->biome_size_max = maximum_size;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_size_control_enabled(
+int32_t voxel_generation_config::set_biome_size_control_enabled(
     ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (enabled != FT_FALSE && enabled != FT_TRUE)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -2693,16 +2616,16 @@ int32_t terrain_generation_config::set_biome_size_control_enabled(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_size_range_for_biome(
+int32_t voxel_generation_config::set_biome_size_range_for_biome(
     uint32_t biome_index, int32_t minimum_size,
     int32_t maximum_size) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES
-        || minimum_size < TERRAIN_BIOME_SIZE_MINIMUM
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES
+        || minimum_size < VOXEL_BIOME_SIZE_MINIMUM
         || maximum_size < minimum_size
-        || maximum_size > TERRAIN_BIOME_SIZE_MAXIMUM)
+        || maximum_size > VOXEL_BIOME_SIZE_MAXIMUM)
         return (FT_ERR_INVALID_ARGUMENT);
     this->biome_size_min_by_biome[biome_index] = minimum_size;
     this->biome_size_max_by_biome[biome_index] = maximum_size;
@@ -2710,22 +2633,22 @@ int32_t terrain_generation_config::set_biome_size_range_for_biome(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_size_override_enabled(
+int32_t voxel_generation_config::set_biome_size_override_enabled(
     uint32_t biome_index, ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES
         || (enabled != FT_FALSE && enabled != FT_TRUE))
         return (FT_ERR_INVALID_ARGUMENT);
     this->biome_size_override_enabled[biome_index] = enabled;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_water_chance_percent(
+int32_t voxel_generation_config::set_water_chance_percent(
     uint32_t value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (value > 100U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -2733,13 +2656,13 @@ int32_t terrain_generation_config::set_water_chance_percent(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_count(uint32_t value) noexcept
+int32_t voxel_generation_config::set_biome_count(uint32_t value) noexcept
 {
     uint32_t index;
 
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (value == 0U || value > TERRAIN_MAX_CUSTOM_BIOMES)
+    if (value == 0U || value > VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     index = this->biome_count;
     while (index < value)
@@ -2757,61 +2680,51 @@ int32_t terrain_generation_config::set_biome_count(uint32_t value) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_selector(
-    terrain_biome_selector selector, void *user_data) noexcept
+int32_t voxel_generation_config::set_biome_selector(
+    voxel_biome_selector selector, void *user_data) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->biome_selector = selector;
     this->biome_selector_user_data = user_data;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_cross_chunk_writer(
-    terrain_cross_chunk_block_writer writer, void *user_data) noexcept
+int32_t voxel_generation_config::set_cross_chunk_writer(
+    voxel_cross_chunk_block_writer writer, void *user_data) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->cross_chunk_block_writer = writer;
     this->cross_chunk_block_writer_user_data = user_data;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_cross_chunk_reader(
-    terrain_cross_chunk_block_reader reader, void *user_data) noexcept
+int32_t voxel_generation_config::set_biome(uint32_t biome_index,
+    const voxel_biome_definition &biome) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    this->cross_chunk_block_reader = reader;
-    this->cross_chunk_block_reader_user_data = user_data;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t terrain_generation_config::set_biome(uint32_t biome_index,
-    const terrain_biome_definition &biome) noexcept
-{
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
-        return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].initialize(biome));
 }
 
-int32_t terrain_generation_config::set_biome_profile(uint32_t biome_index,
-    const terrain_biome_profile &profile) noexcept
+int32_t voxel_generation_config::set_biome_profile(uint32_t biome_index,
+    const voxel_biome_profile &profile) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].set_profile(profile));
 }
 
-int32_t terrain_generation_config::set_biome_height_profile(
+int32_t voxel_generation_config::set_biome_height_profile(
     uint32_t biome_index, int32_t surface_height, int32_t height_variation,
     int32_t topsoil_depth) noexcept
 {
-    terrain_biome_profile profile;
+    voxel_biome_profile profile;
 
     profile.surface_height = surface_height;
     profile.height_variation = height_variation;
@@ -2819,59 +2732,59 @@ int32_t terrain_generation_config::set_biome_height_profile(
     return (this->set_biome_profile(biome_index, profile));
 }
 
-int32_t terrain_generation_config::set_biome_block_palette(
+int32_t voxel_generation_config::set_biome_block_palette(
     uint32_t biome_index, uint32_t surface_block, uint32_t subsurface_block,
     uint32_t deep_block) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].set_block_palette(surface_block,
         subsurface_block, deep_block));
 }
 
-int32_t terrain_generation_config::set_biome_decoration_policy(
+int32_t voxel_generation_config::set_biome_decoration_policy(
     uint32_t biome_index, ft_bool shrubs, ft_bool trees,
     uint32_t shrub_chance, uint32_t tree_chance) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].set_decoration_policy(shrubs, trees,
         shrub_chance, tree_chance));
 }
 
-int32_t terrain_generation_config::set_biome_snow_caps_enabled(
+int32_t voxel_generation_config::set_biome_snow_caps_enabled(
     uint32_t biome_index, ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].set_snow_cap_policy(enabled));
 }
 
-int32_t terrain_generation_config::set_biome_mountain_ridges_enabled(
+int32_t voxel_generation_config::set_biome_mountain_ridges_enabled(
     uint32_t biome_index, ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->biomes[biome_index].set_mountain_ridge_policy(enabled));
 }
 
-int32_t terrain_generation_config::set_biome_tree_template_override(
-    uint32_t biome_index, const terrain_tree_template *value) noexcept
+int32_t voxel_generation_config::set_biome_tree_template_override(
+    uint32_t biome_index, const voxel_tree_template *value) noexcept
 {
     int32_t error_code;
     uint32_t template_index;
 
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     if (value == ft_nullptr)
     {
@@ -2881,9 +2794,9 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
             if (this->biomes[biome_index].tree_template
                 == &this->tree_templates[template_index])
             {
-                if (terrain_generation_config_count_template_references(*this,
+                if (voxel_generation_config_count_template_references(*this,
                         &this->tree_templates[template_index]) <= 1U)
-                    return (terrain_generation_config_remove_tree_template(
+                    return (voxel_generation_config_remove_tree_template(
                         *this, template_index));
                 return (this->biomes[biome_index]
                     .set_tree_template_override(value));
@@ -2892,7 +2805,7 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
         }
         return (this->biomes[biome_index].set_tree_template_override(value));
     }
-    if (terrain_template_is_valid(value) == FT_FALSE)
+    if (voxel_template_is_valid(value) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     template_index = 0U;
     while (template_index < this->tree_template_count)
@@ -2900,7 +2813,7 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
         if (this->biomes[biome_index].tree_template
             == &this->tree_templates[template_index])
         {
-            error_code = terrain_copy_tree_template(*value,
+            error_code = voxel_copy_tree_template(*value,
                     this->tree_template_blocks[template_index],
                     &this->tree_templates[template_index]);
             if (error_code != FT_ERR_SUCCESS)
@@ -2911,9 +2824,9 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
         }
         template_index += 1U;
     }
-    if (this->tree_template_count >= TERRAIN_MAX_TREE_TEMPLATES)
+    if (this->tree_template_count >= VOXEL_MAX_TREE_TEMPLATES)
         return (FT_ERR_FULL);
-    error_code = terrain_copy_tree_template(*value,
+    error_code = voxel_copy_tree_template(*value,
             this->tree_template_blocks[this->tree_template_count],
             &this->tree_templates[this->tree_template_count]);
     if (error_code != FT_ERR_SUCCESS)
@@ -2924,16 +2837,16 @@ int32_t terrain_generation_config::set_biome_tree_template_override(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_feature(uint32_t feature_index,
-    const terrain_feature_rule &feature) noexcept
+int32_t voxel_generation_config::set_feature(uint32_t feature_index,
+    const voxel_feature_rule &feature) noexcept
 {
     int32_t error_code;
     uint32_t template_index;
-    const terrain_tree_template *old_template;
+    const voxel_tree_template *old_template;
 
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (feature_index >= TERRAIN_MAX_FEATURE_RULES)
+    if (feature_index >= VOXEL_MAX_FEATURE_RULES)
         return (FT_ERR_OUT_OF_RANGE);
     if (feature.is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
@@ -2950,10 +2863,10 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
         if (template_index < this->tree_template_count)
         {
             this->features[feature_index].template_data = ft_nullptr;
-            if (terrain_generation_config_count_template_references(*this,
+            if (voxel_generation_config_count_template_references(*this,
                     old_template) == 0U)
             {
-                error_code = terrain_generation_config_remove_tree_template(
+                error_code = voxel_generation_config_remove_tree_template(
                     *this, template_index);
                 if (error_code != FT_ERR_SUCCESS)
                     return (error_code);
@@ -2962,7 +2875,7 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
     }
     if (feature.template_data != ft_nullptr)
     {
-        if (terrain_template_is_valid(feature.template_data) == FT_FALSE)
+        if (voxel_template_is_valid(feature.template_data) == FT_FALSE)
             return (FT_ERR_INVALID_ARGUMENT);
         template_index = 0U;
         while (template_index < this->tree_template_count)
@@ -2974,7 +2887,7 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
         }
         if (template_index >= this->tree_template_count)
         {
-            if (this->tree_template_count >= TERRAIN_MAX_TREE_TEMPLATES)
+            if (this->tree_template_count >= VOXEL_MAX_TREE_TEMPLATES)
                 return (FT_ERR_FULL);
             template_index = this->tree_template_count;
         }
@@ -2984,7 +2897,7 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
     if (feature.template_data != ft_nullptr
         && template_index < this->tree_template_count)
     {
-        error_code = terrain_copy_tree_template(*feature.template_data,
+        error_code = voxel_copy_tree_template(*feature.template_data,
             this->tree_template_blocks[template_index],
             &this->tree_templates[template_index]);
         if (error_code != FT_ERR_SUCCESS)
@@ -3003,73 +2916,73 @@ int32_t terrain_generation_config::set_feature(uint32_t feature_index,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_ore_rule(uint32_t ore_index,
-    const terrain_ore_rule &ore) noexcept
+int32_t voxel_generation_config::set_ore_rule(uint32_t ore_index,
+    const voxel_ore_rule &ore) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (ore_index >= TERRAIN_MAX_ORE_RULES)
+    if (ore_index >= VOXEL_MAX_ORE_RULES)
         return (FT_ERR_OUT_OF_RANGE);
     return (this->ores[ore_index].initialize(ore));
 }
 
-int32_t terrain_generation_config::set_underground_structures(
-    const terrain_underground_structure_config &value) noexcept
+int32_t voxel_generation_config::set_underground_structures(
+    const voxel_underground_structure_config &value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     return (this->underground_structures.initialize(value));
 }
 
-int32_t terrain_generation_config::set_fluids(
-    const terrain_fluid_config &value) noexcept
+int32_t voxel_generation_config::set_fluids(
+    const voxel_fluid_config &value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     return (this->fluids.initialize(value));
 }
 
-int32_t terrain_generation_config::set_layers(
-    const terrain_layer_config &value) noexcept
+int32_t voxel_generation_config::set_layers(
+    const voxel_layer_config &value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     return (this->layers.initialize(value));
 }
 
-int32_t terrain_generation_config::set_feature_count(uint32_t value) noexcept
+int32_t voxel_generation_config::set_feature_count(uint32_t value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (value > TERRAIN_MAX_FEATURE_RULES)
+    if (value > VOXEL_MAX_FEATURE_RULES)
         return (FT_ERR_OUT_OF_RANGE);
     this->feature_count = value;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_ore_rule_count(uint32_t value) noexcept
+int32_t voxel_generation_config::set_ore_rule_count(uint32_t value) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (value > TERRAIN_MAX_ORE_RULES)
+    if (value > VOXEL_MAX_ORE_RULES)
         return (FT_ERR_OUT_OF_RANGE);
     this->ore_rule_count = value;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_transitions_enabled(
+int32_t voxel_generation_config::set_biome_transitions_enabled(
     ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->enable_biome_transitions = enabled;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_biome_transition_settings(
+int32_t voxel_generation_config::set_biome_transition_settings(
     int32_t noise_scale, uint32_t noise_strength) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (noise_scale <= 0 || noise_strength > 100U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -3078,28 +2991,28 @@ int32_t terrain_generation_config::set_biome_transition_settings(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_mountain_ridges_enabled(
+int32_t voxel_generation_config::set_mountain_ridges_enabled(
     ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->enable_mountain_ridges = enabled;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_erosion_enabled(
+int32_t voxel_generation_config::set_erosion_enabled(
     ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->enable_erosion = enabled;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_mountain_ridge_settings(
+int32_t voxel_generation_config::set_mountain_ridge_settings(
     int32_t scale, uint32_t strength) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (scale <= 0)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -3108,10 +3021,10 @@ int32_t terrain_generation_config::set_mountain_ridge_settings(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_erosion_settings(
+int32_t voxel_generation_config::set_erosion_settings(
     int32_t scale, uint32_t strength) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (scale <= 0)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -3120,58 +3033,58 @@ int32_t terrain_generation_config::set_erosion_settings(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config::set_cross_chunk_features_enabled(
+int32_t voxel_generation_config::set_cross_chunk_features_enabled(
     ft_bool enabled) noexcept
 {
-    if (terrain_config_require_initialised(*this) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     this->allow_cross_chunk_features = enabled;
     return (FT_ERR_SUCCESS);
 }
 
-static void terrain_signature_add(uint64_t &signature,
+static void voxel_signature_add(uint64_t &signature,
     uint64_t value) noexcept
 {
     signature ^= value;
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     return ;
 }
 
-static void terrain_signature_add_template(uint64_t &signature,
-    const terrain_tree_template *tree_template) noexcept
+static void voxel_signature_add_template(uint64_t &signature,
+    const voxel_tree_template *tree_template) noexcept
 {
     uint32_t index;
 
     if (tree_template == ft_nullptr)
     {
-        terrain_signature_add(signature, 0U);
+        voxel_signature_add(signature, 0U);
         return ;
     }
     if (tree_template->blocks == ft_nullptr && tree_template->block_count != 0U)
     {
-        terrain_signature_add(signature, UINT64_MAX);
+        voxel_signature_add(signature, UINT64_MAX);
         return ;
     }
-    terrain_signature_add(signature, 1U);
-    terrain_signature_add(signature, tree_template->block_count);
+    voxel_signature_add(signature, 1U);
+    voxel_signature_add(signature, tree_template->block_count);
     index = 0U;
     while (index < tree_template->block_count)
     {
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(tree_template->blocks[index].offset_x)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(tree_template->blocks[index].offset_y)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(tree_template->blocks[index].offset_z)));
-        terrain_signature_add(signature,
+        voxel_signature_add(signature,
             tree_template->blocks[index].block_id);
         index += 1U;
     }
     return ;
 }
 
-uint32_t terrain_generation_config_signature(
-    const terrain_generation_config &config) noexcept
+uint32_t voxel_generation_config_signature(
+    const voxel_generation_config &config) noexcept
 {
     uint64_t signature;
     uint32_t index;
@@ -3179,48 +3092,48 @@ uint32_t terrain_generation_config_signature(
 
     signature = UINT64_C(0x5445525241494E31);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(config.sea_level));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.large_noise_scale));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.detail_noise_scale));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.detail_noise_percent));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(config.enable_biome_size_control);
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.biome_size_min));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.biome_size_max));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(config.water_chance_percent);
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     signature ^= static_cast<uint64_t>(config.biome_count);
     index = 0U;
-    while (index < config.biome_count && index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < config.biome_count && index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biome_size_min_by_biome[index]));
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biome_size_max_by_biome[index]));
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(
             config.biome_size_override_enabled[index]);
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biomes[index].profile.surface_height));
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biomes[index].profile.height_variation));
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
             config.biomes[index].profile.topsoil_depth));
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         signature ^= static_cast<uint64_t>(config.biomes[index].surface_block_id);
         signature ^= static_cast<uint64_t>(config.biomes[index].subsurface_block_id)
             << 8;
@@ -3230,19 +3143,19 @@ uint32_t terrain_generation_config_signature(
             << 24;
         signature ^= static_cast<uint64_t>(config.biomes[index].tree_chance_percent)
             << 32;
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         index += 1U;
     }
     signature ^= static_cast<uint64_t>(config.ore_rule_count) << 7;
     index = 0U;
-    while (index < config.ore_rule_count && index < TERRAIN_MAX_ORE_RULES)
+    while (index < config.ore_rule_count && index < VOXEL_MAX_ORE_RULES)
     {
         signature ^= static_cast<uint64_t>(config.ores[index].block_id)
             + static_cast<uint64_t>(config.ores[index].enabled) * 17U
             + static_cast<uint64_t>(config.ores[index].chance_percent) * 31U
             + static_cast<uint64_t>(config.ores[index]
                 .allow_ore_replacement) * 43U;
-        signature = terrain_mix_u64(signature);
+        signature = voxel_mix_u64(signature);
         index += 1U;
     }
     signature ^= static_cast<uint64_t>(config.enable_biome_transitions);
@@ -3254,7 +3167,6 @@ uint32_t terrain_generation_config_signature(
     signature ^= static_cast<uint64_t>(config.enable_erosion) << 2;
     signature ^= static_cast<uint64_t>(config.fluids.enable_rivers) << 3;
     signature ^= static_cast<uint64_t>(config.fluids.enable_lakes) << 4;
-    signature ^= static_cast<uint64_t>(config.fluids.enable_underground_lakes) << 5;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.fluids.river_noise_scale)) << 9;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
@@ -3263,15 +3175,6 @@ uint32_t terrain_generation_config_signature(
         config.fluids.lake_noise_scale)) << 17;
     signature ^= static_cast<uint64_t>(config.fluids.lake_chance_percent)
         << 21;
-    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_chance_percent)
-        << 27;
-    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
-        config.fluids.underground_lake_minimum_y)) << 31;
-    signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
-        config.fluids.underground_lake_maximum_y)) << 37;
-    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_depth) << 43;
-    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_floor_thickness) << 47;
-    signature ^= static_cast<uint64_t>(config.fluids.underground_lake_roof_thickness) << 51;
     signature ^= static_cast<uint64_t>(config.underground_structures
         .enable_ravines) << 5;
     signature ^= static_cast<uint64_t>(config.underground_structures
@@ -3311,100 +3214,100 @@ uint32_t terrain_generation_config_signature(
         << 7;
     signature ^= static_cast<uint64_t>(config.cross_chunk_block_writer
         != ft_nullptr) << 8;
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         config.biome_selector != ft_nullptr));
     index = 0U;
-    while (index < config.biome_count && index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < config.biome_count && index < VOXEL_MAX_CUSTOM_BIOMES)
     {
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.biomes[index].allow_shrubs));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.biomes[index].allow_trees));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.biomes[index].allow_snow_caps));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.biomes[index].allow_mountain_ridges));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.biomes[index].tree_template_count));
         biome_template_index = 0U;
         while (biome_template_index
             < config.biomes[index].tree_template_count)
         {
-            terrain_signature_add(signature, static_cast<uint64_t>(
+            voxel_signature_add(signature, static_cast<uint64_t>(
                 config.biomes[index].tree_template_indices[
                     biome_template_index]));
             biome_template_index += 1U;
         }
-        terrain_signature_add_template(signature,
+        voxel_signature_add_template(signature,
             config.biomes[index].tree_template);
         index += 1U;
     }
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         config.tree_template_count));
     index = 0U;
     while (index < config.tree_template_count)
     {
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.tree_templates[index].block_count));
-        terrain_signature_add_template(signature,
+        voxel_signature_add_template(signature,
             &config.tree_templates[index]);
         index += 1U;
     }
     index = 0U;
-    while (index < config.ore_rule_count && index < TERRAIN_MAX_ORE_RULES)
+    while (index < config.ore_rule_count && index < VOXEL_MAX_ORE_RULES)
     {
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(config.ores[index].minimum_height)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(config.ores[index].maximum_height)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.ores[index].vein_size));
         index += 1U;
     }
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.underground_structures.minimum_height)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.underground_structures.maximum_height)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.layers.beach_block_id)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.layers.underwater_block_id)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.layers.snow_cap_block_id)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.mountain_ridge_scale)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         config.mountain_ridge_strength));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         static_cast<uint32_t>(config.erosion_noise_scale)));
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         config.erosion_strength));
-    terrain_signature_add(signature, static_cast<uint64_t>(config.feature_count));
+    voxel_signature_add(signature, static_cast<uint64_t>(config.feature_count));
     index = 0U;
-    while (index < config.feature_count && index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < config.feature_count && index < VOXEL_MAX_FEATURE_RULES)
     {
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(config.features[index].biome_index)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.features[index].chance_percent));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(config.features[index].minimum_height)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             static_cast<uint32_t>(config.features[index].maximum_height)));
-        terrain_signature_add(signature, static_cast<uint64_t>(
+        voxel_signature_add(signature, static_cast<uint64_t>(
             config.features[index].requires_dry_land));
-        terrain_signature_add_template(signature,
+        voxel_signature_add_template(signature,
             config.features[index].template_data);
         index += 1U;
     }
-    terrain_signature_add(signature, static_cast<uint64_t>(
+    voxel_signature_add(signature, static_cast<uint64_t>(
         config.cross_chunk_block_writer != ft_nullptr));
-    signature = terrain_mix_u64(signature);
+    signature = voxel_mix_u64(signature);
     return (static_cast<uint32_t>(signature ^ (signature >> 32)));
 }
 
-static ft_bool terrain_template_is_valid(
-    const terrain_tree_template *tree_template) noexcept
+static ft_bool voxel_template_is_valid(
+    const voxel_tree_template *tree_template) noexcept
 {
     uint32_t index;
 
@@ -3415,7 +3318,7 @@ static ft_bool terrain_template_is_valid(
     index = 0U;
     while (index < tree_template->block_count)
     {
-        if (terrain_block_is_known(tree_template->blocks[index].block_id)
+        if (voxel_block_is_known(tree_template->blocks[index].block_id)
             == FT_FALSE)
             return (FT_FALSE);
         index += 1U;
@@ -3423,23 +3326,23 @@ static ft_bool terrain_template_is_valid(
     return (FT_TRUE);
 }
 
-int32_t terrain_generation_config_add_tree_template(
-    terrain_generation_config &config,
-    const terrain_tree_template &tree_template,
+int32_t voxel_generation_config_add_tree_template(
+    voxel_generation_config &config,
+    const voxel_tree_template &tree_template,
     uint32_t *template_index_out) noexcept
 {
     uint32_t template_index;
 
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (template_index_out == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (terrain_template_is_valid(&tree_template) == FT_FALSE)
+    if (voxel_template_is_valid(&tree_template) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (config.tree_template_count >= TERRAIN_MAX_TREE_TEMPLATES)
+    if (config.tree_template_count >= VOXEL_MAX_TREE_TEMPLATES)
         return (FT_ERR_FULL);
     template_index = config.tree_template_count;
-    if (terrain_copy_tree_template(tree_template,
+    if (voxel_copy_tree_template(tree_template,
             config.tree_template_blocks[template_index],
             &config.tree_templates[template_index]) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -3448,8 +3351,8 @@ int32_t terrain_generation_config_add_tree_template(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config_remove_tree_template(
-    terrain_generation_config &config, uint32_t template_index) noexcept
+int32_t voxel_generation_config_remove_tree_template(
+    voxel_generation_config &config, uint32_t template_index) noexcept
 {
     uint32_t index;
     uint32_t biome_index;
@@ -3458,12 +3361,12 @@ int32_t terrain_generation_config_remove_tree_template(
     uint32_t old_template_index;
     uint32_t feature_index;
 
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     if (template_index >= config.tree_template_count)
         return (FT_ERR_OUT_OF_RANGE);
     feature_index = 0U;
-    while (feature_index < TERRAIN_MAX_FEATURE_RULES)
+    while (feature_index < VOXEL_MAX_FEATURE_RULES)
     {
         if (config.features[feature_index].template_data
             == &config.tree_templates[template_index])
@@ -3471,7 +3374,7 @@ int32_t terrain_generation_config_remove_tree_template(
         feature_index += 1U;
     }
     biome_index = 0U;
-    while (biome_index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (biome_index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         if (config.biomes[biome_index].tree_template
             == &config.tree_templates[template_index])
@@ -3500,7 +3403,7 @@ int32_t terrain_generation_config_remove_tree_template(
     while (index + 1U < config.tree_template_count)
     {
         biome_index = 0U;
-        while (biome_index < TERRAIN_MAX_CUSTOM_BIOMES)
+        while (biome_index < VOXEL_MAX_CUSTOM_BIOMES)
         {
             if (config.biomes[biome_index].tree_template
                 == &config.tree_templates[index + 1U])
@@ -3509,7 +3412,7 @@ int32_t terrain_generation_config_remove_tree_template(
             biome_index += 1U;
         }
         feature_index = 0U;
-        while (feature_index < TERRAIN_MAX_FEATURE_RULES)
+        while (feature_index < VOXEL_MAX_FEATURE_RULES)
         {
             if (config.features[feature_index].template_data
                 == &config.tree_templates[index + 1U])
@@ -3532,15 +3435,15 @@ int32_t terrain_generation_config_remove_tree_template(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config_clear_tree_templates(
-    terrain_generation_config &config) noexcept
+int32_t voxel_generation_config_clear_tree_templates(
+    voxel_generation_config &config) noexcept
 {
     uint32_t index;
 
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         if (config.features[index].template_data != ft_nullptr)
             return (FT_ERR_INVALID_OPERATION);
@@ -3548,7 +3451,7 @@ int32_t terrain_generation_config_clear_tree_templates(
     }
     config.tree_template_count = 0U;
     index = 0U;
-    while (index < TERRAIN_MAX_TREE_TEMPLATES)
+    while (index < VOXEL_MAX_TREE_TEMPLATES)
     {
         config.tree_templates[index].blocks = ft_nullptr;
         config.tree_templates[index].block_count = 0U;
@@ -3557,14 +3460,14 @@ int32_t terrain_generation_config_clear_tree_templates(
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_CUSTOM_BIOMES)
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
     {
         config.biomes[index].tree_template_count = 0U;
         config.biomes[index].tree_template = ft_nullptr;
         index += 1U;
     }
     index = 0U;
-    while (index < TERRAIN_MAX_FEATURE_RULES)
+    while (index < VOXEL_MAX_FEATURE_RULES)
     {
         config.features[index].template_data = ft_nullptr;
         index += 1U;
@@ -3572,15 +3475,15 @@ int32_t terrain_generation_config_clear_tree_templates(
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config_assign_tree_template_to_biome(
-    terrain_generation_config &config, uint32_t biome_index,
+int32_t voxel_generation_config_assign_tree_template_to_biome(
+    voxel_generation_config &config, uint32_t biome_index,
     uint32_t template_index) noexcept
 {
     uint32_t index;
 
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES
         || template_index >= config.tree_template_count)
         return (FT_ERR_OUT_OF_RANGE);
     index = 0U;
@@ -3591,23 +3494,23 @@ int32_t terrain_generation_config_assign_tree_template_to_biome(
             return (FT_ERR_ALREADY_EXISTS);
         index += 1U;
     }
-    if (index >= TERRAIN_MAX_BIOME_TREE_TEMPLATES)
+    if (index >= VOXEL_MAX_BIOME_TREE_TEMPLATES)
         return (FT_ERR_FULL);
     config.biomes[biome_index].tree_template_indices[index] = template_index;
     config.biomes[biome_index].tree_template_count += 1U;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_config_remove_tree_template_from_biome(
-    terrain_generation_config &config, uint32_t biome_index,
+int32_t voxel_generation_config_remove_tree_template_from_biome(
+    voxel_generation_config &config, uint32_t biome_index,
     uint32_t template_index) noexcept
 {
     uint32_t index;
     uint32_t kept_count;
 
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (biome_index >= TERRAIN_MAX_CUSTOM_BIOMES)
+    if (biome_index >= VOXEL_MAX_CUSTOM_BIOMES)
         return (FT_ERR_OUT_OF_RANGE);
     kept_count = 0U;
     index = 0U;
@@ -3628,35 +3531,35 @@ int32_t terrain_generation_config_remove_tree_template_from_biome(
     return (FT_ERR_SUCCESS);
 }
 
-const terrain_tree_template *terrain_generation_config_get_tree_template(
-    const terrain_generation_config &config, uint32_t template_index) noexcept
+const voxel_tree_template *voxel_generation_config_get_tree_template(
+    const voxel_generation_config &config, uint32_t template_index) noexcept
 {
-    if (terrain_config_require_initialised(config) != FT_ERR_SUCCESS)
+    if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (ft_nullptr);
     if (template_index >= config.tree_template_count)
         return (ft_nullptr);
     return (&config.tree_templates[template_index]);
 }
 
-ft_bool terrain_generation_config_is_valid(
-    const terrain_generation_config &config) noexcept
+ft_bool voxel_generation_config_is_valid(
+    const voxel_generation_config &config) noexcept
 {
     uint32_t index;
     uint32_t biome_template_index;
 
     if (config.is_initialised() == FT_FALSE)
         return (FT_FALSE);
-    if (config.biome_count == 0U || config.biome_count > TERRAIN_MAX_CUSTOM_BIOMES
+    if (config.biome_count == 0U || config.biome_count > VOXEL_MAX_CUSTOM_BIOMES
         || (config.enable_biome_size_control != FT_FALSE
             && config.enable_biome_size_control != FT_TRUE)
-        || config.tree_template_count > TERRAIN_MAX_TREE_TEMPLATES
-        || config.feature_count > TERRAIN_MAX_FEATURE_RULES
-        || config.ore_rule_count > TERRAIN_MAX_ORE_RULES
+        || config.tree_template_count > VOXEL_MAX_TREE_TEMPLATES
+        || config.feature_count > VOXEL_MAX_FEATURE_RULES
+        || config.ore_rule_count > VOXEL_MAX_ORE_RULES
         || config.large_noise_scale <= 0 || config.detail_noise_scale <= 0
         || config.detail_noise_percent < 0 || config.detail_noise_percent > 100
-        || config.biome_size_min < TERRAIN_BIOME_SIZE_MINIMUM
+        || config.biome_size_min < VOXEL_BIOME_SIZE_MINIMUM
         || config.biome_size_max < config.biome_size_min
-        || config.biome_size_max > TERRAIN_BIOME_SIZE_MAXIMUM
+        || config.biome_size_max > VOXEL_BIOME_SIZE_MAXIMUM
         || config.water_chance_percent > 100
         || config.biome_transition_noise_scale <= 0
         || config.biome_transition_noise_strength > 100U
@@ -3664,19 +3567,6 @@ ft_bool terrain_generation_config_is_valid(
         || config.fluids.lake_noise_scale <= 0
         || config.fluids.river_width < 0
         || config.fluids.lake_chance_percent > 100
-        || (config.fluids.enable_underground_lakes != FT_FALSE
-            && config.fluids.enable_underground_lakes != FT_TRUE)
-        || config.fluids.underground_lake_chance_percent > 100U
-        || (config.fluids.enable_underground_lakes == FT_TRUE
-            && (config.fluids.underground_lake_minimum_y < 1
-                || config.fluids.underground_lake_maximum_y
-                    < config.fluids.underground_lake_minimum_y
-                || config.fluids.underground_lake_maximum_y
-                    >= GAME_VOXEL_CHUNK_HEIGHT
-                || config.fluids.underground_lake_depth == 0U
-                || config.fluids.underground_lake_depth > 8U
-                || config.fluids.underground_lake_floor_thickness == 0U
-                || config.fluids.underground_lake_roof_thickness == 0U))
         || config.underground_structures.ravine_chance_percent > 100
         || config.underground_structures.cave_room_chance_percent > 100
         || config.underground_structures.minimum_height
@@ -3702,7 +3592,7 @@ ft_bool terrain_generation_config_is_valid(
     index = 0U;
     while (index < config.tree_template_count)
     {
-        if (terrain_template_is_valid(&config.tree_templates[index])
+        if (voxel_template_is_valid(&config.tree_templates[index])
             == FT_FALSE)
             return (FT_FALSE);
         index += 1U;
@@ -3713,11 +3603,11 @@ ft_bool terrain_generation_config_is_valid(
     while (index < config.biome_count)
     {
         if (config.biome_size_min_by_biome[index]
-                < TERRAIN_BIOME_SIZE_MINIMUM
+                < VOXEL_BIOME_SIZE_MINIMUM
             || config.biome_size_max_by_biome[index]
                 < config.biome_size_min_by_biome[index]
             || config.biome_size_max_by_biome[index]
-                > TERRAIN_BIOME_SIZE_MAXIMUM
+                > VOXEL_BIOME_SIZE_MAXIMUM
             || (config.biome_size_override_enabled[index] != FT_FALSE
                 && config.biome_size_override_enabled[index] != FT_TRUE))
             return (FT_FALSE);
@@ -3727,14 +3617,14 @@ ft_bool terrain_generation_config_is_valid(
             || config.biomes[index].shrub_chance_percent > 100
             || config.biomes[index].tree_chance_percent > 100
             || config.biomes[index].tree_template_count
-                > TERRAIN_MAX_BIOME_TREE_TEMPLATES
-            || terrain_block_is_known(config.biomes[index].surface_block_id)
+                > VOXEL_MAX_BIOME_TREE_TEMPLATES
+            || voxel_block_is_known(config.biomes[index].surface_block_id)
                 == FT_FALSE
-            || terrain_block_is_known(config.biomes[index].subsurface_block_id)
+            || voxel_block_is_known(config.biomes[index].subsurface_block_id)
                 == FT_FALSE
-            || terrain_block_is_known(config.biomes[index].deep_block_id)
+            || voxel_block_is_known(config.biomes[index].deep_block_id)
                 == FT_FALSE
-            || terrain_template_is_valid(config.biomes[index].tree_template)
+            || voxel_template_is_valid(config.biomes[index].tree_template)
                 == FT_FALSE)
             return (FT_FALSE);
         biome_template_index = 0U;
@@ -3752,7 +3642,7 @@ ft_bool terrain_generation_config_is_valid(
     while (index < config.ore_rule_count)
     {
         if (config.ores[index].is_initialised() == FT_FALSE
-            || terrain_block_is_known(config.ores[index].block_id) == FT_FALSE
+            || voxel_block_is_known(config.ores[index].block_id) == FT_FALSE
             || config.ores[index].minimum_height
                 > config.ores[index].maximum_height
             || config.ores[index].minimum_height < 0
@@ -3762,10 +3652,10 @@ ft_bool terrain_generation_config_is_valid(
             return (FT_FALSE);
         index += 1U;
     }
-    if (terrain_block_is_known(config.layers.beach_block_id) == FT_FALSE
-        || terrain_block_is_known(config.layers.underwater_block_id)
+    if (voxel_block_is_known(config.layers.beach_block_id) == FT_FALSE
+        || voxel_block_is_known(config.layers.underwater_block_id)
             == FT_FALSE
-        || terrain_block_is_known(config.layers.snow_cap_block_id)
+        || voxel_block_is_known(config.layers.snow_cap_block_id)
             == FT_FALSE)
         return (FT_FALSE);
     index = 0U;
@@ -3778,7 +3668,7 @@ ft_bool terrain_generation_config_is_valid(
                 static_cast<int32_t>(config.biome_count)
             || config.features[index].minimum_height
                 > config.features[index].maximum_height
-            || terrain_template_is_valid(config.features[index].template_data)
+            || voxel_template_is_valid(config.features[index].template_data)
                 == FT_FALSE)
             return (FT_FALSE);
         index += 1U;
@@ -3790,35 +3680,35 @@ ft_bool terrain_generation_config_is_valid(
     return (FT_TRUE);
 }
 
-terrain_generation_context::terrain_generation_context() noexcept
+voxel_generation_context::voxel_generation_context() noexcept
     : _config(), _configuration_signature(0U),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     return ;
 }
 
-terrain_generation_context::~terrain_generation_context() noexcept
+voxel_generation_context::~voxel_generation_context() noexcept
 {
     this->destroy();
     return ;
 }
 
-int32_t terrain_generation_context::initialize(
-    const terrain_generation_config &config) noexcept
+int32_t voxel_generation_context::initialize(
+    const voxel_generation_config &config) noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_OPERATION);
-    if (terrain_generation_config_is_valid(config) == FT_FALSE)
+    if (voxel_generation_config_is_valid(config) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_config.initialize(config) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    this->_configuration_signature = terrain_generation_config_signature(
+    this->_configuration_signature = voxel_generation_config_signature(
         this->_config);
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t terrain_generation_context::destroy() noexcept
+int32_t voxel_generation_context::destroy() noexcept
 {
     this->_config.destroy();
     this->_configuration_signature = 0U;
@@ -3826,8 +3716,8 @@ int32_t terrain_generation_context::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-uint32_t terrain_generation_context::move(
-    terrain_generation_context &other) noexcept
+uint32_t voxel_generation_context::move(
+    voxel_generation_context &other) noexcept
 {
     int32_t error_code;
 
@@ -3844,77 +3734,77 @@ uint32_t terrain_generation_context::move(
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool terrain_generation_context::is_initialised() const noexcept
+ft_bool voxel_generation_context::is_initialised() const noexcept
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-const terrain_generation_config &terrain_generation_context::config() const noexcept
+const voxel_generation_config &voxel_generation_context::config() const noexcept
 {
     return (this->_config);
 }
 
-uint32_t terrain_generation_context::configuration_signature() const noexcept
+uint32_t voxel_generation_context::configuration_signature() const noexcept
 {
     return (this->_configuration_signature);
 }
 
-int32_t terrain_generation_context_initialize(
-    terrain_generation_context &context,
-    const terrain_generation_config &config) noexcept
+int32_t voxel_generation_context_initialize(
+    voxel_generation_context &context,
+    const voxel_generation_config &config) noexcept
 {
     return (context.initialize(config));
 }
 
-ft_bool terrain_generation_context_is_initialised(
-    const terrain_generation_context &context) noexcept
+ft_bool voxel_generation_context_is_initialised(
+    const voxel_generation_context &context) noexcept
 {
     return (context.is_initialised());
 }
 
-terrain_biome_profile terrain_get_biome_profile(terrain_biome biome) noexcept
+voxel_biome_profile voxel_get_biome_profile(voxel_biome biome) noexcept
 {
-    terrain_biome_profile biome_profile;
+    voxel_biome_profile biome_profile;
 
-    if (biome == TERRAIN_BIOME_HILLS)
+    if (biome == VOXEL_BIOME_HILLS)
     {
         biome_profile.surface_height = 80;
         biome_profile.height_variation = 8;
         biome_profile.topsoil_depth = 4;
         return (biome_profile);
     }
-    if (biome == TERRAIN_BIOME_DESERT)
+    if (biome == VOXEL_BIOME_DESERT)
     {
         biome_profile.surface_height = 70;
         biome_profile.height_variation = 3;
         biome_profile.topsoil_depth = 5;
         return (biome_profile);
     }
-    if (biome == TERRAIN_BIOME_SNOW)
+    if (biome == VOXEL_BIOME_SNOW)
     {
         biome_profile.surface_height = 84;
         biome_profile.height_variation = 6;
         biome_profile.topsoil_depth = 4;
         return (biome_profile);
     }
-    if (biome == TERRAIN_BIOME_MOUNTAINS)
+    if (biome == VOXEL_BIOME_MOUNTAINS)
     {
         biome_profile.surface_height = 100;
         biome_profile.height_variation = 14;
         biome_profile.topsoil_depth = 2;
         return (biome_profile);
     }
-    biome_profile.surface_height = TERRAIN_GENERATOR_SURFACE_HEIGHT;
+    biome_profile.surface_height = VOXEL_GENERATOR_SURFACE_HEIGHT;
     biome_profile.height_variation = 2;
     biome_profile.topsoil_depth = 3;
     return (biome_profile);
 }
 
-ft_bool terrain_can_place_tree_template(game_voxel_chunk &chunk,
+ft_bool voxel_can_place_tree_template(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
-    const terrain_tree_template &tree_template) noexcept
+    const voxel_tree_template &tree_template) noexcept
 {
     uint32_t block_index;
     int32_t target_x;
@@ -3937,18 +3827,18 @@ ft_bool terrain_can_place_tree_template(game_voxel_chunk &chunk,
         if (chunk.read_block(target_x, target_y, target_z, &block_id)
             != FT_ERR_SUCCESS)
             return (FT_FALSE);
-        if (terrain_block_is_replaceable(block_id) == FT_FALSE)
+        if (voxel_block_is_replaceable(block_id) == FT_FALSE)
             return (FT_FALSE);
         block_index += 1;
     }
     return (FT_TRUE);
 }
 
-int32_t terrain_place_tree_template(game_voxel_chunk &chunk,
+int32_t voxel_place_tree_template(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
-    const terrain_tree_template &tree_template) noexcept
+    const voxel_tree_template &tree_template) noexcept
 {
-    if (terrain_can_place_tree_template(chunk, local_origin_x, local_origin_y,
+    if (voxel_can_place_tree_template(chunk, local_origin_x, local_origin_y,
             local_origin_z, tree_template) == FT_FALSE)
         return (FT_ERR_INVALID_OPERATION);
     uint32_t block_index;

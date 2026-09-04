@@ -242,8 +242,6 @@
 #include "Modules/Voxel/voxel_generation.hpp"
 #include "Modules/Voxel/voxel_types.hpp"
 #include "Modules/Voxel/voxel_mesh.hpp"
-#include "Modules/Voxel/voxel_lighting.hpp"
-#include "Modules/Voxel/voxel_shadow.hpp"
 #include "Modules/XML/xml.hpp"
 #include "Modules/XML/xml_document.hpp"
 #include "Modules/XML/xml_dom_bridge.hpp"

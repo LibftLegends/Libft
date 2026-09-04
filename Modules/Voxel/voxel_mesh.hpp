@@ -5,7 +5,6 @@
 
 # include "../Template/vector.hpp"
 # include "../Errno/errno.hpp"
-# include "voxel_lighting.hpp"
 # include <stdint.h>
 
 class game_voxel_chunk;
@@ -28,9 +27,8 @@ struct chunk_mesh_vertex
     uint16_t    coordinate_z;
     uint16_t    texture_u;
     uint16_t    texture_v;
-    uint8_t     face;
-    uint8_t     packed_light;
     uint32_t    block_id;
+    uint8_t     face;
 };
 
 struct chunk_mesh_bounds
@@ -59,15 +57,11 @@ int32_t chunk_mesh_destroy(chunk_mesh &mesh) noexcept;
 int32_t chunk_mesh_clear(chunk_mesh &mesh) noexcept;
 int32_t chunk_mesh_generate_from_chunk(chunk_mesh &mesh,
     const game_voxel_chunk &chunk) noexcept;
-int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
-    const game_voxel_chunk &chunk, const voxel_light_chunk &light) noexcept;
-int32_t chunk_mesh_apply_light(chunk_mesh &mesh,
-    const voxel_light_chunk &light) noexcept;
 int32_t chunk_mesh_generate_from_chunk_with_neighbors(chunk_mesh &mesh,
     const game_voxel_chunk &chunk, int32_t chunk_x, int32_t chunk_z,
     int32_t (*lookup_block)(void *user_data, int32_t world_x, int32_t world_y,
         int32_t world_z, uint32_t *block_id),
-    void *user_data, const voxel_light_chunk *light = nullptr) noexcept;
+    void *user_data) noexcept;
 ft_bool chunk_mesh_intersects_frustum(const geometry_frustum &frustum,
     int32_t world_origin_x, int32_t world_origin_y,
     int32_t world_origin_z) noexcept;
