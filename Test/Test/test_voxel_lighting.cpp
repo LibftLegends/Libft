@@ -562,4 +562,52 @@ FT_TEST(test_voxel_lighting_build_operation_respects_slice_bound)
     return (1);
 }
 
+FT_TEST(test_voxel_lighting_build_operation_stats_are_cumulative)
+{
+    voxel_light_chunk light_chunk;
+    voxel_light_build_operation operation;
+    voxel_light_update_config configuration;
+    voxel_light_build_stats previous_stats;
+    voxel_light_build_stats current_stats;
+    voxel_lighting_lookup_context context;
+    ft_bool complete;
+    uint32_t step_count;
+
+    context.has_opaque_roof = FT_TRUE;
+    context.roof_height = 128;
+    context.has_side_opening = FT_TRUE;
+    context.opening_x = -1;
+    context.opening_z = 8;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.initialize(light_chunk, 0, 0,
+        voxel_lighting_lookup_block, &context, FT_TRUE));
+    voxel_light_update_config_defaults(configuration);
+    configuration.min_nodes_per_frame = 16U;
+    configuration.target_nodes_per_frame = 16U;
+    configuration.max_nodes_per_frame = 16U;
+    previous_stats.scanned_cells = 0U;
+    previous_stats.propagated_cells = 0U;
+    previous_stats.queue_peak = 0U;
+    complete = FT_FALSE;
+    step_count = 0U;
+    while (complete == FT_FALSE && step_count < 100000U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.step(configuration,
+            &current_stats, &complete));
+        FT_ASSERT(current_stats.scanned_cells >= previous_stats.scanned_cells);
+        FT_ASSERT(current_stats.propagated_cells
+            >= previous_stats.propagated_cells);
+        FT_ASSERT(current_stats.queue_peak >= previous_stats.queue_peak);
+        previous_stats = current_stats;
+        step_count += 1U;
+    }
+    FT_ASSERT_EQ(FT_TRUE, complete);
+    FT_ASSERT(step_count > 1U);
+    FT_ASSERT(current_stats.scanned_cells > 0U);
+    FT_ASSERT(current_stats.propagated_cells > 0U);
+    FT_ASSERT(current_stats.queue_peak > 0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light_chunk.destroy());
+    return (1);
+}
+
 #endif
