@@ -380,6 +380,40 @@ FT_TEST(test_voxel_lighting_cave_opening_propagates_from_neighbor_and_stops_at_r
     return (1);
 }
 
+FT_TEST(test_voxel_lighting_emitter_crosses_chunk_seam_deterministically)
+{
+    voxel_light_chunk seam_light;
+    voxel_light_chunk rebuilt_light;
+    voxel_lighting_lookup_context context;
+    uint8_t seam_value;
+    uint8_t rebuilt_value;
+
+    context.has_opaque_roof = FT_FALSE;
+    context.roof_height = 0;
+    context.has_side_opening = FT_FALSE;
+    context.opening_x = 0;
+    context.opening_z = 0;
+    context.has_emitter = FT_TRUE;
+    context.emitter_x = -1;
+    context.emitter_y = 128;
+    context.emitter_z = 8;
+    context.second_emitter_x = 10000;
+    context.second_emitter_y = 128;
+    context.second_emitter_z = 8;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(seam_light, 0, 0,
+        voxel_lighting_lookup_block, &context));
+    seam_value = voxel_light_block(seam_light.get(0, 128, 8));
+    FT_ASSERT_EQ(static_cast<uint8_t>(14U), seam_value);
+    context.has_emitter = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(rebuilt_light, 0, 0,
+        voxel_lighting_lookup_block, &context));
+    rebuilt_value = voxel_light_block(rebuilt_light.get(0, 128, 8));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U), rebuilt_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rebuilt_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, seam_light.destroy());
+    return (1);
+}
+
 FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
 {
     voxel_light_chunk expected_light;
