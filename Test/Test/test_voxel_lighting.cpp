@@ -414,6 +414,41 @@ FT_TEST(test_voxel_lighting_emitter_crosses_chunk_seam_deterministically)
     return (1);
 }
 
+FT_TEST(test_voxel_lighting_cross_source_order_is_deterministic)
+{
+    voxel_light_chunk first_light;
+    voxel_light_chunk second_light;
+    voxel_lighting_lookup_context first_context;
+    voxel_lighting_lookup_context second_context;
+
+    first_context.has_opaque_roof = FT_FALSE;
+    first_context.roof_height = 0;
+    first_context.has_side_opening = FT_FALSE;
+    first_context.opening_x = 0;
+    first_context.opening_z = 0;
+    first_context.has_emitter = FT_TRUE;
+    first_context.emitter_x = -1;
+    first_context.emitter_y = 128;
+    first_context.emitter_z = 8;
+    first_context.second_emitter_x = 16;
+    first_context.second_emitter_y = 128;
+    first_context.second_emitter_z = 8;
+    second_context = first_context;
+    second_context.emitter_x = first_context.second_emitter_x;
+    second_context.emitter_z = first_context.second_emitter_z;
+    second_context.second_emitter_x = first_context.emitter_x;
+    second_context.second_emitter_z = first_context.emitter_z;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(first_light, 0, 0,
+        voxel_lighting_lookup_block, &first_context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(second_light, 0, 0,
+        voxel_lighting_lookup_block, &second_context));
+    FT_ASSERT_EQ(FT_TRUE, voxel_lighting_chunks_equal(first_light,
+        second_light));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_light.destroy());
+    return (1);
+}
+
 FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
 {
     voxel_light_chunk expected_light;
