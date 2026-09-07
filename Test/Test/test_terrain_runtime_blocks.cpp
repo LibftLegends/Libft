@@ -51,7 +51,7 @@ FT_TEST(test_voxel_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(0, std::strcmp(voxel_get_block_name(block_id),
         "test:script_block"));
     FT_ASSERT_EQ(0, std::strcmp(voxel_get_block_asset_path(block_id,
-        VOXEL_BLOCK_ASSET_FACE_TOP), "Scripting/export_values.asset"));
+        VOXEL_BLOCK_ASSET_FACE_TOP), "export_values.asset"));
     asset_data = voxel_get_block_asset_data(block_id,
         VOXEL_BLOCK_ASSET_FACE_TOP, &asset_size);
     FT_ASSERT(asset_data != ft_nullptr);

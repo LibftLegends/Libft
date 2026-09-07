@@ -5,10 +5,13 @@
 # include "../CPP_class/class_string.hpp"
 # include "../Buffer/byte_buffer.hpp"
 # include "../Template/shared_ptr.hpp"
+# include <atomic>
 
 struct voxel_runtime_block
 {
     uint32_t block_id;
+    std::atomic<uint32_t> handle_references;
+    ft_bool registry_owned;
     voxel_block_metadata metadata;
     ft_string name;
     ft_string asset_paths[VOXEL_BLOCK_ASSET_FACE_COUNT];
@@ -24,7 +27,7 @@ class voxel_runtime_block_handle
         voxel_runtime_block_handle &handle) noexcept;
 
     private:
-        ft_sharedptr<voxel_runtime_block> _block;
+        voxel_runtime_block *_block;
         uint8_t _initialised_state;
 
     public:

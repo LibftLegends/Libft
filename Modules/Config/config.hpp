@@ -24,6 +24,7 @@ struct config_data
 
 config_data   *config_data_create();
 int32_t       config_data_prepare_thread_safety(config_data *config);
+/* Teardown requires exclusive ownership of the config and all entry users. */
 void        config_data_teardown_thread_safety(config_data *config);
 config_data   *config_parse(const char *filename);
 void        config_data_free(config_data *config);
@@ -36,6 +37,7 @@ config_data   *config_merge(const config_data *base_config, const config_data *o
 ft_file_watch *config_watch_file(const char *filename, file_watch_callback callback, void *user_data);
 
 int32_t       config_entry_prepare_thread_safety(config_entry *entry);
+/* Teardown requires exclusive ownership of the entry and its users. */
 void        config_entry_teardown_thread_safety(config_entry *entry);
 int32_t       config_entry_lock(config_entry *entry, ft_bool *lock_acquired);
 void        config_entry_unlock(config_entry *entry, ft_bool lock_acquired);

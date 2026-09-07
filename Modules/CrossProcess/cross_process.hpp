@@ -20,6 +20,7 @@ struct cross_process_read_result
 {
     ft_string shared_memory_name;
     ft_string payload;
+    ft_bool consumed;
 };
 
 int32_t cp_send_descriptor(int32_t socket_file_descriptor,

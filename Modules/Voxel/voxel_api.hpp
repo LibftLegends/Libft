@@ -75,6 +75,7 @@ uint32_t voxel_block_hardness(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_breakable(uint32_t block_id) noexcept;
 int32_t voxel_register_block(const voxel_block_registration &registration,
     uint32_t *block_id_out) noexcept;
+int32_t voxel_unregister_block(uint32_t block_id) noexcept;
 int32_t voxel_register_block_from_root(
     const voxel_block_registration &registration, const char *asset_root,
     uint32_t *block_id_out) noexcept;

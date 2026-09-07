@@ -120,6 +120,9 @@ class game_voxel_chunk
             int32_t local_z, uint32_t *block_id) const noexcept;
         int32_t copy_blocks_locked(uint32_t *blocks_out,
             uint32_t block_count) const noexcept;
+        int32_t copy_region_locked(uint32_t *blocks_out,
+            uint32_t block_count, uint32_t first_x, uint32_t first_z,
+            uint32_t region_width, uint32_t region_depth) const noexcept;
         int32_t copy_x_border_locked(uint32_t *blocks_out,
             uint32_t block_count, uint32_t local_x) const noexcept;
         int32_t copy_z_border_locked(uint32_t *blocks_out,
@@ -158,6 +161,9 @@ class game_voxel_chunk
             uint32_t *block_id) const noexcept;
         int32_t copy_blocks(uint32_t *blocks_out,
             uint32_t block_count) const noexcept;
+        int32_t copy_region(uint32_t *blocks_out, uint32_t block_count,
+            uint32_t first_x, uint32_t first_z, uint32_t region_width,
+            uint32_t region_depth) const noexcept;
         int32_t copy_x_border(uint32_t *blocks_out,
             uint32_t block_count, uint32_t local_x) const noexcept;
         int32_t copy_z_border(uint32_t *blocks_out,

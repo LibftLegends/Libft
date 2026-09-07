@@ -1083,6 +1083,20 @@ int32_t analytics_session::publish_frame(
                 this->_export_buffers[index].frame_count].world_active =
                 world_active == FT_FALSE ? FT_FALSE : FT_TRUE;
             this->_export_buffers[index].frame_count += 1U;
+
+            /* A sampled frame must be handed to the exporter promptly.  The
+             * old implementation only rotated a buffer when it reached its
+             * full capacity, which made a 120-frame sampling interval wait
+             * for 128 sampled records (15,360 rendered frames) before any
+             * file output became visible.  Rotate after publishing the
+             * sampled record; the exporter still performs all formatting and
+             * I/O on its own thread.  If all buffers are busy, keep the
+             * record in the active buffer and let the next sampled frame
+             * retry the handoff under the configured overflow policy.
+             */
+            if (this->_exporter_started != FT_FALSE
+                && this->rotate_active_buffer_locked() == FT_ERR_SUCCESS)
+                rotated = FT_TRUE;
         }
         result = FT_ERR_SUCCESS;
     }

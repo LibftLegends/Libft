@@ -307,6 +307,14 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
     double mountain_weight;
     double snow_weight;
 
+    /*
+     * Surface water is sampled per column, but a single sampled column must
+     * not become a detached pond.  The second pass below filters interior
+     * candidates after all feature IDs are known.  Chunk-border candidates
+     * are intentionally retained because their compatible neighbor can be in
+     * a chunk that has not been sampled here yet.
+     */
+
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
     {
@@ -456,6 +464,58 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                 static_cast<uint32_t>(shrub_chance);
             column_cache[column_index].tree_chance_percent =
                 static_cast<uint32_t>(tree_chance);
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    local_z = 1;
+    while (local_z + 1 < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 1;
+        while (local_x + 1 < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            ft_bool has_compatible_neighbor;
+            int32_t neighbor_index;
+
+            column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
+            has_compatible_neighbor = FT_FALSE;
+            if (column_cache[column_index].has_surface_water == FT_TRUE)
+            {
+                neighbor_index = column_index - 1;
+                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
+                    && column_cache[neighbor_index].surface_water_kind
+                        == column_cache[column_index].surface_water_kind
+                    && column_cache[neighbor_index].surface_water_feature_id
+                        == column_cache[column_index].surface_water_feature_id)
+                    has_compatible_neighbor = FT_TRUE;
+                neighbor_index = column_index + 1;
+                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
+                    && column_cache[neighbor_index].surface_water_kind
+                        == column_cache[column_index].surface_water_kind
+                    && column_cache[neighbor_index].surface_water_feature_id
+                        == column_cache[column_index].surface_water_feature_id)
+                    has_compatible_neighbor = FT_TRUE;
+                neighbor_index = column_index - GAME_VOXEL_CHUNK_WIDTH;
+                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
+                    && column_cache[neighbor_index].surface_water_kind
+                        == column_cache[column_index].surface_water_kind
+                    && column_cache[neighbor_index].surface_water_feature_id
+                        == column_cache[column_index].surface_water_feature_id)
+                    has_compatible_neighbor = FT_TRUE;
+                neighbor_index = column_index + GAME_VOXEL_CHUNK_WIDTH;
+                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
+                    && column_cache[neighbor_index].surface_water_kind
+                        == column_cache[column_index].surface_water_kind
+                    && column_cache[neighbor_index].surface_water_feature_id
+                        == column_cache[column_index].surface_water_feature_id)
+                    has_compatible_neighbor = FT_TRUE;
+                if (has_compatible_neighbor == FT_FALSE)
+                {
+                    column_cache[column_index].has_surface_water = FT_FALSE;
+                    column_cache[column_index].surface_water_depth = 0U;
+                    column_cache[column_index].surface_water_feature_id = 0U;
+                }
+            }
             local_x += 1;
         }
         local_z += 1;

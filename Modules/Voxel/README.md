@@ -12,6 +12,11 @@ they need:
 - `voxel_api.hpp` contains module-level generation, biome, block registry,
   tree-template, and chunk-generation functions.
 - `voxel_mesh.hpp` contains chunk mesh types and mesh functions.
+- `voxel_lighting.hpp` contains packed sky/block light, deterministic light
+  builds, and `voxel_light_build_operation`. The operation API allows a
+  worker to pause and resume scanning, propagation, and finalization according
+  to `voxel_light_update_config` without blocking the caller for one monolithic
+  solve.
 - `voxel_scripting_bridge.hpp` contains the terrain scripting bridge API.
   Terrain configuration scripts are normalized and executed by Libft's custom
   Scripting runtime; the bridge no longer routes terrain execution through Lua.

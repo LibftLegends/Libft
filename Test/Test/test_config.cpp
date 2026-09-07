@@ -142,6 +142,46 @@ FT_TEST(test_config_parse_missing_value_handles_entries)
     return (1);
 }
 
+FT_TEST(test_config_parse_long_physical_line_is_one_entry)
+{
+    const char *filename = "config_long_line.ini";
+    FILE *file;
+    char value[1024];
+    config_data *config;
+    int32_t value_length;
+
+    file = std::fopen(filename, "w");
+    if (!file)
+        return (0);
+    ft_memset(value, 'x', sizeof(value) - 1U);
+    value[sizeof(value) - 1U] = '\0';
+    if (std::fwrite("long_key=", 1U, 9U, file) != 9U)
+    {
+        std::fclose(file);
+        cleanup_file(filename);
+        return (0);
+    }
+    value_length = ft_strlen(value);
+    if (std::fwrite(value, 1U, static_cast<size_t>(value_length), file)
+            != static_cast<size_t>(value_length)
+        || std::fclose(file) != 0)
+    {
+        cleanup_file(filename);
+        return (0);
+    }
+    config = config_parse(filename);
+    FT_ASSERT(config != ft_nullptr);
+    FT_ASSERT(config->entry_count == 1U);
+    FT_ASSERT(config->entries[0].key != ft_nullptr);
+    FT_ASSERT(std::strcmp(config->entries[0].key, "long_key") == 0);
+    FT_ASSERT(config->entries[0].value != ft_nullptr);
+    FT_ASSERT(ft_strlen(config->entries[0].value) == value_length);
+    if (config)
+        config_data_free(config);
+    cleanup_file(filename);
+    return (1);
+}
+
 FT_TEST(test_config_write_ini_round_trip)
 {
     const char *filename = "config_round_trip.ini";
@@ -212,6 +252,51 @@ FT_TEST(test_config_write_ini_round_trip)
     FT_ASSERT(std::strcmp(parsed->entries[2].key, "global") == 0);
     FT_ASSERT(std::strcmp(parsed->entries[2].value, "value") == 0);
     config_data_free(parsed);
+    cleanup_file(filename);
+    return (1);
+}
+
+FT_TEST(test_config_write_ini_rejects_unrepresentable_entry)
+{
+    const char *filename = "config_unrepresentable.ini";
+    config_data *config;
+    FILE *file;
+    char existing[32];
+
+    file = std::fopen(filename, "w");
+    if (!file)
+        return (0);
+    if (std::fwrite("unchanged", 1U, 9U, file) != 9U
+        || std::fclose(file) != 0)
+    {
+        cleanup_file(filename);
+        return (0);
+    }
+    config = create_test_config(1U);
+    if (!config)
+    {
+        cleanup_file(filename);
+        return (0);
+    }
+    config->entries[0].key = adv_strdup("bad\nkey");
+    if (!config->entries[0].key)
+    {
+        config_data_free(config);
+        cleanup_file(filename);
+        return (0);
+    }
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        config_write_file(config, filename));
+    config_data_free(config);
+    file = std::fopen(filename, "r");
+    FT_ASSERT(file != ft_nullptr);
+    if (file)
+    {
+        ft_memset(existing, 0, sizeof(existing));
+        FT_ASSERT(std::fread(existing, 1U, 9U, file) == 9U);
+        FT_ASSERT(std::strcmp(existing, "unchanged") == 0);
+        std::fclose(file);
+    }
     cleanup_file(filename);
     return (1);
 }

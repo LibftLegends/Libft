@@ -174,153 +174,177 @@ void config_data_free(config_data *config)
     return ;
 }
 
+static int32_t config_parse_line(config_data *config, char *line_string,
+    char **current_section)
+{
+    char *equals_sign;
+    char *key;
+    char *value;
+    char *key_start;
+    char *value_start;
+    config_entry *new_entries;
+    config_entry *new_entry;
+    int32_t error_code;
+
+    if (!config || !line_string || !current_section)
+        return (FT_ERR_INVALID_ARGUMENT);
+    line_string = trim_whitespace(line_string);
+    if (*line_string == '\0' || *line_string == ';'
+        || *line_string == '#')
+        return (FT_ERR_SUCCESS);
+    if (*line_string == '[')
+    {
+        char *closing_bracket = ft_strchr(line_string, ']');
+        if (!closing_bracket)
+            return (FT_ERR_INVALID_ARGUMENT);
+        *closing_bracket = '\0';
+        cma_free(*current_section);
+        *current_section = ft_nullptr;
+        if (*(line_string + 1) != '\0')
+        {
+            *current_section = adv_strdup(line_string + 1);
+            if (!*current_section)
+                return (FT_ERR_NO_MEMORY);
+        }
+        return (FT_ERR_SUCCESS);
+    }
+    key = ft_nullptr;
+    value = ft_nullptr;
+    equals_sign = ft_strchr(line_string, '=');
+    if (equals_sign)
+    {
+        *equals_sign = '\0';
+        key_start = trim_whitespace(line_string);
+        value_start = trim_whitespace(equals_sign + 1);
+        if (*key_start != '\0')
+        {
+            key = adv_strdup(key_start);
+            if (!key)
+                return (FT_ERR_NO_MEMORY);
+        }
+        if (*value_start != '\0')
+        {
+            value = adv_strdup(value_start);
+            if (!value)
+            {
+                cma_free(key);
+                return (FT_ERR_NO_MEMORY);
+            }
+        }
+    }
+    else
+    {
+        key_start = trim_whitespace(line_string);
+        if (*key_start != '\0')
+        {
+            key = adv_strdup(key_start);
+            if (!key)
+                return (FT_ERR_NO_MEMORY);
+        }
+    }
+    new_entries = static_cast<config_entry*>(cma_realloc(config->entries,
+        sizeof(config_entry) * (config->entry_count + 1U)));
+    if (!new_entries)
+    {
+        cma_free(key);
+        cma_free(value);
+        return (FT_ERR_NO_MEMORY);
+    }
+    config->entries = new_entries;
+    new_entry = &config->entries[config->entry_count];
+    new_entry->mutex = ft_nullptr;
+    new_entry->section = ft_nullptr;
+    new_entry->key = key;
+    new_entry->value = value;
+    if (*current_section)
+    {
+        new_entry->section = adv_strdup(*current_section);
+        if (!new_entry->section)
+        {
+            cma_free(new_entry->key);
+            cma_free(new_entry->value);
+            new_entry->key = ft_nullptr;
+            new_entry->value = ft_nullptr;
+            return (FT_ERR_NO_MEMORY);
+        }
+    }
+    error_code = config_entry_prepare_thread_safety(new_entry);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        cma_free(new_entry->section);
+        cma_free(new_entry->key);
+        cma_free(new_entry->value);
+        new_entry->section = ft_nullptr;
+        new_entry->key = ft_nullptr;
+        new_entry->value = ft_nullptr;
+        return (error_code);
+    }
+    config->entry_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
 config_data *config_parse(const char *filename)
 {
+    FILE *file;
+    config_data *config;
+    ft_string line;
+    char buffer[512];
+    char *current_section;
+    ft_size_t chunk_length;
+    int32_t error_code;
+
     if (!filename)
-    {
         return (ft_nullptr);
-    }
-    FILE *file = ft_fopen(filename, "r");
+    file = ft_fopen(filename, "r");
     if (!file)
         return (ft_nullptr);
-    config_data *config = config_data_create();
+    config = config_data_create();
     if (!config)
     {
         ft_fclose(file);
         return (ft_nullptr);
     }
-    char buffer[512];
-    char *current_section = ft_nullptr;
+    error_code = line.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        config_data_free(config);
+        ft_fclose(file);
+        return (ft_nullptr);
+    }
+    current_section = ft_nullptr;
     while (ft_fgets(buffer, sizeof(buffer), file))
     {
-        char *line_string = trim_whitespace(buffer);
-        if (*line_string == '\0' || *line_string == ';' || *line_string == '#')
-            continue ;
-        if (*line_string == '[')
+        chunk_length = ft_strlen(buffer);
+        error_code = line.append(buffer, chunk_length);
+        if (error_code != FT_ERR_SUCCESS)
+            break ;
+        if (chunk_length != 0U
+            && (buffer[chunk_length - 1U] == '\n'
+                || buffer[chunk_length - 1U] == '\r'))
         {
-            char *closing_bracket = ft_strchr(line_string, ']');
-            if (closing_bracket)
-            {
-                *closing_bracket = '\0';
-                cma_free(current_section);
-                current_section = ft_nullptr;
-                if (*(line_string + 1))
-                {
-                    current_section = adv_strdup(line_string + 1);
-                    if (!current_section)
-                    {
-                        config_data_free(config);
-                        ft_fclose(file);
-                        return (ft_nullptr);
-                    }
-                }
-            }
-            continue ;
+            error_code = config_parse_line(config, line.data(),
+                &current_section);
+            if (error_code != FT_ERR_SUCCESS)
+                break ;
+            error_code = line.clear();
+            if (error_code != FT_ERR_SUCCESS)
+                break ;
         }
-        char *equals_sign = ft_strchr(line_string, '=');
-        char *key = ft_nullptr;
-        char *value = ft_nullptr;
-        if (equals_sign)
-        {
-            *equals_sign = '\0';
-            char *key_start = trim_whitespace(line_string);
-            char *value_start = trim_whitespace(equals_sign + 1);
-            if (*key_start)
-            {
-                key = adv_strdup(key_start);
-                if (!key)
-                {
-                    cma_free(value);
-                    config_data_free(config);
-                    if (current_section)
-                        cma_free(current_section);
-                    ft_fclose(file);
-                    return (ft_nullptr);
-                }
-            }
-            if (*value_start)
-            {
-                value = adv_strdup(value_start);
-                if (!value)
-                {
-                    cma_free(key);
-                    config_data_free(config);
-                    if (current_section)
-                        cma_free(current_section);
-                    ft_fclose(file);
-                    return (ft_nullptr);
-                }
-            }
-        }
-        else
-        {
-            char *key_start = trim_whitespace(line_string);
-            if (*key_start)
-            {
-                key = adv_strdup(key_start);
-                if (!key)
-                {
-                    config_data_free(config);
-                    if (current_section)
-                        cma_free(current_section);
-                    ft_fclose(file);
-                    return (ft_nullptr);
-                }
-            }
-        }
-        config_entry *new_entries = static_cast<config_entry*>(cma_realloc(config->entries, sizeof(config_entry) * (config->entry_count + 1)));
-        if (!new_entries)
-        {
-            cma_free(key);
-            cma_free(value);
-            config_data_free(config);
-            if (current_section)
-                cma_free(current_section);
-            ft_fclose(file);
-            return (ft_nullptr);
-        }
-        config->entries = new_entries;
-        config_entry *new_entry = &config->entries[config->entry_count];
-        new_entry->mutex = ft_nullptr;
-        if (current_section)
-        {
-            new_entry->section = adv_strdup(current_section);
-            if (!new_entry->section)
-            {
-                cma_free(key);
-                cma_free(value);
-                new_entry->key = ft_nullptr;
-                new_entry->value = ft_nullptr;
-                config_data_free(config);
-                if (current_section)
-                    cma_free(current_section);
-                ft_fclose(file);
-                return (ft_nullptr);
-            }
-        }
-        else
-            new_entry->section = ft_nullptr;
-        new_entry->key = key;
-        new_entry->value = value;
-        if (config_entry_prepare_thread_safety(new_entry) != FT_ERR_SUCCESS)
-        {
-            cma_free(new_entry->section);
-            cma_free(new_entry->key);
-            cma_free(new_entry->value);
-            new_entry->section = ft_nullptr;
-            new_entry->key = ft_nullptr;
-            new_entry->value = ft_nullptr;
-            config_data_free(config);
-            if (current_section)
-                cma_free(current_section);
-            ft_fclose(file);
-            return (ft_nullptr);
-        }
-        config->entry_count++;
     }
-    if (current_section)
-        cma_free(current_section);
+    if (error_code == FT_ERR_SUCCESS && std::ferror(file) != 0)
+        error_code = FT_ERR_IO;
+    if (error_code == FT_ERR_SUCCESS && line.size() != 0U)
+        error_code = config_parse_line(config, line.data(),
+            &current_section);
+    if (line.destroy() != FT_ERR_SUCCESS && error_code == FT_ERR_SUCCESS)
+        error_code = FT_ERR_INTERNAL;
+    cma_free(current_section);
     ft_fclose(file);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        config_data_free(config);
+        return (ft_nullptr);
+    }
     return (config);
 }
 

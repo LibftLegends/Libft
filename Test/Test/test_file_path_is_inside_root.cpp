@@ -34,14 +34,14 @@ FT_TEST(test_file_path_is_inside_root_rejects_escape)
 FT_TEST(test_file_validate_regular_file_inside_root)
 {
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_validate_regular_file_inside_root(
-            "Test/Lua", "Test/Lua/export_values.lua"));
+            "Lua", "Lua/export_values.lua"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Lua",
-                "Test/Lua/../test_voxel_runtime_blocks.cpp"));
+            file_validate_regular_file_inside_root("Lua",
+                "Lua/../test_voxel_runtime_blocks.cpp"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Lua", "Test/Lua"));
+            file_validate_regular_file_inside_root("Lua", "Lua"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Lua",
-                "Test/Lua/missing_asset.bin"));
+            file_validate_regular_file_inside_root("Lua",
+                "Lua/missing_asset.bin"));
     return (1);
 }

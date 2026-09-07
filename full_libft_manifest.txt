@@ -152,6 +152,11 @@ Modules/Networking/http_client.hpp
 Modules/Networking/http_server.hpp
 Modules/Networking/networking.hpp
 Modules/Networking/networking_quic_experimental.hpp
+Modules/Networking/networking_replication_apply_budget.hpp
+Modules/Networking/networking_replication_client.hpp
+Modules/Networking/networking_replication_protocol.hpp
+Modules/Networking/networking_replication_retention_window.hpp
+Modules/Networking/networking_replication_revision_tracker.hpp
 Modules/Networking/networking_tls_aead.hpp
 Modules/Networking/openssl_support.hpp
 Modules/Networking/socket_class.hpp
@@ -237,8 +242,10 @@ Modules/Time/time_timer.hpp
 Modules/Voxel/voxel_api.hpp
 Modules/Voxel/voxel_config.hpp
 Modules/Voxel/voxel_generation.hpp
-Modules/Voxel/voxel_types.hpp
+Modules/Voxel/voxel_lighting.hpp
 Modules/Voxel/voxel_mesh.hpp
+Modules/Voxel/voxel_shadow.hpp
+Modules/Voxel/voxel_types.hpp
 Modules/XML/xml.hpp
 Modules/XML/xml_document.hpp
 Modules/XML/xml_dom_bridge.hpp

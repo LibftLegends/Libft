@@ -91,18 +91,34 @@ int32_t game_block_change_request_deserialize(
     game_block_change_request &request, ft_byte_buffer &buffer) noexcept
 {
     game_block_change_request temporary_request;
+    ft_size_t initial_read_position;
     int32_t error_code;
+    int32_t restore_error;
 
+    initial_read_position = buffer.read_position();
     error_code = game_world_delta_read_request_fields(temporary_request,
         buffer);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (error_code);
+    }
     if (temporary_request.protocol_version
             != GAME_WORLD_DELTA_PROTOCOL_VERSION
+        || temporary_request.session_id == 0U
+        || temporary_request.request_id == 0U
+        || temporary_request.world_id == 0U
         || temporary_request.local_x >= 16U
         || temporary_request.local_y >= 256U
         || temporary_request.local_z >= 16U)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     request = temporary_request;
     return (FT_ERR_SUCCESS);
 }
@@ -148,8 +164,11 @@ int32_t game_block_delta_deserialize(game_block_delta &delta,
     game_block_delta temporary_delta;
     uint32_t chunk_x;
     uint32_t chunk_z;
+    ft_size_t initial_read_position;
     int32_t error_code;
+    int32_t restore_error;
 
+    initial_read_position = buffer.read_position();
     error_code = buffer.read_u16_le(&temporary_delta.protocol_version);
     if (error_code == FT_ERR_SUCCESS)
         error_code = buffer.read_u64_le(&temporary_delta.session_id);
@@ -178,9 +197,17 @@ int32_t game_block_delta_deserialize(game_block_delta &delta,
     if (error_code == FT_ERR_SUCCESS)
         error_code = buffer.read_u8(&temporary_delta.local_z);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (error_code);
+    }
     if (temporary_delta.protocol_version
             != GAME_WORLD_DELTA_PROTOCOL_VERSION
+        || temporary_delta.session_id == 0U
+        || temporary_delta.request_id == 0U
+        || temporary_delta.world_id == 0U
         || temporary_delta.local_x >= 16U
         || temporary_delta.local_y >= 256U
         || temporary_delta.local_z >= 16U
@@ -188,7 +215,12 @@ int32_t game_block_delta_deserialize(game_block_delta &delta,
         || temporary_delta.revision == 0U
         || temporary_delta.previous_revision + 1U
             != temporary_delta.revision)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     temporary_delta.chunk_x = static_cast<int32_t>(chunk_x);
     temporary_delta.chunk_z = static_cast<int32_t>(chunk_z);
     delta = temporary_delta;
@@ -203,6 +235,8 @@ int32_t game_world_delta_snapshot_serialize(const game_voxel_chunk &chunk,
     const uint8_t *payload_data;
     uint32_t payload_size;
     int32_t error_code;
+    int32_t payload_destroy_error;
+    int32_t temporary_destroy_error;
 
     error_code = payload.initialize();
     if (error_code != FT_ERR_SUCCESS)
@@ -229,8 +263,14 @@ int32_t game_world_delta_snapshot_serialize(const game_voxel_chunk &chunk,
         error_code = buffer.destroy();
     if (error_code == FT_ERR_SUCCESS)
         error_code = buffer.move(temporary_buffer);
-    (void)payload.destroy();
-    (void)temporary_buffer.destroy();
+    payload_destroy_error = payload.destroy();
+    temporary_destroy_error = temporary_buffer.destroy();
+    if (error_code == FT_ERR_SUCCESS
+        && payload_destroy_error != FT_ERR_SUCCESS)
+        error_code = payload_destroy_error;
+    if (error_code == FT_ERR_SUCCESS
+        && temporary_destroy_error != FT_ERR_SUCCESS)
+        error_code = temporary_destroy_error;
     return (error_code);
 }
 
@@ -242,33 +282,72 @@ int32_t game_world_delta_snapshot_deserialize(game_voxel_chunk &chunk,
     uint32_t payload_size;
     uint32_t expected_checksum;
     uint32_t actual_checksum;
+    ft_size_t initial_read_position;
     int32_t error_code;
+    int32_t restore_error;
+    int32_t destroy_error;
 
+    initial_read_position = buffer.read_position();
     error_code = buffer.read_u32_le(&payload_size);
     if (error_code != FT_ERR_SUCCESS
         || static_cast<ft_size_t>(payload_size) > buffer.remaining()
         || buffer.remaining() - payload_size < 4U)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
         return (FT_ERR_IO);
+    }
     error_code = buffer.view(buffer.read_position(), payload_size,
         &payload_data);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (error_code);
+    }
     actual_checksum = game_world_delta_snapshot_checksum(payload_data,
         payload_size);
     error_code = buffer.skip(payload_size);
     if (error_code == FT_ERR_SUCCESS)
         error_code = buffer.read_u32_le(&expected_checksum);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (error_code);
+    }
     if (expected_checksum != actual_checksum)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     error_code = payload.initialize();
     if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
         return (error_code);
+    }
     error_code = payload.append(payload_data, payload_size);
     if (error_code == FT_ERR_SUCCESS)
         error_code = chunk.deserialize(payload);
-    (void)payload.destroy();
+    destroy_error = payload.destroy();
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = destroy_error;
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        restore_error = buffer.set_read_position(initial_read_position);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
+    }
     return (error_code);
 }
 
@@ -306,12 +385,14 @@ int32_t game_world_delta_history::initialize(uint32_t capacity) noexcept
 
 int32_t game_world_delta_history::destroy() noexcept
 {
+    int32_t destroy_error;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    (void)this->_entries.destroy();
+    destroy_error = this->_entries.destroy();
     this->_capacity = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (destroy_error);
 }
 
 int32_t game_world_delta_history::append(const game_block_delta &delta) noexcept
@@ -346,12 +427,15 @@ int32_t game_world_delta_history::get_since(uint64_t revision,
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    deltas.clear();
     if (this->_entries.empty() != FT_FALSE)
+    {
+        deltas.clear();
         return (FT_ERR_SUCCESS);
+    }
     oldest_revision = this->_entries[0U].revision;
     if (revision != UINT64_MAX && revision + 1U < oldest_revision)
         return (FT_ERR_OUT_OF_RANGE);
+    deltas.clear();
     index = 0U;
     while (index < this->_entries.size())
     {
@@ -413,11 +497,13 @@ int32_t game_world_delta_interest_set::initialize() noexcept
 
 int32_t game_world_delta_interest_set::destroy() noexcept
 {
+    int32_t destroy_error;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    (void)this->_entries.destroy();
+    destroy_error = this->_entries.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (destroy_error);
 }
 
 int32_t game_world_delta_interest_set::find(uint64_t client_id,
@@ -622,22 +708,28 @@ int32_t game_world_delta_channel::initialize(game_voxel_chunk &chunk,
 
 int32_t game_world_delta_channel::destroy() noexcept
 {
+    int32_t interest_destroy_error;
+    int32_t history_destroy_error;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    (void)this->_interests.destroy();
-    (void)this->_history.destroy();
+    interest_destroy_error = this->_interests.destroy();
+    history_destroy_error = this->_history.destroy();
     this->_chunk = ft_nullptr;
     this->_world_id = 0U;
     this->_chunk_x = 0;
     this->_chunk_z = 0;
     this->_server_tick = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    if (interest_destroy_error != FT_ERR_SUCCESS)
+        return (interest_destroy_error);
+    return (history_destroy_error);
 }
 
 int32_t game_world_delta_channel::apply_request(
     const game_block_change_request &request, game_block_delta &delta) noexcept
 {
+    uint64_t revision_before;
     int32_t error_code;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -646,10 +738,15 @@ int32_t game_world_delta_channel::apply_request(
         || request.chunk_x != this->_chunk_x
         || request.chunk_z != this->_chunk_z)
         return (FT_ERR_INVALID_ARGUMENT);
+    revision_before = this->_chunk->get_revision();
     error_code = this->_chunk->apply_authoritative_block_change(request,
         &delta);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (delta.revision == revision_before)
+        return (FT_ERR_SUCCESS);
+    if (delta.revision != revision_before + 1U)
+        return (FT_ERR_INVALID_STATE);
     if (this->_server_tick != UINT64_MAX)
         this->_server_tick += 1U;
     delta.server_tick = this->_server_tick;
@@ -664,6 +761,8 @@ int32_t game_world_delta_channel::subscribe(uint64_t client_id,
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (snapshot_revision > this->_chunk->get_revision())
+        return (FT_ERR_INVALID_STATE);
     return (this->_interests.subscribe(client_id, this->_world_id,
         this->_chunk_x, this->_chunk_z, snapshot_revision));
 }
@@ -681,6 +780,8 @@ int32_t game_world_delta_channel::acknowledge_snapshot(uint64_t client_id,
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (snapshot_revision > this->_chunk->get_revision())
+        return (FT_ERR_INVALID_STATE);
     return (this->_interests.acknowledge_snapshot(client_id, this->_world_id,
         this->_chunk_x, this->_chunk_z, snapshot_revision));
 }
@@ -690,6 +791,8 @@ int32_t game_world_delta_channel::acknowledge_revision(uint64_t client_id,
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (revision > this->_chunk->get_revision())
+        return (FT_ERR_INVALID_STATE);
     return (this->_interests.acknowledge_revision(client_id, this->_world_id,
         this->_chunk_x, this->_chunk_z, revision));
 }

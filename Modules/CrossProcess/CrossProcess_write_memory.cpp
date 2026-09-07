@@ -10,11 +10,16 @@
 
 namespace
 {
-    static ft_size_t compute_offset(uint64_t pointer_value, uint64_t base_value)
+    static int32_t compute_offset(uint64_t pointer_value, uint64_t base_value,
+        ft_size_t &offset)
     {
         if (pointer_value < base_value)
-            return (0);
-        return (pointer_value - base_value);
+        {
+            errno = EINVAL;
+            return (FT_ERR_INVALID_ARGUMENT);
+        }
+        offset = pointer_value - base_value;
+        return (FT_ERR_SUCCESS);
     }
 }
 
@@ -38,8 +43,10 @@ int32_t cp_write_memory(const cross_process_message &message,
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    data_offset = compute_offset(message.remote_memory_address, message.stack_base_address);
-    if (data_offset >= message.remote_memory_size)
+    operation_error = compute_offset(message.remote_memory_address,
+        message.stack_base_address, data_offset);
+    if (operation_error != FT_ERR_SUCCESS
+        || data_offset >= message.remote_memory_size)
     {
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
@@ -55,14 +62,15 @@ int32_t cp_write_memory(const cross_process_message &message,
     error_offset = 0;
     if (has_error_slot == FT_TRUE)
     {
-        error_offset = compute_offset(message.error_memory_address, message.stack_base_address);
-        if (error_offset > message.remote_memory_size
+        operation_error = compute_offset(message.error_memory_address,
+            message.stack_base_address, error_offset);
+        if (operation_error != FT_ERR_SUCCESS
+            || error_offset > message.remote_memory_size
             || sizeof(int32_t) > message.remote_memory_size - error_offset
             || error_offset < data_offset)
         {
-            has_failure = FT_TRUE;
-            failure_error = FT_ERR_INVALID_ARGUMENT;
             errno = EINVAL;
+            return (FT_ERR_INVALID_ARGUMENT);
         }
         else
         {
@@ -83,6 +91,7 @@ int32_t cp_write_memory(const cross_process_message &message,
     mapping.platform_handle = ft_nullptr;
     mapping.mutex_address = ft_nullptr;
     mutex_state.platform_mutex = ft_nullptr;
+    mutex_state.owner_recovered = FT_FALSE;
     operation_error = cmp_cross_process_open_mapping(message, &mapping);
     if (operation_error != FT_ERR_SUCCESS)
         return (operation_error);
@@ -95,15 +104,26 @@ int32_t cp_write_memory(const cross_process_message &message,
             return (cleanup_error);
         return (operation_error);
     }
+    if (mutex_state.owner_recovered == FT_TRUE)
+    {
+        cleanup_error = cmp_cross_process_unlock_mutex(message, &mapping,
+                &mutex_state);
+        if (cleanup_error != FT_ERR_SUCCESS)
+            return (cleanup_error);
+        cleanup_error = cmp_cross_process_close_mapping(&mapping);
+        if (cleanup_error != FT_ERR_SUCCESS)
+            return (cleanup_error);
+        return (FT_ERR_INVALID_STATE);
+    }
     zero_length = payload_capacity;
     if (zero_length > 0 && (has_failure == FT_FALSE
             || zero_on_failure == FT_TRUE))
-        std::memset(mapping.mapping_address + data_offset, 0, zero_length);
+        ft_memset(mapping.mapping_address + data_offset, 0, zero_length);
     if (has_failure == FT_FALSE && payload_length > 0)
-        std::memcpy(mapping.mapping_address + data_offset, payload, payload_length);
+        ft_memcpy(mapping.mapping_address + data_offset, payload, payload_length);
     if (has_failure == FT_FALSE && has_error_slot == FT_TRUE)
     {
-        std::memcpy(mapping.mapping_address + error_offset, &error_code,
+        ft_memcpy(mapping.mapping_address + error_offset, &error_code,
             sizeof(int32_t));
     }
     operation_error = cmp_cross_process_unlock_mutex(message, &mapping,

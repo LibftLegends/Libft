@@ -21,7 +21,8 @@ static const uint32_t VOXEL_RUNTIME_BLOCK_ID_BASE =
     static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT);
 
 voxel_runtime_block::voxel_runtime_block() noexcept
-    : block_id(0U), metadata(), name(), asset_paths(), asset_data()
+    : block_id(0U), handle_references(0U), registry_owned(FT_FALSE),
+      metadata(), name(), asset_paths(), asset_data()
 {
     return ;
 }
@@ -168,6 +169,201 @@ static void voxel_runtime_destroy_block(voxel_runtime_block *block_pointer,
     block_pointer->~voxel_runtime_block();
     std::free(block_pointer);
     return ;
+}
+
+voxel_runtime_block_handle::voxel_runtime_block_handle() noexcept
+    : _block(ft_nullptr), _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+{
+    return ;
+}
+
+voxel_runtime_block_handle::~voxel_runtime_block_handle() noexcept
+{
+    (void)this->destroy();
+    return ;
+}
+
+int32_t voxel_runtime_block_handle::initialize(
+    const voxel_runtime_block_handle &other) noexcept
+{
+    pt_mutex *mutex_pointer;
+
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state,
+            "voxel_runtime_block_handle::initialize",
+            "called with uninitialised source object");
+        return (FT_ERR_INVALID_STATE);
+    }
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        if (this->destroy() != FT_ERR_SUCCESS)
+            return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->_block = ft_nullptr;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (FT_ERR_SUCCESS);
+    }
+    mutex_pointer = voxel_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    this->_block = other._block;
+    if (this->_block == ft_nullptr)
+    {
+        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        return (FT_ERR_INVALID_STATE);
+    }
+    this->_block->handle_references.fetch_add(1U,
+        std::memory_order_relaxed);
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_runtime_block_handle::destroy() noexcept
+{
+    pt_mutex *mutex_pointer;
+    voxel_runtime_block *block_pointer;
+    uint32_t references;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (FT_ERR_SUCCESS);
+    }
+    mutex_pointer = voxel_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    block_pointer = this->_block;
+    this->_block = ft_nullptr;
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    references = block_pointer->handle_references.fetch_sub(1U,
+        std::memory_order_relaxed) - 1U;
+    if (references == 0U && block_pointer->registry_owned == FT_FALSE)
+        voxel_runtime_destroy_block(block_pointer,
+            VOXEL_BLOCK_ASSET_FACE_COUNT);
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_runtime_block_handle::move(
+    voxel_runtime_block_handle &other) noexcept
+{
+    int32_t error_code;
+
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state,
+            "voxel_runtime_block_handle::move",
+            "called with uninitialised source object");
+        return (FT_ERR_INVALID_STATE);
+    }
+    error_code = this->destroy();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    this->_block = other._block;
+    this->_initialised_state = other._initialised_state;
+    other._block = ft_nullptr;
+    other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (FT_ERR_SUCCESS);
+}
+
+ft_bool voxel_runtime_block_handle::is_valid() const noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        && this->_block != ft_nullptr)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+uint32_t voxel_runtime_block_handle::get_id() const noexcept
+{
+    if (this->is_valid() == FT_FALSE)
+        return (0U);
+    return (this->_block->block_id);
+}
+
+const voxel_block_metadata *voxel_runtime_block_handle::get_metadata()
+    const noexcept
+{
+    if (this->is_valid() == FT_FALSE)
+        return (ft_nullptr);
+    return (&this->_block->metadata);
+}
+
+const char *voxel_runtime_block_handle::get_name() const noexcept
+{
+    if (this->is_valid() == FT_FALSE)
+        return (ft_nullptr);
+    return (this->_block->name.c_str());
+}
+
+const char *voxel_runtime_block_handle::get_asset_path(
+    voxel_block_asset_face face) const noexcept
+{
+    if (this->is_valid() == FT_FALSE
+        || face >= VOXEL_BLOCK_ASSET_FACE_COUNT)
+        return (ft_nullptr);
+    return (this->_block->asset_paths[face].c_str());
+}
+
+const uint8_t *voxel_runtime_block_handle::get_asset_data(
+    voxel_block_asset_face face, ft_size_t *size_out) const noexcept
+{
+    if (size_out == ft_nullptr)
+        return (ft_nullptr);
+    *size_out = 0U;
+    if (this->is_valid() == FT_FALSE
+        || face >= VOXEL_BLOCK_ASSET_FACE_COUNT)
+        return (ft_nullptr);
+    *size_out = this->_block->asset_data[face].size();
+    return (this->_block->asset_data[face].data());
+}
+
+int32_t voxel_acquire_block(uint32_t block_id,
+    voxel_runtime_block_handle &handle) noexcept
+{
+    pt_mutex *mutex_pointer;
+    voxel_runtime_block *block_pointer;
+    uint32_t index;
+
+    if (block_id < VOXEL_RUNTIME_BLOCK_ID_BASE)
+        return (FT_ERR_NOT_FOUND);
+    index = block_id - VOXEL_RUNTIME_BLOCK_ID_BASE;
+    if (index >= VOXEL_RUNTIME_BLOCK_CAPACITY)
+        return (FT_ERR_NOT_FOUND);
+    if (handle._initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        if (handle.destroy() != FT_ERR_SUCCESS)
+            return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    }
+    mutex_pointer = voxel_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    block_pointer = g_voxel_runtime_blocks[index];
+    if (block_pointer == ft_nullptr)
+    {
+        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        return (FT_ERR_NOT_FOUND);
+    }
+    block_pointer->handle_references.fetch_add(1U,
+        std::memory_order_relaxed);
+    handle._block = block_pointer;
+    handle._initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t voxel_runtime_load_asset(const char *path,
@@ -325,6 +521,7 @@ static int32_t voxel_register_block_internal(
     }
     created_block = new (memory_pointer) voxel_runtime_block();
     created_block->block_id = VOXEL_RUNTIME_BLOCK_ID_BASE + index;
+    created_block->registry_owned = FT_TRUE;
     created_block->metadata = registration.metadata;
     error_code = created_block->name.initialize(registration.name);
     asset_index = 0U;
@@ -376,6 +573,40 @@ int32_t voxel_register_block(const voxel_block_registration &registration,
 {
     return (voxel_register_block_internal(registration, ft_nullptr,
         block_id_out));
+}
+
+int32_t voxel_unregister_block(uint32_t block_id) noexcept
+{
+    pt_mutex *mutex_pointer;
+    voxel_runtime_block *block_pointer;
+    uint32_t index;
+    uint32_t references;
+
+    if (block_id < VOXEL_RUNTIME_BLOCK_ID_BASE)
+        return (FT_ERR_NOT_FOUND);
+    index = block_id - VOXEL_RUNTIME_BLOCK_ID_BASE;
+    if (index >= VOXEL_RUNTIME_BLOCK_CAPACITY)
+        return (FT_ERR_NOT_FOUND);
+    mutex_pointer = voxel_runtime_get_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
+        return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    block_pointer = g_voxel_runtime_blocks[index];
+    if (block_pointer == ft_nullptr)
+    {
+        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        return (FT_ERR_NOT_FOUND);
+    }
+    g_voxel_runtime_blocks[index] = ft_nullptr;
+    block_pointer->registry_owned = FT_FALSE;
+    references = block_pointer->handle_references.load(
+        std::memory_order_relaxed);
+    if (references == 0U)
+        voxel_runtime_destroy_block(block_pointer,
+            VOXEL_BLOCK_ASSET_FACE_COUNT);
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t voxel_register_block_from_root(
@@ -490,8 +721,14 @@ void voxel_runtime_reset_for_tests(void) noexcept
     {
         block_pointer = g_voxel_runtime_blocks[index];
         g_voxel_runtime_blocks[index] = ft_nullptr;
-        voxel_runtime_destroy_block(block_pointer,
-            VOXEL_BLOCK_ASSET_FACE_COUNT);
+        if (block_pointer != ft_nullptr)
+        {
+            block_pointer->registry_owned = FT_FALSE;
+            if (block_pointer->handle_references.load(
+                    std::memory_order_relaxed) == 0U)
+                voxel_runtime_destroy_block(block_pointer,
+                    VOXEL_BLOCK_ASSET_FACE_COUNT);
+        }
         index += 1U;
     }
     (void)pt_mutex_unlock_if_not_null(mutex_pointer);

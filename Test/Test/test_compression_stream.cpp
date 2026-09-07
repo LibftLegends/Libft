@@ -841,6 +841,7 @@ FT_TEST(test_ft_compress_stream_preserves_fragmented_producer_input)
     std::size_t first_size;
     std::size_t second_size;
     std::size_t compressed_size;
+    uLong compressed_size_zlib;
     uLongf decompressed_size;
     ssize_t read_bytes;
     int compression_result;
@@ -879,8 +880,10 @@ FT_TEST(test_ft_compress_stream_preserves_fragmented_producer_input)
     close(compressed_file_descriptor);
     FT_ASSERT(compressed_size > 0);
     decompressed_size = sizeof(decompressed_buffer);
+    FT_ASSERT(compressed_size <= static_cast<std::size_t>(ULONG_MAX));
+    compressed_size_zlib = static_cast<uLong>(compressed_size);
     FT_ASSERT_EQ(Z_OK, uncompress(decompressed_buffer, &decompressed_size,
-        compressed_buffer, compressed_size));
+        compressed_buffer, compressed_size_zlib));
     FT_ASSERT_EQ(first_size + second_size, decompressed_size);
     FT_ASSERT_EQ(0, ft_memcmp(decompressed_buffer, first_fragment, first_size));
     FT_ASSERT_EQ(0, ft_memcmp(decompressed_buffer + first_size,

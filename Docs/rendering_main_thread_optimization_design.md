@@ -5,7 +5,8 @@ renderer identity, mesh partition changes, visibility caching, analytics-only
 upload/commit diagnostics, bounded persistent mesh-upload scheduling, startup
 backpressure handling, and conservative frustum-plane culling are implemented.
 GPU draw batching remains measurement-gated because current draw-submission
-cost is not material.
+cost is not material. Section 11 supersedes the in-process world-ownership
+assumption and is a required, not-yet-implemented client/server migration.
 
 Reviewed branch: `agent/libft-hardening-update`
 
@@ -1466,3 +1467,1322 @@ the storage slot, chunk coordinates, world offset, camera position, and active
 render distance. This catches coordinate and frustum regressions in CI; it
 does not replace an interactive GPU capture, which is still required to prove
 that an admitted chunk was uploaded and drawn.
+
+## 11. Required architectural pivot: authoritative world service
+
+The mandatory architectural change is a logically authoritative world service
+which has no renderer ownership. Analytics and interactive testing show that
+generation, halo-light snapshot capture, relighting, remeshing, and result
+publication remain coupled closely enough that a block edit can take an
+unacceptable amount of time to become visible. The immediate correction is to
+establish clean ownership, bounded background work, and asynchronous
+publication. Process separation alone does not prove or create that correction.
+
+The world service must first run headlessly in the existing process as a
+transitional integration mode. This proves that renderer coupling has actually
+been removed before transport, encryption, and process lifecycle add new
+variables. The intended final deployment moves that exact service behind the
+same client/server protocol for single-player and multiplayer:
+
+```text
+single-player launcher
+        |
+        +-- starts a separate local server process
+        |       |
+        |       +-- owns authoritative world state
+        |       +-- owns world generation and persistence
+        |       +-- validates and applies gameplay actions
+        |       +-- owns authoritative block/light revisions
+        |       +-- publishes snapshots, deltas, and hashes
+        |
+        +-- starts/connects the client process
+                |
+                +-- owns a partial replicated world view
+                +-- owns rendering, meshes, GPU resources, and UI
+                +-- predicts only explicitly permitted presentation state
+                +-- sends intents; never commits authoritative world state
+```
+
+In the final topology, the local server and client must not share mutable world
+memory. Using the same
+wire protocol, validation path, revision rules, and recovery logic in
+single-player is a deliberate requirement. It prevents a separate multiplayer
+implementation from drifting away from the behavior exercised every time the
+game is played locally.
+
+Process separation is not by itself a performance optimization and must not be
+used to hide an unbounded or incorrectly prioritized pipeline. The server can
+still consume every CPU core and starve rendering, or the client can still
+apply an unbounded burst of snapshots and meshes. The implementation must
+therefore retain bounded work on both sides:
+
+- server generation and lighting use persistent sleeping workers and bounded
+  node/job budgets;
+- server network serialization uses immutable prepared payloads and bounded
+  queues;
+- client packet processing, delta application, remeshing, mesh publication,
+  and GPU upload each have independent per-frame budgets;
+- the client never waits synchronously for generation, lighting, persistence,
+  or a server response while rendering a frame;
+- backpressure delays low-priority work rather than allocating or executing an
+  unbounded backlog.
+
+The transitional in-process mode is not a second gameplay architecture. It
+uses the same world-service API, command/result queues, immutable publications,
+revision rules, and budgets as the final server. It may replace serialized
+transport with an in-memory adapter solely while proving the boundary. Once the
+minimum vertical slice below passes, single-player moves to the separate local
+server executable and the transitional adapter is removed.
+
+### 11.1 Module responsibility boundary
+
+Libft Networking and Crypto provide the transport and security primitives.
+They must not contain Minecraft-specific block rules.
+
+Libft owns:
+
+- encrypted authenticated connections through the existing message transport;
+- reliable ordered, unreliable, and unreliable-sequenced delivery;
+- fragmentation/reassembly, retransmission, flow control, priority lanes, and
+  connection statistics;
+- X25519 handshake, HKDF-SHA-256 key derivation, ChaCha20-Poly1305 AEAD,
+  HMAC-SHA-256 retry/bootstrap authentication, replay protection, and secure
+  random generation;
+- loopback IPv4/IPv6 transport and the persistent networking worker;
+- bounded message parsing and transport-level denial-of-service protection;
+- deterministic impairment simulation for tests.
+
+Minecraft owns:
+
+- application message schemas and protocol versioning;
+- world/chunk/block/light revisions;
+- player identity, permissions, reach, collision, inventory, cooldown, game
+  mode, and action legality;
+- interest management and which chunks each client may receive;
+- deterministic authoritative action ordering;
+- chunk snapshot/delta serialization and canonical hashing;
+- prediction, reconciliation, remeshing, and visual publication;
+- persistence and world migration policy.
+
+The validation boundary should accept game-owned policy callbacks or a
+Minecraft validator object. Libft transports an authenticated request and
+identifies its connection; it does not decide whether a player may break stone,
+place water, fly, or edit a protected region.
+
+### 11.2 Single-player local-server lifecycle
+
+Add a dedicated headless server executable, for example `ft_vox_server`, built
+from the same authoritative server code used by remote multiplayer. The client
+launcher performs this sequence:
+
+```text
+create inherited bootstrap pipe
+generate 256-bit one-use bootstrap secret with Crypto secure RNG
+start ft_vox_server with inherited pipe handle and loopback-only mode
+write bootstrap secret and requested world identifier through the pipe
+wait asynchronously for READY { port, server_instance_id, protocol_version }
+connect Libft message transport to 127.0.0.1/::1 on the assigned port
+authenticate the first application handshake with the bootstrap secret
+erase the secret after successful channel binding
+enter the normal client connection state machine
+```
+
+Do not place the bootstrap secret in command-line arguments, logs, environment
+variables, save files, or crash reports. Command lines and environments are
+observable by unrelated local processes on several supported platforms. Use
+the platform-neutral CrossProcess/System_utils process and inherited-handle
+abstractions; add narrowly scoped platform backends only where those modules do
+not yet expose the required primitive.
+
+The server binds only to loopback in local mode and rejects non-loopback source
+addresses. It chooses an ephemeral port to avoid stale-port collisions. The
+client must use a bounded asynchronous startup deadline and report server
+stderr/readiness diagnostics if startup fails. Rendering/menu processing must
+continue while the launcher waits.
+
+Normal shutdown is explicit:
+
+```text
+client -> SERVER_SHUTDOWN_REQUEST(local bootstrap owner only)
+server stops accepting gameplay intents
+server drains accepted authoritative mutations
+server flushes persistence atomically
+server sends SERVER_SHUTDOWN_COMPLETE
+client closes transport and waits for the child with a bounded deadline
+```
+
+If the client crashes, the local server detects connection loss and follows the
+configured policy: save and exit for ordinary single-player, or remain alive
+for an explicitly detached/LAN-hosted session. If the server crashes, the
+client leaves the world, preserves diagnostics, and never continues mutating a
+now-unowned local replica.
+
+### 11.3 Authoritative and replicated world models
+
+The server stores the canonical current block state, generated/player-modified
+provenance, biome/generator identity, authoritative light state when lighting
+affects gameplay, and monotonically increasing revisions. It does not build
+render meshes or own GPU objects.
+
+The client stores only subscribed chunks and derived rendering data. Each
+client chunk contains at least:
+
+```cpp
+struct client_chunk_replica
+{
+    chunk_coordinate coordinate;
+    uint64_t block_revision;
+    uint64_t light_revision;
+    uint64_t snapshot_generation;
+    block_storage blocks;
+    light_storage light;
+    provenance_storage provenance;
+    mesh_state mesh;
+    ft_bool snapshot_ready;
+    ft_bool delta_gap;
+};
+```
+
+The client may retain generated baselines or compact overrides as described by
+the server-authoritative delta design, but its copy is never evidence that an
+action is legal. Collision used for local movement prediction is provisional;
+the server remains authoritative for final player position and interactions.
+
+World generation should occur only on the server. The server sends complete
+chunk snapshots for first subscription and compact current-state deltas after
+that. The client builds meshes from replicated block/light data on persistent
+client workers. A server must never send render vertices as authoritative
+state: vertex formats are renderer/backend details and are substantially larger
+than canonical world data.
+
+### 11.4 Application protocol over Libft Networking
+
+Define a Minecraft application envelope inside the encrypted Libft message:
+
+```cpp
+struct minecraft_message_header
+{
+    uint16_t protocol_version;
+    uint16_t message_type;
+    uint32_t payload_length;
+    uint64_t server_instance_id;
+    uint64_t session_id;
+    uint64_t message_sequence;
+};
+```
+
+Serialize fields explicitly in network byte order. Never cast packet bytes to
+the structure. Include the application header as authenticated payload; the
+Libft transport already authenticates its own connection/packet envelope.
+Reject unknown required versions and length violations before allocation.
+
+Required application messages:
+
+| Message | Direction | Delivery | Purpose |
+| --- | --- | --- | --- |
+| `CLIENT_CAPABILITIES` | client to server | reliable/control | protocol, generator, compression, and feature negotiation |
+| `SERVER_SESSION` | server to client | reliable/control | session identity, tick rate, world identity, and ruleset digest |
+| `INTEREST_UPDATE` | client to server | unreliable-sequenced | camera/player center and requested view radius |
+| `CHUNK_MANIFEST` | server to client | reliable/world | subscribed coordinates and authoritative revisions |
+| `CHUNK_SNAPSHOT` | server to client | reliable/snapshot | canonical full chunk at a declared revision |
+| `CHUNK_BLOCK_DELTA` | server to client | reliable/delta | ordered current-state block/provenance changes |
+| `CHUNK_LIGHT_DELTA` | server to client | reliable/delta | asynchronous light changes tied to a source block revision |
+| `EDIT_INTENT` | client to server | reliable/action | requested block interaction, never a committed edit |
+| `EDIT_RESULT` | server to client | reliable/action | accepted/rejected result and canonical revision/value |
+| `PLAYER_INPUT` | client to server | unreliable-sequenced | movement/input sequence for server simulation |
+| `PLAYER_STATE` | server to client | unreliable-sequenced | authoritative movement state and acknowledgement |
+| `CHUNK_HASH_MANIFEST` | server to client | reliable/control | periodic canonical section/chunk hashes |
+| `CHUNK_REPAIR_REQUEST` | client to server | reliable/control | request sections or full snapshot after mismatch/gap |
+| `CHUNK_REPAIR_RESPONSE` | server to client | reliable/snapshot | transactional repair payload |
+| `CHUNK_SYNC_REQUEST` | client to server | reliable/control | request bounded block/light replay from client cursors |
+| `DELTA_ACK` | client to server | reliable/control | highest contiguous applied revision per chunk |
+| `RESYNC_REQUIRED` | server to client | reliable/control | retained delta history cannot satisfy the client |
+
+Recommended Libft channels/lanes:
+
+```text
+lane 0, channel 0: connection control, rejection, shutdown, hash/repair control
+lane 1, channel 1: edit intents/results and authoritative gameplay deltas
+lane 2, channel 2: chunk snapshots and bulk repair data
+lane 3, channel 3: low-priority manifests/observability
+
+unreliable-sequenced: player input, player transforms, interest updates
+reliable-ordered: world deltas, edit results, snapshots, repair, lifecycle
+```
+
+Do not put a large snapshot ahead of edit results on the same reliable ordering
+channel. Separate channels avoid application-level head-of-line blocking while
+Libft lanes provide transport scheduling priority. Observe `FT_ERR_FULL` as
+backpressure; retain or regenerate the immutable application message and retry
+later. Never treat queue saturation as successful delivery.
+
+The first implementation should expose interfaces with responsibilities close
+to the following. Exact names may follow the repository's eventual Minecraft
+module layout, but ownership and error semantics must remain intact:
+
+```cpp
+class minecraft_server_runtime
+{
+  public:
+    int32_t initialize(const server_config &configuration) noexcept;
+    int32_t listen(const networking_message_endpoint &endpoint) noexcept;
+    int32_t advance_tick(uint64_t tick, const server_tick_budget &budget)
+        noexcept;
+    int32_t request_shutdown() noexcept;
+    int32_t destroy() noexcept;
+};
+
+class minecraft_client_connection
+{
+  public:
+    int32_t initialize(const client_connection_config &configuration) noexcept;
+    int32_t connect(const networking_message_endpoint &endpoint) noexcept;
+    int32_t send_interest(const interest_update &interest) noexcept;
+    int32_t send_edit_intent(const edit_intent &intent,
+        uint64_t *request_id) noexcept;
+    int32_t poll_events(uint32_t maximum_events) noexcept;
+    int32_t destroy() noexcept;
+};
+
+class server_world_replication
+{
+  public:
+    int32_t subscribe(connection_id client, const interest_region &region)
+        noexcept;
+    int32_t validate_and_apply(connection_id client,
+        const edit_intent &intent, edit_result &result) noexcept;
+    int32_t build_pending_deltas(connection_id client,
+        const replication_budget &budget) noexcept;
+    int32_t acknowledge(connection_id client,
+        const chunk_revision_ack &acknowledgement) noexcept;
+    int32_t request_repair(connection_id client,
+        const chunk_repair_request &request) noexcept;
+};
+
+class client_world_replication
+{
+  public:
+    int32_t apply_manifest(const chunk_manifest &manifest) noexcept;
+    int32_t apply_snapshot(const chunk_snapshot &snapshot) noexcept;
+    int32_t apply_block_delta(const chunk_block_delta &delta) noexcept;
+    int32_t apply_light_delta(const chunk_light_delta &delta) noexcept;
+    int32_t apply_edit_result(const edit_result &result) noexcept;
+    int32_t compare_hashes(const chunk_hash_manifest &manifest,
+        ft_vector<chunk_repair_request> &requests) noexcept;
+    int32_t advance_derived_work(const client_world_budget &budget) noexcept;
+};
+```
+
+Every parser and state-changing API returns a meaningful Libft error code.
+Receiving code first parses into a temporary validated message, then submits it
+to the owning state machine. Parsing must never mutate a live world/session.
+Sending APIs copy or transfer ownership of immutable payloads before returning;
+callers must know whether data was accepted, rejected, or blocked by
+backpressure.
+
+The application protocol should be layered over the currently documented
+Networking flow approximately as follows:
+
+```cpp
+networking_message_transport transport;
+networking_message_transport_config transport_configuration;
+networking_udp_datagram_io datagram_io;
+
+FT_TRY(transport.initialize(transport_configuration, datagram_io));
+FT_TRY(transport.start_worker());
+
+// Server:
+FT_TRY(transport.listen(loopback_or_public_endpoint));
+// Accept only after bootstrap/ticket/application identity validation.
+
+// Client:
+networking_message_connection connection;
+FT_TRY(transport.connect(server_endpoint, connection));
+
+// Application messages use send_message with the lane/channel contract above.
+// The owning thread drains deferred callbacks/events; transport workers never
+// call world or renderer code directly.
+```
+
+`FT_TRY` in pseudocode means “check and propagate the return code.” It is not a
+requirement to add a macro, exception, or hidden return-value discard.
+
+### 11.5 Server tick and action-validation pipeline
+
+All client world changes are intents. The authenticated connection determines
+the acting player; a player ID carried inside an untrusted payload is never
+authoritative.
+
+```cpp
+int32_t authoritative_server::tick(uint64_t tick)
+{
+    drain_network_commands_bounded();
+    expire_disconnected_sessions();
+    update_interest_sets_bounded();
+
+    while (accepted_intent_budget_remaining())
+    {
+        edit_intent intent;
+        authenticated_session *session;
+
+        if (next_intent(intent, session) != FT_ERR_SUCCESS)
+            break ;
+        validation_result validation = validate_edit(*session, intent);
+        if (validation.error_code != FT_ERR_SUCCESS)
+        {
+            queue_rejection(*session, intent, validation);
+            continue ;
+        }
+        apply_edit_transactionally(*session, intent, tick);
+    }
+
+    advance_generation_workers_bounded();
+    advance_lighting_workers_bounded();
+    publish_completed_world_work_bounded();
+    build_and_fanout_delta_batches_bounded();
+    schedule_periodic_hash_manifests_bounded();
+    enqueue_persistence_snapshots_bounded();
+    return (FT_ERR_SUCCESS);
+}
+```
+
+`validate_edit` must check at least:
+
+- authenticated session and current player entity;
+- finite, in-range coordinates with overflow-safe chunk/local conversion;
+- chunk loaded and at the expected world/generator generation;
+- requested block ID exists and is permitted in the current ruleset;
+- authoritative current block matches any optional client precondition;
+- authoritative raycast/reach and line of sight;
+- player game mode, permission/claim/region restrictions;
+- inventory ownership and item/tool requirements;
+- cooldown, action rate, per-tick, per-client, and per-chunk limits;
+- collision and placement occupancy rules;
+- request ID is new, or is an exact idempotent duplicate of a retained result.
+
+Each authenticated session keeps a bounded request/result ledger. A retry with
+the same request ID is compared field-for-field with the original intent. An
+exact match resends the cached result and, for an accepted edit, the cached
+authoritative delta without calling world mutation again. Reusing a request ID
+with different coordinates, preconditions, or requested value is rejected as
+an invalid/forged request. The ledger is session-scoped, is cleared when the
+session ends, and its capacity/eviction policy must be large enough for the
+transport retry window; an evicted request must require a fresh client request
+or snapshot reconciliation rather than being applied speculatively.
+
+Prepare all fallible allocations before mutating the world. The authoritative
+in-memory transaction commits block value, provenance, block revision,
+dirty-persistence state, lighting invalidation, and owned immutable work records
+for replication and persistence together. If any preparation fails, no part of
+the authoritative state changes. This transaction must not perform synchronous
+disk I/O while holding the chunk lock. A committed persistence record means an
+owned record has entered a bounded persistence queue; durability is reported
+separately after the persistence worker flushes it.
+
+#### Staged block-edit and lighting publication
+
+Breaking or placing a block is deliberately completed in stages. The client
+does not wait for lighting to finish before learning whether the edit was
+accepted:
+
+For a block break specifically, the interaction is a request/confirmation
+sequence rather than an immediate client-owned world mutation. The client may
+show a lightweight predicted break state (for example, a crack animation or a
+temporarily hidden block), but it must retain the previous authoritative block
+value until the server result arrives. This prevents a rejected break from
+permanently changing the replica and makes retries/reconciliation explicit.
+
+```text
+client sends EDIT_INTENT
+        |
+        v
+server validates the intent against authoritative state
+        |
+        +-- rejected --> EDIT_RESULT(rejected, reason, current revision)
+        |
+        +-- accepted --> atomically commit block/provenance state
+                         increment block revision exactly once
+                         send EDIT_RESULT(accepted, canonical value/revision)
+                         publish CHUNK_BLOCK_DELTA to the requester and peers
+                         enqueue lighting invalidation
+                                      |
+                                      v
+                         bounded server lighting worker recomputes affected area
+                                      |
+                                      v
+                         send CHUNK_LIGHT_DELTA(source_block_revision=R)
+```
+
+The accepted result and block delta are the first authoritative publication.
+The server updates its authoritative block state at commit time. The requesting
+client then applies the canonical accepted value and revision, clears its
+pending break/place request, and schedules the affected region for remeshing.
+Other interested clients apply the same ordered block delta. If the result is
+rejected, the requester removes its prediction and restores the last confirmed
+block value; it must not invent a local replacement. Persistence and
+replication records are prepared from that same committed state, so a failure
+cannot report success while losing the edit.
+
+The server must enter an accepted block delta into its retained journal before
+depending on any individual network send succeeding. It should then attempt
+the requester result, the source client's delta, and peer fanout independently,
+returning the first error while retaining the authoritative delta for replay or
+snapshot recovery. A full outgoing queue is therefore a delivery delay, not a
+reason to roll back the world or discard the delta.
+
+Lighting is a later derived publication. It runs under a bounded work budget,
+may span multiple ticks, and never delays the edit result or block delta. A
+light result records the block revision from which it was calculated. The
+client applies it only when that `source_block_revision` still matches its
+current block revision for the chunk; otherwise it discards the stale result
+and waits for a newer light computation. The client may temporarily display
+the previous light values, but it must never keep the old block logically
+present merely because lighting or remeshing is incomplete.
+
+This ordering is intentional:
+
+```text
+break request
+    -> server validation
+    -> authoritative block update (or rejection)
+    -> EDIT_RESULT + CHUNK_BLOCK_DELTA
+    -> client/server block state converges
+    -> asynchronous lighting propagation
+    -> CHUNK_LIGHT_DELTA tied to the accepted block revision
+    -> bounded client light application and remesh publication
+```
+
+Lighting must therefore be treated as a derived, eventually consistent view
+of the already-authoritative block state. A delayed, dropped, or stale light
+message may cause lighting to settle later, but it may not delay or undo the
+block result. If a newer block revision arrives before lighting finishes, the
+server cancels or supersedes the old lighting job and emits a result tagged
+with the newer source revision.
+
+The same separation applies on the client: authoritative block deltas are
+decoded and applied within the per-frame message/byte/operation budget, while
+lighting application, remeshing, mesh publication, and GPU upload use their
+own bounded asynchronous queues. A large light delta or complete mesh rebuild
+must be deferred across frames rather than monopolising the render thread.
+
+```cpp
+int32_t authoritative_world::apply_edit_transactionally(
+    const validated_edit &edit, authoritative_delta &out_delta)
+{
+    prepared_delta prepared;
+    prepared_persistence_record persistence;
+
+    FT_TRY(prepare_delta(edit, prepared));
+    FT_TRY(prepare_persistence(edit, persistence));
+
+    chunk_write_guard guard(edit.chunk);
+    if (!precondition_still_matches(edit))
+        return (FT_ERR_STALE_REVISION);
+
+    uint64_t next_revision = checked_increment(edit.chunk.block_revision);
+    commit_block_and_provenance(edit, next_revision);
+    commit_prepared_persistence_work(persistence);
+    commit_prepared_delta(prepared, next_revision, out_delta);
+    enqueue_lighting_invalidation(edit.position, next_revision);
+    return (FT_ERR_SUCCESS);
+}
+```
+
+The pseudocode names behavior rather than requiring C++ exceptions, RAII, or
+the shown helper macro. The implementation must follow Libft/Minecraft error
+and lifecycle rules and must not discard meaningful return codes.
+
+### 11.6 Delta model, acknowledgement, and interest management
+
+Every authoritative chunk has independent, strictly increasing block and light
+revisions. Do not combine asynchronous lighting changes with block revisions.
+Block deltas declare a contiguous block-revision range:
+
+```cpp
+struct chunk_block_delta
+{
+    chunk_coordinate coordinate;
+    uint64_t base_block_revision;
+    uint64_t final_block_revision;
+    uint64_t snapshot_generation;
+    ft_vector<block_value_delta> block_changes;
+    ft_vector<provenance_value_delta> provenance_changes;
+};
+
+struct chunk_light_delta
+{
+    chunk_coordinate coordinate;
+    uint64_t base_light_revision;
+    uint64_t final_light_revision;
+    uint64_t source_block_revision;
+    uint64_t snapshot_generation;
+    ft_vector<light_value_delta> changes;
+};
+```
+
+Applying a block delta is valid only when the client has exactly
+`base_block_revision` and the snapshot generation matches. Duplicate deltas
+whose final revision is already applied are acknowledged and ignored. A future
+base revision creates a gap and triggers snapshot recovery; an older overlapping
+delta is rejected unless an explicit overlap parser is implemented and tested.
+
+A light delta additionally applies only when its light revision is contiguous
+and its `source_block_revision` still equals the replica's block revision. A
+light result calculated from obsolete blocks is discarded and the current
+region remains dirty for relighting. Block replication must never wait for a
+matching light delta.
+
+The server retains a bounded per-chunk recent-delta ring until all interested
+clients acknowledge or retention expires. If the requested base revision is no
+longer retained, send `RESYNC_REQUIRED` followed by a fresh snapshot. Never
+silently skip a gap.
+
+Interest is server-authoritative. The client reports a desired center/radius,
+but the server clamps it by rules, permissions, bandwidth, and configured
+maximums. On entry, the server captures a snapshot at revision R, records the
+subscription, then sends deltas R+1 onward. On exit, it stops broadcasts and
+eventually tells the client to release the replica. Snapshot capture and
+subscription registration must be ordered so no edit can fall between them.
+
+Coalesce multiple edits to the same block within one unsent batch to the final
+current value while preserving the final revision and required provenance.
+This engine needs current-state replication, not an unbounded player-edit
+history. Persistence and optional replay/audit logging are separate consumers.
+
+### 11.7 Client application, prediction, and reconciliation
+
+The networking worker receives/decrypts messages into bounded immutable queues.
+It never calls renderer or world-replica code directly. At frame start, the
+client applies a bounded amount of authoritative data:
+
+```cpp
+int32_t replicated_world::advance_frame(const replication_budget &budget)
+{
+    drain_control_messages(budget.control_messages);
+    apply_chunk_snapshots(budget.snapshot_bytes);
+    apply_block_deltas(budget.delta_operations);
+    apply_light_deltas(budget.light_operations);
+    schedule_dirty_light_and_mesh_regions(budget.scheduler_operations);
+    publish_completed_meshes(budget.mesh_commits);
+    return (FT_ERR_SUCCESS);
+}
+```
+
+A block interaction may show an immediate cursor/animation/sound and optionally
+a clearly tracked predicted block overlay. It must not overwrite the canonical
+replica. When `EDIT_RESULT`/`CHUNK_BLOCK_DELTA` arrives:
+
+- accepted and matching prediction: remove the overlay and apply canonical
+  revision/value;
+- accepted but different canonical value/revision: replace the overlay and
+  schedule derived lighting/mesh work;
+- rejected: remove the overlay and restore authoritative presentation;
+- timeout: retain a pending indicator or cancel prediction; do not invent an
+  authoritative success.
+
+The server should return `EDIT_RESULT` immediately after committing the block,
+without waiting for lighting, persistence flush, or every interested client.
+The block delta can be broadcast in the same server tick. Light changes may
+follow under a separate `light_revision` when the bounded server lighting job
+completes. The client must never wait half an hour to learn that the block is
+gone merely because derived lighting is delayed.
+
+Block-state replication and derived visual work must be decoupled:
+
+```text
+authoritative block delta arrives
+        |
+        +-- update collision/query replica immediately
+        +-- mark bounded light region dirty
+        +-- mark bounded mesh region dirty
+        +-- retain old mesh until replacement is ready
+        +-- publish replacement mesh under block/light revision guards
+```
+
+This rule applies inside the client just as strictly as it applies between
+the server and client. Applying a giant light delta, copying an unbounded
+snapshot, or rebuilding a complete mesh on the render thread would simply
+move the hitch from world generation to replication. Client networking must
+therefore enqueue received bytes into bounded ownership-transferred queues;
+the frame loop may apply only a configured operation/byte budget. Block data
+needed for collision and immediate queries is applied first, while lighting
+propagation, remeshing, mesh validation, and GPU upload remain asynchronous.
+Completed meshes are published through an atomic ownership handoff and are
+accepted only when their chunk coordinate, snapshot generation, block
+revision, and light revision still match the replica. An old mesh may remain
+visible briefly while derived work settles, but the logical block state and
+collision state must update immediately. This makes delayed lighting a visual
+settling effect rather than a gameplay or frame-rate stall.
+
+The initial Libft Networking layer provides the transport-neutral envelope
+and sender/decoder primitives for this boundary. It copies received payloads
+out of transport-owned storage and validates the complete frame before
+committing it to an application-owned buffer. Minecraft remains responsible
+for bounded queues, prioritisation, replica mutation, remesh scheduling, and
+render-thread publication.
+
+The transport pump must preserve ownership whenever the selected endpoint
+cannot accept a received message, whether the endpoint is the client ingress
+queue or the server session. It may retain one complete received message as a
+deferred pending item and retry it before receiving another transport message;
+it must not destroy a reliable message merely because the frame budget,
+application queue, or server send queue is temporarily exhausted. The pending
+slot is role-neutral: a server-side `FT_ERR_FULL` is retained in exactly the
+same way as a client-side `FT_ERR_FULL`. Once the pending item is accepted by
+the endpoint, the pump may resume receiving. A persistent overflow beyond that
+retained item is reported as backpressure and must be handled by the
+connection/session policy, never treated as successful delivery. Server
+dispatch must remain idempotent while such a message is retried; request IDs
+and cached authoritative results are therefore part of the retry contract.
+
+### 11.8 Canonical hashes and repair
+
+Hashes are consistency and recovery tools, not permission checks. The server
+never trusts a client merely because it reports the expected hash, and a client
+cannot use its local hash to authorize an action.
+
+Define a canonical byte representation independent of native structure layout,
+endianness, padding, pointer values, container capacity, mesh data, and process
+identity. Content hashes and synchronization metadata have different meanings
+and must remain separate. The content hash must not include revision counters;
+the manifest carries revisions alongside the hash. At minimum hash:
+
+```text
+domain tag: "FTVOX-CHUNK-HASH-V1"
+world identity and generator/configuration digest
+chunk x/z
+canonical block IDs in fixed coordinate order
+player-modified/provenance mask in fixed order
+canonical authoritative light values when server-owned
+```
+
+Use Libft Crypto SHA-256. Do not invent a faster non-cryptographic hash for the
+authoritative reconciliation contract. Cache hashes by revision so unchanged
+chunks are not rehashed every verification interval.
+
+Send `snapshot_generation`, `block_revision`, and `light_revision` as manifest
+metadata. Equal content with different history can then have an equal content
+hash while still requiring revision-aware protocol handling. Use section hashes
+plus a chunk root:
+
+```text
+section_hash[y] = SHA256(section domain || metadata || canonical section bytes)
+chunk_root = SHA256(chunk domain || ordered section_hash[0..15])
+```
+
+This allows repair of one mismatched section without resending an entire chunk.
+The server periodically sends manifests for a bounded rotating subset of the
+client's interest set, prioritizing recently edited chunks. The client compares
+only when it has applied through the declared revision. A mismatch produces a
+`CHUNK_REPAIR_REQUEST` containing coordinate, local revision, root, and the
+requested section indices. The response is applied transactionally to a
+temporary replica and committed only after lengths, IDs, revisions, and SHA-256
+all validate.
+
+Hash timing must be configurable by interval and maximum bytes/chunks per tick.
+Never hash every loaded chunk every frame. Hash calculation belongs on server
+and client workers over immutable snapshots; only revision-checked publication
+touches live state.
+
+### 11.9 Failure, security, and abuse handling
+
+- Bound every count and byte length before allocating.
+- Limit incomplete snapshot/reassembly memory per connection in addition to
+  Libft transport limits.
+- Authenticate before accepting world requests.
+- Apply replay/idempotency checks at both transport packet and application
+  request-ID levels.
+- Rate-limit invalid edits separately from valid gameplay traffic.
+- Disconnect repeated malformed/cryptographically invalid senders without
+  allowing unlimited logs.
+- Never expose save paths, memory addresses, secrets, stack traces, or private
+  server diagnostics to a remote client.
+- Preserve old authoritative state if snapshot/delta/hash construction fails.
+- On `FT_ERR_FULL`, retain bounded pending work or explicitly resync; never drop
+  a reliable authoritative delta silently.
+- Ensure shutdown wakes every persistent worker and does not hold a world lock
+  while joining networking, generation, lighting, persistence, or hash workers.
+- Keep test failure injection and impairment hooks out of release archives.
+
+The server should maintain connection-level and world-replication metrics:
+accepted/rejected intents, rejection reason counts, delta bytes, snapshot bytes,
+ack lag, revision gaps, repairs, hash mismatches, queue depth, backpressure,
+generation/light work, and persistence latency. Analytics export must remain
+off the authoritative mutation lock path.
+
+### 11.10 Player-visible scheduling priority
+
+Bounded queues are insufficient when urgent work remains behind thousands of
+valid distant jobs. Every server and client scheduler must use stable priority
+classes, bounded starvation prevention, and revision-based stale-work removal.
+The default order is:
+
+1. accepted local edits and directly affected neighbouring regions;
+2. collision-affecting changes near any player;
+3. lighting propagation near visible modified blocks;
+4. meshes intersecting or immediately entering the camera view;
+5. nearby generation required by current movement;
+6. ordinary visible-region generation and meshes;
+7. distant generation, persistence compaction, and hash verification.
+
+Lighting begins at invalidated blocks and propagates outward incrementally until
+no value changes. Proximity may determine which frontier node is processed next,
+but must not alter the deterministic final light state. Promotion/aging prevents
+continuous local edits from permanently starving lower classes. Completed work
+must carry source revisions so publication can cheaply discard stale results.
+
+### 11.11 Minimum vertical slice
+
+Before implementing periodic hashes, targeted section repair, full capability
+negotiation, provenance replication, or remote abuse hardening, Luna must deliver
+and measure this end-to-end slice:
+
+1. start the authoritative world service headlessly in-process;
+2. connect one client through the in-memory protocol adapter;
+3. subscribe to a small chunk area and receive snapshots;
+4. break and place one block by sending an intent;
+5. validate and commit it on the service;
+6. return an authoritative result and contiguous block delta immediately;
+7. update collision/query state, then remesh the affected region independently;
+8. save through the asynchronous persistence queue and shut down cleanly.
+
+The slice passes only if block-visible latency stays within a configured bound
+while lighting and generation are deliberately backlogged. Next, replace the
+adapter with Libft Networking, launch the same service as `ft_vox_server`, and
+repeat the identical tests. Crypto bootstrap and advanced reconciliation follow
+without changing world-service behavior.
+
+### 11.12 Implementation sequence for Luna
+
+Implement this migration in reviewable phases. Do not delete the current local
+world path until the server path passes equivalent tests.
+
+1. **Freeze service and revision invariants.** Document canonical coordinates,
+   block/light revisions, generation identity, provenance, maximum sizes, and
+   error codes. Add deterministic serialization fixtures.
+2. **Extract authoritative services in-process.** Move generation, block mutation,
+   validation, lighting invalidation, and persistence behind server-owned
+   interfaces that can run headlessly without renderer headers.
+3. **Pass the minimum vertical slice.** Use bounded in-memory command/result
+   queues and prove prompt block publication independently of lighting.
+4. **Build `ft_vox_server`.** Add explicit initialize/run/stop/destroy lifecycle,
+   loopback listen mode, persistent worker ownership, bounded ticks, and clean
+   shutdown. It must run independently before a client exists.
+   The first owner may be a headless `WorldReplicationServerRuntime` around a
+   caller-owned Libft transport; it must not include renderer headers or call
+   renderer code from transport/worker paths.
+5. **Add the minimum application protocol.** Implement session, interest,
+   snapshots, block deltas, light deltas, edit intent/result, acknowledgements,
+   and snapshot fallback over Libft message transport.
+   Expose separate peer-admission paths: the early in-process path may use a
+   test adapter, while production admission must require a connected Libft
+   session whose authenticated peer identity has been verified.
+6. **Create the client replica.** Separate replicated canonical blocks/light
+   from derived meshes/GPU state. Apply snapshots and deltas transactionally
+   under per-frame budgets.
+   Use a client runtime owner that drains transport ingress separately from
+   frame-budgeted replica application; callbacks must publish only immutable
+   application data and must not execute renderer work on the transport path.
+7. **Route all single-player edits through networking.** Remove direct client
+   calls to authoritative `place_block_at`/`delete_block_at`; retain optional
+   presentation prediction only. Prove the server receives, validates, commits,
+   acknowledges, and broadcasts each accepted edit.
+8. **Implement interest and fanout.** Snapshot-at-revision subscription, ordered
+   post-snapshot deltas, bounded recent-delta retention, acknowledgement, and
+   snapshot fallback.
+9. **Add secure local bootstrap and full negotiation.** Start the child process
+   through Libft process utilities, pass a one-use secret over an inherited
+   pipe, bind it to the encrypted connection, and test timeout/crash cleanup.
+10. **Implement SHA-256 reconciliation as resilience work.** Add canonical
+    content hashes, revision metadata, targeted repair, full-snapshot fallback,
+    and configurable rotating verification budgets. This must not block the
+    first playable client/server path.
+11. **Move and tune derived work.** Server generation/lighting and client
+    light/mesh construction use persistent sleeping workers and the priority
+    classes in section 11.10.
+12. **Migrate menus and launch flow.** Single-player creates/connects a local
+    server; multiplayer connects to a remote server through the same session
+    state machine. Loading UI reports server, snapshot, replica, mesh, and GPU
+    readiness separately.
+13. **Remove compatibility ownership.** Only after all gates pass, remove direct
+    authoritative world mutation from the client and archive obsolete in-process
+    synchronization code.
+
+### 11.13 Current implementation status
+
+The first Libft Networking foundation is now implemented in
+`Modules/Networking/networking_replication_protocol.*`. It provides:
+
+- a versioned, length-checked, transactional application envelope;
+- a transactional receive decoder that copies payloads out of transport-owned
+  storage before handing them to an application;
+- bounded payload validation before the transport sees a message;
+- reliable control, reliable delta, reliable snapshot, and
+  unreliable-sequenced sender helpers mapped to separate lanes/channels;
+- a caller-owned revision tracker for one replicated stream that requires a
+  snapshot before accepting deltas, enforces contiguous block/light revisions,
+  and rejects light results derived from an obsolete block revision;
+- a transactional per-pump message, payload-byte, and operation budget so a
+  client can defer excess replication work without dropping authoritative
+  state;
+- a caller-owned client replica gate with snapshot, block-delta, and
+  light-delta callbacks; callbacks run before revision advancement, so failed
+  application and exhausted budgets remain retryable;
+- a contiguous revision-retention window with acknowledgement tracking and
+  explicit snapshot fallback when a client falls behind the retained range;
+- a SHA-256 payload-content helper that keeps canonical content hashing
+  separate from revision metadata, leaving application-specific chunk
+  canonicalization in Minecraft;
+- a Game-module block intent/delta coordinator with expected-revision and
+  expected-block validation, bounded recent request/result idempotency,
+  bounded recent delta history, interest/snapshot handoff, checksummed chunk
+  snapshots, and
+  transactional decoder cursor behavior;
+- a Minecraft `WorldReplicationServerRuntime` that owns the replication service,
+  peer registry, and transport pump with explicit listen, worker, pump, and
+  shutdown lifecycle; secure peer admission is exposed separately from the
+  transitional test adapter;
+- a Minecraft `WorldReplicationClientRuntime` that owns client replication and
+  transport pumping, while exposing a separate per-frame bounded drain so
+  transport reception cannot perform unbounded world, lighting, mesh, or GPU
+  work;
+- transactional Minecraft codecs for `CHUNK_HASH_MANIFEST` and
+  `CHUNK_REPAIR_REQUEST`, carrying content hashes separately from block/light
+  revisions and allowing section-scoped repair requests;
+- a transactional `CHUNK_REPAIR_RESPONSE` codec carrying the authoritative
+  repaired revision metadata, section mask, content hash, and bounded opaque
+  repair payload;
+- a transactional `CHUNK_SYNC_REQUEST` codec carrying the client's block and
+  light cursors for bounded journal replay or snapshot fallback;
+- no Minecraft-specific block, light, or gameplay assumptions.
+
+The client endpoint also provides bounded repair-request sending and a
+repair-response callback boundary. The server session validates and dispatches
+repair requests through an application-owned provider, then sends the response
+reliably. The world service also has a default canonical block-stream repair
+response. The client verifies that format's payload hash before invoking the
+callback; application-owned formats must validate canonical content in the
+callback, which must then validate the canonical content against its
+replica and commit the repaired state atomically. Decoding alone is not an
+acceptance decision.
+
+`WorldReplicationBlockReplica` now provides the first client-owned replica
+primitive. It owns one canonical block chunk, a separate light chunk, and
+block/light/generation revision metadata, decodes snapshots through temporary
+chunks before commit, and rejects deltas that are not contiguous for the
+configured session, world, or chunk. It applies canonical section repairs
+transactionally after validating their content hash. A canonical block repair
+does not advance the light revision: the repair contains no light cells, so
+the previous light state remains the last known light state until a matching
+light delta is received. This avoids claiming that untransmitted lighting is
+already synchronized. The replica still intentionally does not own meshes,
+GPU objects, or render-thread scheduling. The remaining integration must
+connect this state to the client callbacks and bounded application-owned mesh
+publication.
+
+This is transport plumbing and a headless ownership boundary, not the complete
+server process. The canonical chunk snapshot now carries both the Game block
+snapshot and a validated sparse-light snapshot, and the batched light-delta
+codec is shared by snapshot creation and incremental publication. The
+following items still belong to the Minecraft implementation: headless
+authoritative world-service ownership, the in-process vertical slice, process
+launch, gameplay validation rules, reconnect lifecycle integration, and the
+adapter that publishes replica state into the
+actual client world and bounded mesh queues. The transport pump, live sync
+request, bounded replay/snapshot paths, canonical repair boundary, and
+transactional block/light snapshot application are implemented. The existing
+Game delta coordinator is a reusable authority/replication foundation, not
+the complete server and not a renderer or lighting worker. The Networking
+module must remain usable by those consumers without taking ownership of their
+world state.
+
+#### Handoff contract for the next implementation phase
+
+The Minecraft integration must use the existing Game delta coordinator as the
+authoritative block boundary rather than writing a second revision system in
+the client. The intended call sequence is:
+
+```cpp
+// server-side, after transport decoding and gameplay validation
+game_world_delta_channel::apply_request(request, delta);
+game_block_delta_serialize(delta, payload);
+networking_replication_sender::send_reliable_delta(connection,
+    CHUNK_BLOCK_DELTA, payload, server_instance_id, session_id, sequence);
+
+// client-side, after envelope decoding and apply-budget admission
+game_block_delta_deserialize(delta, payload);
+game_voxel_chunk::apply_authoritative_block_delta(delta);
+```
+
+The server is the only owner allowed to call the authoritative change path.
+The client may maintain a prediction overlay, but it must not advance its
+replica revision from the overlay. The client applies the accepted block
+delta before waiting for derived lighting. The light-delta envelope carries
+`base_light_revision`, `final_light_revision`, and `source_block_revision`; the
+client discards a light result when its source
+block revision no longer matches the applied block state. No light or mesh
+operation may be performed synchronously on the render thread as part of
+processing the block result.
+
+Minecraft's `World::apply_authoritative_block_change` is the first concrete
+world-side boundary for this flow. It validates local coordinates, delegates
+expected-revision and expected-block checks to the Game chunk, returns the
+canonical delta, updates world geometry/light revisions, records the edit for
+history, and schedules the affected remesh region. Duplicate request IDs are
+idempotent and do not increment revisions or enqueue duplicate remesh work.
+`WorldReplicationService` now wraps that boundary for the in-process vertical
+slice: it consumes an edit-intent message and emits an accepted result with
+the canonical delta, or a rejected result carrying the current authoritative
+revision when available. Minecraft also
+now has a `WorldReplicationClient` boundary that submits edit intents through
+the reliable control lane and applies received snapshots, block deltas, light
+deltas, and edit results through Libft's bounded client gate. Its callbacks
+are application-owned, so the client replica can update block state promptly
+and schedule lighting/remeshing independently of message decoding. The
+client validates the typed session/world identity in addition to the outer
+envelope and can acknowledge the exact block/light revisions and generation
+epoch it has applied. The server uses those acknowledgements to retain
+unacknowledged deltas and choose snapshot repair when a client falls behind.
+Remaining work is to connect these boundaries to the persistent transport
+event loop, implement authenticated session startup, and connect the client
+replica to its actual world/mesh publication queues.
+It can also produce a revisioned chunk snapshot using the existing checksummed
+Game chunk format, so snapshot admission precedes block/light delta admission.
+The service also exposes reliable sender helpers for edit results, block
+deltas, light deltas, and snapshots; block and light publications use the
+reliable delta lane while control results use the reliable control lane. The
+caller supplies the authenticated Libft connection and monotonically
+increasing message sequence. These helpers do not mutate world state or retry
+transport failures, so the server loop remains responsible for retaining an
+unacknowledged result/delta and applying backpressure.
+The service also validates incoming chunk acknowledgements against the
+authenticated session, world identity, loaded chunk, and current authoritative
+revision before the server updates its caller-owned retention window.
+`WorldReplicationServerSession` now supplies the corresponding one-connection
+dispatcher: it decodes authenticated envelopes, passes edit intents to the
+service, sends the result immediately, sends the accepted block delta on the
+next reliable-delta sequence, and validates chunk acknowledgements. It does
+not yet start a server process; that remains an explicit next phase. Dispatch
+also rechecks that the underlying Libft connection is `CONNECTED` and
+authenticated, so registering a connection before handshake completion cannot
+be used to process world messages accidentally.
+`WorldReplicationServer` now owns a bounded table of 32
+peer sessions, routes messages by connection ID, and fans out an accepted
+block delta to other peers subscribed to that chunk. The fan-out rewrites the
+recipient session identity while preserving the source request ID, world,
+coordinate, and authoritative revision. A failed send is reported after the
+server has attempted the other eligible peers; it is not treated as a reason
+to roll back the already-committed world edit.
+The server also keeps a bounded 4096-entry block-delta journal. It enforces
+per-chunk revision continuity, exposes the next delta for contiguous replay,
+and reports when an evicted gap requires a snapshot. Journal failure is
+reported independently after the authoritative edit has already committed;
+the server must retain or retry that publication through its outer queue.
+`WorldReplicationServer::synchronize_peer` now uses that journal for a
+subscribed chunk: it replays each contiguous retained delta, or sends a fresh
+snapshot when the requested base is evicted, unavailable, or ahead of the
+authoritative journal. Replay is intentionally explicit and bounded by the
+caller’s scheduling loop; it does not block world mutation or lighting.
+Session initialization binds the adapter to the service's server-instance ID,
+and every received envelope must match both that ID and the negotiated session
+ID before any application payload is dispatched. The first subscription/fallback
+path now reuses `CHUNK_REQUEST`: the client requests one coordinate over the
+reliable control lane, the server creates a revisioned snapshot, and the
+session sends `CHUNK_SNAPSHOT` with a fresh server sequence. The session now
+retains a bounded set of requested chunk coordinates, so later fan-out can
+filter publications by interest without unbounded per-peer allocation. Region
+interest updates are now supported through the reliable `CHUNK_INTEREST`
+message, including idempotent subscribe and unsubscribe operations.
+The server also exposes bounded-interest light-delta fan-out. A derived light
+result is sent only to peers subscribed to its chunk, on the reliable delta
+lane, with each recipient's session identity and the original source block
+revision preserved. Retained serialized-delta replay and snapshot fallback
+are now available for both block and light streams: the server journals each
+stream independently, replays contiguous entries from a requested base, and
+falls back to a complete chunk snapshot when an eviction gap or invalid future
+base is detected. The live transport request that invokes this synchronization
+operation is now `CHUNK_SYNC_REQUEST`. It carries the client's block and light
+cursors over the reliable control lane; the server validates the session/world
+identity and invokes the existing bounded block/light replay paths, which
+independently fall back to a snapshot when a cursor is outside the retained
+range. The client codec and server dispatch are transactional. Persistence of
+acknowledgement cursors across reconnects remains pending, so reconnects must
+force a fresh snapshot until that policy exists.
+
+Per-peer acknowledgement bookkeeping is now part of the server session. Each
+subscription records monotonic block/light revisions, generation epoch, and
+whether the peer has acknowledged its snapshot; lower or regressive
+acknowledgements never move that state backwards. After processing messages,
+the server computes the minimum acknowledged revision across every active
+subscriber for each chunk and prunes only entries at or below that minimum.
+History is not pruned while any subscriber lacks a snapshot acknowledgement.
+This makes retention acknowledgement-aware while preserving the bounded
+journal fallback: if a disconnected or slow peer is later beyond the retained
+range, synchronization sends a fresh snapshot. Removing a peer must trigger
+the same pruning pass so a departed peer cannot pin history indefinitely.
+The generic Networking layer now provides a fixed, transactional
+`networking_replication_peer_cursor` record containing the authenticated
+server/session/subscription identity, block/light revisions, generation, and
+snapshot-acknowledged state. Minecraft may persist this record with its peer
+metadata and restore it only after re-authentication and subscription
+validation. If the application cannot prove that identity match, it must
+discard the cursor and force a fresh snapshot. Minecraft's
+`WorldReplicationCursorStore` now persists one validated cursor record through
+`file_replace_safe`, rejects missing, truncated, or invalid records without
+changing the caller's cursor, and removes stale records explicitly. The
+remaining lifecycle work is connecting that store to authenticated reconnect
+and subscription validation.
+
+`WorldReplicationTransportPump` now provides the first live integration
+boundary around Libft's `networking_message_transport`. It is a non-owning,
+bounded pump for either a server or a client: it calls the transport poll,
+drains at most the caller's message budget, dispatches each received message
+to the selected replication endpoint, and leaves later messages queued for a
+future tick. When Libft's transport worker owns polling, it only drains the
+worker-owned receive queue and never calls `poll`, so the integration cannot
+create two competing poll loops. It does
+not perform world work, mesh work, or unbounded retries; those remain in the
+server tick and client publication queues. The eventual process host must
+choose exactly one owner for polling (this pump or Libft's persistent worker)
+and route worker-produced messages into the same bounded dispatch path.
+
+The client endpoint now adds a separate bounded ingress queue: the pump copies
+transport-owned messages into that queue, and `drain_received_messages` applies
+them under a caller-selected application budget. Queue limits are both
+message-count and payload-byte bounded; overflow is reported as backpressure,
+not silent loss. This keeps decoding and revision admission separate from the
+application callbacks that update replicas and schedule lighting or meshes.
+Both runtimes now expose a bounded `tick` boundary. The server tick limits
+transport messages; the client tick separately limits transport ingress and
+application-message draining and reports both counts. With Libft's persistent
+worker, this drains the worker-owned queue without creating a competing poller.
+If client ingress is full, already queued application messages are still
+drained and the caller receives the backpressure result for a later retry.
+
+Minecraft now reserves stable message identifiers for `CHUNK_BLOCK_DELTA`,
+`CHUNK_LIGHT_DELTA`, `EDIT_INTENT`, `EDIT_RESULT`, snapshots,
+acknowledgements, and `CHUNK_SYNC_REQUEST`. Message envelopes/codecs exist for
+all implemented stages; the client and service wrappers route edit intents,
+sync requests, and inbound replication through Libft Networking helpers. The
+remaining integration work must provide the server-owned chunk registry, an
+adapter from the now-canonical client replica store into the
+actual client world, persistent generation/lighting workers, and bounded
+publication queues described below. Those responsibilities do not belong in
+Libft Networking.
+
+The Minecraft light-delta envelope now defines a canonical sparse-cell codec:
+little-endian cell count followed by strictly ascending linear cell indices
+and packed-light bytes. The replica validates bounds, ordering, truncation,
+and trailing data, copies the existing light state into a temporary chunk,
+applies all records, and commits the light state and revision together. A
+zero-count four-byte payload is the only valid no-cell-change revision. The
+`protocol_chunk_light_payload_append` producer helper validates ordering and
+bounds before constructing the payload transactionally, so the server must
+use this exact format before publishing a light revision to the bounded
+lighting/remesh queue. Its output is appended only after the complete encoded
+payload has been prepared.
+
+### 11.14 Cross-module persistence and parser hardening
+
+The networking handoff depends on Libft persistence and configuration paths
+being lossless and failure-safe. These audit findings are now implementation
+requirements: replication must not lose a configuration field or corrupt a
+saved snapshot during streaming or concurrent persistence work.
+
+#### CSV parser
+
+`ft_csv_document::parse_content` must model every row as having a current
+field, including an empty field. A delimiter finalizes the current field and
+starts the next one; EOF immediately after a delimiter must therefore
+finalize one final empty field. The same rule applies to consecutive
+delimiters and to a delimiter before a record terminator:
+
+```text
+a,b,   -> [a, b, ""]
+,     -> ["", ""]
+a,,   -> [a, "", ""]
+"a",  -> [a, ""]
+```
+
+Reject delimiters that collide with the grammar (`NUL`, quote, LF, and CR)
+unless a separately specified grammar supports them. Field and row metadata
+updates must be transactional: if appending a row offset or length fails,
+neither vector may retain a partial row entry. Large-field range appends may
+be added later, but must preserve quote, CRLF, and escaped-quote semantics.
+
+Required CSV tests cover trailing/consecutive empty fields, quoted empty
+fields, embedded commas, escaped quotes, CRLF, embedded newlines in quoted
+fields, unterminated quotes, characters after a closing quote, invalid
+delimiters, very large fields, and allocation failure at every field/row
+growth point. Failure tests must verify both the error and the documented
+unchanged-or-destroyed document state.
+
+#### Config parser and INI persistence
+
+`config_parse` must never treat a fragment of one physical line as an
+independent configuration record. Replace the fixed 512-byte assumption with
+dynamic line accumulation, or append chunks until LF, CRLF, or EOF is seen
+before parsing. A final line without a newline is valid when permitted by the
+grammar. Allocation failure while growing a line must release the temporary
+line and leave the partial configuration safely destroyable.
+
+The writer must define a lossless INI grammar for public section, key, and
+value strings. Use explicit escaping/quoting for `=`, brackets, comment
+markers, quotes, tabs, leading/trailing whitespace, CR, and LF; or reject
+unrepresentable values before touching the destination. It must never emit a
+file that reparses differently. The required invariant is:
+
+```text
+parse(write(config)) == config
+```
+
+for representable entries, including empty strings and structural
+characters. Write through a unique temporary file and commit only after the
+complete output succeeds, so a failed write cannot replace a valid config.
+
+`config_write_json` should avoid repeated O(N) group scans. At minimum keep a
+tail when appending groups; preferably use a temporary section index or
+sort/group once. Preserve entry order and JSON semantics.
+
+Thread-safety preparation and teardown are lifecycle operations. The public
+contract must require exclusive ownership, or the implementation must block
+new operations, wait for active operations to drain, and only then destroy
+mutex storage. This applies to both the table and entries. Test repeated
+prepare/teardown, failed mutex creation, concurrent access at lifecycle
+boundaries, and destruction after partial initialization under TSan.
+
+#### Filesystem interaction required by persistence
+
+Config and chunk persistence must use unique `O_EXCL` temporary names in the
+target directory; a shared `<target>.tmp` is unsafe for concurrent writers.
+Temporary-file creation may retry only for the platform equivalent of
+`EEXIST`; other errors must be returned immediately and accurately. Security-
+sensitive relative paths must distinguish lexical validation from real
+filesystem containment and test symlink/junction escapes.
+
+The APIs must document whether success means atomic visibility or crash
+durability. The durable variant must surface file-sync and directory-sync
+failures. Tests must run concurrent atomic writers, inject failures at every
+write/rename/sync stage, and verify that the destination is always the old
+complete payload or one complete new payload.
+
+These fixes are prerequisites for server snapshots, replay files, and
+configuration-driven world startup. Parsing, serialization, and snapshot
+publication remain bounded background/server work and must not run on the
+render thread.
+
+The dynamic Config line reader is now implemented and covered by a long-line
+regression test; a 1 KiB key/value line remains one entry and a final line
+without a newline is accepted. The current INI writer now rejects
+unrepresentable structural text before building output and commits the
+complete document through `file_replace_safe`, so an existing destination is
+preserved when serialization or replacement fails. JSON configuration output
+now follows the same safe replacement path and uses a tail pointer for section
+creation. Config teardown uses the documented exclusive-ownership contract:
+the caller must quiesce table and entry users before destroying their mutexes.
+Full INI escaping remains intentionally represented by rejection of values that
+the current INI grammar cannot encode; a future escaped grammar may broaden
+the accepted value set without weakening the round-trip invariant.
+
+#### CrossProcess shared-memory transport
+
+The shared-memory transport now treats descriptors as hostile IPC input. Its
+fixed 304-byte big-endian wire representation is versioned and decoded
+transactionally; raw C++ object layouts are never sent over the socket.
+Receivers reject zero or undersized mappings, non-terminated names, addresses
+below the advertised mapping base, and offsets that would exceed the mapping.
+POSIX receivers verify the backing object's actual size before `mmap`, while
+Windows receivers validate the mapped view before access. Partial socket sends
+and receives are handled explicitly.
+
+`cp_receive_memory` reports whether the payload was consumed independently from
+later unlock/unmap cleanup errors. Callers must not retry when `consumed` is
+true. Process-shared mutex owner death/abandonment is treated as an invalid
+operation requiring the affected shared-memory state to be rebuilt; recovered
+mutex ownership is released before returning. Test-only failure seams cover
+post-consumption cleanup failures and are excluded from release builds.
+
+The focused tests cover transactional wire truncation, malformed names,
+below-base addresses, undersized backing objects, owner-death recovery, and
+payload-preserving validation failures. POSIX process-death and cleanup-failure
+cases must remain enabled in Linux/macOS CI; the Windows build validates the
+portable wire and descriptor paths and requires equivalent native mapping tests
+when its CI runner is available.
+
+### 11.15 Required tests and acceptance gates
+
+Unit tests:
+
+- canonical encoding/decoding is transactional at every truncation boundary;
+- all integer/count/coordinate overflow cases fail before allocation/mutation;
+- accepted edits increment the authoritative revision exactly once;
+- rejected and idempotent duplicate intents do not mutate or double-charge;
+- block/provenance/persistence/delta commit is atomic under injected failures;
+- client delta application accepts only contiguous revisions;
+- the transport pump drains no more than its message budget, preserves later
+  messages for the next pump, retains a full message for either endpoint,
+  dispatches to exactly one endpoint, and never polls when Libft's transport
+  worker is active;
+- obsolete light deltas are rejected by `source_block_revision` without
+  delaying or reverting the current block state;
+- section and root SHA-256 values are deterministic across platforms;
+- changing any canonical block, provenance bit, or world identity changes the
+  expected content hash;
+- changing only revision metadata does not change the content hash but remains
+  visible to synchronization logic;
+- mesh/container/pointer layout does not affect canonical hashes.
+
+Multi-process integration tests:
+
+- launcher starts a loopback-only server, securely bootstraps, connects, loads a
+  minimum playable area, saves, and shuts down without orphaning a process;
+- client A edits; server commits; A, B, and C receive the same revision/value;
+- conflicting edits at one revision produce one deterministic authoritative
+  order and every client converges;
+- invalid reach, block ID, inventory, permission, collision, stale revision,
+  oversized batch, replayed request, and rate-limit cases leave state unchanged;
+- a client disconnects between snapshot R and delta R+1 and recovers by retained
+  deltas or explicit snapshot fallback;
+- a client joins while edits continue and cannot miss the snapshot/delta handoff;
+- server/client hash mismatch repairs one section, then verifies the new root;
+- repair corruption leaves the previous client replica intact;
+- local server crash and client crash follow the documented cleanup policy.
+
+Performance tests:
+
+- repeated block breaks receive `EDIT_RESULT` and canonical block delta within a
+  configured tick/latency bound independent of lighting completion;
+- generation and lighting load cannot block client input/rendering;
+- client applies no more than configured message bytes, delta operations, mesh
+  commits, or GPU uploads per frame;
+- server observes bounded queue memory and fair progress under many clients;
+- hashes obey byte/chunk-per-tick budgets and do not create periodic frame/tick
+  spikes;
+- matched normal/analytics runs report p50/p95/p99 client frame time, server tick
+  time, edit acknowledgement latency, block-visible latency, light-correct
+  latency, snapshot throughput, and queue peaks.
+
+Run protocol and state tests with Libft's seeded impairment simulator covering
+latency, jitter, loss, duplication, corruption, reordering, MTU drops, and
+manual time. Run process/network tests on Windows, Linux, and macOS, plus ASan,
+UBSan, and TSan where supported. Release builds must contain no test-only fault
+injection or verbose packet/world dumps.
+
+This architecture is accepted only when:
+
+- the renderer has no authoritative world ownership and the minimum vertical
+  slice proves prompt updates before process migration;
+- final single-player deployment uses a separate local authoritative server
+  process;
+- multiplayer uses the same server/session/replication path;
+- the client cannot directly commit authoritative blocks;
+- an accepted block edit is replicated promptly without waiting for lighting or
+  remeshing;
+- all interested clients converge through contiguous revisions;
+- hash mismatch and delta-gap recovery are deterministic and transactional;
+- generation, lighting, persistence, hashing, and networking never block the
+  render thread;
+- bounded queues expose backpressure rather than silently dropping state;
+- server and client shutdown leave no worker threads or child processes behind;
+- cross-platform, impairment, sanitizer, performance, and graphics-context
+  validation gates pass.

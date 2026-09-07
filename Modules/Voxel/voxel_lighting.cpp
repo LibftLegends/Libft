@@ -4,6 +4,7 @@
 
 #include "voxel_api.hpp"
 #include "../Game/game_voxel_chunk.hpp"
+#include <chrono>
 #include <new>
 #include <vector>
 
@@ -245,6 +246,15 @@ namespace
         uint8_t level;
     };
 
+    /* World-generation workers are long-lived. Reuse their lighting scratch
+     * storage instead of allocating two half-million-cell grids and a large
+     * propagation queue for every remesh. These buffers are thread-local, so
+     * concurrent workers never share mutable solver state. */
+    static thread_local std::vector<uint8_t> light_sky_workspace;
+    static thread_local std::vector<uint8_t> light_block_workspace;
+    static thread_local std::vector<uint32_t> light_block_id_workspace;
+    static thread_local std::vector<light_node> light_queue_workspace;
+
     static uint32_t light_index(int32_t x, int32_t y, int32_t z) noexcept
     {
         return static_cast<uint32_t>((y * VOXEL_LIGHT_GRID_EDGE + z)
@@ -265,21 +275,366 @@ namespace
     }
 }
 
+struct voxel_light_build_operation::implementation
+{
+    voxel_light_chunk *light_chunk;
+    int32_t origin_x;
+    int32_t origin_z;
+    int32_t region_min;
+    int32_t region_max;
+    int32_t scan_x;
+    int32_t scan_y;
+    int32_t scan_z;
+    ft_bool direct_sky;
+    int32_t final_x;
+    int32_t final_y;
+    int32_t final_z;
+    uint8_t phase;
+    voxel_light_block_lookup_fn lookup;
+    void *user_data;
+    voxel_light_build_stats stats;
+    std::vector<uint8_t> sky;
+    std::vector<uint8_t> block;
+    std::vector<uint32_t> block_ids;
+    std::vector<light_node> queue;
+};
+
+static const uint8_t VOXEL_LIGHT_OPERATION_SCAN = 0U;
+static const uint8_t VOXEL_LIGHT_OPERATION_PROPAGATE = 1U;
+static const uint8_t VOXEL_LIGHT_OPERATION_FINALIZE = 2U;
+static const uint8_t VOXEL_LIGHT_OPERATION_COMPLETE = 3U;
+
+voxel_light_build_operation::voxel_light_build_operation() noexcept
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
+      _implementation(ft_nullptr)
+{
+    return ;
+}
+
+voxel_light_build_operation::~voxel_light_build_operation() noexcept
+{
+    (void)this->destroy();
+    return ;
+}
+
+int32_t voxel_light_build_operation::initialize(
+    voxel_light_chunk &light_chunk, int32_t world_origin_x,
+    int32_t world_origin_z, voxel_light_block_lookup_fn lookup_block,
+    void *user_data, ft_bool include_halo) noexcept
+{
+    implementation *operation;
+    size_t grid_size;
+    int32_t error_code;
+
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_OPERATION);
+    if (lookup_block == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    operation = new (std::nothrow) implementation();
+    if (operation == ft_nullptr)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (FT_ERR_NO_MEMORY);
+    }
+    operation->light_chunk = &light_chunk;
+    operation->origin_x = world_origin_x;
+    operation->origin_z = world_origin_z;
+    operation->region_min = include_halo != FT_FALSE ? -VOXEL_LIGHT_HALO : 0;
+    operation->region_max = include_halo != FT_FALSE
+        ? 16 + VOXEL_LIGHT_HALO : 16;
+    operation->scan_x = operation->region_min;
+    operation->scan_y = 255;
+    operation->scan_z = operation->region_min;
+    operation->direct_sky = FT_TRUE;
+    operation->final_x = 0;
+    operation->final_y = 0;
+    operation->final_z = 0;
+    operation->phase = VOXEL_LIGHT_OPERATION_SCAN;
+    operation->lookup = lookup_block;
+    operation->user_data = user_data;
+    operation->stats = {};
+    grid_size = static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE) * 256U
+        * VOXEL_LIGHT_GRID_EDGE;
+    operation->sky.assign(grid_size, 0U);
+    operation->block.assign(grid_size, 0U);
+    operation->block_ids.assign(grid_size, GAME_VOXEL_AIR_BLOCK);
+    operation->queue.reserve(65536U);
+    error_code = light_chunk.destroy();
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = light_chunk.initialize(0U);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        delete operation;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (error_code);
+    }
+    this->_implementation = operation;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_light_build_operation::destroy() noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
+        || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (FT_ERR_SUCCESS);
+    delete this->_implementation;
+    this->_implementation = ft_nullptr;
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_light_build_operation::move(
+    voxel_light_build_operation &other) noexcept
+{
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    (void)this->destroy();
+    this->_implementation = other._implementation;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    other._implementation = ft_nullptr;
+    other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_light_build_operation::step(
+    const voxel_light_update_config &config, voxel_light_build_stats *stats,
+    ft_bool *complete) noexcept
+{
+    implementation *operation;
+    uint32_t processed;
+    uint32_t minimum_nodes;
+    uint32_t target_nodes;
+    uint32_t maximum_nodes;
+    uint64_t start_nanoseconds;
+    uint64_t now_nanoseconds;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_implementation == ft_nullptr || complete == ft_nullptr)
+        return (FT_ERR_NOT_INITIALISED);
+    if (voxel_light_update_config_is_valid(config) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    operation = this->_implementation;
+    *complete = operation->phase == VOXEL_LIGHT_OPERATION_COMPLETE
+        ? FT_TRUE : FT_FALSE;
+    if (*complete != FT_FALSE)
+    {
+        if (stats != nullptr)
+            *stats = operation->stats;
+        return (FT_ERR_SUCCESS);
+    }
+    minimum_nodes = config.min_nodes_per_frame;
+    target_nodes = config.target_nodes_per_frame;
+    maximum_nodes = config.max_nodes_per_frame;
+    processed = 0U;
+    start_nanoseconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    while (processed < maximum_nodes)
+    {
+        if (operation->phase == VOXEL_LIGHT_OPERATION_SCAN)
+        {
+            uint32_t block_id;
+            uint32_t index;
+            const voxel_block_metadata *metadata;
+
+            block_id = GAME_VOXEL_AIR_BLOCK;
+            if (operation->lookup(operation->user_data,
+                    operation->origin_x + operation->scan_x,
+                    operation->scan_y,
+                    operation->origin_z + operation->scan_z,
+                    &block_id) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_OPERATION);
+            index = light_index(operation->scan_x + VOXEL_LIGHT_HALO,
+                operation->scan_y, operation->scan_z + VOXEL_LIGHT_HALO);
+            operation->block_ids[index] = block_id;
+            operation->stats.scanned_cells += 1U;
+            metadata = &voxel_get_block_metadata(block_id);
+            if (operation->direct_sky != FT_FALSE
+                && metadata->light_attenuation < 15U
+                && metadata->transparent != FT_FALSE)
+            {
+                operation->sky[index] = 15U;
+                operation->queue.push_back({
+                    static_cast<int16_t>(operation->scan_x),
+                    static_cast<int16_t>(operation->scan_y),
+                    static_cast<int16_t>(operation->scan_z), 0U, 15U});
+            }
+            else
+                operation->direct_sky = FT_FALSE;
+            if (voxel_block_emitted_light_level(block_id) != 0U
+                && voxel_block_emitted_light_level(block_id)
+                    > operation->block[index])
+            {
+                operation->block[index] =
+                    voxel_block_emitted_light_level(block_id);
+                operation->queue.push_back({
+                    static_cast<int16_t>(operation->scan_x),
+                    static_cast<int16_t>(operation->scan_y),
+                    static_cast<int16_t>(operation->scan_z), 1U,
+                    voxel_block_emitted_light_level(block_id)});
+            }
+            operation->scan_y -= 1;
+            if (operation->scan_y < 0)
+            {
+                operation->scan_y = 255;
+                operation->scan_x += 1;
+                operation->direct_sky = FT_TRUE;
+                if (operation->scan_x >= operation->region_max)
+                {
+                    operation->scan_x = operation->region_min;
+                    operation->scan_z += 1;
+                    if (operation->scan_z >= operation->region_max)
+                        operation->phase = VOXEL_LIGHT_OPERATION_PROPAGATE;
+                }
+            }
+        }
+        else if (operation->phase == VOXEL_LIGHT_OPERATION_PROPAGATE)
+        {
+            light_node node;
+            static const int8_t delta_x[6] = {1, -1, 0, 0, 0, 0};
+            static const int8_t delta_y[6] = {0, 0, 1, -1, 0, 0};
+            static const int8_t delta_z[6] = {0, 0, 0, 0, 1, -1};
+            uint8_t direction;
+
+            if (operation->queue.empty())
+            {
+                operation->phase = VOXEL_LIGHT_OPERATION_FINALIZE;
+                continue;
+            }
+            node = operation->queue.back();
+            operation->queue.pop_back();
+            operation->stats.propagated_cells += 1U;
+            if (operation->queue.size() > operation->stats.queue_peak)
+                operation->stats.queue_peak = operation->queue.size();
+            direction = 0U;
+            while (direction < 6U)
+            {
+                int32_t coordinate_x = node.x + delta_x[direction];
+                int32_t coordinate_y = node.y + delta_y[direction];
+                int32_t coordinate_z = node.z + delta_z[direction];
+                uint32_t index;
+                uint32_t block_id;
+                const voxel_block_metadata *metadata;
+                uint8_t cost;
+                uint8_t candidate;
+                uint8_t *destination;
+
+                if (coordinate_x >= operation->region_min
+                    && coordinate_x < operation->region_max
+                    && coordinate_y >= 0 && coordinate_y < 256
+                    && coordinate_z >= operation->region_min
+                    && coordinate_z < operation->region_max)
+                {
+                    index = light_index(coordinate_x + VOXEL_LIGHT_HALO,
+                        coordinate_y, coordinate_z + VOXEL_LIGHT_HALO);
+                    block_id = operation->block_ids[index];
+                    metadata = &voxel_get_block_metadata(block_id);
+                    if (metadata->light_attenuation < 15U
+                        && metadata->occludes_faces == FT_FALSE)
+                    {
+                        cost = metadata->light_attenuation > 1U
+                            ? metadata->light_attenuation : 1U;
+                        if (node.level > cost)
+                        {
+                            candidate = static_cast<uint8_t>(node.level
+                                - cost);
+                            destination = node.channel == 0U
+                                ? &operation->sky[index]
+                                : &operation->block[index];
+                            if (candidate > *destination)
+                            {
+                                *destination = candidate;
+                                operation->queue.push_back({
+                                    static_cast<int16_t>(coordinate_x),
+                                    static_cast<int16_t>(coordinate_y),
+                                    static_cast<int16_t>(coordinate_z),
+                                    node.channel, candidate});
+                                if (operation->queue.size()
+                                    > operation->stats.queue_peak)
+                                    operation->stats.queue_peak =
+                                        operation->queue.size();
+                            }
+                        }
+                    }
+                }
+                direction += 1U;
+            }
+        }
+        else if (operation->phase == VOXEL_LIGHT_OPERATION_FINALIZE)
+        {
+            uint32_t index = light_index(operation->final_x
+                + VOXEL_LIGHT_HALO, operation->final_y,
+                operation->final_z + VOXEL_LIGHT_HALO);
+            if (operation->light_chunk->set(operation->final_x,
+                    operation->final_y, operation->final_z,
+                    voxel_light_pack(operation->sky[index],
+                        operation->block[index])) != FT_ERR_SUCCESS)
+                return (FT_ERR_NO_MEMORY);
+            operation->final_x += 1;
+            if (operation->final_x >= 16)
+            {
+                operation->final_x = 0;
+                operation->final_z += 1;
+                if (operation->final_z >= 16)
+                {
+                    operation->final_z = 0;
+                    operation->final_y += 1;
+                    if (operation->final_y >= 256)
+                        operation->phase = VOXEL_LIGHT_OPERATION_COMPLETE;
+                }
+            }
+        }
+        processed += 1U;
+        now_nanoseconds = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (processed >= minimum_nodes
+            && (processed >= target_nodes
+                || now_nanoseconds - start_nanoseconds
+                    >= config.time_budget_microseconds * 1000U))
+            break;
+    }
+    *complete = operation->phase == VOXEL_LIGHT_OPERATION_COMPLETE
+        ? FT_TRUE : FT_FALSE;
+    if (stats != nullptr)
+        *stats = operation->stats;
+    return (FT_ERR_SUCCESS);
+}
+
+ft_bool voxel_light_build_operation::is_complete() const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_implementation == ft_nullptr)
+        return (FT_FALSE);
+    return (this->_implementation->phase == VOXEL_LIGHT_OPERATION_COMPLETE
+        ? FT_TRUE : FT_FALSE);
+}
+
 static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     int32_t origin_x, int32_t origin_z,
     voxel_light_block_lookup_fn lookup, void *user_data,
     int32_t region_min, int32_t region_max,
     voxel_light_build_stats *stats) noexcept
 {
-    std::vector<uint8_t> sky(static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE)
-        * 256U * VOXEL_LIGHT_GRID_EDGE, 0U);
-    std::vector<uint8_t> block(sky.size(), 0U);
-    std::vector<light_node> queue;
+    std::vector<uint8_t> &sky = light_sky_workspace;
+    std::vector<uint8_t> &block = light_block_workspace;
+    std::vector<uint32_t> &block_ids = light_block_id_workspace;
+    std::vector<light_node> &queue = light_queue_workspace;
+    size_t grid_size;
     uint32_t index;
     int32_t error;
 
     if (lookup == ft_nullptr)
         return FT_ERR_INVALID_ARGUMENT;
+    grid_size = static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE)
+        * 256U * VOXEL_LIGHT_GRID_EDGE;
+    sky.assign(grid_size, 0U);
+    block.assign(grid_size, 0U);
+    block_ids.assign(grid_size, GAME_VOXEL_AIR_BLOCK);
+    queue.clear();
     if (stats != nullptr)
     {
         stats->scanned_cells = 0U;
@@ -290,17 +645,18 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     error = light_chunk.initialize(0U);
     if (error != FT_ERR_SUCCESS)
         return error;
-    queue.reserve(65536U);
+    if (queue.capacity() < 65536U)
+        queue.reserve(65536U);
     for (int32_t z = region_min; z < region_max; ++z)
     {
         for (int32_t x = region_min; x < region_max; ++x)
         {
             ft_bool direct = FT_TRUE;
-            for (int32_t y = 255; y >= 0; --y)
-            {
-                uint32_t id = GAME_VOXEL_AIR_BLOCK;
-                error = read_block(lookup, user_data, origin_x + x, y,
-                    origin_z + z, &id);
+			for (int32_t y = 255; y >= 0; --y)
+			{
+				uint32_t id = GAME_VOXEL_AIR_BLOCK;
+				error = read_block(lookup, user_data, origin_x + x, y,
+					origin_z + z, &id);
                 if (error != FT_ERR_SUCCESS)
                     return error;
                 if (stats != nullptr)
@@ -309,12 +665,16 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
                     voxel_get_block_metadata(id);
                 index = light_index(x + VOXEL_LIGHT_HALO, y,
                     z + VOXEL_LIGHT_HALO);
-                if (direct == FT_TRUE && metadata.light_attenuation < 15U
-                    && metadata.transparent == FT_TRUE)
-                {
-                    sky[index] = 15U;
-                        queue.push_back({static_cast<int16_t>(x),
-                            static_cast<int16_t>(y), static_cast<int16_t>(z), 0U, 15U});
+                block_ids[index] = id;
+				if (direct == FT_TRUE && metadata.light_attenuation < 15U
+					&& metadata.transparent == FT_TRUE)
+				{
+					sky[index] = 15U;
+					/* Every direct-sky cell is also a lateral propagation source.
+					 * Seeding only the top and roof boundary leaves an adjacent
+					 * cave at the same height without a source to propagate from. */
+					queue.push_back({static_cast<int16_t>(x),
+						static_cast<int16_t>(y), static_cast<int16_t>(z), 0U, 15U});
                 }
                 else
                     direct = FT_FALSE;
@@ -350,11 +710,9 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
             if (x < region_min || x >= region_max || y < 0 || y >= 256
                 || z < region_min || z >= region_max)
                 continue;
-            uint32_t id = GAME_VOXEL_AIR_BLOCK;
-            error = read_block(lookup, user_data, origin_x + x, y,
-                origin_z + z, &id);
-            if (error != FT_ERR_SUCCESS)
-                return error;
+            index = light_index(x + VOXEL_LIGHT_HALO, y,
+                z + VOXEL_LIGHT_HALO);
+            uint32_t id = block_ids[index];
             const voxel_block_metadata &metadata = voxel_get_block_metadata(id);
             if (metadata.light_attenuation >= 15U || metadata.occludes_faces == FT_TRUE)
                 continue;
@@ -363,8 +721,6 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
             if (node.level <= cost)
                 continue;
             uint8_t candidate = static_cast<uint8_t>(node.level - cost);
-            index = light_index(x + VOXEL_LIGHT_HALO, y,
-                z + VOXEL_LIGHT_HALO);
             uint8_t *destination = node.channel == 0U ? &sky[index] : &block[index];
             if (candidate <= *destination)
                 continue;

@@ -111,7 +111,39 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   ticket validation hooks, concurrent candidate-pair probing, direct-path
   nomination, and relay-fallback state machine. Rendezvous/STUN/relay services
   provide the network-side infrastructure and application ticket verifier.
+- `networking_replication_protocol.hpp` - Generic authoritative-replication
+  envelope with version and payload-length validation, transactional framing
+  decode, a transport-owned payload copier, and stateless sender helpers for
+  reliable control/delta/snapshot lanes and unreliable-sequenced updates.
+  Message types and payload schemas
+  remain owned by the consuming application; this API only frames and sends
+  bytes through `networking_message_connection`.
+- `networking_replication_hash_payload` - Computes a SHA-256 content hash for
+  caller-owned canonical payload bytes. Revision numbers are deliberately not
+  included, so content equality and synchronization position remain separate.
+- `networking_replication_revision_tracker` - Caller-owned revision gate for
+  one replicated stream. It accepts a complete snapshot, requires contiguous
+  block and light revisions, and rejects light results calculated from an
+  obsolete block revision before the application commits decoded data. It owns
+  no world, block, light, mesh, or transport state and is not thread-safe; the
+  consuming replica must serialize calls to one tracker.
+- `networking_replication_apply_budget` - Per-pump message, payload-byte, and
+  operation budget. A rejected consumption returns `FT_ERR_FULL` without
+  changing counters, allowing a client to defer the remaining work to a later
+  frame or tick.
+- `networking_replication_client` - Caller-owned client replica gate that
+  applies snapshots, block deltas, and light deltas through application
+  callbacks while enforcing contiguous revisions and per-frame budgets.
+- `networking_replication_retention_window` - Contiguous server-side revision
+  window with acknowledgement tracking and snapshot-fallback decisions. It
+  tracks revision availability only; applications retain and own the actual
+  delta payloads.
+- `networking_replication_peer_cursor` - Fixed, transactional reconnect
+  cursor containing authenticated server/session/subscription identity and
+  block/light acknowledgement state. It contains no pointers or handles;
+  applications own durable storage and must re-authenticate before restoring
+  it.
 
 The detailed implementation contract, wire-format rules, resource limits,
-security requirements, and test gates are documented in
-`Docs/steam_style_networking_design.md` until implementation completion.
+security requirements, client budgets, and test gates are documented in
+`Docs/rendering_main_thread_optimization_design.md`, especially section 11.

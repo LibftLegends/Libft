@@ -85,6 +85,37 @@ struct voxel_light_update_config
     uint64_t time_budget_microseconds;
 };
 
+class voxel_light_build_operation
+{
+    private:
+        struct implementation;
+        uint8_t _initialised_state;
+        implementation *_implementation;
+
+    public:
+        voxel_light_build_operation() noexcept;
+        voxel_light_build_operation(const voxel_light_build_operation &other)
+            noexcept = delete;
+        voxel_light_build_operation(voxel_light_build_operation &&other)
+            noexcept = delete;
+        ~voxel_light_build_operation() noexcept;
+
+        voxel_light_build_operation &operator=(
+            const voxel_light_build_operation &other) noexcept = delete;
+        voxel_light_build_operation &operator=(
+            voxel_light_build_operation &&other) noexcept = delete;
+
+        int32_t initialize(voxel_light_chunk &light_chunk,
+            int32_t world_origin_x, int32_t world_origin_z,
+            voxel_light_block_lookup_fn lookup_block, void *user_data,
+            ft_bool include_halo) noexcept;
+        int32_t destroy() noexcept;
+        int32_t move(voxel_light_build_operation &other) noexcept;
+        int32_t step(const voxel_light_update_config &config,
+            voxel_light_build_stats *stats, ft_bool *complete) noexcept;
+        ft_bool is_complete() const noexcept;
+};
+
 void voxel_light_update_config_defaults(voxel_light_update_config &config) noexcept;
 ft_bool voxel_light_update_config_is_valid(
     const voxel_light_update_config &config) noexcept;
