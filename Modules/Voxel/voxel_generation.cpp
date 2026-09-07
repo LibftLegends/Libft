@@ -115,6 +115,17 @@ static int32_t voxel_surface_water_bed_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z, int32_t column_height,
     const voxel_generation_config &config) noexcept;
 
+static ft_bool voxel_surface_water_candidate_is_valid(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z,
+    const voxel_generation_config &config, uint8_t *water_kind,
+    uint64_t *feature_id) noexcept;
+
+static ft_bool voxel_surface_water_neighbor_matches(uint64_t seed_value,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    int32_t local_x, int32_t local_z, int32_t offset_x, int32_t offset_z,
+    const voxel_generation_config &config, voxel_column_cache *column_cache,
+    uint8_t expected_kind, uint64_t expected_feature_id) noexcept;
+
 static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
     uint32_t previous_mask) noexcept;
 
@@ -307,13 +318,11 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
     double mountain_weight;
     double snow_weight;
 
-    /*
-     * Surface water is sampled per column, but a single sampled column must
-     * not become a detached pond.  The second pass below filters interior
-     * candidates after all feature IDs are known.  Chunk-border candidates
-     * are intentionally retained because their compatible neighbor can be in
-     * a chunk that has not been sampled here yet.
-     */
+    /* Surface water is sampled per column.  The second pass removes detached
+     * candidates, including candidates on a chunk border.  Border columns
+     * are checked against deterministic world-coordinate samples so a pond
+     * can cross a chunk boundary without creating a floating one-column
+     * fragment when the neighboring chunk is generated later. */
 
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
@@ -468,46 +477,48 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
         }
         local_z += 1;
     }
-    local_z = 1;
-    while (local_z + 1 < GAME_VOXEL_CHUNK_DEPTH)
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
     {
-        local_x = 1;
-        while (local_x + 1 < GAME_VOXEL_CHUNK_WIDTH)
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
         {
             ft_bool has_compatible_neighbor;
-            int32_t neighbor_index;
 
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
             has_compatible_neighbor = FT_FALSE;
             if (column_cache[column_index].has_surface_water == FT_TRUE)
             {
-                neighbor_index = column_index - 1;
-                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
-                    && column_cache[neighbor_index].surface_water_kind
-                        == column_cache[column_index].surface_water_kind
-                    && column_cache[neighbor_index].surface_water_feature_id
-                        == column_cache[column_index].surface_water_feature_id)
+                if (voxel_surface_water_neighbor_matches(seed_value,
+                        world_block_origin_x, world_block_origin_z, local_x,
+                        local_z, -1, 0, config, column_cache,
+                        column_cache[column_index].surface_water_kind,
+                        column_cache[column_index].surface_water_feature_id)
+                        == FT_TRUE)
                     has_compatible_neighbor = FT_TRUE;
-                neighbor_index = column_index + 1;
-                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
-                    && column_cache[neighbor_index].surface_water_kind
-                        == column_cache[column_index].surface_water_kind
-                    && column_cache[neighbor_index].surface_water_feature_id
-                        == column_cache[column_index].surface_water_feature_id)
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
+                        world_block_origin_x, world_block_origin_z, local_x,
+                        local_z, 1, 0, config, column_cache,
+                        column_cache[column_index].surface_water_kind,
+                        column_cache[column_index].surface_water_feature_id)
+                        == FT_TRUE)
                     has_compatible_neighbor = FT_TRUE;
-                neighbor_index = column_index - GAME_VOXEL_CHUNK_WIDTH;
-                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
-                    && column_cache[neighbor_index].surface_water_kind
-                        == column_cache[column_index].surface_water_kind
-                    && column_cache[neighbor_index].surface_water_feature_id
-                        == column_cache[column_index].surface_water_feature_id)
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
+                        world_block_origin_x, world_block_origin_z, local_x,
+                        local_z, 0, -1, config, column_cache,
+                        column_cache[column_index].surface_water_kind,
+                        column_cache[column_index].surface_water_feature_id)
+                        == FT_TRUE)
                     has_compatible_neighbor = FT_TRUE;
-                neighbor_index = column_index + GAME_VOXEL_CHUNK_WIDTH;
-                if (column_cache[neighbor_index].has_surface_water == FT_TRUE
-                    && column_cache[neighbor_index].surface_water_kind
-                        == column_cache[column_index].surface_water_kind
-                    && column_cache[neighbor_index].surface_water_feature_id
-                        == column_cache[column_index].surface_water_feature_id)
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
+                        world_block_origin_x, world_block_origin_z, local_x,
+                        local_z, 0, 1, config, column_cache,
+                        column_cache[column_index].surface_water_kind,
+                        column_cache[column_index].surface_water_feature_id)
+                        == FT_TRUE)
                     has_compatible_neighbor = FT_TRUE;
                 if (has_compatible_neighbor == FT_FALSE)
                 {
@@ -1421,6 +1432,92 @@ static int32_t voxel_surface_water_bed_height(uint64_t seed_value,
     if (bed_height < VOXEL_BEDROCK_FLOOR_Y + 1)
         bed_height = VOXEL_BEDROCK_FLOOR_Y + 1;
     return (bed_height);
+}
+
+static ft_bool voxel_surface_water_candidate_is_valid(uint64_t seed_value,
+    int32_t world_block_x, int32_t world_block_z,
+    const voxel_generation_config &config, uint8_t *water_kind,
+    uint64_t *feature_id) noexcept
+{
+    uint8_t kind;
+    int32_t level;
+    int32_t column_height;
+    int32_t bed_height;
+    int32_t feature_cell_size;
+    int32_t feature_cell_x;
+    int32_t feature_cell_z;
+
+    kind = voxel_surface_water_kind(seed_value, world_block_x,
+        world_block_z, config);
+    if (kind == VOXEL_SURFACE_WATER_NONE)
+        return (FT_FALSE);
+    level = config.sea_level;
+    if (kind == VOXEL_SURFACE_WATER_RIVER)
+        level -= 1;
+    else if (kind == VOXEL_SURFACE_WATER_LAKE)
+        level -= 2;
+    column_height = voxel_smooth_heightfield(seed_value, world_block_x,
+        world_block_z, config);
+    if (column_height > level + 4)
+        return (FT_FALSE);
+    bed_height = voxel_surface_water_bed_height(seed_value, world_block_x,
+        world_block_z, column_height, config);
+    if (bed_height >= level)
+        return (FT_FALSE);
+    if (kind == VOXEL_SURFACE_WATER_RIVER)
+        feature_cell_size = config.fluids.river_noise_scale;
+    else
+        feature_cell_size = config.fluids.lake_noise_scale;
+    if (feature_cell_size > 0)
+    {
+        feature_cell_x = voxel_floor_division(world_block_x,
+            feature_cell_size) * feature_cell_size;
+        feature_cell_z = voxel_floor_division(world_block_z,
+            feature_cell_size) * feature_cell_size;
+    }
+    else
+    {
+        feature_cell_x = world_block_x;
+        feature_cell_z = world_block_z;
+    }
+    *water_kind = kind;
+    *feature_id = voxel_feature_seed(seed_value, feature_cell_x,
+        feature_cell_z, VOXEL_FEATURE_WATER_SALT
+            ^ static_cast<uint64_t>(kind));
+    return (FT_TRUE);
+}
+
+static ft_bool voxel_surface_water_neighbor_matches(uint64_t seed_value,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    int32_t local_x, int32_t local_z, int32_t offset_x, int32_t offset_z,
+    const voxel_generation_config &config, voxel_column_cache *column_cache,
+    uint8_t expected_kind, uint64_t expected_feature_id) noexcept
+{
+    int32_t neighbor_x;
+    int32_t neighbor_z;
+    int32_t neighbor_index;
+    uint8_t neighbor_kind;
+    uint64_t neighbor_feature_id;
+
+    neighbor_x = local_x + offset_x;
+    neighbor_z = local_z + offset_z;
+    if (neighbor_x >= 0 && neighbor_x < GAME_VOXEL_CHUNK_WIDTH
+        && neighbor_z >= 0 && neighbor_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        neighbor_index = neighbor_z * GAME_VOXEL_CHUNK_WIDTH + neighbor_x;
+        return (column_cache[neighbor_index].has_surface_water == FT_TRUE
+            && column_cache[neighbor_index].surface_water_kind
+                == expected_kind
+            && column_cache[neighbor_index].surface_water_feature_id
+                == expected_feature_id);
+    }
+    if (voxel_surface_water_candidate_is_valid(seed_value,
+            world_block_origin_x + neighbor_x,
+            world_block_origin_z + neighbor_z, config, &neighbor_kind,
+            &neighbor_feature_id) == FT_FALSE)
+        return (FT_FALSE);
+    return (neighbor_kind == expected_kind
+        && neighbor_feature_id == expected_feature_id);
 }
 
 static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
