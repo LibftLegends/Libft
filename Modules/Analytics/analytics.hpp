@@ -26,6 +26,35 @@ static const uint32_t FT_ANALYTICS_EXPORT_BUFFER_COUNT = 3U;
 static const uint32_t FT_ANALYTICS_MAX_EXPORT_BUFFER_COUNT = 8U;
 static const uint32_t FT_ANALYTICS_INVALID_BUFFER_INDEX = 0xffffffffU;
 
+enum class analytics_runtime_region : uint32_t
+{
+    CMA_MALLOC = 0U,
+    CMA_FREE = 1U,
+    CMA_REALLOC = 2U,
+    CMA_ALIGNED_ALLOC = 3U,
+    CMA_LOCK = 4U,
+    CMA_UNLOCK = 5U,
+    PT_MUTEX_LOCK = 6U,
+    PT_MUTEX_UNLOCK = 7U,
+    PT_MUTEX_TRY_LOCK = 8U,
+    PT_RECURSIVE_MUTEX_LOCK = 9U,
+    PT_RECURSIVE_MUTEX_UNLOCK = 10U,
+    PT_RWLOCK_READ = 11U,
+    PT_RWLOCK_WRITE = 12U,
+    PT_RWLOCK_UNLOCK = 13U,
+    COUNT = 14U
+};
+
+class analytics_session;
+
+struct analytics_runtime_scope_token
+{
+    analytics_session *session;
+    uint32_t region_id;
+    uint64_t start_nanoseconds;
+    ft_bool active;
+};
+
 enum class analytics_output_format : uint32_t
 {
     NONE = 0U,
@@ -114,8 +143,6 @@ typedef void (*analytics_export_callback)(
     void *user_data);
 typedef void (*analytics_trace_callback)(const analytics_trace_event &event,
     void *user_data);
-
-class analytics_session;
 
 struct analytics_flow_token
 {
@@ -302,5 +329,13 @@ int32_t analytics_end_scope_at(analytics_session *session,
 int32_t analytics_begin_flow(analytics_session *session, uint64_t flow_id,
     uint32_t region_id, analytics_flow_token *token) noexcept;
 int32_t analytics_end_flow(const analytics_flow_token &token) noexcept;
+
+int32_t analytics_runtime_register_regions(analytics_session *session) noexcept;
+int32_t analytics_runtime_shutdown() noexcept;
+int32_t analytics_runtime_set_sample_rate(uint32_t sample_rate) noexcept;
+int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
+    analytics_runtime_scope_token *token) noexcept;
+int32_t analytics_runtime_scope_end(
+    analytics_runtime_scope_token *token) noexcept;
 
 #endif

@@ -14,8 +14,11 @@
 #include "../System_utils/system_utils.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
-void* cma_malloc(ft_size_t size)
+static void *cma_malloc_uninstrumented(ft_size_t size)
 {
     void *result = nullptr;
     ft_bool lock_acquired = FT_FALSE;
@@ -116,4 +119,26 @@ void* cma_malloc(ft_size_t size)
     if (lock_acquired)
         cma_unlock_allocator(lock_acquired);
     return (result);
+}
+
+void *cma_malloc(ft_size_t size)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    void *result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_MALLOC, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_malloc_uninstrumented(size));
+    result = cma_malloc_uninstrumented(size);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr, "[LIBFT][Analytics] cma_malloc scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_malloc_uninstrumented(size));
+#endif
 }

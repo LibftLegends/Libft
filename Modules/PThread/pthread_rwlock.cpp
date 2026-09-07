@@ -5,6 +5,10 @@
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/basic.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 
 #define PT_RWLOCK_TLS_READ_LOCK_CAPACITY 64U
 
@@ -693,7 +697,8 @@ static int pt_rwlock_strategy_read_lock_internal(t_pt_rwlock *rwlock,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t pt_rwlock_strategy_rdlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_rdlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     int error_code;
 
@@ -701,7 +706,8 @@ int32_t pt_rwlock_strategy_rdlock(t_pt_rwlock *rwlock)
     return (pt_rwlock_strategy_report_result(rwlock, error_code, error_code));
 }
 
-int32_t pt_rwlock_strategy_try_rdlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_try_rdlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     int error_code;
 
@@ -832,7 +838,8 @@ static int pt_rwlock_strategy_write_lock_internal(t_pt_rwlock *rwlock,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t pt_rwlock_strategy_wrlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_wrlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     int error_code;
 
@@ -840,7 +847,8 @@ int32_t pt_rwlock_strategy_wrlock(t_pt_rwlock *rwlock)
     return (pt_rwlock_strategy_report_result(rwlock, error_code, error_code));
 }
 
-int32_t pt_rwlock_strategy_try_wrlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_try_wrlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     int error_code;
 
@@ -848,7 +856,8 @@ int32_t pt_rwlock_strategy_try_wrlock(t_pt_rwlock *rwlock)
     return (pt_rwlock_strategy_report_result(rwlock, error_code, error_code));
 }
 
-int32_t pt_rwlock_strategy_rdunlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_rdunlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     uint32_t lock_index;
     ft_bool fast_path;
@@ -933,7 +942,8 @@ int32_t pt_rwlock_strategy_rdunlock(t_pt_rwlock *rwlock)
     return (pt_rwlock_strategy_report_result(rwlock, error_code, error_code));
 }
 
-int32_t pt_rwlock_strategy_wrunlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_wrunlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     pt_thread_id_type thread_id;
     int error_code;
@@ -1008,7 +1018,8 @@ int32_t pt_rwlock_strategy_wrunlock(t_pt_rwlock *rwlock)
     return (pt_rwlock_strategy_report_result(rwlock, error_code, error_code));
 }
 
-int32_t pt_rwlock_strategy_unlock(t_pt_rwlock *rwlock)
+static int32_t pt_rwlock_strategy_unlock_uninstrumented(
+    t_pt_rwlock *rwlock)
 {
     pt_thread_id_type thread_id;
     int error_code;
@@ -1048,6 +1059,167 @@ int32_t pt_rwlock_strategy_unlock(t_pt_rwlock *rwlock)
         return (pt_rwlock_strategy_rdunlock(rwlock));
     return (pt_rwlock_strategy_report_result(rwlock,
             FT_ERR_MUTEX_NOT_OWNER, FT_ERR_MUTEX_NOT_OWNER));
+}
+
+int32_t pt_rwlock_strategy_rdlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_READ, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_rdlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_rdlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_rdlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_rdlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_try_rdlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_READ, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_try_rdlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_try_rdlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_try_rdlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_try_rdlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_wrlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_WRITE, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_wrlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_wrlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_wrlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_wrlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_try_wrlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_WRITE, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_try_wrlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_try_wrlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_try_wrlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_try_wrlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_rdunlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_rdunlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_rdunlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_rdunlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_rdunlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_wrunlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_wrunlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_wrunlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_wrunlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_wrunlock_uninstrumented(rwlock));
+#endif
+}
+
+int32_t pt_rwlock_strategy_unlock(t_pt_rwlock *rwlock)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RWLOCK_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (pt_rwlock_strategy_unlock_uninstrumented(rwlock));
+    result = pt_rwlock_strategy_unlock_uninstrumented(rwlock);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_rwlock_unlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (pt_rwlock_strategy_unlock_uninstrumented(rwlock));
+#endif
 }
 
 int32_t pt_rwlock_strategy_destroy(t_pt_rwlock *rwlock)

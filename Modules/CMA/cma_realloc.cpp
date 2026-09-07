@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstddef>
+#include <cstdio>
 #include <pthread.h>
 #include "../Errno/errno.hpp"
 #include "CMA.hpp"
@@ -10,6 +11,9 @@
 #include "../System_utils/system_utils.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
 static ft_bool reallocate_block(void *memory_pointer, ft_size_t aligned_size, ft_size_t user_size)
 {
@@ -115,7 +119,8 @@ static void release_block_locked(Block *block)
     return ;
 }
 
-void *cma_realloc(void* memory_pointer, ft_size_t new_size)
+static void *cma_realloc_uninstrumented(void *memory_pointer,
+    ft_size_t new_size)
 {
     if (new_size > FT_SYSTEM_SIZE_MAX)
         return (nullptr);
@@ -264,4 +269,27 @@ void *cma_realloc(void* memory_pointer, ft_size_t new_size)
     if (lock_acquired)
         cma_unlock_allocator(lock_acquired);
     return (new_ptr);
+}
+
+void *cma_realloc(void *memory_pointer, ft_size_t new_size)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    void *result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_REALLOC, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_realloc_uninstrumented(memory_pointer, new_size));
+    result = cma_realloc_uninstrumented(memory_pointer, new_size);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] cma_realloc scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_realloc_uninstrumented(memory_pointer, new_size));
+#endif
 }

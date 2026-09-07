@@ -8,9 +8,13 @@
 #include <mutex>
 #include <pthread.h>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 
 #include "../PThread/mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
 static const uint64_t CMA_OPERATION_STATE_TRANSITION =
     static_cast<uint64_t>(1U);
@@ -350,7 +354,7 @@ ft_bool cma_is_thread_safe_enabled(void)
     return (FT_FALSE);
 }
 
-int32_t cma_lock_allocator(ft_bool *lock_acquired)
+static int32_t cma_lock_allocator_uninstrumented(ft_bool *lock_acquired)
 {
     pt_recursive_mutex *mutex_pointer;
     ft_bool thread_safety_enabled;
@@ -439,7 +443,7 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t cma_unlock_allocator(ft_bool lock_acquired)
+static int32_t cma_unlock_allocator_uninstrumented(ft_bool lock_acquired)
 {
     ft_bool guard_decremented;
     int32_t mutex_error;
@@ -468,4 +472,49 @@ int32_t cma_unlock_allocator(ft_bool lock_acquired)
     if (guard_decremented == FT_FALSE)
         return (FT_ERR_INVALID_STATE);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t cma_lock_allocator(ft_bool *lock_acquired)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_lock_allocator_uninstrumented(lock_acquired));
+    result = cma_lock_allocator_uninstrumented(lock_acquired);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr, "[LIBFT][Analytics] cma_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_lock_allocator_uninstrumented(lock_acquired));
+#endif
+}
+
+int32_t cma_unlock_allocator(ft_bool lock_acquired)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_unlock_allocator_uninstrumented(lock_acquired));
+    result = cma_unlock_allocator_uninstrumented(lock_acquired);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] cma_unlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_unlock_allocator_uninstrumented(lock_acquired));
+#endif
 }

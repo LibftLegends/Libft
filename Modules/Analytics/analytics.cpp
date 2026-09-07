@@ -149,6 +149,32 @@ static thread_local analytics_thread_state g_analytics_thread_states[
 static thread_local analytics_thread_state *g_analytics_current_thread_state
     = ft_nullptr;
 
+static std::atomic<analytics_session *> g_analytics_runtime_session(
+    ft_nullptr);
+static uint32_t g_analytics_runtime_region_ids[
+    static_cast<uint32_t>(analytics_runtime_region::COUNT)] = {};
+static std::atomic<uint32_t> g_analytics_runtime_sample_rate(1U);
+static thread_local uint32_t g_analytics_runtime_sample_counter = 0U;
+
+static const char *analytics_runtime_region_name(
+    analytics_runtime_region region) noexcept
+{
+    static const char *names[
+        static_cast<uint32_t>(analytics_runtime_region::COUNT)] = {
+        "cma_malloc", "cma_free", "cma_realloc", "cma_aligned_alloc",
+        "cma_lock", "cma_unlock", "pt_mutex_lock", "pt_mutex_unlock",
+        "pt_mutex_try_lock", "pt_recursive_mutex_lock",
+        "pt_recursive_mutex_unlock", "pt_rwlock_read", "pt_rwlock_write",
+        "pt_rwlock_unlock"};
+    uint32_t region_index;
+
+    region_index = static_cast<uint32_t>(region);
+    if (region_index >= static_cast<uint32_t>(
+            analytics_runtime_region::COUNT))
+        return ("unknown");
+    return (names[region_index]);
+}
+
 static analytics_thread_state *analytics_thread_state_for(
     analytics_session *session, ft_bool allocate) noexcept
 {
@@ -323,6 +349,102 @@ int32_t analytics_default_session_config(
         return (FT_ERR_INVALID_ARGUMENT);
     *configuration = analytics_session_config();
     return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_runtime_register_regions(analytics_session *session) noexcept
+{
+    uint32_t region_index;
+    int32_t error_code;
+
+    if (session == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    region_index = 0U;
+    while (region_index < static_cast<uint32_t>(
+            analytics_runtime_region::COUNT))
+    {
+        error_code = session->register_region(
+            analytics_runtime_region_name(
+                static_cast<analytics_runtime_region>(region_index)),
+            "libft_runtime", &g_analytics_runtime_region_ids[region_index]);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        region_index += 1U;
+    }
+    g_analytics_runtime_session.store(session, std::memory_order_release);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_runtime_shutdown() noexcept
+{
+    g_analytics_runtime_session.store(ft_nullptr, std::memory_order_release);
+    g_analytics_runtime_sample_counter = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_runtime_set_sample_rate(uint32_t sample_rate) noexcept
+{
+    if (sample_rate == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    g_analytics_runtime_sample_rate.store(sample_rate,
+        std::memory_order_release);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
+    analytics_runtime_scope_token *token) noexcept
+{
+    analytics_session *session;
+    uint32_t sample_rate;
+    uint32_t region_index;
+    int32_t error_code;
+
+    if (token == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    token->session = ft_nullptr;
+    token->region_id = 0U;
+    token->start_nanoseconds = 0U;
+    token->active = FT_FALSE;
+    region_index = static_cast<uint32_t>(region);
+    if (region_index >= static_cast<uint32_t>(
+            analytics_runtime_region::COUNT))
+        return (FT_ERR_INVALID_ARGUMENT);
+    session = g_analytics_runtime_session.load(std::memory_order_acquire);
+    if (session == ft_nullptr || session->is_enabled() == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    sample_rate = g_analytics_runtime_sample_rate.load(
+        std::memory_order_relaxed);
+    g_analytics_runtime_sample_counter += 1U;
+    if (sample_rate > 1U
+        && (g_analytics_runtime_sample_counter % sample_rate) != 0U)
+        return (FT_ERR_SUCCESS);
+    token->session = session;
+    token->region_id = g_analytics_runtime_region_ids[region_index];
+    token->start_nanoseconds = session->now_nanoseconds();
+    error_code = analytics_begin_scope_at(session, token->region_id,
+        token->start_nanoseconds);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        token->session = ft_nullptr;
+        return (FT_ERR_SUCCESS);
+    }
+    token->active = FT_TRUE;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t analytics_runtime_scope_end(
+    analytics_runtime_scope_token *token) noexcept
+{
+    int32_t error_code;
+
+    if (token == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (token->active == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    error_code = analytics_end_scope_at(token->session,
+        token->session->now_nanoseconds());
+    token->session = ft_nullptr;
+    token->active = FT_FALSE;
+    return (error_code);
 }
 
 analytics_session::~analytics_session() noexcept
