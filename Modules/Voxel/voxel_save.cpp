@@ -9,7 +9,7 @@
 #include "../Errno/errno.hpp"
 
 static const uint32_t VOXEL_SAVE_MAGIC = UINT32_C(0x54434F4E);
-static const uint32_t VOXEL_SAVE_VERSION = 11U;
+static const uint32_t VOXEL_SAVE_VERSION = 12U;
 
 static int32_t voxel_save_append_block_reference(ft_byte_buffer &buffer,
     uint32_t block_id) noexcept
@@ -642,6 +642,12 @@ int32_t voxel_generation_config_serialize(
     error_code = buffer.append_u32_le(config.fluids.lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.surface_river_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = buffer.append_u32_le(config.fluids.surface_lake_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     error_code = buffer.append_u8(config.fluids.enable_underground_lakes);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -762,6 +768,8 @@ int32_t voxel_generation_config_deserialize(
     int32_t river_width;
     int32_t lake_noise_scale;
     uint32_t lake_chance_percent;
+    uint32_t surface_river_depth;
+    uint32_t surface_lake_depth;
     uint8_t enable_underground_lakes;
     uint32_t underground_lake_chance_percent;
     int32_t underground_lake_minimum_y;
@@ -793,7 +801,8 @@ int32_t voxel_generation_config_deserialize(
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = buffer.read_u32_le(&version);
     if (error_code != FT_ERR_SUCCESS
-        || (version != VOXEL_SAVE_VERSION && version != 10U && version != 9U
+        || (version != VOXEL_SAVE_VERSION && version != 11U && version != 10U
+            && version != 9U
             && version != 8U && version != 7U))
         return (FT_ERR_INVALID_ARGUMENT);
     error_code = voxel_save_read_i32(buffer, &loaded_config.sea_level);
@@ -1085,6 +1094,15 @@ int32_t voxel_generation_config_deserialize(
     error_code = buffer.read_u32_le(&lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (version >= 12U)
+    {
+        error_code = buffer.read_u32_le(&surface_river_depth);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = buffer.read_u32_le(&surface_lake_depth);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     if (version >= 11U)
     {
         error_code = buffer.read_u8(&enable_underground_lakes);
@@ -1181,6 +1199,13 @@ int32_t voxel_generation_config_deserialize(
         lake_noise_scale, lake_chance_percent);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (version >= 12U)
+    {
+        error_code = loaded_config.fluids.set_surface_water_depths(
+            surface_river_depth, surface_lake_depth);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     if (version >= 11U)
     {
         error_code = loaded_config.fluids.set_underground_lakes_enabled(

@@ -497,8 +497,10 @@ int32_t voxel_fluid_config::serialize_json(ft_string &output) const noexcept
     VOXEL_JSON_BOOL(staging_output, "enable_underground_lakes", this->enable_underground_lakes);
     VOXEL_JSON_I32(staging_output, "river_noise_scale", this->river_noise_scale);
     VOXEL_JSON_I32(staging_output, "river_width", this->river_width);
+    VOXEL_JSON_U32(staging_output, "surface_river_depth", this->surface_river_depth);
     VOXEL_JSON_I32(staging_output, "lake_noise_scale", this->lake_noise_scale);
     VOXEL_JSON_U32(staging_output, "lake_chance_percent", this->lake_chance_percent);
+    VOXEL_JSON_U32(staging_output, "surface_lake_depth", this->surface_lake_depth);
     VOXEL_JSON_U32(staging_output, "underground_lake_chance_percent", this->underground_lake_chance_percent);
     VOXEL_JSON_I32(staging_output, "underground_lake_minimum_y", this->underground_lake_minimum_y);
     VOXEL_JSON_I32(staging_output, "underground_lake_maximum_y", this->underground_lake_maximum_y);

@@ -68,6 +68,13 @@ int32_t chunk_mesh_generate_from_chunk_with_neighbors(chunk_mesh &mesh,
     int32_t (*lookup_block)(void *user_data, int32_t world_x, int32_t world_y,
         int32_t world_z, uint32_t *block_id),
     void *user_data, const voxel_light_chunk *light = nullptr) noexcept;
+int32_t chunk_mesh_generate_from_chunk_with_neighbors_and_light_lookup(
+    chunk_mesh &mesh, const game_voxel_chunk &chunk, int32_t chunk_x,
+    int32_t chunk_z,
+    int32_t (*lookup_block)(void *user_data, int32_t world_x, int32_t world_y,
+        int32_t world_z, uint32_t *block_id),
+    void *user_data, const voxel_light_chunk *light,
+    voxel_light_packed_lookup_fn light_lookup, void *light_user_data) noexcept;
 ft_bool chunk_mesh_intersects_frustum(const geometry_frustum &frustum,
     int32_t world_origin_x, int32_t world_origin_y,
     int32_t world_origin_z) noexcept;

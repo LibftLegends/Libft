@@ -218,6 +218,8 @@ class voxel_fluid_config
         int32_t set_underground_lakes_enabled(ft_bool enabled) noexcept;
         int32_t set_river_settings(int32_t scale, int32_t width) noexcept;
         int32_t set_lake_settings(int32_t scale, uint32_t chance) noexcept;
+        int32_t set_surface_water_depths(uint32_t river_depth,
+            uint32_t lake_depth) noexcept;
         int32_t set_underground_lake_settings(uint32_t chance,
             int32_t minimum_y, int32_t maximum_y, uint32_t depth,
             uint32_t floor_thickness, uint32_t roof_thickness) noexcept;
@@ -230,8 +232,10 @@ class voxel_fluid_config
         ft_bool enable_underground_lakes;
         int32_t river_noise_scale;
         int32_t river_width;
+        uint32_t surface_river_depth;
         int32_t lake_noise_scale;
         uint32_t lake_chance_percent;
+        uint32_t surface_lake_depth;
         uint32_t underground_lake_chance_percent;
         int32_t underground_lake_minimum_y;
         int32_t underground_lake_maximum_y;

@@ -37,3 +37,33 @@ Runtime block registry entries can be acquired through
 keeps the block and its loaded asset bytes alive while a registry entry is
 unregistered. Legacy raw-pointer accessors remain borrowed views and must not
 outlive the registry entry.
+
+## Fluid generation contract
+
+`voxel_fluid_config` exposes `surface_river_depth` and
+`surface_lake_depth`. Both values are validated in the range `1..16` and
+default to `1`, so surface water is shallow unless a caller explicitly opts
+into deeper depressions with `set_surface_water_depths(...)`. The existing
+two-argument river and lake settings remain source-compatible.
+
+Surface fluids never reshape the heightfield. The generated terrain and caves
+are completed first; a valid river, lake, or legacy water candidate may only
+fill a natural depression whose water depth is nonzero and within the
+kind-specific configured maximum. A candidate must have a same-feature
+cardinal neighbor, and every cardinal neighbor must either be the same valid
+feature or provide a natural terrain bank at or above the water level. Border
+decisions use world coordinates and do not recurse into generation.
+
+Generation stages are ordered as:
+
+```text
+base terrain and caves
+surface and underground fluids
+snow, aquatic features, shrubs, trees, and other decoration
+```
+
+The fluid stage requires both `VOXEL_STAGE_BASE_TERRAIN` and
+`VOXEL_STAGE_CAVES`. Underground `underground_lake_depth` means the number of
+water layers. Exactly one air headroom layer is retained above those layers;
+the configured maximum Y bounds the final water layer, while the floor, walls,
+headroom, roof, and chunk-height checks must all fit before a lake is written.

@@ -740,7 +740,8 @@ voxel_fluid_config::voxel_fluid_config() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       enable_rivers(FT_FALSE), enable_lakes(FT_FALSE),
       enable_underground_lakes(FT_FALSE), river_noise_scale(0),
-      river_width(0), lake_noise_scale(0), lake_chance_percent(0U),
+      river_width(0), surface_river_depth(0U), lake_noise_scale(0),
+      lake_chance_percent(0U), surface_lake_depth(0U),
       underground_lake_chance_percent(0U), underground_lake_minimum_y(0),
       underground_lake_maximum_y(0), underground_lake_depth(0U),
       underground_lake_floor_thickness(0U), underground_lake_roof_thickness(0U)
@@ -763,8 +764,10 @@ int32_t voxel_fluid_config::initialize() noexcept
     this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
+    this->surface_river_depth = 1U;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
+    this->surface_lake_depth = 1U;
     this->underground_lake_chance_percent = 0U;
     this->underground_lake_minimum_y = 0;
     this->underground_lake_maximum_y = 0;
@@ -789,8 +792,10 @@ int32_t voxel_fluid_config::initialize(
     this->enable_underground_lakes = other.enable_underground_lakes;
     this->river_noise_scale = other.river_noise_scale;
     this->river_width = other.river_width;
+    this->surface_river_depth = other.surface_river_depth;
     this->lake_noise_scale = other.lake_noise_scale;
     this->lake_chance_percent = other.lake_chance_percent;
+    this->surface_lake_depth = other.surface_lake_depth;
     this->underground_lake_chance_percent = other.underground_lake_chance_percent;
     this->underground_lake_minimum_y = other.underground_lake_minimum_y;
     this->underground_lake_maximum_y = other.underground_lake_maximum_y;
@@ -811,8 +816,10 @@ uint32_t voxel_fluid_config::destroy() noexcept
     this->enable_underground_lakes = FT_FALSE;
     this->river_noise_scale = 0;
     this->river_width = 0;
+    this->surface_river_depth = 0U;
     this->lake_noise_scale = 0;
     this->lake_chance_percent = 0U;
+    this->surface_lake_depth = 0U;
     this->underground_lake_chance_percent = 0U;
     this->underground_lake_minimum_y = 0;
     this->underground_lake_maximum_y = 0;
@@ -846,6 +853,9 @@ int32_t voxel_fluid_config::set_enabled(ft_bool rivers,
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
+    if ((rivers != FT_FALSE && rivers != FT_TRUE)
+        || (lakes != FT_FALSE && lakes != FT_TRUE))
+        return (FT_ERR_INVALID_ARGUMENT);
     this->enable_rivers = rivers;
     this->enable_lakes = lakes;
     return (FT_ERR_SUCCESS);
@@ -855,6 +865,8 @@ int32_t voxel_fluid_config::set_underground_lakes_enabled(ft_bool enabled) noexc
 {
     if (this->is_initialised() == FT_FALSE)
         return (FT_ERR_NOT_INITIALISED);
+    if (enabled != FT_FALSE && enabled != FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
     this->enable_underground_lakes = enabled;
     return (FT_ERR_SUCCESS);
 }
@@ -883,6 +895,19 @@ int32_t voxel_fluid_config::set_lake_settings(int32_t scale,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t voxel_fluid_config::set_surface_water_depths(
+    uint32_t river_depth, uint32_t lake_depth) noexcept
+{
+    if (this->is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    if (river_depth == 0U || river_depth > 16U
+        || lake_depth == 0U || lake_depth > 16U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    this->surface_river_depth = river_depth;
+    this->surface_lake_depth = lake_depth;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t voxel_fluid_config::set_underground_lake_settings(uint32_t chance,
     int32_t minimum_y, int32_t maximum_y, uint32_t depth,
     uint32_t floor_thickness, uint32_t roof_thickness) noexcept
@@ -892,6 +917,8 @@ int32_t voxel_fluid_config::set_underground_lake_settings(uint32_t chance,
     if (chance > 100U || minimum_y < 1 || maximum_y < minimum_y
         || maximum_y >= GAME_VOXEL_CHUNK_HEIGHT || depth == 0U
         || depth > 8U || floor_thickness == 0U || roof_thickness == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (maximum_y - minimum_y + 1 < static_cast<int32_t>(depth))
         return (FT_ERR_INVALID_ARGUMENT);
     this->underground_lake_chance_percent = chance;
     this->underground_lake_minimum_y = minimum_y;
@@ -3259,10 +3286,14 @@ uint32_t voxel_generation_config_signature(
         config.fluids.river_noise_scale)) << 9;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.fluids.river_width)) << 13;
+    signature = voxel_mix_u64(signature ^ static_cast<uint64_t>(
+        config.fluids.surface_river_depth));
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.fluids.lake_noise_scale)) << 17;
     signature ^= static_cast<uint64_t>(config.fluids.lake_chance_percent)
         << 21;
+    signature = voxel_mix_u64(signature ^ static_cast<uint64_t>(
+        config.fluids.surface_lake_depth));
     signature ^= static_cast<uint64_t>(config.fluids.underground_lake_chance_percent)
         << 27;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
@@ -3663,7 +3694,15 @@ ft_bool voxel_generation_config_is_valid(
         || config.fluids.river_noise_scale <= 0
         || config.fluids.lake_noise_scale <= 0
         || config.fluids.river_width < 0
+        || config.fluids.surface_river_depth == 0U
+        || config.fluids.surface_river_depth > 16U
         || config.fluids.lake_chance_percent > 100
+        || config.fluids.surface_lake_depth == 0U
+        || config.fluids.surface_lake_depth > 16U
+        || (config.fluids.enable_rivers != FT_FALSE
+            && config.fluids.enable_rivers != FT_TRUE)
+        || (config.fluids.enable_lakes != FT_FALSE
+            && config.fluids.enable_lakes != FT_TRUE)
         || (config.fluids.enable_underground_lakes != FT_FALSE
             && config.fluids.enable_underground_lakes != FT_TRUE)
         || config.fluids.underground_lake_chance_percent > 100U
@@ -3675,6 +3714,9 @@ ft_bool voxel_generation_config_is_valid(
                     >= GAME_VOXEL_CHUNK_HEIGHT
                 || config.fluids.underground_lake_depth == 0U
                 || config.fluids.underground_lake_depth > 8U
+                || config.fluids.underground_lake_maximum_y
+                    - config.fluids.underground_lake_minimum_y + 1
+                    < static_cast<int32_t>(config.fluids.underground_lake_depth)
                 || config.fluids.underground_lake_floor_thickness == 0U
                 || config.fluids.underground_lake_roof_thickness == 0U))
         || config.underground_structures.ravine_chance_percent > 100

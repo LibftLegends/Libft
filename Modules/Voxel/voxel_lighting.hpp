@@ -70,6 +70,14 @@ typedef int32_t (*voxel_light_block_lookup_fn)(void *user_data,
     int32_t world_x, int32_t world_y, int32_t world_z,
     uint32_t *block_id) noexcept;
 
+/* The callback does not transfer ownership of the returned sample. The
+ * caller owns user_data and must keep it valid for the duration of the
+ * lookup. World coordinates are absolute coordinates supplied by the
+ * consumer, not chunk-local coordinates. */
+typedef int32_t (*voxel_light_packed_lookup_fn)(void *user_data,
+    int32_t world_x, int32_t world_y, int32_t world_z,
+    uint8_t *packed_light) noexcept;
+
 struct voxel_light_build_stats
 {
     uint64_t scanned_cells;
@@ -114,7 +122,22 @@ class voxel_light_build_operation
         int32_t step(const voxel_light_update_config &config,
             voxel_light_build_stats *stats, ft_bool *complete) noexcept;
         ft_bool is_complete() const noexcept;
+        /* The operation owns its internal light workspace. This query only
+         * copies a completed sample into packed_light; it never exposes that
+         * workspace. The operation, destination light chunk, callback data,
+         * and any object passed as user_data to the build must remain alive
+         * and externally synchronized for the operation's lifetime. A query
+         * is valid only after completion and only for the computed target
+         * region plus halo selected at initialize(). */
+        int32_t get_packed_light(int32_t world_x, int32_t world_y,
+            int32_t world_z, uint8_t *packed_light) const noexcept;
 };
+
+/* Adapter for passing a completed operation as a
+ * voxel_light_packed_lookup_fn. user_data must point to a live operation. */
+int32_t voxel_light_build_operation_lookup(void *user_data,
+    int32_t world_x, int32_t world_y, int32_t world_z,
+    uint8_t *packed_light) noexcept;
 
 void voxel_light_update_config_defaults(voxel_light_update_config &config) noexcept;
 ft_bool voxel_light_update_config_is_valid(
@@ -134,4 +157,3 @@ int32_t voxel_light_build_chunk_local(voxel_light_chunk &light_chunk,
 #endif
 
 #endif
-
