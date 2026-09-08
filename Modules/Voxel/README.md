@@ -17,6 +17,13 @@ they need:
   worker to pause and resume scanning, propagation, and finalization according
   to `voxel_light_update_config` without blocking the caller for one monolithic
   solve.
+- `voxel_shadow.hpp` contains the renderer-independent blob-shadow helpers:
+  `voxel_shadow_find_receiver(...)` searches downward through solid voxel
+  space for an entity's receiver surface, while
+  `voxel_shadow_height_fade(...)` computes the bounded alpha fade from the
+  entity height above that surface. Both APIs use a caller-provided lookup
+  callback and do not access world storage directly, so renderers can use them
+  with an immutable snapshot or another application-owned query source.
 - `voxel_scripting_bridge.hpp` contains the terrain scripting bridge API.
   Terrain configuration scripts are normalized and executed by Libft's custom
   Scripting runtime; the bridge no longer routes terrain execution through Lua.
