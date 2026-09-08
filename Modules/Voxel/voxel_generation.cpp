@@ -369,8 +369,6 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
     uint32_t sample_index;
     double shrub_chance;
     double tree_chance;
-    double mountain_weight;
-    double snow_weight;
     uint32_t validation_pass;
     ft_bool validation_changed;
 
@@ -398,8 +396,6 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
             column_cache[column_index].biome_profile.topsoil_depth = 0;
             shrub_chance = 0.0;
             tree_chance = 0.0;
-            mountain_weight = 0.0;
-            snow_weight = 0.0;
             sample_index = 0U;
             while (sample_index < column_cache[column_index].biome_sample.count)
             {
@@ -419,14 +415,6 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                 column_cache[column_index].biome_profile.topsoil_depth +=
                     static_cast<int32_t>(static_cast<double>(config.biomes[
                         sampled_biome].profile.topsoil_depth) * sampled_weight);
-                shrub_chance += sampled_weight * static_cast<double>(config.biomes[
-                    sampled_biome].shrub_chance_percent);
-                tree_chance += sampled_weight * static_cast<double>(config.biomes[
-                    sampled_biome].tree_chance_percent);
-                if (config.biomes[sampled_biome].allow_mountain_ridges == FT_TRUE)
-                    mountain_weight += sampled_weight;
-                if (config.biomes[sampled_biome].allow_snow_caps == FT_TRUE)
-                    snow_weight += sampled_weight;
                 sample_index += 1U;
             }
             column_cache[column_index].column_height
@@ -496,27 +484,20 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                     world_block_z, config);
             column_cache[column_index].deep_block_id = config.biomes[
                 column_cache[column_index].biome].deep_block_id;
-            column_cache[column_index].can_place_shrubs = FT_FALSE;
-            column_cache[column_index].can_place_trees = FT_FALSE;
-            column_cache[column_index].can_place_snow = FT_FALSE;
-            column_cache[column_index].can_place_mountain_ridges = FT_FALSE;
-            sample_index = 0U;
-            while (sample_index < column_cache[column_index].biome_sample.count)
-            {
-                uint32_t sampled_biome;
-
-                sampled_biome = column_cache[column_index].biome_sample
-                    .biome_indices[sample_index];
-                if (config.biomes[sampled_biome].allow_shrubs == FT_TRUE)
-                    column_cache[column_index].can_place_shrubs = FT_TRUE;
-                if (config.biomes[sampled_biome].allow_trees == FT_TRUE)
-                    column_cache[column_index].can_place_trees = FT_TRUE;
-                sample_index += 1U;
-            }
-            if (snow_weight >= 0.25)
-                column_cache[column_index].can_place_snow = FT_TRUE;
-            if (mountain_weight >= 0.25)
-                column_cache[column_index].can_place_mountain_ridges = FT_TRUE;
+            column_cache[column_index].can_place_shrubs =
+                config.biomes[column_cache[column_index].biome].allow_shrubs;
+            column_cache[column_index].can_place_trees =
+                config.biomes[column_cache[column_index].biome].allow_trees;
+            column_cache[column_index].can_place_snow =
+                config.biomes[column_cache[column_index].biome]
+                    .allow_snow_caps;
+            column_cache[column_index].can_place_mountain_ridges =
+                config.biomes[column_cache[column_index].biome]
+                    .allow_mountain_ridges;
+            shrub_chance = static_cast<double>(config.biomes[
+                column_cache[column_index].biome].shrub_chance_percent);
+            tree_chance = static_cast<double>(config.biomes[
+                column_cache[column_index].biome].tree_chance_percent);
             if (shrub_chance > 100.0)
                 shrub_chance = 100.0;
             if (tree_chance > 100.0)
@@ -991,81 +972,32 @@ static uint32_t voxel_sample_biome_block(
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     uint64_t material_salt, ft_bool subsurface) noexcept
 {
-    uint64_t sample_seed;
-    double sample_value;
-    double accumulated_weight;
-    uint32_t index;
     uint32_t biome;
 
-    sample_seed = seed_value ^ material_salt
-        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_x))
-            * UINT64_C(0xA24BAED4963EE407))
-        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_y))
-            * UINT64_C(0x9FB21C651E98DF25))
-        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_z))
-            * UINT64_C(0xC13FA9A902A6328F));
-    sample_value = static_cast<double>(voxel_mix_u64(sample_seed)
-        % 100000U) / 100000.0;
-    accumulated_weight = 0.0;
-    index = 0U;
-    while (index < sample.count)
-    {
-        biome = sample.biome_indices[index];
-        accumulated_weight += sample.weights[index];
-        if (sample_value <= accumulated_weight || index + 1U == sample.count)
-        {
-            if (subsurface == FT_TRUE)
-                return (config.biomes[biome].subsurface_block_id);
-            return (config.biomes[biome].surface_block_id);
-        }
-        index += 1U;
-    }
-    return (config.biomes[sample.biome_indices[0]].surface_block_id);
+    (void)seed_value;
+    (void)world_block_x;
+    (void)world_block_y;
+    (void)world_block_z;
+    (void)material_salt;
+    biome = sample.biome_indices[0];
+    if (subsurface == FT_TRUE)
+        return (config.biomes[biome].subsurface_block_id);
+    return (config.biomes[biome].surface_block_id);
 }
 
 static const voxel_tree_template *voxel_sample_tree_template(
     const voxel_generation_config &config,
     const voxel_biome_sample &sample, uint64_t seed_value)
 {
-    uint32_t index;
     uint32_t selected_biome;
-    double tree_weight_total;
-    double sample_value;
-    double accumulated_weight;
     const voxel_tree_template *tree_template;
 
-    tree_weight_total = 0.0;
-    index = 0U;
-    while (index < sample.count)
-    {
-        selected_biome = sample.biome_indices[index];
-        if (config.biomes[selected_biome].allow_trees == FT_TRUE
-            && (config.biomes[selected_biome].tree_template != ft_nullptr
-                || config.biomes[selected_biome].tree_template_count > 0U))
-            tree_weight_total += sample.weights[index];
-        index += 1U;
-    }
-    if (tree_weight_total <= 0.0)
-        return (ft_nullptr);
+    (void)seed_value;
     selected_biome = sample.biome_indices[0];
-    sample_value = static_cast<double>(voxel_mix_u64(seed_value)
-        % 100000U) / 100000.0 * tree_weight_total;
-    accumulated_weight = 0.0;
-    index = 0U;
-    while (index < sample.count)
-    {
-        selected_biome = sample.biome_indices[index];
-        if (config.biomes[selected_biome].allow_trees == FT_TRUE
-            && (config.biomes[selected_biome].tree_template != ft_nullptr
-                || config.biomes[selected_biome].tree_template_count > 0U))
-        {
-            selected_biome = sample.biome_indices[index];
-            accumulated_weight += sample.weights[index];
-            if (sample_value <= accumulated_weight)
-                break ;
-        }
-        index += 1U;
-    }
+    if (config.biomes[selected_biome].allow_trees != FT_TRUE
+        || (config.biomes[selected_biome].tree_template == ft_nullptr
+            && config.biomes[selected_biome].tree_template_count == 0U))
+        return (ft_nullptr);
     tree_template = config.biomes[selected_biome].tree_template;
     if (tree_template == ft_nullptr
         && config.biomes[selected_biome].tree_template_count > 0U)
@@ -1632,7 +1564,8 @@ static ft_bool voxel_surface_water_neighbor_is_compatible(
             world_block_origin_z + neighbor_z, config, &neighbor_kind,
             &neighbor_feature_id) == FT_TRUE
         && neighbor_kind == expected_kind
-        && neighbor_feature_id == expected_feature_id)
+        && voxel_surface_water_level(neighbor_kind, config.sea_level)
+            == expected_water_level)
         return (FT_TRUE);
     natural_height = voxel_smooth_heightfield(seed_value,
         world_block_origin_x + neighbor_x,

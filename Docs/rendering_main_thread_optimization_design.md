@@ -2215,7 +2215,60 @@ off the authoritative mutation lock path.
 Bounded queues are insufficient when urgent work remains behind thousands of
 valid distant jobs. Every server and client scheduler must use stable priority
 classes, bounded starvation prevention, and revision-based stale-work removal.
-The default order is:
+For the voxel renderer, the required order is:
+
+1. block changes in already-loaded chunks and their visible border geometry;
+2. lighting propagation and light-aware remeshes caused by those changes;
+3. new-chunk generation, arrival lighting, and ordinary arrival remeshes.
+
+This is an implementation dependency order as well as a runtime scheduling
+order:
+
+1. **Loaded-chunk block changes first.** Apply the authoritative edit, mark
+   the edited chunk and visible face-sharing neighbours, and publish
+   geometry-only replacement meshes without waiting for lighting. The edit
+   path must coalesce duplicate invalidations, reject stale results, and never
+   upload the previous mesh under a newer voxel revision.
+2. **Edit-caused lighting second.** Relight the bounded affected frontier and
+   publish light-aware remeshes in local edit-distance order. Work must be
+   sliced across frames using runtime configuration, preserve chunk-border
+   propagation, and coalesce dirty cells/sections so one edit does not trigger
+   an unbounded render-thread burst.
+3. **New chunks third.** Only when no ready interactive edit or edit-caused
+   lighting work remains may ordinary generation, arrival lighting, neighbour
+   remeshes, and distant uploads consume the available work window. New-chunk
+   work must remain in the background queue and must not delay an active edit.
+
+The scheduler must expose these as separate priority classes in diagnostics.
+The worker may take one generation request after at most eight consecutive
+remesh/light selections as a starvation escape, but that escape must not
+outrank ready block-change or lighting work. Acceptance tests must verify the
+ordering while continuously breaking blocks as new terrain streams in.
+
+The first class must publish block removal/placement without waiting for a
+complete light solve. The second class is incremental and frame-budgeted. The
+third class must not enter the interactive edit queue. Each class needs queue
+age/depth analytics, and bounded starvation promotion must preserve progress
+without allowing new-chunk work to delay an active edit.
+
+The worker arbitration must select queued remesh/light requests before queued
+generation requests. After at most eight consecutive remesh selections it may
+select one generation request, then the remesh priority resumes. This escape
+prevents starvation without allowing normal streaming to outrank an active
+edit.
+
+For a remesh, this means the worker may publish a geometry-only intermediate
+result after snapshot capture. The request remains alive and revision-bound;
+its later light-aware result is the only result allowed to clear the dirty
+state. Renderers may upload the intermediate mesh because its mesh revision is
+newer, but must never upload the pre-edit mesh under the new voxel revision.
+
+Minecraft exposes both the background and interactive lighting slice
+configurations at runtime. Each setter validates the minimum/target/maximum
+node relationship and the time limit before replacing the active copy; the
+interactive edit budget is not a compile-time-only constant.
+
+The broader priority order for non-voxel work remains:
 
 1. accepted local edits and directly affected neighbouring regions;
 2. collision-affecting changes near any player;

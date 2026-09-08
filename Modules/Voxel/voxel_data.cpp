@@ -2558,8 +2558,12 @@ static int32_t voxel_apply_default_generation_config(
         config.biomes[index].deep_block_id = voxel_deep_block_for_biome(biome);
         config.biomes[index].allow_shrubs = voxel_biome_has_shrubs(biome);
         config.biomes[index].allow_trees = voxel_biome_has_trees(biome);
-        config.biomes[index].allow_snow_caps = FT_TRUE;
-        config.biomes[index].allow_mountain_ridges = FT_TRUE;
+        config.biomes[index].allow_snow_caps = FT_FALSE;
+        if (biome == VOXEL_BIOME_SNOW || biome == VOXEL_BIOME_MOUNTAINS)
+            config.biomes[index].allow_snow_caps = FT_TRUE;
+        config.biomes[index].allow_mountain_ridges = FT_FALSE;
+        if (biome == VOXEL_BIOME_HILLS || biome == VOXEL_BIOME_MOUNTAINS)
+            config.biomes[index].allow_mountain_ridges = FT_TRUE;
         config.biomes[index].shrub_chance_percent = 6U;
         config.biomes[index].tree_chance_percent = 18U;
         config.biomes[index].tree_template_count = 0U;

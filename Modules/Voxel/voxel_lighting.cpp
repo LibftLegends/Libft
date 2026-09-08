@@ -453,6 +453,48 @@ int32_t voxel_light_build_operation::step(
     target_nodes = config.target_nodes_per_frame;
     maximum_nodes = config.max_nodes_per_frame;
     processed = 0U;
+    const auto seed_sky_neighbor =
+        [operation](int32_t destination_x, int32_t destination_y,
+            int32_t destination_z) -> int32_t
+        {
+            uint32_t destination_index;
+            const voxel_block_metadata *metadata;
+            uint8_t cost;
+            uint8_t candidate;
+
+            if (destination_x < operation->region_min
+                || destination_x >= operation->region_max
+                || destination_z < operation->region_min
+                || destination_z >= operation->region_max
+                || destination_y < 0 || destination_y >= 256)
+                return (FT_ERR_SUCCESS);
+            destination_index = light_index(
+                destination_x + VOXEL_LIGHT_HALO, destination_y,
+                destination_z + VOXEL_LIGHT_HALO);
+            metadata = &voxel_get_block_metadata(
+                operation->block_ids[destination_index]);
+            if (metadata->light_attenuation >= 15U
+                || metadata->occludes_faces != FT_FALSE)
+                return (FT_ERR_SUCCESS);
+            cost = metadata->light_attenuation;
+            if (cost < 1U)
+                cost = 1U;
+            if (15U <= cost)
+                return (FT_ERR_SUCCESS);
+            candidate = static_cast<uint8_t>(15U - cost);
+            if (candidate <= operation->sky[destination_index])
+                return (FT_ERR_SUCCESS);
+            operation->sky[destination_index] = candidate;
+            if (light_queue_push(operation->queue, {
+                    static_cast<int16_t>(destination_x),
+                    static_cast<int16_t>(destination_y),
+                    static_cast<int16_t>(destination_z), 0U,
+                    candidate}) != FT_ERR_SUCCESS)
+                return (FT_ERR_NO_MEMORY);
+            if (operation->queue.size() > operation->stats.queue_peak)
+                operation->stats.queue_peak = operation->queue.size();
+            return (FT_ERR_SUCCESS);
+        };
     start_nanoseconds = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -481,15 +523,73 @@ int32_t voxel_light_build_operation::step(
                 && metadata->transparent != FT_FALSE)
             {
                 operation->sky[index] = 15U;
-                error_code = light_queue_push(operation->queue, {
-                    static_cast<int16_t>(operation->scan_x),
-                    static_cast<int16_t>(operation->scan_y),
-                    static_cast<int16_t>(operation->scan_z), 0U, 15U});
-                if (error_code != FT_ERR_SUCCESS)
-                    return (error_code);
+                if (operation->scan_x > operation->region_min)
+                {
+                    uint32_t west_index = light_index(
+                        operation->scan_x - 1 + VOXEL_LIGHT_HALO,
+                        operation->scan_y,
+                        operation->scan_z + VOXEL_LIGHT_HALO);
+                    if (operation->sky[west_index] == 0U)
+                    {
+                        error_code = seed_sky_neighbor(operation->scan_x - 1,
+                            operation->scan_y, operation->scan_z);
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                    }
+                }
+                if (operation->scan_z > operation->region_min)
+                {
+                    uint32_t north_index = light_index(
+                        operation->scan_x + VOXEL_LIGHT_HALO,
+                        operation->scan_y,
+                        operation->scan_z - 1 + VOXEL_LIGHT_HALO);
+                    if (operation->sky[north_index] == 0U)
+                    {
+                        error_code = seed_sky_neighbor(operation->scan_x,
+                            operation->scan_y, operation->scan_z - 1);
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                    }
+                }
             }
             else
+            {
                 operation->direct_sky = FT_FALSE;
+                if (metadata->light_attenuation < 15U
+                    && metadata->occludes_faces == FT_FALSE)
+                {
+                    if (operation->scan_x > operation->region_min)
+                    {
+                        uint32_t west_index = light_index(
+                            operation->scan_x - 1 + VOXEL_LIGHT_HALO,
+                            operation->scan_y,
+                            operation->scan_z + VOXEL_LIGHT_HALO);
+                        if (operation->sky[west_index] == 15U)
+                        {
+                            error_code = seed_sky_neighbor(
+                                operation->scan_x, operation->scan_y,
+                                operation->scan_z);
+                            if (error_code != FT_ERR_SUCCESS)
+                                return (error_code);
+                        }
+                    }
+                    if (operation->scan_z > operation->region_min)
+                    {
+                        uint32_t north_index = light_index(
+                            operation->scan_x + VOXEL_LIGHT_HALO,
+                            operation->scan_y,
+                            operation->scan_z - 1 + VOXEL_LIGHT_HALO);
+                        if (operation->sky[north_index] == 15U)
+                        {
+                            error_code = seed_sky_neighbor(
+                                operation->scan_x, operation->scan_y,
+                                operation->scan_z);
+                            if (error_code != FT_ERR_SUCCESS)
+                                return (error_code);
+                        }
+                    }
+                }
+            }
             if (voxel_block_emitted_light_level(block_id) != 0U
                 && voxel_block_emitted_light_level(block_id)
                     > operation->block[index])

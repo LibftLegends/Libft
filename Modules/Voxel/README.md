@@ -12,6 +12,19 @@ they need:
 - `voxel_api.hpp` contains module-level generation, biome, block registry,
   tree-template, and chunk-generation functions.
 - `voxel_mesh.hpp` contains chunk mesh types and mesh functions.
+
+Chunk mesh generation bounds use half-open chunk-local coordinates:
+`[minimum, maximum)`. `chunk_mesh_generate_from_chunk_in_bounds(...)` and its
+light-aware/neighbor-aware variants create a bounded replacement mesh; they do
+not merge it into an existing mesh. Use
+`chunk_mesh_replace_in_bounds(existing, replacement, bounds)` to transactionally
+replace generated quads whose face anchor lies in `bounds` while preserving
+unaffected quads. Both meshes must be canonical Libft-generated meshes with
+four vertices and six indices per quad, and their vectors must not have
+thread-safety enabled. The bounds must be expanded so no old greedy quad
+straddles the boundary; such a mesh is rejected with
+`FT_ERR_INVALID_ARGUMENT` rather than being partially discarded. Replacement
+quads must likewise have anchors and geometry inside the supplied bounds.
 - `voxel_lighting.hpp` contains packed sky/block light, deterministic light
   builds, and `voxel_light_build_operation`. The operation API allows a
   worker to pause and resume scanning, propagation, and finalization according
