@@ -1,0 +1,4 @@
+# Textured material for cube.obj
+newmtl checker
+Kd 1.000 1.000 1.000
+map_Kd ../textures/checker.tga

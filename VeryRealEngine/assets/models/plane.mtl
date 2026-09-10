@@ -1,0 +1,4 @@
+# Untextured material for plane.obj: no map_Kd, so the renderer samples
+# the default 1x1 white texture and relies solely on the diffuse tint.
+newmtl ground
+Kd 0.55 0.58 0.65
