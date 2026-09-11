@@ -15,12 +15,27 @@
 namespace vre
 {
 
-/// One vertex: position, normal, and UV, matching the layout the graphics pipeline expects.
+/**
+ * @brief One vertex: position, normal, UV, plus up-to-4-bone GPU
+ * linear-blend skinning data, matching the layout the graphics pipeline
+ * expects (see mesh.vert's skinning computation).
+ *
+ * `bone_indices`/`bone_weights` exist for every vertex, not just skinned
+ * meshes: an ordinary static mesh (anything loaded via obj_loader.cpp) is
+ * simply bound entirely to bone slot 0 with weight 1.0, and
+ * Renderer::GlobalUbo::bone_matrices[0] is always the identity matrix — so
+ * `skin_matrix` in mesh.vert reduces to the identity for every vertex that
+ * doesn't actually belong to an animated skeleton, and static geometry is
+ * unaffected. This is what lets one shader/pipeline serve both static and
+ * skinned meshes rather than needing two.
+ */
 struct MeshVertex
 {
     float position[3];
     float normal[3];
     float uv[2];
+    float bone_indices[4] = {0.0f, 0.0f, 0.0f, 0.0f}; ///< Indices into GlobalUbo::bone_matrices.
+    float bone_weights[4] = {1.0f, 0.0f, 0.0f, 0.0f};  ///< Must sum to 1.0 per vertex.
 };
 
 /// One contiguous run of indices in the mesh's index buffer that shares a single material — i.e. what `usemtl` splits an OBJ file into.

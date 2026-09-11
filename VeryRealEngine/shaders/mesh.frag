@@ -11,6 +11,7 @@ layout(set = 1, binding = 0) uniform GlobalUbo
     vec4 light_count_ambient; // x = light count, y = ambient
     vec4 view_position;
     vec4 shadow_caster_count; // x = active shadow casters
+    mat4 bone_matrices[16]; // kMaxBones — unused here, but must stay in the layout to match mesh.vert/renderer.hpp's GlobalUbo exactly
 } global;
 // sampler2DShadow: a hardware depth-COMPARE sampler (see
 // Renderer::create_shadow_resources — compareEnable/compareOp on the

@@ -12,6 +12,7 @@ layout(set = 1, binding = 0) uniform GlobalUbo
     vec4 light_count_ambient; // x = light count, y = ambient
     vec4 view_position;
     vec4 shadow_caster_count; // x = active shadow casters
+    mat4 bone_matrices[16]; // kMaxBones — [0] is always identity, see mesh_data.hpp
 } global;
 
 layout(push_constant) uniform PushConstants
@@ -24,6 +25,8 @@ layout(push_constant) uniform PushConstants
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_uv;
+layout(location = 3) in vec4 in_bone_indices;
+layout(location = 4) in vec4 in_bone_weights;
 
 layout(location = 0) out vec3 frag_world_pos;
 layout(location = 1) out vec3 frag_normal;
@@ -33,7 +36,27 @@ layout(location = 4) out vec4 frag_light_space_pos_1;
 
 void main()
 {
-    vec4 world_pos = push.model * vec4(in_position, 1.0);
+    // GPU linear-blend skinning: each vertex blends up to 4 bone matrices
+    // by its own weights before anything else happens to it. For an
+    // ordinary static mesh (bone_indices = [0,0,0,0], weights = [1,0,0,0])
+    // this reduces to skin_matrix == global.bone_matrices[0] == identity,
+    // so in_position/in_normal pass through completely unaffected — see
+    // mesh_data.hpp's MeshVertex doc comment for why every vertex carries
+    // this data, not just actually-animated ones.
+    mat4 skin_matrix =
+        in_bone_weights.x * global.bone_matrices[int(in_bone_indices.x)] +
+        in_bone_weights.y * global.bone_matrices[int(in_bone_indices.y)] +
+        in_bone_weights.z * global.bone_matrices[int(in_bone_indices.z)] +
+        in_bone_weights.w * global.bone_matrices[int(in_bone_indices.w)];
+
+    vec4 skinned_position = skin_matrix * vec4(in_position, 1.0);
+    // mat3(skin_matrix) is exact here (not just the model-matrix normal-
+    // transform shortcut noted below) because every bone matrix this engine
+    // ever builds is a rigid transform (rotation + translation only, no
+    // scale) — see Animator::compute_bone_matrices in skeleton.cpp.
+    vec3 skinned_normal = mat3(skin_matrix) * in_normal;
+
+    vec4 world_pos = push.model * skinned_position;
     gl_Position = global.view_proj * world_pos;
 
     frag_world_pos = world_pos.xyz;
@@ -42,7 +65,7 @@ void main()
     // normals. Every object in the demo scene uses uniform scale, so this
     // is an acceptable simplification for step 5, not a general-purpose
     // normal transform.
-    frag_normal = mat3(push.model) * in_normal;
+    frag_normal = mat3(push.model) * skinned_normal;
     frag_uv = in_uv;
     frag_light_space_pos_0 = global.light_space_matrices[0] * world_pos;
     frag_light_space_pos_1 = global.light_space_matrices[1] * world_pos;

@@ -326,6 +326,57 @@ overlapping doesn't double-saturate.
   missing GPU feature: `AudioSystem::initialize()` returns `false` and the
   demo runs on, silently, rather than aborting — see `main.cpp`.
 
+### Bonus — Skeletal Animation (done)
+
+Real GPU linear-blend skinning, not a scene-graph rotation dressed up as
+one: `mesh_data.hpp`'s `MeshVertex` carries `bone_indices`/`bone_weights`
+for every vertex (defaulting to "fully bound to bone 0" for ordinary static
+meshes), `mesh.vert` blends up to 4 bone matrices per vertex before
+anything else happens to it, and `src/animation/skeleton.{hpp,cpp}` is a
+from-scratch bone hierarchy + keyframe clip + `Animator` that turns elapsed
+time into those matrices each frame.
+
+- **One shader path serves both static and skinned meshes.** Bone slot 0 in
+  `Renderer::GlobalUbo::bone_matrices` is always the identity matrix; a
+  static mesh's vertices are 100% weighted to it, so `skin_matrix` reduces
+  to the identity and `in_position`/`in_normal` pass through unchanged —
+  confirmed by re-running the tech-demo and house scenes afterward with no
+  visual regression. An actual animated rig's bones occupy slots 1+ instead.
+- **Custom asset format**: OBJ has no notion of bone weights, so — exactly
+  as the subject permits ("create your own custom file type") —
+  `src/assets/skinned_mesh_loader.{hpp,cpp}` defines a small JSON schema
+  (bones, weighted vertices, indices, one animation clip) reusing the
+  engine's existing hand-written JSON parser rather than inventing a new
+  text format from scratch.
+- **Demo content**: `assets/models/pendulum_lamp.skinnedmesh.json` — a
+  3-bone hanging chain (`hinge`→`link1`→`link2`), each bone swinging a bit
+  further than its parent (±0.22, ±0.16, ±0.10 radians) for a real,
+  cascading pendulum motion, not one rigid body rotating. Hangs from Room
+  A's ceiling in `house_scene.json`.
+- **A real bug, found and fixed while building this**: the very first
+  screenshot showed thin, jagged slivers instead of solid boxes — 3 of the
+  procedurally-generated mesh's 6 box faces per segment turned out to have
+  reversed winding relative to this engine's established
+  `frontFace = VK_FRONT_FACE_CLOCKWISE` convention (re-derived independently
+  instead of copying `cube.obj`'s already-correct face order), so half of
+  every box was silently backface-culled. Fixed by copying `cube.obj`'s
+  exact per-face vertex ordering into the generator instead of re-deriving
+  it. A second, separate bug in the same pass — vertex positions authored
+  relative to each bone's own local origin instead of in cumulative
+  bind-pose *world* space, which the skinning-matrix formula requires —
+  caused all three segments to overlap at the same position; fixed by
+  accumulating each segment's depth down the chain before authoring its box.
+- **Verified live, not just "it compiles"**: screenshots at frame 10 and
+  frame 200 of the same run show the rig in two clearly different, correctly
+  posed positions — real, advancing keyframe interpolation, not a static
+  bind pose.
+- **Scope line, documented not hidden**: the pendulum's shadow (cast via
+  `shadow.vert`, a separate shader from `mesh.vert`) uses the mesh's raw,
+  unskinned bind-pose positions — the shadow itself doesn't swing with the
+  rig. Extending `shadow.vert` with the same skinning math `mesh.vert` uses
+  would fix this; not done here to keep this bonus feature's Vulkan surface
+  area small and low-risk against the already-verified shadow pipeline.
+
 ### Controls
 
 - **WASD** — move, **arrow keys** — look (house scene)

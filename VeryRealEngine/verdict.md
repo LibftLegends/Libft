@@ -108,13 +108,34 @@ note at the top of this file.**
 | Post-processing (bloom, motion blur, depth of field) | ✅ |
 | Particle systems | ✅ |
 | Sound system | ✅ |
-| Skeletal animation | ❌ Not started (next up) |
+| Skeletal animation | ✅ |
 | Networking (multiplayer) | ❌ Not started (reasonable to skip — highest effort, lowest payoff of the five, and fully optional) |
 
 Post-processing and particle systems are genuinely done, not partially: `post.frag`'s `main()`
 actually reads and uses its bloom, DOF, and motion-blur push-constant parameters (confirmed by
 reading the shader, not just its declared struct), and the particle system is a real CPU-side
 emitter doing double duty as Chapter V's mandatory steam requirement.
+
+**Skeletal animation**, added this pass: real GPU linear-blend skinning (not a scene-graph rotation
+standing in for it) — `MeshVertex` (`src/assets/mesh_data.hpp`) carries `bone_indices`/`bone_weights`
+for every vertex, `mesh.vert` blends up to 4 bone matrices per vertex, and
+`src/animation/skeleton.{hpp,cpp}` is a from-scratch bone hierarchy + keyframe clip + `Animator`.
+One shader path serves both static and skinned meshes: bone slot 0 in `GlobalUbo::bone_matrices` is
+always the identity, so an ordinary static mesh's vertices (100% weighted to slot 0) pass through
+unaffected — re-verified by re-running both existing scenes afterward with no visual regression.
+OBJ has no bone-weight concept, so — exactly as the subject permits ("create your own custom file
+type") — `src/assets/skinned_mesh_loader.{hpp,cpp}` defines a small JSON schema for skinned content,
+reusing the existing hand-written JSON parser. Demo content: a 3-bone hanging pendulum lamp
+(`assets/models/pendulum_lamp.skinnedmesh.json`) with a cascading swing (each bone swings further
+than its parent), hanging from Room A's ceiling. Two real bugs were found and fixed while building
+it — a face-winding bug (3 of 6 box faces per segment were wound backwards, causing half of every
+box to be backface-culled into thin slivers) and a bind-pose-space bug (vertex positions authored
+relative to each bone's own origin instead of cumulative world space, causing all three segments to
+overlap) — see `README.md`'s writeup for the full diagnosis. Verified live: screenshots at frame 10
+and frame 200 of the same run show two clearly different, correctly interpolated poses, not a static
+bind pose. Documented scope line: the pendulum's shadow uses its unskinned bind pose (shadow.vert
+doesn't apply skinning), so the shadow itself doesn't swing — a deliberate choice to keep this bonus
+feature's Vulkan surface area small, not an oversight.
 
 **Sound system**, added this pass: `src/audio/wav_loader.{hpp,cpp}` (hand-written PCM WAVE
 parser — no third-party audio library), `src/audio/mixer.{hpp,cpp}` (a real, platform-independent
@@ -157,11 +178,14 @@ manual step, no missing file, no regeneration needed beyond `make`.
 ## Bottom line
 
 Every mandatory-checklist item is a clean ✅, independently re-verified this pass rather than
-carried forward from an earlier pass's claim. Four of five bonus items are done (post-processing,
-particle systems, and — new this pass — a real sound system). What's left:
+carried forward from an earlier pass's claim. **Four of five bonus items are now done**
+(post-processing, particle systems, sound, and — new this pass — real GPU skeletal animation);
+only networking remains, and it's reasonable to skip. What's left:
 
-1. **Commit this session's changes** (Doxygen + compiler-warning fixes, the new sound system) —
-   a fresh clone right now would be missing all of it.
+1. **Commit this session's changes** (Doxygen + compiler-warning fixes, the sound system, the
+   skeletal-animation system and its pendulum-lamp demo asset) — a fresh clone right now would be
+   missing all of it.
 2. **House content quality** toward Figures V.1–V.4 — the one substantive, honestly-still-open
    item, and purely content-authoring work at this point, not engine work.
-3. **Skeletal animation** — the one remaining bonus item, next up.
+3. **Networking** — the only bonus item not attempted, and reasonable to leave that way (highest
+   effort, lowest payoff of the five, fully optional).

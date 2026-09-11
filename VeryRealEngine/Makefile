@@ -34,7 +34,9 @@ LIB_CPP_SRCS := src/renderer/renderer.cpp \
                 src/physics/physics_world.cpp \
                 src/particles/particle_system.cpp \
                 src/audio/wav_loader.cpp \
-                src/audio/mixer.cpp
+                src/audio/mixer.cpp \
+                src/assets/skinned_mesh_loader.cpp \
+                src/animation/skeleton.cpp
 LIB_MM_SRCS  :=
 
 ifeq ($(UNAME_S),Linux)

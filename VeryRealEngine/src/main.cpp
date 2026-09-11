@@ -15,6 +15,7 @@
 #include "physics/physics_world.hpp"
 #include "particles/particle_system.hpp"
 #include "audio/audio_system.hpp"
+#include "animation/skeleton.hpp"
 #include "math/vre_math.hpp"
 
 #include <algorithm>
@@ -79,6 +80,20 @@ int main(int argc, char **argv)
     steam_desc.emitter_position = vre::vec3(-4.5f, 0.85f, 2.2f);
     steam_desc.mesh = renderer.load_mesh_from_obj("assets/models/cube_steam.obj");
     vre::ParticleSystem steam(steam_desc);
+
+    // Skeletal animation (bonus, Chapter VII): a small hanging pendulum
+    // lamp — a 3-bone chain, each bone swinging a bit further than its
+    // parent for a real, cascading pendulum motion, GPU-skinned via
+    // Renderer::draw_frame()'s bone_matrices parameter (see
+    // mesh_data.hpp's MeshVertex doc comment for how a single shader path
+    // serves both this and every static mesh in the scene).
+    vre::Skeleton pendulum_skeleton;
+    vre::AnimationClip pendulum_clip;
+    vre::MeshHandle pendulum_mesh = renderer.load_skinned_mesh(
+        "assets/models/pendulum_lamp.skinnedmesh.json", &pendulum_skeleton, &pendulum_clip);
+    vre::Animator pendulum_animator(&pendulum_skeleton, &pendulum_clip);
+    // Hangs from Room A's ceiling, clear of the light/door/coffee machine.
+    vre::mat4 pendulum_model = vre::mat4::translate(vre::vec3(-2.2f, 2.95f, 1.5f));
 
     // Sound system (bonus, Chapter VII): a looping ambient room hum plus
     // one-shot effects on the door and light switch. audio->initialize()
@@ -297,6 +312,9 @@ int main(int argc, char **argv)
         scene.sync_from_physics(physics);
         scene.update(delta_seconds);
         steam.update(delta_seconds);
+        pendulum_animator.update(delta_seconds);
+        std::vector<vre::mat4> pendulum_bone_matrices;
+        pendulum_animator.compute_bone_matrices(&pendulum_bone_matrices);
 
         // --- Camera -----------------------------------------------------------
         vre::vec3 look_forward(
@@ -324,8 +342,18 @@ int main(int argc, char **argv)
         scene.collect_render_items(&items);
         steam.collect_render_items(&items);
 
+        vre::RenderItem pendulum_item;
+        pendulum_item.mesh = pendulum_mesh;
+        pendulum_item.model = pendulum_model;
+        // Left at its default (opted out of occlusion culling — see
+        // RenderItem::occlusion_id's doc comment): this is one small object
+        // near the ceiling, not worth the query-pool bookkeeping, and
+        // opting out just means "always drawn if frustum-visible", not a
+        // correctness issue.
+        items.push_back(pendulum_item);
+
         renderer.draw_frame(view, projection, player_position, scene.get_lights(),
-            scene.get_ambient(), items, motion_blur_x, motion_blur_y);
+            scene.get_ambient(), items, motion_blur_x, motion_blur_y, pendulum_bone_matrices);
 
         frame_counter++;
         if (screenshot_path != nullptr && frame_counter == screenshot_after_frame)

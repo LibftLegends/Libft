@@ -15,6 +15,7 @@
 #include "../platform/window.hpp"
 #include "../math/vre_math.hpp"
 #include "../assets/mesh_data.hpp"
+#include "../animation/skeleton.hpp"
 #include "../assets/tga_loader.hpp"
 
 #include <vulkan/vulkan.h>
@@ -102,6 +103,15 @@ class Renderer
          */
         static constexpr uint32_t kMaxShadowCasters = 2;
         /**
+         * Bone-matrix slots for GPU linear-blend skinning (see
+         * mesh_data.hpp's MeshVertex doc comment): slot 0 is permanently
+         * the identity matrix, reserved for every static (non-skinned)
+         * vertex, leaving kMaxBones - 1 slots for actual skeletons — ample
+         * for this engine's one hand-authored animated rig, and easily
+         * raised if a future scene needs more.
+         */
+        static constexpr uint32_t kMaxBones = 16;
+        /**
          * Occlusion-query slots per frame-in-flight. Generous headroom
          * over this demo's object count (tens, not hundreds); items beyond
          * this cap simply don't get occlusion-tested (documented scope
@@ -139,6 +149,23 @@ class Renderer
         MeshHandle load_mesh_from_obj(const char *path);
 
         /**
+         * @brief Loads a skinned rig from this project's own JSON format
+         * (see skinned_mesh_loader.hpp) and uploads its geometry to a
+         * GPU-resident mesh, same as load_mesh_from_obj — but this mesh's
+         * vertices carry real bone weights, ready for GPU linear-blend
+         * skinning (mesh_data.hpp's MeshVertex doc comment, mesh.vert's
+         * skin_matrix computation) once its Animator's output is passed to
+         * draw_frame()'s `bone_matrices` parameter.
+         * @param path Filesystem path to the skinned-asset JSON file.
+         * @param out_skeleton Filled with the rig's bone hierarchy/bind pose.
+         * @param out_clip Filled with the rig's (single) animation clip.
+         * @return Handle to the uploaded mesh, usable in a RenderItem, or
+         * an empty/fallback mesh on failure (same "don't take the whole
+         * demo down over one bad asset" policy as load_mesh_from_obj).
+         */
+        MeshHandle load_skinned_mesh(const char *path, Skeleton *out_skeleton, AnimationClip *out_clip);
+
+        /**
          * @brief Renders one frame: shadow passes for the active casters,
          * the geometry pass (with frustum + occlusion culling applied to
          * `items`), and the post-process composite to the swapchain.
@@ -164,11 +191,19 @@ class Renderer
          * effect — a cheap, camera-only approximation (see post.frag's header
          * comment for why), not full per-object world-space reprojection.
          * @param screen_motion_blur_y Same, vertical component.
+         * @param bone_matrices Current skinning matrices for GPU linear-
+         * blend skinning (see mesh_data.hpp's MeshVertex doc comment):
+         * element `i` lands in `GlobalUbo::bone_matrices[i + 1]` — slot 0
+         * is always the identity matrix, reserved for static meshes, so
+         * this vector's own indexing starts at 1 from the shader's point of
+         * view. Empty (the default) if no animated skeleton is in the
+         * scene this frame; capped at `kMaxBones - 1` entries.
          */
         void draw_frame(const mat4 &view, const mat4 &projection, const vec3 &view_position,
             const std::vector<Light> &lights, float ambient_intensity,
             const std::vector<RenderItem> &items,
-            float screen_motion_blur_x = 0.0f, float screen_motion_blur_y = 0.0f);
+            float screen_motion_blur_x = 0.0f, float screen_motion_blur_y = 0.0f,
+            const std::vector<mat4> &bone_matrices = {});
 
         /**
          * @brief Culling counts from the most recently drawn frame.
@@ -263,6 +298,7 @@ class Renderer
             float light_count_ambient[4];                     ///< x = light count, y = ambient
             float view_position[4];
             float shadow_caster_count[4];                     ///< x = active shadow casters
+            mat4 bone_matrices[kMaxBones]; ///< [0] always identity; see kMaxBones' doc comment.
         };
 
         Window *_window; ///< Non-owning pointer to the platform window passed to initialize().
@@ -483,10 +519,13 @@ class Renderer
          * @param view_position Camera world-space position.
          * @param lights Active scene lights.
          * @param ambient_intensity Flat ambient term.
+         * @param bone_matrices See draw_frame()'s own doc comment — same
+         * slot-1-based indexing, same `kMaxBones - 1` cap.
          */
         void update_global_ubo(uint32_t frame_index, const mat4 &view, const mat4 &projection,
             const mat4 light_space_matrices[kMaxShadowCasters], uint32_t shadow_caster_count,
-            const vec3 &view_position, const std::vector<Light> &lights, float ambient_intensity);
+            const vec3 &view_position, const std::vector<Light> &lights, float ambient_intensity,
+            const std::vector<mat4> &bone_matrices);
 
         /**
          * @brief Records one shadow-caster's depth-only render pass.
@@ -567,6 +606,15 @@ class Renderer
         /// Creates a GPU-resident material (descriptor set + push-constant parameters) from parsed data.
         /// @return Handle to the created material.
         MaterialHandle create_material(const MaterialData &data);
+        /**
+         * @brief Shared tail end of load_mesh_from_obj()/load_skinned_mesh():
+         * uploads already-parsed CPU-side mesh/material data to GPU-resident
+         * buffers and registers the materials, without any notion of where
+         * the data came from.
+         * @return Handle to the newly uploaded mesh.
+         */
+        MeshHandle upload_mesh_data(const MeshData &mesh_data,
+            const std::vector<MaterialData> &material_data);
 };
 
 } // namespace vre

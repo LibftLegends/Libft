@@ -2,6 +2,7 @@
 #include "vk_check.hpp"
 #include "../assets/obj_loader.hpp"
 #include "../assets/tga_loader.hpp"
+#include "../assets/skinned_mesh_loader.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1235,7 +1236,16 @@ void Renderer::create_graphics_pipeline()
     binding.stride = sizeof(MeshVertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attributes[3]{};
+    // Locations 3/4 (bone_indices/bone_weights) are new — GPU linear-blend
+    // skinning support (see mesh_data.hpp's MeshVertex doc comment and
+    // mesh.vert's skin_matrix computation). Every static mesh's vertices
+    // default to bone_indices=[0,0,0,0]/weights=[1,0,0,0], and
+    // GlobalUbo::bone_matrices[0] is always the identity matrix, so this is
+    // a no-op for anything that isn't an actual animated skeleton. Required
+    // here too (not just the main graphics pipeline) since this pipeline
+    // binds the very same mesh.vert module, whose input interface now
+    // declares these locations regardless of which pipeline runs it.
+    VkVertexInputAttributeDescription attributes[5]{};
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -1248,12 +1258,20 @@ void Renderer::create_graphics_pipeline()
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
     attributes[2].offset = offsetof(MeshVertex, uv);
+    attributes[3].binding = 0;
+    attributes[3].location = 3;
+    attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributes[3].offset = offsetof(MeshVertex, bone_indices);
+    attributes[4].binding = 0;
+    attributes[4].location = 4;
+    attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributes[4].offset = offsetof(MeshVertex, bone_weights);
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input.vertexBindingDescriptionCount = 1;
     vertex_input.pVertexBindingDescriptions = &binding;
-    vertex_input.vertexAttributeDescriptionCount = 3;
+    vertex_input.vertexAttributeDescriptionCount = 5;
     vertex_input.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
@@ -1373,7 +1391,16 @@ void Renderer::create_occlusion_resources()
     binding.stride = sizeof(MeshVertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attributes[3]{};
+    // Locations 3/4 (bone_indices/bone_weights) are new — GPU linear-blend
+    // skinning support (see mesh_data.hpp's MeshVertex doc comment and
+    // mesh.vert's skin_matrix computation). Every static mesh's vertices
+    // default to bone_indices=[0,0,0,0]/weights=[1,0,0,0], and
+    // GlobalUbo::bone_matrices[0] is always the identity matrix, so this is
+    // a no-op for anything that isn't an actual animated skeleton. Required
+    // here too (not just the main graphics pipeline) since this pipeline
+    // binds the very same mesh.vert module, whose input interface now
+    // declares these locations regardless of which pipeline runs it.
+    VkVertexInputAttributeDescription attributes[5]{};
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -1386,12 +1413,20 @@ void Renderer::create_occlusion_resources()
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
     attributes[2].offset = offsetof(MeshVertex, uv);
+    attributes[3].binding = 0;
+    attributes[3].location = 3;
+    attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributes[3].offset = offsetof(MeshVertex, bone_indices);
+    attributes[4].binding = 0;
+    attributes[4].location = 4;
+    attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributes[4].offset = offsetof(MeshVertex, bone_weights);
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input.vertexBindingDescriptionCount = 1;
     vertex_input.pVertexBindingDescriptions = &binding;
-    vertex_input.vertexAttributeDescriptionCount = 3;
+    vertex_input.vertexAttributeDescriptionCount = 5;
     vertex_input.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
@@ -1915,10 +1950,25 @@ mat4 Renderer::compute_light_space_matrix(const Light &shadow_caster) const
 
 void Renderer::update_global_ubo(uint32_t frame_index, const mat4 &view, const mat4 &projection,
     const mat4 light_space_matrices[kMaxShadowCasters], uint32_t shadow_caster_count,
-    const vec3 &view_position, const std::vector<Light> &lights, float ambient_intensity)
+    const vec3 &view_position, const std::vector<Light> &lights, float ambient_intensity,
+    const std::vector<mat4> &bone_matrices)
 {
     GlobalUbo ubo{};
     ubo.view_proj = mat4::multiply(projection, view);
+
+    // Slot 0 is always the identity (every static mesh's vertices are fully
+    // weighted to it — see mesh_data.hpp's MeshVertex doc comment); every
+    // other slot also defaults to identity so an out-of-range bone_indices
+    // value on some future asset reads harmless identity rather than
+    // uninitialized/zero (a zero mat4 would collapse every position it
+    // touches to the origin, a much worse failure mode than "no visible
+    // deformation").
+    mat4 identity = mat4::identity();
+    for (uint32_t i = 0; i < kMaxBones; i++)
+        ubo.bone_matrices[i] = identity;
+    uint32_t bone_count = std::min(static_cast<uint32_t>(bone_matrices.size()), kMaxBones - 1);
+    for (uint32_t i = 0; i < bone_count; i++)
+        ubo.bone_matrices[i + 1] = bone_matrices[i];
     for (uint32_t i = 0; i < kMaxShadowCasters; i++)
         ubo.light_space_matrices[i] = light_space_matrices[i];
     ubo.shadow_caster_count[0] = static_cast<float>(shadow_caster_count);
@@ -2313,6 +2363,17 @@ MeshHandle Renderer::load_mesh_from_obj(const char *path)
         build_fallback_cube_mesh(&mesh_data);
     }
 
+    MeshHandle handle = upload_mesh_data(mesh_data, material_data);
+    _mesh_cache[path] = handle;
+    std::fprintf(stderr, "Renderer: loaded \"%s\": %zu vertices, %zu indices, %zu submesh(es)\n",
+        path, mesh_data.vertices.size(), mesh_data.indices.size(),
+        _meshes[handle].submeshes.size());
+    return handle;
+}
+
+MeshHandle Renderer::upload_mesh_data(const MeshData &mesh_data,
+    const std::vector<MaterialData> &material_data)
+{
     std::vector<MaterialHandle> local_to_global_material(material_data.size());
     for (size_t i = 0; i < material_data.size(); i++)
         local_to_global_material[i] = create_material(material_data[i]);
@@ -2355,10 +2416,33 @@ MeshHandle Renderer::load_mesh_from_obj(const char *path)
 
     MeshHandle handle = _meshes.size();
     _meshes.push_back(mesh);
-    _mesh_cache[path] = handle;
-    std::fprintf(stderr, "Renderer: loaded \"%s\": %zu vertices, %zu indices, %zu submesh(es)\n",
-        path, mesh_data.vertices.size(), mesh_data.indices.size(), mesh.submeshes.size());
     return handle;
+}
+
+MeshHandle Renderer::load_skinned_mesh(const char *path, Skeleton *out_skeleton,
+    AnimationClip *out_clip)
+{
+    SkinnedAsset asset;
+    if (!load_skinned_asset(path, &asset))
+    {
+        // Same policy as load_mesh_from_obj's own failure path: one bad
+        // asset shouldn't take the whole demo down. An empty skeleton/clip
+        // means Animator::compute_bone_matrices() produces no matrices,
+        // which is harmless — draw_frame() simply gets an empty
+        // bone_matrices vector, equivalent to "no skinning this frame".
+        std::fprintf(stderr,
+            "Renderer: load_skinned_mesh(\"%s\") failed — using a fallback placeholder "
+            "mesh instead of aborting.\n", path);
+        MeshData fallback_mesh;
+        build_fallback_cube_mesh(&fallback_mesh);
+        *out_skeleton = Skeleton{};
+        *out_clip = AnimationClip{};
+        return upload_mesh_data(fallback_mesh, {});
+    }
+
+    *out_skeleton = std::move(asset.skeleton);
+    *out_clip = std::move(asset.clip);
+    return upload_mesh_data(asset.mesh, {});
 }
 
 void Renderer::create_command_buffers()
@@ -2674,7 +2758,8 @@ void Renderer::update_occlusion_results()
 void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &view_position,
     const std::vector<Light> &lights, float ambient_intensity,
     const std::vector<RenderItem> &items,
-    float screen_motion_blur_x, float screen_motion_blur_y)
+    float screen_motion_blur_x, float screen_motion_blur_y,
+    const std::vector<mat4> &bone_matrices)
 {
     vkWaitForFences(_device, 1, &_in_flight_fences[_current_frame], VK_TRUE, UINT64_MAX);
 
@@ -2719,7 +2804,7 @@ void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &
         light_space_matrices[i] = mat4::identity();
 
     update_global_ubo(_current_frame, view, projection, light_space_matrices, shadow_caster_count,
-        view_position, lights, ambient_intensity);
+        view_position, lights, ambient_intensity, bone_matrices);
 
     VkCommandBuffer command_buffer = _command_buffers[_current_frame];
     vkResetCommandBuffer(command_buffer, 0);
