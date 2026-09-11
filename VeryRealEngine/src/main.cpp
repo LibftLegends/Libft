@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace
@@ -93,6 +94,39 @@ int main(int argc, char **argv)
     const float room_b_light_on_intensity = 4.0f;
     const size_t room_b_light_index = 1;
     const float interact_radius = 1.6f;
+
+    // Debug/verification overrides, read from the environment rather than
+    // argv: this is purely for scripted screenshot capture (see
+    // VRE_SCREENSHOT_PATH below) in a context with no keyboard/mouse to
+    // actually drive the demo interactively — e.g. positioning the camera
+    // to look at a specific object, or forcing the door/light into a
+    // particular state without waiting for real input. None of this
+    // affects normal interactive use: every env var is optional and only
+    // read once, at startup.
+    if (const char *env = std::getenv("VRE_CAMERA_POS"))
+    {
+        float x, y, z;
+        if (std::sscanf(env, "%f,%f,%f", &x, &y, &z) == 3)
+            player_position = vre::vec3(x, y, z);
+    }
+    if (const char *env = std::getenv("VRE_CAMERA_YAW"))
+        yaw = static_cast<float>(std::atof(env));
+    if (const char *env = std::getenv("VRE_CAMERA_PITCH"))
+        pitch = static_cast<float>(std::atof(env));
+    if (std::getenv("VRE_FORCE_DOOR_OPEN") != nullptr)
+    {
+        door_open = true;
+        door_angle = door_open_angle; // skip the lerp-open animation entirely
+    }
+    if (std::getenv("VRE_FORCE_LIGHT_ON") != nullptr)
+        room_b_light_on = true;
+    // Exercises the exact mechanism Chapter IV.1's "hide an object and all
+    // its children simultaneously by editing only the parent" is evaluated
+    // against (Scene::set_visible), without needing a live H-keypress —
+    // see collect_render_items()'s parent-chain visibility combination.
+    if (const char *env = std::getenv("VRE_FORCE_HIDE_NODE"))
+        scene.set_visible(env, false);
+
     // Enforce the initial state explicitly rather than relying on it
     // happening to match whatever intensity house_scene.json authored for
     // this light — otherwise the two could silently drift out of sync.
@@ -103,6 +137,28 @@ int main(int argc, char **argv)
         "Controls: WASD move, arrow keys look, E near the door to open/close it, "
         "F near the light switch to toggle Room B's light, H toggles a demo node "
         "(only present in demo_scene.json).\n");
+
+    // Debug screenshot capture: if VRE_SCREENSHOT_PATH is set, dumps the
+    // presented frame to a PPM file once frame_counter reaches
+    // VRE_SCREENSHOT_FRAME (default 60 — enough frames for the door lerp
+    // and physics to settle into whatever this run's overrides above put
+    // them into). See Renderer::capture_screenshot().
+    const char *screenshot_path = std::getenv("VRE_SCREENSHOT_PATH");
+    uint64_t screenshot_after_frame = 60;
+    if (const char *env = std::getenv("VRE_SCREENSHOT_FRAME"))
+        screenshot_after_frame = static_cast<uint64_t>(std::atoll(env));
+    uint64_t frame_counter = 0;
+
+    // Lets the demo terminate itself cleanly after a fixed frame count —
+    // exactly the same shutdown path should->close()/Escape would take
+    // (renderer.destroy(), window->destroy(), delete window, a normal
+    // `return 0`), just triggered without needing keyboard input. Exists
+    // so automated tools that need a real, clean process exit (e.g. macOS's
+    // `leaks --atExit`, or a scripted smoke test) can run this demo
+    // unattended instead of having to kill -9 it.
+    uint64_t exit_after_frame = 0;
+    if (const char *env = std::getenv("VRE_EXIT_AFTER_FRAME"))
+        exit_after_frame = static_cast<uint64_t>(std::atoll(env));
 
     const float move_speed = 2.5f;   // units/second
     const float look_speed = 2.0f;   // radians/second
@@ -220,6 +276,10 @@ int main(int argc, char **argv)
         renderer.draw_frame(view, projection, player_position, scene.get_lights(),
             scene.get_ambient(), items);
 
+        frame_counter++;
+        if (screenshot_path != nullptr && frame_counter == screenshot_after_frame)
+            renderer.capture_screenshot(screenshot_path);
+
         frames_this_window++;
         fps_report_accumulator += delta_seconds;
         if (fps_report_accumulator >= 1.0f)
@@ -233,6 +293,9 @@ int main(int argc, char **argv)
             frames_this_window = 0;
             fps_report_accumulator = 0.0f;
         }
+
+        if (exit_after_frame != 0 && frame_counter >= exit_after_frame)
+            break;
     }
 
     renderer.wait_idle();

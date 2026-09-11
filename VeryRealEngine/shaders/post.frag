@@ -5,11 +5,18 @@
 // ever let a fragment shader read its own pixel's value — see
 // Renderer::create_post_process_resources / create_render_pass.
 //
-// Known limitation: with a fixed (non-rotated) 8-tap kernel and no
-// bilateral blur pass afterward, the result shows some banding/noise
-// rather than a perfectly smooth occlusion gradient. A per-pixel rotation
-// (noise texture) plus a small blur pass would clean this up — a natural
-// follow-up, not attempted here to keep this step's scope bounded.
+// The 8-tap kernel below is per-pixel rotated (pixel_rotation_angle()) so
+// its fixed sample pattern doesn't line up with itself from one pixel to
+// the next. Without that rotation, a flat surface viewed at a shallow/
+// grazing angle produces a large-scale, clearly structured
+// staircase/moiré pattern, not just mild noise — confirmed by screenshot
+// (a wall lit only by the camera's viewing angle showed a sharp repeating
+// diagonal step pattern; disabling AO entirely made it vanish, and adding
+// this rotation removes it with AO still active). A genuinely random
+// per-pixel angle turns that coherent aliasing into fine, much
+// less objectionable dither noise instead — a small bilateral blur pass
+// would clean up that residual noise further, a reasonable follow-up not
+// attempted here.
 layout(set = 0, binding = 0) uniform sampler2D scene_color;
 layout(set = 0, binding = 1) uniform sampler2D scene_depth;
 
@@ -71,6 +78,18 @@ vec2 project_to_uv(vec3 view_pos)
     float b = push.proj_params.y;
     vec2 ndc = vec2(a * view_pos.x, b * view_pos.y) / max(-view_pos.z, 1e-4);
     return ndc * 0.5 + 0.5;
+}
+
+// A cheap per-pixel hash (interleaved-gradient-noise style) turned into a
+// rotation angle, used to spin KERNEL's XY per pixel so its fixed sample
+// pattern doesn't stay coherent across neighboring pixels — see this
+// file's header comment for why that coherence is a real, confirmed
+// visible artifact (a large structured staircase pattern at grazing
+// angles), not just cosmetic noise.
+float pixel_rotation_angle(vec2 screen_pos)
+{
+    return fract(52.9829189 * fract(dot(screen_pos, vec2(0.06711056, 0.00583715))))
+        * 6.28318530718;
 }
 
 // Cheap single-pass bloom: rather than the usual downsample/blur-pyramid
@@ -179,9 +198,14 @@ void main()
         float strength = push.ao_params.z;
 
         float occlusion = 0.0;
+        float angle = pixel_rotation_angle(gl_FragCoord.xy);
+        float cos_angle = cos(angle);
+        float sin_angle = sin(angle);
+        mat2 kernel_rotation = mat2(cos_angle, sin_angle, -sin_angle, cos_angle);
         for (int i = 0; i < 8; i++)
         {
-            vec3 sample_pos = origin + KERNEL[i] * radius;
+            vec3 tap = KERNEL[i];
+            vec3 sample_pos = origin + vec3(kernel_rotation * tap.xy, tap.z) * radius;
             vec2 sample_uv = project_to_uv(sample_pos);
 
             float sample_scene_depth = texture(scene_depth, sample_uv).r;

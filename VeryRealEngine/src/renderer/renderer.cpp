@@ -590,6 +590,25 @@ static VkSurfaceFormatKHR choose_surface_format(const std::vector<VkSurfaceForma
 
 static VkPresentModeKHR choose_present_mode(const std::vector<VkPresentModeKHR> &modes)
 {
+    // VRE_PRESENT_MODE=immediate: an uncapped-vsync override for FPS
+    // benchmarking (Chapter IV.1's "must achieve at least 60 FPS" is about
+    // real engine throughput, which MAILBOX/FIFO's display-refresh cap
+    // can't measure — a display refreshing at 60Hz reads as "60 FPS"
+    // whether the engine could actually push 60 or 6000). Not used by
+    // default: normal interactive play has no reason to tear.
+    if (const char *env = std::getenv("VRE_PRESENT_MODE"))
+    {
+        if (std::strcmp(env, "immediate") == 0)
+        {
+            for (const auto &mode : modes)
+                if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+                    return mode;
+        }
+        else if (std::strcmp(env, "fifo") == 0)
+        {
+            return VK_PRESENT_MODE_FIFO_KHR;
+        }
+    }
     for (const auto &mode : modes)
     {
         if (mode == VK_PRESENT_MODE_MAILBOX_KHR)
@@ -2771,6 +2790,7 @@ void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &
     present_info.pImageIndices = &image_index;
 
     result = vkQueuePresentKHR(_present_queue, &present_info);
+    _last_presented_image_index = image_index;
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
         || _window->was_resized())
@@ -2785,6 +2805,110 @@ void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &
     }
 
     _current_frame = (_current_frame + 1) % kMaxFramesInFlight;
+}
+
+bool Renderer::capture_screenshot(const char *path)
+{
+    // One-off debug operation, not a per-frame one — a full stall here
+    // (rather than the careful per-frame-in-flight synchronization
+    // draw_frame() uses) is the simplest way to guarantee the presented
+    // image is actually done presenting before this reads it back.
+    vkDeviceWaitIdle(_device);
+
+    VkImage image = _swapchain_images[_last_presented_image_index];
+    uint32_t width = _swapchain_extent.width;
+    uint32_t height = _swapchain_extent.height;
+    VkDeviceSize buffer_size = static_cast<VkDeviceSize>(width) * height * 4;
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_memory;
+    create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &staging_buffer, &staging_memory);
+
+    VkCommandBuffer command_buffer = begin_single_time_commands();
+
+    VkImageMemoryBarrier to_transfer_src{};
+    to_transfer_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_transfer_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_transfer_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_transfer_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer_src.image = image;
+    to_transfer_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    to_transfer_src.srcAccessMask = 0;
+    to_transfer_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_transfer_src);
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        staging_buffer, 1, &region);
+
+    // Restore PRESENT_SRC_KHR: this image goes back into the normal
+    // acquire/draw/present rotation next time its index comes up.
+    VkImageMemoryBarrier back_to_present = to_transfer_src;
+    back_to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    back_to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    back_to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    back_to_present.dstAccessMask = 0;
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &back_to_present);
+
+    end_single_time_commands(command_buffer); // waits for queue idle before returning
+
+    void *mapped = nullptr;
+    vkMapMemory(_device, staging_memory, 0, buffer_size, 0, &mapped);
+    const uint8_t *pixels = static_cast<const uint8_t *>(mapped);
+
+    // Swapchain formats are practically always some 8-bit-per-channel BGRA
+    // or RGBA variant (see choose_surface_format()'s BGRA8_SRGB
+    // preference) — swap channels 0/2 only for the BGR* case so the PPM
+    // (which is always RGB) comes out with correct colors either way.
+    bool is_bgr_order = (_swapchain_image_format == VK_FORMAT_B8G8R8A8_SRGB
+        || _swapchain_image_format == VK_FORMAT_B8G8R8A8_UNORM);
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open())
+    {
+        vkUnmapMemory(_device, staging_memory);
+        vkDestroyBuffer(_device, staging_buffer, nullptr);
+        vkFreeMemory(_device, staging_memory, nullptr);
+        std::fprintf(stderr, "Renderer: capture_screenshot: failed to open \"%s\"\n", path);
+        return false;
+    }
+
+    out << "P6\n" << width << " " << height << "\n255\n";
+    std::vector<uint8_t> row(static_cast<size_t>(width) * 3);
+    for (uint32_t y = 0; y < height; y++)
+    {
+        const uint8_t *src_row = pixels + static_cast<size_t>(y) * width * 4;
+        for (uint32_t x = 0; x < width; x++)
+        {
+            const uint8_t *src_pixel = src_row + static_cast<size_t>(x) * 4;
+            uint8_t r = is_bgr_order ? src_pixel[2] : src_pixel[0];
+            uint8_t g = src_pixel[1];
+            uint8_t b = is_bgr_order ? src_pixel[0] : src_pixel[2];
+            row[x * 3 + 0] = r;
+            row[x * 3 + 1] = g;
+            row[x * 3 + 2] = b;
+        }
+        out.write(reinterpret_cast<const char *>(row.data()), static_cast<std::streamsize>(row.size()));
+    }
+    out.close();
+
+    vkUnmapMemory(_device, staging_memory);
+    vkDestroyBuffer(_device, staging_buffer, nullptr);
+    vkFreeMemory(_device, staging_memory, nullptr);
+
+    std::fprintf(stderr, "Renderer: wrote screenshot to \"%s\" (%ux%u)\n", path, width, height);
+    return true;
 }
 
 } // namespace vre

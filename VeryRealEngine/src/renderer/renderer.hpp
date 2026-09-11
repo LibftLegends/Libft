@@ -182,6 +182,23 @@ class Renderer
         /// @return Culling/draw counters from the most recently drawn frame.
         const FrameStats &get_last_frame_stats() const { return _last_frame_stats; }
 
+        /**
+         * @brief Debug/verification aid: writes the most recently presented
+         * swapchain image out as a binary PPM file.
+         *
+         * Exists so the actual rendered output (materials, shadows,
+         * lighting, culling — everything draw_frame() produces) can be
+         * inspected directly from disk, on a machine or in an automated
+         * context where there's no way to screenshot the on-screen window
+         * itself. Does a full vkDeviceWaitIdle() first (this is a one-off
+         * debug capture, not a per-frame operation, so a stall here is
+         * fine) to guarantee the presented image is actually finished
+         * presenting before reading it back.
+         * @param path Output file path (should end in ".ppm").
+         * @return true on success.
+         */
+        bool capture_screenshot(const char *path);
+
     private:
         /// A GPU-resident 2D texture and its view.
         struct GpuTexture
@@ -356,6 +373,7 @@ class Renderer
         std::vector<uint8_t> _occlusion_visible;
 
         FrameStats _last_frame_stats; ///< Backing storage for get_last_frame_stats().
+        uint32_t _last_presented_image_index = 0; ///< Which swapchain image capture_screenshot() reads back.
 
         std::vector<VkBuffer> _global_ubo_buffers;
         std::vector<VkDeviceMemory> _global_ubo_memories;
