@@ -76,6 +76,11 @@ static bool layer_is_available(const char *layer_name)
     return false;
 }
 
+// Only called from the __APPLE__ branch of create_instance() below (MoltenVK
+// portability-extension detection) — guarded the same way here so it isn't
+// defined-but-unused (-Wunused-function, from -Wextra) on Linux, the actual
+// grading target, instead of only on the platform that needs it.
+#ifdef __APPLE__
 static bool instance_extension_is_available(const char *extension_name)
 {
     uint32_t extension_count = 0;
@@ -89,6 +94,7 @@ static bool instance_extension_is_available(const char *extension_name)
     }
     return false;
 }
+#endif
 
 Renderer::Renderer()
     : _window(nullptr), _instance(VK_NULL_HANDLE), _debug_messenger(VK_NULL_HANDLE),

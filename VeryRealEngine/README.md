@@ -1,7 +1,7 @@
 # VeryRealEngine
 
 A from-scratch Vulkan 3D engine for the 42 "Very Real Engine" project. This
-is a **new, independent codebase** — see [`verdict.md`](verdict.md)
+is a **new, independent codebase** — see <a href="verdict.md"><code>verdict.md</code></a>
 for why it does not build on top of `FullLibft`'s modules (circular
 dependency graph, incompatible mandatory coding style, and the subject's
 "core components must be implemented by you" / "no non-system library"
@@ -280,11 +280,57 @@ step-4 falling-cube/trigger demo objects in `demo_scene.json`).
   (and the metal sphere's specular highlight is, if anything, more correct
   now).
 
+### Bonus — Sound System (done)
+
+A real, from-scratch playback path, not a stub: `src/audio/wav_loader.{hpp,cpp}`
+hand-parses uncompressed PCM WAVE files (8-bit or 16-bit, mono or stereo —
+same "no third-party library" rule as the OBJ/TGA/JSON loaders), and
+`src/audio/mixer.{hpp,cpp}` is a platform-independent software mixer: a
+fixed pool of 32 voices, each independently resampled (linear interpolation)
+to the output device's rate and mono-duplicated-to-stereo as needed, summed
+in a float accumulator and clipped once at the end so multiple loud sounds
+overlapping doesn't double-saturate.
+
+- **Backend**: `src/platform/linux/audio_linux.{hpp,cpp}` — direct ALSA
+  (`libasound`) PCM playback, the same category of system library the
+  subject names XCB as an example of. A dedicated writer thread wakes up
+  once per ~20ms ALSA period, asks the mixer for that many frames, and
+  writes them — so a slow render frame never causes an audio dropout, and
+  the sound card's timing never blocks the render loop.
+- **Assets**: `assets/sounds/` — a soft looping ambient room hum, a UI
+  click, and a door creak, all procedurally generated (matching this
+  project's existing pattern for the house demo's textures) rather than
+  sourced third-party audio.
+- **Wired into the house demo**: the ambient hum loops continuously from
+  startup; the door creak plays on every open/close (**E**); the click
+  plays on every light-switch toggle (**F**).
+- **Verified live**, not just "it compiles": running the demo shows a real,
+  correctly-formatted (`s16le 2ch 44100Hz`, matching the mixer's own output
+  exactly) active audio stream registered with the system's audio server —
+  confirmed via `pactl list sink-inputs` showing an uncorked, unmuted
+  `very_real_engine_demo` stream for the full duration of a run. (Directly
+  recording and inspecting the stream's actual sample data wasn't possible
+  in the environment this was developed in — no audio-capture permission —
+  so "does the OS accept and route it exactly as intended" is the strongest
+  check available there; the format, volume, and mute state all being
+  exactly right and the stream staying open for the whole session is strong
+  evidence the mixer is producing real, ongoing audio, not silence.)
+- **No macOS backend yet**: `src/audio/null_audio_system.cpp` provides a
+  silent, always-succeeds-at-loading-but-never-plays fallback so a macOS
+  build still links and runs correctly (see the Makefile) rather than
+  failing to link at all. A real CoreAudio backend would follow the same
+  `AudioSystem` interface — the mixer and WAV loader are already fully
+  platform-independent and need no changes to support one.
+- A degraded/no-device environment (no sound card, a sandboxed session with
+  no audio permission) is handled the same way the renderer handles a
+  missing GPU feature: `AudioSystem::initialize()` returns `false` and the
+  demo runs on, silently, rather than aborting — see `main.cpp`.
+
 ### Controls
 
 - **WASD** — move, **arrow keys** — look (house scene)
-- **E** near the door — open/close it
-- **F** near the light switch — toggle Room B's light
+- **E** near the door — open/close it (also plays a door-creak sound)
+- **F** near the light switch — toggle Room B's light (also plays a click)
 - **H** — toggle the "rig" scene node (and its child) on/off (demo scene)
 - Close the window to quit
 
@@ -383,26 +429,54 @@ implementation:
 doxygen Doxyfile
 ```
 
-Open `docs/doxygen/html/index.html` in a browser. `Doxyfile` has
+Open `docs/html/index.html` in a browser. `Doxyfile` has
 `EXTRACT_ALL`/`EXTRACT_PRIVATE`/`EXTRACT_STATIC` enabled, and every public
 class, struct, method, and field across `src/**/*.hpp` carries a real
 `@brief`/`@param`/`@return` comment (not just relying on those flags to
-paper over gaps) — confirmed generating with **zero warnings**. Only
-`src/platform/macos/window_macos.mm` is excluded from the Doxygen input
-(Objective-C++; Doxygen's C++ parser doesn't handle `@interface`/`@property`
-syntax, and that file is macOS-dev-only, not part of the graded Linux
-build).
+paper over gaps) — confirmed generating with **zero warnings on a real,
+from-scratch run** (`doxygen` 1.9.8, the current Ubuntu/apt version — the
+one actually verified, not just the one this file happened to be authored
+against). Only `src/platform/macos/window_macos.mm` is excluded from the
+Doxygen input (Objective-C++; Doxygen's C++ parser doesn't handle
+`@interface`/`@property` syntax, and that file is macOS-dev-only, not part
+of the graded Linux build).
+
+`OUTPUT_DIRECTORY` is a single-level `docs` (not `docs/doxygen`) deliberately:
+this Doxygen version can create one missing directory level on its own but
+not two nested ones, so on a truly fresh clone (where `docs/` doesn't exist
+yet — it's gitignored) a nested `docs/doxygen` output path made the
+documented one-line `doxygen Doxyfile` command fail outright with "Output
+directory 'docs/doxygen' does not exist and cannot be created". Caught by
+actually re-running the documented command from a clean clone rather than
+trusting that it still worked after the `Doxyfile` was last touched.
 
 ### Verifying memory safety / crash safety
 
 ```sh
 make SANITIZE=1 -j        # separate obj-sanitize/ + *-sanitize binary, doesn't touch the normal build
-./very_real_engine_demo-sanitize
+LSAN_OPTIONS=suppressions=lsan_suppressions.txt ./very_real_engine_demo-sanitize
 ```
 
 Builds an AddressSanitizer + UndefinedBehaviorSanitizer-instrumented copy
 of the demo, to verify Chapter III's "no unexpected termination" / "no
 memory leaks" requirements with real tooling rather than by inspection.
+
+**`lsan_suppressions.txt`** exists for one specific, verified reason: opening
+the sound system's ALSA "default" device (`src/platform/linux/audio_linux.cpp`)
+internally routes through PipeWire's ALSA compatibility plugin on this kind
+of system, which does its own one-time plugin/config loading inside
+`snd_pcm_open` — allocations this project has no API to free (confirmed by
+reading every leak's full stack trace before adding the suppression: every
+one terminates inside `snd_pcm_open`, never reaching any function this
+project defines). `AudioLinux::destroy()` already calls
+`snd_config_update_free_global()` (ALSA's own documented cleanup call) for
+the part of this that *is* reachable; the suppression file covers the
+remainder, which lives inside PipeWire's own internals. Without it, a real
+run reports leaks whose stacks are 100% third-party library code — see the
+file's own header comment for the full accounting. This is a well-known
+category of ALSA/PulseAudio/PipeWire "leak" under valgrind/ASan on any
+application that opens a "default" PCM device on a PipeWire-managed system,
+not something specific to this codebase.
 
 **macOS-specific caveats** (this is a dev-convenience build; do the real
 verification on Linux, the actual submission target):

@@ -32,12 +32,17 @@ LIB_CPP_SRCS := src/renderer/renderer.cpp \
                 src/assets/json_parser.cpp \
                 src/scene/scene.cpp \
                 src/physics/physics_world.cpp \
-                src/particles/particle_system.cpp
+                src/particles/particle_system.cpp \
+                src/audio/wav_loader.cpp \
+                src/audio/mixer.cpp
 LIB_MM_SRCS  :=
 
 ifeq ($(UNAME_S),Linux)
-LIB_CPP_SRCS += src/platform/linux/window_linux.cpp
-LDLIBS       := -lvulkan -lX11
+LIB_CPP_SRCS += src/platform/linux/window_linux.cpp \
+                src/platform/linux/audio_linux.cpp
+# -lasound: ALSA, a Linux system library (same category as the XCB the
+# subject names as an allowed example) — see src/platform/linux/audio_linux.hpp.
+LDLIBS       := -lvulkan -lX11 -lasound -lpthread
 else ifeq ($(UNAME_S),Darwin)
 # Homebrew: `brew install vulkan-headers vulkan-loader molten-vk shaderc`.
 # Linked directly against MoltenVK's own dylib (which implements the full
@@ -52,6 +57,9 @@ endif
 ifeq ($(MOLTENVK_PREFIX),)
 $(error molten-vk not found. Run: brew install vulkan-headers vulkan-loader molten-vk shaderc)
 endif
+# No CoreAudio backend yet (see src/audio/null_audio_system.cpp) — macOS is
+# the local-dev-only platform, Linux is the actual submission target.
+LIB_CPP_SRCS += src/audio/null_audio_system.cpp
 LIB_MM_SRCS  += src/platform/macos/window_macos.mm
 CXXFLAGS     += -I$(VULKAN_HEADERS_PREFIX)/include -I$(MOLTENVK_PREFIX)/include
 LDLIBS       := -L$(MOLTENVK_PREFIX)/lib -lMoltenVK \

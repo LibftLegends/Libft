@@ -1,0 +1,20 @@
+# LeakSanitizer suppressions for VeryRealEngine's `make SANITIZE=1` build.
+#
+# Every entry here was verified, not assumed: run the sanitizer build, read
+# every reported leak's full allocation stack, and confirm it terminates
+# inside third-party library code *before* ever reaching any function this
+# project defines (grep the stack for "src/" — see README.md's "Verifying
+# memory safety" section for the exact command used to check this).
+#
+# snd_pcm_open (ALSA, opening "default" on a system where it resolves
+# through PipeWire's ALSA compatibility plugin — see
+# src/platform/linux/audio_linux.cpp) internally dlopen()s and parses
+# ALSA/PipeWire plugin config once per process. That allocation is reclaimed
+# by the OS at process exit either way; snd_config_update_free_global()
+# (called in AudioLinux::destroy()) frees what ALSA's own API exposes for
+# this, but the remainder lives inside libpipewire's own internal module
+# cache, which this project has no API to tear down — a well-documented
+# category of ALSA/PulseAudio/PipeWire "leak" under valgrind/ASan, present
+# in effectively any application that opens an ALSA "default" device on a
+# PipeWire-managed system, not specific to this codebase.
+leak:snd_pcm_open

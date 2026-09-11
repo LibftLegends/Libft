@@ -14,6 +14,7 @@
 #include "scene/scene.hpp"
 #include "physics/physics_world.hpp"
 #include "particles/particle_system.hpp"
+#include "audio/audio_system.hpp"
 #include "math/vre_math.hpp"
 
 #include <algorithm>
@@ -78,6 +79,25 @@ int main(int argc, char **argv)
     steam_desc.emitter_position = vre::vec3(-4.5f, 0.85f, 2.2f);
     steam_desc.mesh = renderer.load_mesh_from_obj("assets/models/cube_steam.obj");
     vre::ParticleSystem steam(steam_desc);
+
+    // Sound system (bonus, Chapter VII): a looping ambient room hum plus
+    // one-shot effects on the door and light switch. audio->initialize()
+    // returning false (no device, e.g. a headless/sandboxed session) is not
+    // fatal — see audio_system.hpp's doc comment — the demo just runs
+    // silently rather than aborting.
+    vre::AudioSystem *audio = vre::AudioSystem::create();
+    bool audio_available = audio->initialize();
+    vre::SoundHandle ambient_sound = vre::kInvalidSound;
+    vre::SoundHandle click_sound = vre::kInvalidSound;
+    vre::SoundHandle door_creak_sound = vre::kInvalidSound;
+    if (audio_available)
+    {
+        ambient_sound = audio->load_sound("assets/sounds/ambient_hum.wav");
+        click_sound = audio->load_sound("assets/sounds/click.wav");
+        door_creak_sound = audio->load_sound("assets/sounds/door_creak.wav");
+        if (ambient_sound != vre::kInvalidSound)
+            audio->play(ambient_sound, /*loop=*/true, /*volume=*/0.35f);
+    }
 
     // First-person player state. Room A (bright) is centered near x=-3;
     // start facing toward the doorway at x=-1.
@@ -235,6 +255,8 @@ int main(int argc, char **argv)
             {
                 door_open = !door_open;
                 std::fprintf(stderr, "Door %s.\n", door_open ? "opened" : "closed");
+                if (door_creak_sound != vre::kInvalidSound)
+                    audio->play(door_creak_sound, /*loop=*/false, /*volume=*/0.8f);
             }
         }
         float door_target_angle = door_open ? door_open_angle : 0.0f;
@@ -253,6 +275,8 @@ int main(int argc, char **argv)
                 scene.set_light_intensity(room_b_light_index,
                     room_b_light_on ? room_b_light_on_intensity : room_b_light_off_intensity);
                 std::fprintf(stderr, "Room B light %s.\n", room_b_light_on ? "on" : "off");
+                if (click_sound != vre::kInvalidSound)
+                    audio->play(click_sound, /*loop=*/false, /*volume=*/0.6f);
             }
         }
 
@@ -324,6 +348,9 @@ int main(int argc, char **argv)
         if (exit_after_frame != 0 && frame_counter >= exit_after_frame)
             break;
     }
+
+    audio->destroy();
+    delete audio;
 
     renderer.wait_idle();
     renderer.destroy();
