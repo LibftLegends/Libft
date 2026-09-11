@@ -1,0 +1,7 @@
+# Hashes of file build rules.
+7554cbe8b79c9ba33286a976ca18ca78 CMakeFiles/shaders
+b051a0b53dfba0c1943a189a7f05ed72 shaders/mesh.frag.spv
+8e1d666f1aac45f9f929ca68e2bdc2ff shaders/mesh.vert.spv
+a4d133e6e4674a05af8d18fc26fa5ffa shaders/post.frag.spv
+33a6b994131902e6d680ea5f12bda64c shaders/post.vert.spv
+63c80768c2c2a4d9114d621bdf4e9e17 shaders/shadow.vert.spv

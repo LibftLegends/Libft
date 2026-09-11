@@ -64,6 +64,16 @@
                 "friction": 0.6,
                 "initial_velocity": [0, 0, 0.6]
             }
+        },
+        {
+            "name": "metal_sphere",
+            "mesh": "assets/models/sphere_metal.obj",
+            "position": [-0.6, 0.5, 1.8]
+        },
+        {
+            "name": "wood_sphere",
+            "mesh": "assets/models/sphere_wood.obj",
+            "position": [0.7, 0.5, 1.8]
         }
     ]
 }

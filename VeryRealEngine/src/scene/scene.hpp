@@ -78,11 +78,26 @@ class Scene
         bool toggle_visible(const std::string &name);
         bool is_visible(const std::string &name) const;
 
+        // Runtime control used by the house demo's interactions (door
+        // hinge animation, proximity checks for the light switch/door).
+        // Overrides whatever static value the JSON scene file set; there's
+        // no way back to the JSON value short of reloading the scene,
+        // which is fine for a demo that only ever moves forward from here.
+        bool set_node_rotation(const std::string &name, const vec3 &euler_radians);
+        bool get_node_position(const std::string &name, vec3 *out_position) const;
+
         // Parsed from an optional top-level "lights" array and "ambient"
         // field. get_lights()[0], if present, is treated as the shadow
         // caster by Renderer::draw_frame and must be a Directional light.
         const std::vector<Light> &get_lights() const { return _lights; }
         float get_ambient() const { return _ambient; }
+
+        // Runtime light control for the demo's light switch — addressed by
+        // index into get_lights() (scene lights have no name in the JSON
+        // format; the demo just needs to know which index it authored the
+        // switchable light at).
+        size_t get_light_count() const { return _lights.size(); }
+        bool set_light_intensity(size_t index, float intensity);
 
     private:
         std::vector<SceneNode> _nodes;

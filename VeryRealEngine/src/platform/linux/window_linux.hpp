@@ -35,6 +35,10 @@ class WindowLinux : public Window
         {
             return _key_pressed_this_poll[static_cast<size_t>(key)];
         }
+        bool is_key_held(KeyCode key) const override
+        {
+            return _key_held[static_cast<size_t>(key)];
+        }
 
         void get_required_instance_extensions(
             const char **out_extensions, uint32_t *out_count) const override;
@@ -51,6 +55,7 @@ class WindowLinux : public Window
         bool _close_requested;
         bool _resized;
         bool _key_pressed_this_poll[static_cast<size_t>(KeyCode::Count)] = {};
+        bool _key_held[static_cast<size_t>(KeyCode::Count)] = {};
 };
 
 } // namespace vre

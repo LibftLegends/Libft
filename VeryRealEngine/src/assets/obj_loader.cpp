@@ -56,6 +56,16 @@ static bool load_mtl(const std::string &path, const std::string &base_directory,
             stream >> texture_name;
             current->diffuse_texture_path = base_directory + texture_name;
         }
+        else if (keyword == "Pr" && current != nullptr)
+        {
+            // Roughness/metallic PBR extension to .mtl (Pr/Pm), the same
+            // convention Blender's OBJ exporter and several other tools use.
+            stream >> current->roughness;
+        }
+        else if (keyword == "Pm" && current != nullptr)
+        {
+            stream >> current->metallic;
+        }
     }
     return true;
 }

@@ -1,0 +1,8 @@
+# Metallic PBR material: high metallic, fairly smooth (low roughness) so
+# the specular highlight is small, sharp, and tinted by the albedo texture
+# instead of white — the visible signature of a real metal vs. a dielectric.
+newmtl metal
+Kd 1.000 1.000 1.000
+map_Kd ../textures/metal.tga
+Pr 0.25
+Pm 1.0

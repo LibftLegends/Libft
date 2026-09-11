@@ -1,0 +1,8 @@
+# Wood-like PBR material: fully dielectric (no metallic), high roughness
+# so the specular highlight is broad, dim, and un-tinted (~4% white
+# reflectance) — the visible signature of a rough non-metal vs. a metal.
+newmtl wood
+Kd 1.000 1.000 1.000
+map_Kd ../textures/wood.tga
+Pr 0.75
+Pm 0.0

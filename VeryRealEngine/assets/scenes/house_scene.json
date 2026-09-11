@@ -1,0 +1,49 @@
+{
+    "ambient": 0.05,
+    "lights": [
+        {
+            "type": "point",
+            "position": [-3, 2.6, 0],
+            "color": [1.0, 0.92, 0.8],
+            "intensity": 5.0
+        },
+        {
+            "type": "point",
+            "position": [1, 2.6, 0],
+            "color": [0.75, 0.85, 1.0],
+            "intensity": 0.05
+        }
+    ],
+    "objects": [
+        { "name": "floor_a", "mesh": "assets/models/cube_wood.obj", "position": [-3, -0.075, 0], "scale": [4, 0.15, 6] },
+        { "name": "floor_b", "mesh": "assets/models/cube_wood.obj", "position": [1, -0.075, 0], "scale": [4, 0.15, 6] },
+        { "name": "ceiling_a", "mesh": "assets/models/cube_wall.obj", "position": [-3, 3.075, 0], "scale": [4, 0.15, 6] },
+        { "name": "ceiling_b", "mesh": "assets/models/cube_wall.obj", "position": [1, 3.075, 0], "scale": [4, 0.15, 6] },
+
+        { "name": "wall_a_south", "mesh": "assets/models/cube_wall.obj", "position": [-3, 1.5, -3], "scale": [4, 3, 0.15] },
+        { "name": "wall_a_north", "mesh": "assets/models/cube_wall.obj", "position": [-3, 1.5, 3], "scale": [4, 3, 0.15] },
+        { "name": "wall_a_west", "mesh": "assets/models/cube_wall.obj", "position": [-5, 1.5, 0], "scale": [0.15, 3, 6] },
+
+        { "name": "wall_shared_south", "mesh": "assets/models/cube_wall.obj", "position": [-1, 1.5, -1.8], "scale": [0.15, 3, 2.4] },
+        { "name": "wall_shared_north", "mesh": "assets/models/cube_wall.obj", "position": [-1, 1.5, 1.8], "scale": [0.15, 3, 2.4] },
+
+        { "name": "wall_b_south", "mesh": "assets/models/cube_wall.obj", "position": [1, 1.5, -3], "scale": [4, 3, 0.15] },
+        { "name": "wall_b_north", "mesh": "assets/models/cube_wall.obj", "position": [1, 1.5, 3], "scale": [4, 3, 0.15] },
+        { "name": "wall_b_east", "mesh": "assets/models/cube_wall.obj", "position": [3, 1.5, 0], "scale": [0.15, 3, 6] },
+
+        {
+            "name": "door_hinge",
+            "position": [-1, 0, -0.6]
+        },
+        {
+            "name": "door",
+            "mesh": "assets/models/cube_wood.obj",
+            "parent": "door_hinge",
+            "position": [0, 1.2, 0.6],
+            "scale": [0.08, 2.4, 1.2]
+        },
+
+        { "name": "light_switch", "mesh": "assets/models/cube_metal.obj", "position": [-0.85, 1.2, 1.4], "scale": [0.06, 0.12, 0.03] },
+        { "name": "coffee_machine", "mesh": "assets/models/cube_metal.obj", "position": [-4.5, 0.4, 2.2], "scale": [0.5, 0.8, 0.4] }
+    ]
+}

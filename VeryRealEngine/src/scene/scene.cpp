@@ -248,4 +248,41 @@ bool Scene::is_visible(const std::string &name) const
     return _nodes[it->second].visible;
 }
 
+bool Scene::set_node_rotation(const std::string &name, const vec3 &euler_radians)
+{
+    auto it = _name_to_index.find(name);
+    if (it == _name_to_index.end())
+        return false;
+    _nodes[it->second].rotation = euler_radians;
+    return true;
+}
+
+bool Scene::get_node_position(const std::string &name, vec3 *out_position) const
+{
+    auto it = _name_to_index.find(name);
+    if (it == _name_to_index.end())
+        return false;
+    // World position, not local: walks the parent chain the same way
+    // collect_render_items() does, so proximity checks against a child of
+    // a moved/rotated parent are still correct.
+    size_t index = it->second;
+    mat4 world = local_transform(_nodes[index]);
+    size_t parent = _nodes[index].parent_index;
+    while (parent != kNoParent)
+    {
+        world = mat4::multiply(local_transform(_nodes[parent]), world);
+        parent = _nodes[parent].parent_index;
+    }
+    *out_position = vec3(world.m[12], world.m[13], world.m[14]);
+    return true;
+}
+
+bool Scene::set_light_intensity(size_t index, float intensity)
+{
+    if (index >= _lights.size())
+        return false;
+    _lights[index].intensity = intensity;
+    return true;
+}
+
 } // namespace vre

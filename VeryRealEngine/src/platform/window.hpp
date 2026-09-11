@@ -16,11 +16,22 @@ namespace vre
 {
 
 // Small, deliberately short list: just what the current demo needs to
-// drive (toggling scene-node visibility). Extend as later steps need more.
+// drive (visibility toggling, first-person navigation, interaction).
+// Extend as later steps need more.
 enum class KeyCode
 {
     H,
     Escape,
+    W,
+    A,
+    S,
+    D,
+    Left,
+    Right,
+    Up,
+    Down,
+    E,
+    F,
     Count,
 };
 
@@ -44,6 +55,11 @@ class Window
         // Edge-triggered: true only on the poll_events() call where the key
         // transitioned from up to down (a held key doesn't repeat this).
         virtual bool was_key_pressed(KeyCode key) const = 0;
+
+        // Level-triggered: true for as long as the key is physically held
+        // down. Used for continuous movement (WASD/arrow-key navigation),
+        // where an edge-triggered "was pressed" would only move one step.
+        virtual bool is_key_held(KeyCode key) const = 0;
 
         // Instance extensions this backend needs for VK_KHR_surface creation
         // (e.g. VK_KHR_xlib_surface on Linux).

@@ -1,0 +1,6 @@
+# Interior wall/ceiling material: dielectric, fairly rough (matte plaster).
+newmtl wall
+Kd 1.000 1.000 1.000
+map_Kd ../textures/wall.tga
+Pr 0.85
+Pm 0.0

@@ -74,17 +74,22 @@ void WindowLinux::destroy()
 
 static bool keysym_to_keycode(KeySym sym, KeyCode *out_code)
 {
-    if (sym == XK_h || sym == XK_H)
+    switch (sym)
     {
-        *out_code = KeyCode::H;
-        return true;
+        case XK_h: case XK_H: *out_code = KeyCode::H; return true;
+        case XK_Escape: *out_code = KeyCode::Escape; return true;
+        case XK_w: case XK_W: *out_code = KeyCode::W; return true;
+        case XK_a: case XK_A: *out_code = KeyCode::A; return true;
+        case XK_s: case XK_S: *out_code = KeyCode::S; return true;
+        case XK_d: case XK_D: *out_code = KeyCode::D; return true;
+        case XK_Left: *out_code = KeyCode::Left; return true;
+        case XK_Right: *out_code = KeyCode::Right; return true;
+        case XK_Up: *out_code = KeyCode::Up; return true;
+        case XK_Down: *out_code = KeyCode::Down; return true;
+        case XK_e: case XK_E: *out_code = KeyCode::E; return true;
+        case XK_f: case XK_F: *out_code = KeyCode::F; return true;
+        default: return false;
     }
-    if (sym == XK_Escape)
-    {
-        *out_code = KeyCode::Escape;
-        return true;
-    }
-    return false;
 }
 
 void WindowLinux::poll_events()
@@ -102,7 +107,34 @@ void WindowLinux::poll_events()
             KeySym sym = XLookupKeysym(&event.xkey, 0);
             KeyCode code;
             if (keysym_to_keycode(sym, &code))
+            {
                 _key_pressed_this_poll[static_cast<size_t>(code)] = true;
+                _key_held[static_cast<size_t>(code)] = true;
+            }
+        }
+        else if (event.type == KeyRelease)
+        {
+            // X11 auto-repeat sends a release immediately followed by a
+            // press (same keycode, same timestamp) while a key is held
+            // down — without filtering that out, is_key_held() would
+            // flicker false between repeats instead of staying true.
+            bool is_repeat = false;
+            if (XEventsQueued(_display, QueuedAfterReading) > 0)
+            {
+                XEvent next_event;
+                XPeekEvent(_display, &next_event);
+                if (next_event.type == KeyPress
+                    && next_event.xkey.keycode == event.xkey.keycode
+                    && next_event.xkey.time == event.xkey.time)
+                    is_repeat = true;
+            }
+            if (!is_repeat)
+            {
+                KeySym sym = XLookupKeysym(&event.xkey, 0);
+                KeyCode code;
+                if (keysym_to_keycode(sym, &code))
+                    _key_held[static_cast<size_t>(code)] = false;
+            }
         }
         else if (event.type == ClientMessage)
         {

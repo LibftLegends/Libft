@@ -1,0 +1,7 @@
+# Steam particle material: no texture (falls back to the renderer's
+# default white texture), a pale blue-white tint, fully rough dielectric —
+# a soft, matte puff rather than a shiny one.
+newmtl steam
+Kd 0.85 0.90 0.95
+Pr 0.95
+Pm 0.0

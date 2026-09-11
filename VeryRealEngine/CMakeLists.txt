@@ -15,24 +15,37 @@ if(UNIX AND NOT APPLE)
     find_package(X11 REQUIRED)
 endif()
 
-add_executable(very_real_engine
-    src/main.cpp
+# --- The VeryRealEngine library --------------------------------------------
+# The subject requires "the final product must be a library named
+# VeryRealEngine" — every engine subsystem (renderer, physics, scene graph,
+# asset loaders, windowing) lives here. src/main.cpp is deliberately NOT
+# part of this target: it's the separate demo executable below, linking
+# against the library the way any other game built on VeryRealEngine would.
+add_library(VeryRealEngine STATIC
     src/renderer/renderer.cpp
     src/assets/obj_loader.cpp
     src/assets/tga_loader.cpp
     src/assets/json_parser.cpp
     src/scene/scene.cpp
     src/physics/physics_world.cpp
+    src/particles/particle_system.cpp
 )
 
+target_include_directories(VeryRealEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(VeryRealEngine PUBLIC Vulkan::Vulkan)
+
 if(UNIX AND NOT APPLE)
-    target_sources(very_real_engine PRIVATE src/platform/linux/window_linux.cpp)
-    target_link_libraries(very_real_engine PRIVATE ${X11_LIBRARIES})
-    target_include_directories(very_real_engine PRIVATE ${X11_INCLUDE_DIR})
+    target_sources(VeryRealEngine PRIVATE src/platform/linux/window_linux.cpp)
+    target_link_libraries(VeryRealEngine PUBLIC ${X11_LIBRARIES})
+    target_include_directories(VeryRealEngine PUBLIC ${X11_INCLUDE_DIR})
 endif()
 
-target_link_libraries(very_real_engine PRIVATE Vulkan::Vulkan)
-target_include_directories(very_real_engine PRIVATE src)
+# --- The demo executable ----------------------------------------------------
+# A thin consumer of the library, same as any game built on top of it would
+# be: it only owns the window/render loop in main.cpp, plus the demo's
+# scene/shader/asset content.
+add_executable(very_real_engine_demo src/main.cpp)
+target_link_libraries(very_real_engine_demo PRIVATE VeryRealEngine)
 
 # --- Shader compilation ---------------------------------------------------
 # Prefer glslc (shaderc), fall back to glslangValidator. Neither ships with
@@ -45,7 +58,7 @@ find_program(GLSLANG_VALIDATOR_EXECUTABLE glslangValidator)
 if(NOT GLSLC_EXECUTABLE AND NOT GLSLANG_VALIDATOR_EXECUTABLE)
     message(WARNING
         "Neither glslc nor glslangValidator was found. Shaders will not be "
-        "compiled to SPIR-V; the engine will fail to load shaders/*.spv at "
+        "compiled to SPIR-V; the demo will fail to load shaders/*.spv at "
         "runtime. Install one with e.g. 'sudo apt install glslang-tools'.")
 endif()
 
@@ -53,6 +66,8 @@ set(SHADER_SOURCES
     ${CMAKE_SOURCE_DIR}/shaders/mesh.vert
     ${CMAKE_SOURCE_DIR}/shaders/mesh.frag
     ${CMAKE_SOURCE_DIR}/shaders/shadow.vert
+    ${CMAKE_SOURCE_DIR}/shaders/post.vert
+    ${CMAKE_SOURCE_DIR}/shaders/post.frag
 )
 set(SHADER_OUTPUT_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders)
 
@@ -83,15 +98,15 @@ endforeach()
 
 if(SHADER_OUTPUTS)
     add_custom_target(shaders ALL DEPENDS ${SHADER_OUTPUTS})
-    add_dependencies(very_real_engine shaders)
+    add_dependencies(very_real_engine_demo shaders)
 endif()
 
-# The renderer loads "shaders/*.spv" and "assets/..." relative to the
-# working directory it's run from, so keep copies next to the binary too.
-add_custom_command(TARGET very_real_engine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:very_real_engine>/shaders
+# The demo loads "shaders/*.spv" and "assets/..." relative to the working
+# directory it's run from, so keep copies next to the binary too.
+add_custom_command(TARGET very_real_engine_demo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:very_real_engine_demo>/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/shaders
-        $<TARGET_FILE_DIR:very_real_engine>/shaders
+        $<TARGET_FILE_DIR:very_real_engine_demo>/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:very_real_engine>/assets
+        $<TARGET_FILE_DIR:very_real_engine_demo>/assets
 )
