@@ -118,15 +118,20 @@ occlusion-excluded because it's no longer geometrically absent).
   target) — see the dedicated section below. Still the single largest body of work left, and now
   that the rendering pipeline underneath it is confirmed actually correct (not just plausible),
   that work stands on solid ground (pun noted) rather than on top of an unverified base.
-- **Mandatory checklist is now fully closed, with no hedged/partial rows left.** Every row in
-  the requirement table below is a clean ✅: frustum + occlusion culling with measured FPS (a
-  confirmed 60 FPS steady-state, and 120 FPS with vsync explicitly bypassed), a real ECS,
-  warning-free Doxygen generation, hide-parent-hides-children re-verified live with a real
-  before/after screenshot, and leak-freedom independently confirmed with macOS's native `leaks`
-  tool (0 leaks, both scene files, full init-to-shutdown lifecycle) rather than left dependent on
-  a Linux run. The only thing genuinely deferred, by direct instruction, to the next phase is the
-  Interactive House Environment's content quality (all boxes, no real props) — tracked
-  separately below, not counted against the mandatory checklist itself.
+- **Mandatory checklist is fully closed, with no hedged/partial rows left.** Every mandatory row
+  in the table below is a clean ✅: frustum + occlusion culling with measured FPS (a confirmed
+  60 FPS steady-state, and 120 FPS with vsync explicitly bypassed), a real ECS, warning-free
+  Doxygen generation, hide-parent-hides-children re-verified live with a real before/after
+  screenshot, and leak-freedom independently confirmed with macOS's native `leaks` tool (0 leaks,
+  both scene files, full init-to-shutdown lifecycle) rather than left dependent on a Linux run.
+- **Bonus: post-processing and particle systems are also both fully done** — bloom, motion blur,
+  and depth of field (the three effects the subject names explicitly) are all implemented and
+  visually confirmed, not just bloom. What's left on the bonus side, by direct instruction
+  excluding networking: sound and skeletal animation, neither started.
+- **What's genuinely still open**: the Interactive House Environment's content quality (all
+  boxes, no real props — the next phase) and visual-fidelity work toward Figures V.1/V.2 (the
+  phase after that). Neither is a mandatory-checklist or in-scope-bonus gap; both are their own,
+  explicitly scoped bodies of work.
 
 ## Requirement-by-requirement status
 
@@ -148,8 +153,9 @@ occlusion-excluded because it's no longer geometrically absent).
 | JSON scene loading (objects, materials, lights) | ✅ | Confirmed by reading both scene JSON files and by both files loading and running correctly. |
 | Interactive House Environment | ⚠️ **Mechanically present, minimal content** | `house_scene.json`: two rooms with different lighting, a hinged door (E), a light switch (F), a coffee machine with a real particle-based steam emitter — confirmed via `VRE_FORCE_DOOR_OPEN`/`VRE_FORCE_LIGHT_ON` screenshot overrides (door visibly swings open to its full angle; Room B's light visibly turns on) rather than just reading the interaction code. **But every piece of geometry — walls, floor, ceiling, door, switch, coffee machine — is the same scaled unit cube**, confirmed visually: the house reads as a room of gray/brown boxes, exactly as the source predicted, no surprises there. |
 | Doxygen (`@brief`/`@param`/`@return`), `Doxyfile` | ✅ **Done, zero warnings** | Every public class/struct/method/field across every header in `src/` carries a real Doxygen comment. `doxygen Doxyfile` → **0 warnings**, independently re-run after every change this session including the bug fixes above. |
-| Bonus: post-processing / particles | ✅ Partial, and now more precisely characterized | ACES tonemapping, bloom, and FXAA-lite confirmed working by screenshot (visible soft highlight rolloff, smoothed silhouette edges). SSAO confirmed working *correctly* only after this session's kernel-rotation fix — before that fix, it was producing a visible defect rather than the intended subtle contact-darkening effect on at least some camera angles. Particle system (steam) visually confirmed: distinct small particle cubes visible at different lifetimes/heights above the coffee machine in a real screenshot. |
-| Bonus: sound / skeletal animation / networking | ❌ | None started. |
+| Bonus: post-processing / particles | ✅ | The subject names three specific post-processing effects — **bloom, motion blur, and depth of field** — and **all three are now implemented and visually confirmed**, plus ACES tonemapping and FXAA-lite. **Motion blur**: added `sample_motion_blur()` (`post.frag`) driven by a screen-space velocity `main.cpp` derives each frame from the camera's own yaw/pitch delta (a deliberate camera-pan-only approximation — see the shader's header comment for why full per-object reprojection wasn't used); verified with `VRE_AUTO_YAW_SPEED` forcing a continuous pan — screenshot shows unambiguous directional smearing (multiple overlapping "ghost" copies of an object stretched along the pan direction). **Depth of field**: added `sample_dof_blur()`, a circle-of-confusion-driven ring blur keyed off each pixel's own depth; verified with a controlled A/B (identical camera pose, only the DOF tuning changed): default tuning renders sharp, tightened tuning renders visibly and uniformly blurred, isolating the effect as real and depth-driven rather than baked into geometry. **Particle Systems** (the separate bonus line item): the steam emitter was already visually confirmed working in an earlier pass (distinct particle cubes at different lifetimes/heights above the coffee machine in a real screenshot). |
+| Bonus: sound / skeletal animation | ❌ | Neither started. Next up on the bonus side. |
+| Bonus: networking | — | Out of scope by direct instruction — not being pursued. |
 
 ## Build system: Makefile (converted from CMake)
 
@@ -201,7 +207,10 @@ correctness, not new progress toward V.1/V.2 specifically), reproduced here for 
 4. **Reflections.** Confirmed no SSR/cubemap code anywhere.
 5. **Some form of baked or approximate GI beyond the current (now correctly-functioning)
    screen-space AO.** Full GI/bounce lighting remains unattempted.
-6. **Depth of field + color grading.** Confirmed absent from `post.frag`.
+6. **Color grading.** Confirmed absent from `post.frag`. (Depth of field itself is done — see the
+   bonus row above — but was tuned for a general-purpose "look at something a few meters away"
+   default, not specifically to match V.1/V.2's exact framing; may need retuning per-shot once
+   real house content exists.)
 
 This is genuinely large scope — larger than everything built for the core engine combined — and
 it's content-authoring work as much as engine work. Budget accordingly.
@@ -211,18 +220,24 @@ it's content-authoring work as much as engine work. Budget accordingly.
 **Done and now visually (not just structurally) verified this pass**: frustum + occlusion
 culling with measured FPS (including a confirmed 120 FPS uncapped ceiling), a real ECS,
 warning-free Doxygen generation, hide-parent-hides-children re-verified live, leak-freedom
-independently confirmed (macOS `leaks`, 0 leaks both scenes), and — found and fixed only because
-this pass insisted on looking at actual rendered frames instead of trusting the source — the
-SSAO grazing-angle artifact and the `plane.obj` invisible-ground bug.
+independently confirmed (macOS `leaks`, 0 leaks both scenes), the bonus post-processing effects
+(motion blur and depth of field, added and verified this pass, alongside the already-working
+bloom/tonemap/FXAA/particles), and — found and fixed only because this pass insisted on looking
+at actual rendered frames instead of trusting the source — the SSAO grazing-angle artifact and
+the `plane.obj` invisible-ground bug.
 
 **Mandatory side: nothing left.** Every mandatory-checklist item is a clean, unhedged ✅ in the
 table above. The 9 remaining `abort()` sites are a reviewed, defensible design choice (genuine
 "cannot function at all" conditions), not an open gap.
 
+**Bonus side: post-processing and particle systems done; sound and skeletal animation are what's
+left** (networking excluded by direct instruction).
+
 **What's left overall** is exactly the two things called out as separate, later phases: the
 Interactive House Environment's content quality (next), and visual-fidelity work toward
 Figures V.1/V.2 (after that) — see the ranked list above for the latter. Neither is a mandatory-
-checklist gap; both are explicitly scoped, larger bodies of work in their own right.
+checklist or in-scope-bonus gap; both are explicitly scoped, larger bodies of work in their own
+right.
 
 ## What wasn't re-litigated this pass
 

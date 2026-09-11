@@ -418,6 +418,26 @@ verification on Linux, the actual submission target):
   defect in the engine. Linux's native Vulkan ICD doesn't have MoltenVK in
   the picture, so this is not expected to reproduce there.
 
+### Debug/verification environment variables
+
+None of these affect normal interactive use (every one is optional, read
+once at startup) — they exist so the demo's rendering and interaction logic
+can be exercised and screenshotted without a live keyboard/mouse (see
+`verdict.md` for why: a real-world case of verifying this engine in an
+environment with no window-permission/input access).
+
+| Variable | Effect |
+|---|---|
+| `VRE_SCREENSHOT_PATH` | Dumps the presented frame to this path as a PPM once `VRE_SCREENSHOT_FRAME` (default 60) frames have rendered. See `Renderer::capture_screenshot()`. |
+| `VRE_SCREENSHOT_FRAME` | Which frame to capture (see above). |
+| `VRE_CAMERA_POS` | `"x,y,z"` — overrides the starting camera position. |
+| `VRE_CAMERA_YAW` / `VRE_CAMERA_PITCH` | Overrides the starting camera orientation (radians). |
+| `VRE_FORCE_DOOR_OPEN` | House scene: starts with the door already fully open (skips the lerp animation). |
+| `VRE_FORCE_LIGHT_ON` | House scene: starts with Room B's light already on. |
+| `VRE_FORCE_HIDE_NODE` | Calls `Scene::set_visible(name, false)` at startup — the same API the H-key binding uses, for verifying hide-parent-hides-children without a keypress. |
+| `VRE_AUTO_YAW_SPEED` | Continuously pans the camera at this many radians/second — lets the motion-blur post-process effect (which needs real camera movement) be exercised and screenshotted. |
+| `VRE_EXIT_AFTER_FRAME` | Exits cleanly (same shutdown path as pressing Escape) after this many frames, instead of running until the window closes — needed for tools like `leaks --atExit` that require a normal process exit. |
+| `VRE_PRESENT_MODE=immediate` | Forces `VK_PRESENT_MODE_IMMEDIATE_KHR` (bypasses vsync) — used to measure the engine's actual FPS ceiling above the display's refresh rate. |
 
 ## Layout
 

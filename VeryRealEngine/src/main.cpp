@@ -126,6 +126,13 @@ int main(int argc, char **argv)
     // see collect_render_items()'s parent-chain visibility combination.
     if (const char *env = std::getenv("VRE_FORCE_HIDE_NODE"))
         scene.set_visible(env, false);
+    // Continuously pans the camera at a fixed angular speed (radians/sec) —
+    // exists purely so the post-process motion-blur bonus effect (which
+    // needs the camera to actually be turning between frames) can be
+    // exercised and screenshotted without live keyboard input.
+    float auto_yaw_speed = 0.0f;
+    if (const char *env = std::getenv("VRE_AUTO_YAW_SPEED"))
+        auto_yaw_speed = static_cast<float>(std::atof(env));
 
     // Enforce the initial state explicitly rather than relying on it
     // happening to match whatever intensity house_scene.json authored for
@@ -184,6 +191,15 @@ int main(int argc, char **argv)
         float delta_seconds = std::chrono::duration<float>(now - last_time).count();
         last_time = now;
 
+        // Captured before this frame's look input is applied, so the delta
+        // below reflects exactly how far the camera turned this frame —
+        // main.cpp's approximation of the post-process motion blur's
+        // screen-space velocity (see post.frag's header comment on
+        // sample_motion_blur() for why this is camera-pan-only, not a full
+        // per-object velocity buffer).
+        float yaw_before_look = yaw;
+        float pitch_before_look = pitch;
+
         // --- Look (arrow keys) ---------------------------------------------
         if (window->is_key_held(vre::KeyCode::Left))
             yaw -= look_speed * delta_seconds;
@@ -193,6 +209,7 @@ int main(int argc, char **argv)
             pitch = clamp_pitch(pitch + look_speed * delta_seconds);
         if (window->is_key_held(vre::KeyCode::Down))
             pitch = clamp_pitch(pitch - look_speed * delta_seconds);
+        yaw += auto_yaw_speed * delta_seconds;
 
         // Movement uses a pitch-free forward vector so looking up/down
         // doesn't make the player fly or sink into the floor.
@@ -267,14 +284,24 @@ int main(int argc, char **argv)
 
         float aspect = static_cast<float>(window->get_width())
             / static_cast<float>(window->get_height() > 0 ? window->get_height() : 1);
-        vre::mat4 projection = vre::mat4::perspective(0.9f /* ~51 degrees */, aspect, 0.1f, 100.0f);
+        const float vertical_fov = 0.9f; // ~51 degrees, must match perspective() below
+        vre::mat4 projection = vre::mat4::perspective(vertical_fov, aspect, 0.1f, 100.0f);
+
+        // Motion-blur velocity: this frame's yaw/pitch change as a fraction
+        // of the camera's horizontal/vertical field of view — e.g. turning
+        // by exactly the full horizontal FOV in one frame would sweep the
+        // whole screen width, hence dividing by it. A deliberately simple
+        // camera-only approximation (see post.frag's header comment).
+        float horizontal_fov = 2.0f * std::atan(std::tan(vertical_fov * 0.5f) * aspect);
+        float motion_blur_x = (yaw - yaw_before_look) / horizontal_fov;
+        float motion_blur_y = (pitch - pitch_before_look) / vertical_fov;
 
         std::vector<vre::RenderItem> items;
         scene.collect_render_items(&items);
         steam.collect_render_items(&items);
 
         renderer.draw_frame(view, projection, player_position, scene.get_lights(),
-            scene.get_ambient(), items);
+            scene.get_ambient(), items, motion_blur_x, motion_blur_y);
 
         frame_counter++;
         if (screenshot_path != nullptr && frame_counter == screenshot_after_frame)

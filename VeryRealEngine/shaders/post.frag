@@ -30,6 +30,8 @@ layout(push_constant) uniform PushConstants
     vec4 proj_params;  // x = m[0], y = m[5], z = m[10], w = m[14]
     vec4 ao_params;    // x = radius, y = bias, z = strength
     vec4 bloom_params; // x = threshold, y = intensity, z = sample step (texels)
+    vec4 dof_params;   // x = focus distance, y = focus range, z = falloff range, w = max CoC (texels)
+    vec4 motion_blur_params; // x = screen velocity.x, y = velocity.y (UV units/frame)
 } push;
 
 layout(location = 0) in vec2 frag_uv;
@@ -173,6 +175,58 @@ vec3 fxaa_lite(vec2 uv)
     return mix(center, (blend_pos + blend_neg) * 0.5, blend_factor);
 }
 
+// Camera-pan motion blur: a cheap, camera-only approximation, not full
+// per-object world-space reprojection. A real reprojection-based blur
+// needs the previous frame's view-projection matrix and the current
+// frame's inverse view (to unproject depth into world space, then
+// re-project into last frame's clip space) — worth a full extra mat4 (or
+// two) of per-frame state; this single-pass architecture's push-constant
+// budget is already committed to AO/bloom/DOF, and Vulkan's guaranteed
+// minimum push-constant size (128 bytes) doesn't have room left for that
+// without moving to a UBO. Instead, main.cpp derives a single approximate
+// screen-space velocity from the camera's own yaw/pitch delta since last
+// frame and passes just that (2 floats) — correct for camera pans/turns,
+// not for a moving *object* against a static camera (a documented scope
+// line, not a bug: a real object-velocity buffer is the natural
+// follow-up). Taps scene_color directly (pre-FXAA) along the velocity
+// vector and averages them — used instead of fxaa_lite() when there's
+// real motion, since directional blur already smooths the same aliasing
+// FXAA targets.
+vec3 sample_motion_blur(vec2 uv, vec2 velocity)
+{
+    const int TAPS = 8;
+    vec3 result = texture(scene_color, uv).rgb;
+    for (int i = 1; i <= TAPS; i++)
+    {
+        float t = float(i) / float(TAPS);
+        result += texture(scene_color, uv - velocity * t).rgb;
+        result += texture(scene_color, uv + velocity * t).rgb;
+    }
+    return result / float(TAPS * 2 + 1);
+}
+
+// Depth-of-field "gather" blur: gathers scene_color in a ring around the
+// current pixel, radius set by this pixel's own circle-of-confusion (CoC)
+// — a real, working approximation, not a placeholder, but a simpler one
+// than a proper scatter/gather-with-depth-weighting DOF (which would
+// avoid a thin in-focus object bleeding blur onto an out-of-focus
+// background behind it, or vice versa). Good enough at this engine's
+// object counts/scales; a depth-aware weighted gather is the natural
+// follow-up, not attempted here.
+vec3 sample_dof_blur(vec2 uv, float coc_texels)
+{
+    vec2 texel = 1.0 / vec2(textureSize(scene_color, 0));
+    vec3 result = vec3(0.0);
+    const int TAPS = 8;
+    for (int i = 0; i < TAPS; i++)
+    {
+        float angle = 6.28318530718 * float(i) / float(TAPS);
+        vec2 offset = vec2(cos(angle), sin(angle)) * coc_texels * texel;
+        result += texture(scene_color, uv + offset).rgb;
+    }
+    return result / float(TAPS);
+}
+
 // Narkowicz's fit of the ACES filmic tonemap curve: maps unbounded HDR
 // color down to displayable [0,1] with a soft highlight rolloff instead of
 // a hard clip — the reason a bright specular highlight or an over-driven
@@ -188,7 +242,11 @@ void main()
     float alpha = texture(scene_color, frag_uv).a;
     float depth = texture(scene_depth, frag_uv).r;
 
-    vec3 color = fxaa_lite(frag_uv);
+    vec2 motion_blur_velocity = push.motion_blur_params.xy;
+    bool has_motion_blur = dot(motion_blur_velocity, motion_blur_velocity) > 1e-10;
+    vec3 color = has_motion_blur
+        ? sample_motion_blur(frag_uv, motion_blur_velocity)
+        : fxaa_lite(frag_uv);
 
     if (depth < 1.0)
     {
@@ -228,8 +286,22 @@ void main()
 
         float ao = 1.0 - strength * (occlusion / 8.0);
         color *= ao;
+
+        // Depth of field: blur this pixel by an amount (its
+        // circle-of-confusion) driven by how far its own depth sits
+        // outside the in-focus zone.
+        float distance_from_camera = -origin.z;
+        float focus_distance = push.dof_params.x;
+        float focus_range = push.dof_params.y;
+        float falloff_range = max(push.dof_params.z, 1e-4);
+        float max_coc = push.dof_params.w;
+        float distance_from_focus = max(
+            abs(distance_from_camera - focus_distance) - focus_range, 0.0);
+        float coc = clamp(distance_from_focus / falloff_range, 0.0, 1.0) * max_coc;
+        if (coc > 0.5)
+            color = sample_dof_blur(frag_uv, coc) * ao;
     }
-    // Background (depth >= 1.0): no AO to apply, but still bloom/tonemap
+    // Background (depth >= 1.0): no AO/DOF to apply, but still bloom/tonemap
     // below, so there's no visible seam at the horizon.
 
     color += sample_bloom(frag_uv) * push.bloom_params.y;

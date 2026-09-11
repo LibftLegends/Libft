@@ -47,6 +47,8 @@ struct PostPushConstants
     float proj_params[4];  // x = proj.m[0], y = proj.m[5], z = proj.m[10], w = proj.m[14]
     float ao_params[4];    // x = radius, y = bias, z = strength, w = unused
     float bloom_params[4]; // x = threshold, y = intensity, z = sample step (texels), w = unused
+    float dof_params[4];   // x = focus distance, y = focus range, z = falloff range, w = max CoC (texels)
+    float motion_blur_params[4]; // x = screen-space velocity.x, y = velocity.y, z/w = unused
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
@@ -2431,7 +2433,8 @@ void Renderer::record_shadow_pass(VkCommandBuffer command_buffer, uint32_t caste
 
 void Renderer::record_command_buffer(VkCommandBuffer command_buffer, uint32_t image_index,
     const mat4 &projection, const std::vector<RenderItem> &draw_items,
-    const std::vector<RenderItem> &occlusion_test_items, std::vector<uint32_t> *out_query_ids)
+    const std::vector<RenderItem> &occlusion_test_items, std::vector<uint32_t> *out_query_ids,
+    float screen_motion_blur_x, float screen_motion_blur_y)
 {
     // Must happen outside any render pass instance (Vulkan spec
     // requirement for vkCmdResetQueryPool) — resets the whole pool
@@ -2601,6 +2604,15 @@ void Renderer::record_command_buffer(VkCommandBuffer command_buffer, uint32_t im
     post_push.bloom_params[1] = 0.6f; // bloom intensity
     post_push.bloom_params[2] = 2.5f; // sample step, in texels
     post_push.bloom_params[3] = 0.0f;
+    post_push.dof_params[0] = 3.0f;  // focus distance, view-space units — a "look at
+                                      // something a few meters away" default
+    post_push.dof_params[1] = 1.5f;  // focus range: +/- this many units stay fully sharp
+    post_push.dof_params[2] = 3.0f;  // falloff range: blur ramps to max over this many units
+    post_push.dof_params[3] = 6.0f;  // max circle-of-confusion radius, in texels
+    post_push.motion_blur_params[0] = screen_motion_blur_x;
+    post_push.motion_blur_params[1] = screen_motion_blur_y;
+    post_push.motion_blur_params[2] = 0.0f;
+    post_push.motion_blur_params[3] = 0.0f;
     vkCmdPushConstants(command_buffer, _post_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
         0, sizeof(PostPushConstants), &post_push);
 
@@ -2655,7 +2667,8 @@ void Renderer::update_occlusion_results()
 
 void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &view_position,
     const std::vector<Light> &lights, float ambient_intensity,
-    const std::vector<RenderItem> &items)
+    const std::vector<RenderItem> &items,
+    float screen_motion_blur_x, float screen_motion_blur_y)
 {
     vkWaitForFences(_device, 1, &_in_flight_fences[_current_frame], VK_TRUE, UINT64_MAX);
 
@@ -2756,7 +2769,8 @@ void Renderer::draw_frame(const mat4 &view, const mat4 &projection, const vec3 &
     }
 
     record_command_buffer(command_buffer, image_index, projection, draw_items,
-        occlusion_test_items, &_occlusion_query_ids[_current_frame]);
+        occlusion_test_items, &_occlusion_query_ids[_current_frame],
+        screen_motion_blur_x, screen_motion_blur_y);
 
     _last_frame_stats.total_items = static_cast<uint32_t>(items.size());
     _last_frame_stats.frustum_visible = static_cast<uint32_t>(frustum_visible_items.size());

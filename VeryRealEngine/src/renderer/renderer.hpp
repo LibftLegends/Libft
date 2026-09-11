@@ -159,10 +159,16 @@ class Renderer
          * @param lights Active scene lights.
          * @param ambient_intensity Flat ambient term added before per-light shading.
          * @param items Candidate draw list for this frame, before culling.
+         * @param screen_motion_blur_x Approximate screen-space camera-pan velocity,
+         * horizontal (UV units/frame) for the post-process motion-blur bonus
+         * effect — a cheap, camera-only approximation (see post.frag's header
+         * comment for why), not full per-object world-space reprojection.
+         * @param screen_motion_blur_y Same, vertical component.
          */
         void draw_frame(const mat4 &view, const mat4 &projection, const vec3 &view_position,
             const std::vector<Light> &lights, float ambient_intensity,
-            const std::vector<RenderItem> &items);
+            const std::vector<RenderItem> &items,
+            float screen_motion_blur_x = 0.0f, float screen_motion_blur_y = 0.0f);
 
         /**
          * @brief Culling counts from the most recently drawn frame.
@@ -509,11 +515,14 @@ class Renderer
          * @param out_query_ids Receives, in the same order queries were
          * issued, which occlusion_id each one belongs to (see
          * update_occlusion_results()).
+         * @param screen_motion_blur_x See draw_frame()'s parameter of the same name.
+         * @param screen_motion_blur_y See draw_frame()'s parameter of the same name.
          */
         void record_command_buffer(VkCommandBuffer command_buffer, uint32_t image_index,
             const mat4 &projection, const std::vector<RenderItem> &draw_items,
             const std::vector<RenderItem> &occlusion_test_items,
-            std::vector<uint32_t> *out_query_ids);
+            std::vector<uint32_t> *out_query_ids,
+            float screen_motion_blur_x, float screen_motion_blur_y);
 
         /// Recreates the swapchain and everything sized from it (e.g. after a resize).
         void recreate_swapchain();
