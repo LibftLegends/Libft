@@ -290,6 +290,10 @@ step-4 falling-cube/trigger demo objects in `demo_scene.json`).
 
 ## Building
 
+**Linux is the actual submission target** (this is what gets graded). macOS
+is also supported, purely so the engine can be developed/iterated on without
+a Linux box — see the macOS section below and its caveats.
+
 Dependencies (Linux):
 
 ```sh
@@ -300,34 +304,85 @@ sudo apt install glslang-tools     # provides glslangValidator
 sudo apt install glslc             # provides glslc (preferred if available)
 ```
 
-Build:
+Dependencies (macOS, via Homebrew):
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+brew install vulkan-headers vulkan-loader molten-vk shaderc
 ```
 
-This produces two targets: the `VeryRealEngine` static library
-(`libVeryRealEngine.a`) and a `very_real_engine_demo` executable that links
-against it — the subject requires the final product to be a library, so
-everything except `src/main.cpp` lives in the library, not the demo binary.
-
-Run (from the build directory, so it finds `shaders/*.spv` next to the binary):
+Build (either platform):
 
 ```sh
-cd build && ./very_real_engine_demo
+make
 ```
 
-If no shader compiler is installed, CMake prints a warning and skips
-compiling `shaders/*.spv`; the C++ still builds and links, but the program
-will abort at startup trying to load the missing SPIR-V files. Install
-`glslc` or `glslangValidator` and re-run CMake to fix that.
+This produces two things at the repo root: the `VeryRealEngine` static
+library (`libVeryRealEngine.a`) and a `very_real_engine_demo` executable that
+links against it — the subject requires the final product to be a library,
+so everything except `src/main.cpp` lives in the library, not the demo
+binary. `make` also compiles `shaders/*.vert`/`*.frag` to `shaders/*.spv` in
+place, and only rebuilds/re-links what actually changed (object files carry
+`-MMD` header dependencies, tracked under `obj/`).
+
+Other rules: `make clean` (remove object files), `make fclean` (also remove
+the library, the demo binary, and compiled shaders), `make re` (`fclean` +
+`all`).
+
+Run (from the repo root, so it finds `shaders/*.spv` and `assets/` next to
+the binary):
+
+```sh
+./very_real_engine_demo
+```
+
+If no shader compiler is installed, `make` fails on the shader-compilation
+step with an explicit error. Install `glslc` or `glslangValidator` and
+re-run `make` to fix that.
+
+### macOS notes
+
+There is no native Vulkan driver on macOS, so this uses
+[MoltenVK](https://github.com/KhronosGroup/MoltenVK) (a Vulkan-over-Metal
+translation layer) and a Cocoa windowing backend
+(`src/platform/macos/window_macos.mm`), instead of Xlib. The Makefile links
+directly against MoltenVK's own `libMoltenVK.dylib` (which implements the
+full Vulkan API itself) rather than going through the generic Vulkan
+loader, since Homebrew's `molten-vk` formula doesn't ship an ICD manifest
+for the loader to discover it by — one less moving part for local dev.
+
+This has been verified to actually build and run (not just compile): it
+picks the Apple Silicon GPU (`Renderer: using physical device "Apple M1"`),
+loads the OBJ meshes and JSON scene, and stays in a live render loop rather
+than aborting.
+
+Known gaps/caveats, since MoltenVK is not a fully conformant Vulkan
+implementation:
+
+- If your toolchain resolves a beta/mismatched macOS SDK by default (check
+  with `xcrun --show-sdk-path`; symptom: linker errors like `tapi error:
+  malformed file` / `unknown architecture` on framework `.tbd` files), the
+  Makefile already pins both compile and link steps to
+  `` `xcrun --sdk macosx --show-sdk-path` `` to route around it — this is a
+  toolchain quirk, not something in this engine's control.
+  `VK_KHR_portability_subset` and `VK_KHR_portability_enumeration` are
+  checked for availability at runtime before being requested (MoltenVK,
+  linked directly as here, doesn't advertise either — requesting them
+  unconditionally would fail instance/device creation outright).
+- Validation layers (`VK_LAYER_KHRONOS_validation`) aren't installed by the
+  packages above; the engine runs without them (same fallback path Linux
+  uses when they're absent there too), just with less Vulkan-side error
+  checking.
+- This is a development convenience, not the graded target. Fine-tune and
+  do the final verification (memory/crash checks, the 60 FPS requirement,
+  visual correctness) on the actual Linux submission environment before
+  submitting.
+
 
 ## Layout
 
 ```
 VeryRealEngine/
-  CMakeLists.txt
+  Makefile
   shaders/            GLSL sources (compiled to SPIR-V at build time)
   src/
     main.cpp          demo entry point / render loop (NOT part of the library)

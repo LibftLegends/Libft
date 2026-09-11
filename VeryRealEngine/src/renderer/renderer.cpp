@@ -74,6 +74,20 @@ static bool layer_is_available(const char *layer_name)
     return false;
 }
 
+static bool instance_extension_is_available(const char *extension_name)
+{
+    uint32_t extension_count = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, nullptr);
+    std::vector<VkExtensionProperties> extensions(extension_count);
+    vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, extensions.data());
+    for (const auto &extension : extensions)
+    {
+        if (std::strcmp(extension.extensionName, extension_name) == 0)
+            return true;
+    }
+    return false;
+}
+
 Renderer::Renderer()
     : _window(nullptr), _instance(VK_NULL_HANDLE), _debug_messenger(VK_NULL_HANDLE),
       _surface(VK_NULL_HANDLE), _physical_device(VK_NULL_HANDLE), _device(VK_NULL_HANDLE),
@@ -309,6 +323,26 @@ void Renderer::create_instance()
     VkInstanceCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     create_info.pApplicationInfo = &app_info;
+
+#ifdef __APPLE__
+    // MoltenVK is a "portability" (non-fully-conformant) Vulkan
+    // implementation; the *standard Vulkan Loader* requires instances to
+    // opt in explicitly via this extension + flag once it detects a
+    // portability ICD, or vkCreateInstance returns
+    // VK_ERROR_INCOMPATIBLE_DRIVER. This engine links directly against
+    // MoltenVK's own dylib instead (see the Makefile), which doesn't
+    // advertise or require this extension at all — requesting it
+    // unconditionally fails instance creation with
+    // VK_ERROR_EXTENSION_NOT_PRESENT. Checked dynamically so this does the
+    // right thing either way (direct MoltenVK link today, a real loader +
+    // ICD manifest if that ever changes).
+    if (instance_extension_is_available(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME))
+    {
+        extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif
+
     create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     create_info.ppEnabledExtensionNames = extensions.data();
 
@@ -493,15 +527,36 @@ void Renderer::create_logical_device()
     VkPhysicalDeviceFeatures device_features{};
     device_features.samplerAnisotropy = VK_TRUE;
 
-    const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    std::vector<const char *> device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
+#ifdef __APPLE__
+    // MoltenVK devices advertise VK_KHR_portability_subset; the spec
+    // requires enabling it whenever a device supports it. Checked
+    // dynamically (rather than assumed) so this has no effect running
+    // against a real Vulkan driver that doesn't expose it.
+    uint32_t available_extension_count = 0;
+    vkEnumerateDeviceExtensionProperties(
+        _physical_device, nullptr, &available_extension_count, nullptr);
+    std::vector<VkExtensionProperties> available_extensions(available_extension_count);
+    vkEnumerateDeviceExtensionProperties(
+        _physical_device, nullptr, &available_extension_count, available_extensions.data());
+    for (const VkExtensionProperties &extension : available_extensions)
+    {
+        if (std::strcmp(extension.extensionName, "VK_KHR_portability_subset") == 0)
+        {
+            device_extensions.push_back("VK_KHR_portability_subset");
+            break;
+        }
+    }
+#endif
 
     VkDeviceCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
     create_info.pQueueCreateInfos = queue_create_infos.data();
     create_info.pEnabledFeatures = &device_features;
-    create_info.enabledExtensionCount = 1;
-    create_info.ppEnabledExtensionNames = device_extensions;
+    create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
+    create_info.ppEnabledExtensionNames = device_extensions.data();
 
     if (_validation_enabled)
     {

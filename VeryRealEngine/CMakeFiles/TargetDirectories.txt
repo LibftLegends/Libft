@@ -1,5 +1,0 @@
-/home/rperez-t/Documents/minecraft/Libft/VeryRealEngine/CMakeFiles/VeryRealEngine.dir
-/home/rperez-t/Documents/minecraft/Libft/VeryRealEngine/CMakeFiles/very_real_engine_demo.dir
-/home/rperez-t/Documents/minecraft/Libft/VeryRealEngine/CMakeFiles/shaders.dir
-/home/rperez-t/Documents/minecraft/Libft/VeryRealEngine/CMakeFiles/edit_cache.dir
-/home/rperez-t/Documents/minecraft/Libft/VeryRealEngine/CMakeFiles/rebuild_cache.dir
