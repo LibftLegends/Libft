@@ -1,5 +1,8 @@
 obj/
+obj-sanitize/
 *.spv
 *.a
 very_real_engine_demo
+very_real_engine_demo-sanitize
 compile_commands.json
+docs/

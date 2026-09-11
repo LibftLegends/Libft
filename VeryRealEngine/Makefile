@@ -13,7 +13,8 @@
 # Linux box — see README.md's macOS section for setup and known gaps
 # (MoltenVK is not a fully conformant Vulkan implementation).
 #
-# Usual rules: all, clean, fclean, re.
+# Usual rules: all, clean, fclean, re. `make SANITIZE=1` builds an
+# ASan+UBSan-instrumented copy alongside the normal one (see below).
 
 NAME        := libVeryRealEngine.a
 DEMO        := very_real_engine_demo
@@ -72,9 +73,28 @@ backends; building on $(UNAME_S) will fail to link. See src/platform/.)
 LDLIBS       := -lvulkan
 endif
 
+# `make SANITIZE=1` (or `re`/`clean` with the same flag) builds a separate,
+# instrumented copy — its own object dir/library/binary names, so it never
+# clobbers a normal release build sitting alongside it. Used to verify the
+# subject's "no memory leaks" / "no unexpected termination" requirements
+# with real tooling (ASan catches leaks/UB memory errors, UBSan catches
+# undefined behavior like signed overflow or misaligned access) rather than
+# just by inspection.
+ifeq ($(SANITIZE),1)
+CXXFLAGS    += -g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined
+LDLIBS      += -fsanitize=address,undefined
+LIB_BASENAME := VeryRealEngine-sanitize
+NAME        := libVeryRealEngine-sanitize.a
+DEMO        := very_real_engine_demo-sanitize
+OBJ_DIR_SUFFIX := -sanitize
+else
+LIB_BASENAME := VeryRealEngine
+OBJ_DIR_SUFFIX :=
+endif
+
 DEMO_SRCS   := src/main.cpp
 
-OBJ_DIR     := obj
+OBJ_DIR     := obj$(OBJ_DIR_SUFFIX)
 LIB_OBJS    := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(LIB_CPP_SRCS)) \
                $(patsubst src/%.mm,$(OBJ_DIR)/%.o,$(LIB_MM_SRCS))
 DEMO_OBJS   := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(DEMO_SRCS))
@@ -98,7 +118,7 @@ $(NAME): $(LIB_OBJS)
 	ar rcs $@ $(LIB_OBJS)
 
 $(DEMO): $(DEMO_OBJS) $(NAME)
-	$(CXX) $(CXXFLAGS) $(DEMO_OBJS) -L. -lVeryRealEngine $(LDLIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(DEMO_OBJS) -L. -l$(LIB_BASENAME) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
@@ -123,10 +143,12 @@ else
 endif
 
 clean:
-	rm -rf $(OBJ_DIR)
+	rm -rf $(OBJ_DIR) obj obj-sanitize
 
 fclean: clean
-	rm -f $(NAME) $(DEMO) $(SHADER_SPVS)
+	rm -f $(NAME) $(DEMO) $(SHADER_SPVS) \
+	    libVeryRealEngine.a libVeryRealEngine-sanitize.a \
+	    very_real_engine_demo very_real_engine_demo-sanitize
 
 re: fclean all
 

@@ -2,6 +2,7 @@
 #include "../assets/json_parser.hpp"
 
 #include <cstdio>
+#include <unordered_map>
 
 namespace vre
 {
@@ -16,15 +17,15 @@ static vec3 read_vec3(const JsonValue *value, const vec3 &default_value)
         static_cast<float>(value->array_value[2].as_number()));
 }
 
-static bool parse_physics(const JsonValue &object_json, const SceneNode &node,
-    RigidBodyDesc *out_desc)
+static bool parse_physics(const JsonValue &object_json, const std::string &name,
+    const vec3 &position, RigidBodyDesc *out_desc)
 {
     const JsonValue *physics_field = object_json.find("physics");
     if (physics_field == nullptr || !physics_field->is_object())
         return false;
 
-    out_desc->position = node.position;
-    out_desc->debug_name = node.name;
+    out_desc->position = position;
+    out_desc->debug_name = name;
 
     const JsonValue *static_field = physics_field->find("static");
     out_desc->is_static = (static_field != nullptr) ? static_field->as_bool(false) : false;
@@ -107,171 +108,225 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
 
     for (const JsonValue &object_json : objects->array_value)
     {
-        SceneNode node;
-        node.name = object_json.find("name") != nullptr
+        std::string name = object_json.find("name") != nullptr
             ? object_json.find("name")->as_string() : std::string();
-        if (node.name.empty())
+        if (name.empty())
         {
             std::fprintf(stderr, "Scene: \"%s\" has an object with no \"name\"\n", path);
             return false;
         }
 
+        ecs::Entity entity = _registry.create();
+        _registry.emplace<NameComponent>(entity, NameComponent{name});
+
+        ecs::Entity parent_entity = ecs::kInvalidEntity;
         const JsonValue *parent_field = object_json.find("parent");
         if (parent_field != nullptr && parent_field->type == JsonType::String)
         {
-            auto parent_it = _name_to_index.find(parent_field->string_value);
-            if (parent_it == _name_to_index.end())
+            auto parent_it = _name_to_entity.find(parent_field->string_value);
+            if (parent_it == _name_to_entity.end())
             {
                 std::fprintf(stderr,
                     "Scene: \"%s\": object \"%s\" references parent \"%s\", which must "
                     "appear earlier in \"objects\"\n",
-                    path, node.name.c_str(), parent_field->string_value.c_str());
+                    path, name.c_str(), parent_field->string_value.c_str());
                 return false;
             }
-            node.parent_index = parent_it->second;
+            parent_entity = parent_it->second;
+            _registry.emplace<ParentComponent>(entity, ParentComponent{parent_entity});
         }
 
+        MeshHandle mesh = kNoMesh;
         const JsonValue *mesh_field = object_json.find("mesh");
         if (mesh_field != nullptr && mesh_field->type == JsonType::String)
-            node.mesh = renderer->load_mesh_from_obj(mesh_field->string_value.c_str());
+            mesh = renderer->load_mesh_from_obj(mesh_field->string_value.c_str());
+        if (mesh != kNoMesh)
+            _registry.emplace<MeshComponent>(entity, MeshComponent{mesh});
 
-        node.position = read_vec3(object_json.find("position"), vec3(0.0f, 0.0f, 0.0f));
-        node.rotation = read_vec3(object_json.find("rotation"), vec3(0.0f, 0.0f, 0.0f));
-        node.scale = read_vec3(object_json.find("scale"), vec3(1.0f, 1.0f, 1.0f));
-        node.spin = read_vec3(object_json.find("spin"), vec3(0.0f, 0.0f, 0.0f));
+        TransformComponent transform;
+        transform.position = read_vec3(object_json.find("position"), vec3(0.0f, 0.0f, 0.0f));
+        transform.rotation = read_vec3(object_json.find("rotation"), vec3(0.0f, 0.0f, 0.0f));
+        transform.scale = read_vec3(object_json.find("scale"), vec3(1.0f, 1.0f, 1.0f));
+        transform.spin = read_vec3(object_json.find("spin"), vec3(0.0f, 0.0f, 0.0f));
+        _registry.emplace<TransformComponent>(entity, transform);
 
         const JsonValue *visible_field = object_json.find("visible");
-        node.visible = (visible_field != nullptr) ? visible_field->as_bool(true) : true;
+        bool visible = (visible_field != nullptr) ? visible_field->as_bool(true) : true;
+        _registry.emplace<VisibilityComponent>(entity, VisibilityComponent{visible});
 
         if (physics_world != nullptr)
         {
             RigidBodyDesc physics_desc;
-            if (parse_physics(object_json, node, &physics_desc))
+            if (parse_physics(object_json, name, transform.position, &physics_desc))
             {
-                if (node.parent_index != kNoParent)
+                if (parent_entity != ecs::kInvalidEntity)
                 {
                     std::fprintf(stderr,
                         "Scene: \"%s\": object \"%s\" has both \"physics\" and \"parent\" — "
                         "physics-driven nodes must be root nodes, ignoring physics\n",
-                        path, node.name.c_str());
+                        path, name.c_str());
                 }
                 else
                 {
-                    node.physics_body = physics_world->add_body(physics_desc);
+                    BodyHandle body = physics_world->add_body(physics_desc);
+                    _registry.emplace<PhysicsBodyComponent>(entity, PhysicsBodyComponent{body});
                 }
             }
         }
 
-        _name_to_index[node.name] = _nodes.size();
-        _nodes.push_back(node);
+        _name_to_entity[name] = entity;
+        _load_order.push_back(entity);
     }
 
-    std::fprintf(stderr, "Scene: loaded \"%s\": %zu node(s)\n", path, _nodes.size());
+    std::fprintf(stderr, "Scene: loaded \"%s\": %zu node(s)\n", path, _load_order.size());
     return true;
 }
 
 void Scene::sync_from_physics(const PhysicsWorld &physics_world)
 {
-    for (auto &node : _nodes)
+    for (auto &[entity, body] : _registry.storage<PhysicsBodyComponent>())
     {
-        if (node.physics_body != kInvalidBody)
-            node.position = physics_world.get_position(node.physics_body);
+        TransformComponent *transform = _registry.try_get<TransformComponent>(entity);
+        if (transform != nullptr && body.body != kInvalidBody)
+            transform->position = physics_world.get_position(body.body);
     }
 }
 
 void Scene::update(float delta_seconds)
 {
-    for (auto &node : _nodes)
+    for (auto &[entity, transform] : _registry.storage<TransformComponent>())
     {
-        node.spin_accumulated = node.spin_accumulated + node.spin * delta_seconds;
+        (void)entity;
+        transform.spin_accumulated = transform.spin_accumulated + transform.spin * delta_seconds;
     }
 }
 
-mat4 Scene::local_transform(const SceneNode &node) const
+mat4 Scene::local_transform(const TransformComponent &transform) const
 {
-    vec3 total_rotation = node.rotation + node.spin_accumulated;
-    return mat4::compose(node.position, total_rotation, node.scale);
+    vec3 total_rotation = transform.rotation + transform.spin_accumulated;
+    return mat4::compose(transform.position, total_rotation, transform.scale);
 }
 
 void Scene::collect_render_items(std::vector<RenderItem> *out_items) const
 {
-    std::vector<mat4> world_transforms(_nodes.size());
-    std::vector<bool> world_visible(_nodes.size());
+    // The transform + visibility system: requires parents to precede
+    // children in _load_order (enforced in load()), so a single forward
+    // pass suffices to compose every entity's WorldTransformComponent and
+    // combined (self AND every ancestor) visibility — no recursion needed.
+    // const_cast is safe/contained here: WorldTransformComponent is a
+    // frame-local cache, not scene-authored state, and recomputing it is
+    // exactly what a const "give me this frame's render items" call means.
+    auto &registry = const_cast<ecs::Registry &>(_registry);
+    std::unordered_map<ecs::Entity, bool> combined_visible;
+    combined_visible.reserve(_load_order.size());
 
-    // Requires parents to precede children in _nodes (enforced at load
-    // time), so a single forward pass suffices — no recursion needed.
-    for (size_t i = 0; i < _nodes.size(); i++)
+    for (ecs::Entity entity : _load_order)
     {
-        const SceneNode &node = _nodes[i];
-        mat4 local = local_transform(node);
+        const TransformComponent *transform = registry.try_get<TransformComponent>(entity);
+        const VisibilityComponent *visibility = registry.try_get<VisibilityComponent>(entity);
+        bool self_visible = (visibility == nullptr) || visibility->visible;
 
-        if (node.parent_index == kNoParent)
+        mat4 local = (transform != nullptr) ? local_transform(*transform) : mat4::identity();
+        const ParentComponent *parent = registry.try_get<ParentComponent>(entity);
+
+        mat4 world;
+        bool visible;
+        if (parent == nullptr || parent->parent == ecs::kInvalidEntity)
         {
-            world_transforms[i] = local;
-            world_visible[i] = node.visible;
+            world = local;
+            visible = self_visible;
         }
         else
         {
-            world_transforms[i] = mat4::multiply(world_transforms[node.parent_index], local);
-            world_visible[i] = node.visible && world_visible[node.parent_index];
+            const WorldTransformComponent *parent_world =
+                registry.try_get<WorldTransformComponent>(parent->parent);
+            world = (parent_world != nullptr) ? mat4::multiply(parent_world->value, local) : local;
+            visible = self_visible && combined_visible[parent->parent];
         }
 
-        if (world_visible[i] && node.mesh != kNoMesh)
-            out_items->push_back(RenderItem{node.mesh, world_transforms[i]});
+        registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{world});
+        combined_visible[entity] = visible;
+
+        const MeshComponent *mesh = registry.try_get<MeshComponent>(entity);
+        if (visible && mesh != nullptr && mesh->mesh != kNoMesh)
+        {
+            // Entity value doubles as the occlusion-culling identity
+            // (RenderItem::occlusion_id) — stable across frames as long as
+            // the scene's entity set itself doesn't change shape, which
+            // holds for every JSON-authored scene this engine loads (no
+            // runtime entity add/remove, only component value changes).
+            RenderItem item;
+            item.mesh = mesh->mesh;
+            item.model = world;
+            item.occlusion_id = entity;
+            out_items->push_back(item);
+        }
     }
 }
 
 bool Scene::set_visible(const std::string &name, bool visible)
 {
-    auto it = _name_to_index.find(name);
-    if (it == _name_to_index.end())
+    auto it = _name_to_entity.find(name);
+    if (it == _name_to_entity.end())
         return false;
-    _nodes[it->second].visible = visible;
+    _registry.emplace<VisibilityComponent>(it->second, VisibilityComponent{visible});
     return true;
 }
 
 bool Scene::toggle_visible(const std::string &name)
 {
-    auto it = _name_to_index.find(name);
-    if (it == _name_to_index.end())
+    auto it = _name_to_entity.find(name);
+    if (it == _name_to_entity.end())
         return false;
-    SceneNode &node = _nodes[it->second];
-    node.visible = !node.visible;
+    VisibilityComponent *visibility = _registry.try_get<VisibilityComponent>(it->second);
+    bool new_value = (visibility == nullptr) || !visibility->visible;
+    _registry.emplace<VisibilityComponent>(it->second, VisibilityComponent{new_value});
     return true;
 }
 
 bool Scene::is_visible(const std::string &name) const
 {
-    auto it = _name_to_index.find(name);
-    if (it == _name_to_index.end())
+    auto it = _name_to_entity.find(name);
+    if (it == _name_to_entity.end())
         return false;
-    return _nodes[it->second].visible;
+    const VisibilityComponent *visibility = _registry.try_get<VisibilityComponent>(it->second);
+    return (visibility == nullptr) || visibility->visible;
 }
 
 bool Scene::set_node_rotation(const std::string &name, const vec3 &euler_radians)
 {
-    auto it = _name_to_index.find(name);
-    if (it == _name_to_index.end())
+    auto it = _name_to_entity.find(name);
+    if (it == _name_to_entity.end())
         return false;
-    _nodes[it->second].rotation = euler_radians;
+    TransformComponent *transform = _registry.try_get<TransformComponent>(it->second);
+    if (transform == nullptr)
+        return false;
+    transform->rotation = euler_radians;
     return true;
 }
 
 bool Scene::get_node_position(const std::string &name, vec3 *out_position) const
 {
-    auto it = _name_to_index.find(name);
-    if (it == _name_to_index.end())
+    auto it = _name_to_entity.find(name);
+    if (it == _name_to_entity.end())
         return false;
+
     // World position, not local: walks the parent chain the same way
     // collect_render_items() does, so proximity checks against a child of
     // a moved/rotated parent are still correct.
-    size_t index = it->second;
-    mat4 world = local_transform(_nodes[index]);
-    size_t parent = _nodes[index].parent_index;
-    while (parent != kNoParent)
+    ecs::Entity entity = it->second;
+    const TransformComponent *transform = _registry.try_get<TransformComponent>(entity);
+    mat4 world = (transform != nullptr) ? local_transform(*transform) : mat4::identity();
+
+    const ParentComponent *parent = _registry.try_get<ParentComponent>(entity);
+    while (parent != nullptr && parent->parent != ecs::kInvalidEntity)
     {
-        world = mat4::multiply(local_transform(_nodes[parent]), world);
-        parent = _nodes[parent].parent_index;
+        const TransformComponent *parent_transform =
+            _registry.try_get<TransformComponent>(parent->parent);
+        mat4 parent_local = (parent_transform != nullptr)
+            ? local_transform(*parent_transform) : mat4::identity();
+        world = mat4::multiply(parent_local, world);
+        parent = _registry.try_get<ParentComponent>(parent->parent);
     }
     *out_position = vec3(world.m[12], world.m[13], world.m[14]);
     return true;

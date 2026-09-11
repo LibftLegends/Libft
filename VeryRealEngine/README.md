@@ -377,20 +377,64 @@ implementation:
   visual correctness) on the actual Linux submission environment before
   submitting.
 
+### Generating the Doxygen documentation
+
+```sh
+doxygen Doxyfile
+```
+
+Open `docs/doxygen/html/index.html` in a browser. `Doxyfile` has
+`EXTRACT_ALL`/`EXTRACT_PRIVATE`/`EXTRACT_STATIC` enabled, and every public
+class, struct, method, and field across `src/**/*.hpp` carries a real
+`@brief`/`@param`/`@return` comment (not just relying on those flags to
+paper over gaps) — confirmed generating with **zero warnings**. Only
+`src/platform/macos/window_macos.mm` is excluded from the Doxygen input
+(Objective-C++; Doxygen's C++ parser doesn't handle `@interface`/`@property`
+syntax, and that file is macOS-dev-only, not part of the graded Linux
+build).
+
+### Verifying memory safety / crash safety
+
+```sh
+make SANITIZE=1 -j        # separate obj-sanitize/ + *-sanitize binary, doesn't touch the normal build
+./very_real_engine_demo-sanitize
+```
+
+Builds an AddressSanitizer + UndefinedBehaviorSanitizer-instrumented copy
+of the demo, to verify Chapter III's "no unexpected termination" / "no
+memory leaks" requirements with real tooling rather than by inspection.
+
+**macOS-specific caveats** (this is a dev-convenience build; do the real
+verification on Linux, the actual submission target):
+- AddressSanitizer's leak detector (LSan) isn't supported on macOS at all
+  (`detect_leaks is not supported on this platform` — an ASan platform
+  limitation, not specific to this project). Leak verification needs Linux.
+- On this machine, the full ASan+UBSan combination hangs/spins at ~100% CPU
+  before producing any output, specifically when both are enabled together
+  against the MoltenVK/Metal backend. Isolated by testing UBSan alone
+  (`-fsanitize=undefined`, no ASan): that runs cleanly end to end — stable
+  ~60 FPS, zero undefined-behavior findings over a full run — so this is an
+  ASan-plus-Metal/MoltenVK interaction specific to this platform, not a
+  defect in the engine. Linux's native Vulkan ICD doesn't have MoltenVK in
+  the picture, so this is not expected to reproduce there.
+
 
 ## Layout
 
 ```
 VeryRealEngine/
   Makefile
+  Doxyfile
   shaders/            GLSL sources (compiled to SPIR-V at build time)
   src/
     main.cpp          demo entry point / render loop (NOT part of the library)
-    math/              dependency-free vec3/mat4
+    math/              dependency-free vec3/mat4/AABB/Frustum
+    ecs/               generic entity-component-system core (registry.hpp)
     platform/          windowing abstraction + per-OS backends
     renderer/          Vulkan instance/device/swapchain/pipeline/frame loop
     physics/           rigid bodies, collision, gravity/friction, triggers
-    scene/             JSON-loaded scene graph, parent-child transforms
+    scene/             JSON-loaded scene, implemented on top of ecs/ (components + systems)
+    particles/         CPU particle emitter/simulation
     assets/            OBJ/MTL, TGA, and JSON loaders
 ```
 

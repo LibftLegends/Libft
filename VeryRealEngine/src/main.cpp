@@ -110,6 +110,14 @@ int main(int argc, char **argv)
     auto start_time = std::chrono::high_resolution_clock::now();
     auto last_time = start_time;
 
+    // FPS measurement (Chapter IV.1's "must achieve at least 60 FPS in
+    // Release" requirement): a real, running average printed once a
+    // second, not a one-off number — reports frame *count* over the
+    // window, not 1/delta_seconds of a single frame, which would be far
+    // too noisy frame-to-frame to mean anything.
+    uint32_t frames_this_window = 0;
+    float fps_report_accumulator = 0.0f;
+
     while (!window->should_close())
     {
         window->poll_events();
@@ -211,6 +219,20 @@ int main(int argc, char **argv)
 
         renderer.draw_frame(view, projection, player_position, scene.get_lights(),
             scene.get_ambient(), items);
+
+        frames_this_window++;
+        fps_report_accumulator += delta_seconds;
+        if (fps_report_accumulator >= 1.0f)
+        {
+            const vre::Renderer::FrameStats &stats = renderer.get_last_frame_stats();
+            std::fprintf(stderr,
+                "FPS: %.1f (%.2f ms/frame) | items: %u total, %u frustum-visible, %u drawn\n",
+                static_cast<float>(frames_this_window) / fps_report_accumulator,
+                1000.0f * fps_report_accumulator / static_cast<float>(frames_this_window),
+                stats.total_items, stats.frustum_visible, stats.drawn);
+            frames_this_window = 0;
+            fps_report_accumulator = 0.0f;
+        }
     }
 
     renderer.wait_idle();

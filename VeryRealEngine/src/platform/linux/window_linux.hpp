@@ -1,3 +1,10 @@
+/**
+ * @file window_linux.hpp
+ * @brief Linux windowing backend: plain Xlib, same choice GPGR's Linux
+ * backend made (Modules/GPGR/gpgr_window_linux.cpp), so window/event-loop
+ * shape is familiar — but this backend exposes a VkSurfaceKHR via
+ * VK_KHR_xlib_surface instead of creating a GLX context.
+ */
 #pragma once
 
 #include "../window.hpp"
@@ -10,10 +17,7 @@
 namespace vre
 {
 
-// Linux windowing backend: plain Xlib, same choice GPGR's Linux backend
-// made (Modules/GPGR/gpgr_window_linux.cpp), so window/event-loop shape is
-// familiar — but this backend exposes a VkSurfaceKHR via
-// VK_KHR_xlib_surface instead of creating a GLX context.
+/// Xlib + VK_KHR_xlib_surface implementation of Window.
 class WindowLinux : public Window
 {
     public:
