@@ -1,0 +1,8 @@
+# Black door-hardware metal: untextured (a solid painted/anodized metal
+# handle doesn't need a diffuse map — Kd alone tints the engine's default
+# white fallback texture), metallic, fairly smooth for a small sharp
+# highlight along the bar.
+newmtl handle
+Kd 0.05 0.05 0.05
+Pr 0.35
+Pm 0.85

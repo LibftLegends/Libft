@@ -558,6 +558,7 @@ environment with no window-permission/input access).
 | `VRE_CAMERA_POS` | `"x,y,z"` — overrides the starting camera position. |
 | `VRE_CAMERA_YAW` / `VRE_CAMERA_PITCH` | Overrides the starting camera orientation (radians). |
 | `VRE_FORCE_DOOR_OPEN` | House scene: starts with the door already fully open (skips the lerp animation). |
+| `VRE_DOOR_OPEN_ANGLE` | House scene: radians the door swings to when opened (default `1.35`, ~77°) — combine with `VRE_FORCE_DOOR_OPEN` for a small deliberate gap instead of a full swing, e.g. for framing a glimpse of the next room alongside the door. |
 | `VRE_FORCE_LIGHT_ON` | House scene: starts with Room B's light already on. |
 | `VRE_FORCE_HIDE_NODE` | Calls `Scene::set_visible(name, false)` at startup — the same API the H-key binding uses, for verifying hide-parent-hides-children without a keypress. |
 | `VRE_AUTO_YAW_SPEED` | Continuously pans the camera at this many radians/second — lets the motion-blur post-process effect (which needs real camera movement) be exercised and screenshotted. |

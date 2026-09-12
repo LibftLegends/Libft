@@ -123,7 +123,7 @@ int main(int argc, char **argv)
     // Door and light-switch interaction state.
     bool door_open = false;
     float door_angle = 0.0f;
-    const float door_open_angle = 1.35f; // radians, ~77 degrees
+    float door_open_angle = 1.35f; // radians, ~77 degrees; VRE_DOOR_OPEN_ANGLE can override this below
     bool room_b_light_on = false;
     const float room_b_light_off_intensity = 0.05f;
     const float room_b_light_on_intensity = 4.0f;
@@ -148,6 +148,12 @@ int main(int argc, char **argv)
         yaw = static_cast<float>(std::atof(env));
     if (const char *env = std::getenv("VRE_CAMERA_PITCH"))
         pitch = static_cast<float>(std::atof(env));
+    // Overrides how far VRE_FORCE_DOOR_OPEN below opens the door — lets a
+    // screenshot show a small, deliberate gap (e.g. for framing a glimpse
+    // of the next room alongside the door, rather than a fully-open
+    // doorway) instead of only the full ~77-degree swing.
+    if (const char *env = std::getenv("VRE_DOOR_OPEN_ANGLE"))
+        door_open_angle = static_cast<float>(std::atof(env));
     if (std::getenv("VRE_FORCE_DOOR_OPEN") != nullptr)
     {
         door_open = true;

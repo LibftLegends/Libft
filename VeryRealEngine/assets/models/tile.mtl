@@ -1,0 +1,8 @@
+# Small-format bathroom/hallway tile: dielectric, moderately smooth
+# (glazed ceramic reads with a soft, fairly tight highlight, not the broad
+# matte one plain wall plaster has).
+newmtl tile
+Kd 1.000 1.000 1.000
+map_Kd ../textures/tile.tga
+Pr 0.45
+Pm 0.0

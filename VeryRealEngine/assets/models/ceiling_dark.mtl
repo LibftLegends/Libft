@@ -1,0 +1,8 @@
+# Dark painted/matte-black ceiling (the moody near-black ceiling in Figure
+# V.1's hallway): dielectric, fairly smooth so it still picks up a soft
+# highlight under a strong key light instead of reading as flat void-black.
+newmtl ceiling_dark
+Kd 1.000 1.000 1.000
+map_Kd ../textures/ceiling_dark.tga
+Pr 0.4
+Pm 0.0

@@ -1,0 +1,8 @@
+# White/cream bed linen: dielectric, fully rough (fabric has no specular
+# sheen worth modeling here) — the bedding block glimpsed through the
+# doorway in Figure V.1's recreation.
+newmtl linen
+Kd 1.000 1.000 1.000
+map_Kd ../textures/linen.tga
+Pr 0.95
+Pm 0.0

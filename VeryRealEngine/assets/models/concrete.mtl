@@ -1,0 +1,8 @@
+# Polished/formed concrete: dielectric, fairly rough but a touch smoother
+# than plain plaster (a sealed/polished concrete surface still has some
+# sheen under a strong key light).
+newmtl concrete
+Kd 1.000 1.000 1.000
+map_Kd ../textures/concrete.tga
+Pr 0.65
+Pm 0.0
