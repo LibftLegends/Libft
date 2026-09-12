@@ -377,6 +377,63 @@ time into those matrices each frame.
   would fix this; not done here to keep this bonus feature's Vulkan surface
   area small and low-risk against the already-verified shadow pipeline.
 
+### Visual-fidelity demonstration scenes (Figures V.1–V.4)
+
+Per the project directive that visual parity with the subject's four reference
+figures is a hard target, not a suggestion: every figure now has a real,
+running scene, not just a written comparison.
+
+- **Figure V.1** — recreated directly inside `house_scene.json` itself
+  (the required interactive house demo doubles as this figure's
+  recreation): a tiled hallway wall, a thick concrete door jamb with a real
+  recessed reveal (not a flat panel), a wood door with a long vertical black
+  handle, and a *permanent* narrow gap beside the door (not just the
+  hinge-open animation) revealing a wood-paneled bedroom with a bed —
+  visible even with the door fully closed, matching the reference's
+  composition. New materials: `tile`, `concrete`, `handle` (black metal),
+  `ceiling_dark`, `linen`.
+- **Figure V.2** — `assets/scenes/fidelity_v2_scene.json`: a concrete-walled
+  open pavilion with wood-framed leather seating, under a swooping
+  cantilevered canopy roof built from 4 progressively-angled flat panels
+  (real rotated geometry approximating a curve this engine's box-only
+  primitives can't render directly), plus foliage planters and a garden
+  wall. New materials: `canopy`, `leather`, `foliage`.
+- **Figure V.3** — `assets/scenes/fidelity_v3_scene.json`: marble columns
+  with capitals, a gilded cornice band, three gold-framed arch-panel bays,
+  and a chandelier (gold rings + 5 bright bulb boxes) lit by a strong warm
+  point light — an upward-looking shot in the same spirit as the reference's
+  ornate ceiling/chandelier framing. New materials: `gold`, `marble`.
+- **Figure V.4** — `assets/scenes/fidelity_v4_scene.json`: a wood-post
+  tavern/workshop interior (slate floor, cream plaster walls, a stone-arched
+  wood door, bronze wall-mounted shield plaques, a hanging lantern,
+  workbenches and crates) opening onto an exterior with a wood fence, three
+  trees (trunk + foliage boxes), a barrel, and a potted plant, with a large
+  tinted backdrop panel standing in for sky. New materials: `slate`,
+  `bronze`, `sky`.
+
+**Two real bugs found and fixed while building these**, beyond the usual
+per-scene layout iteration:
+1. The pendulum lamp and steam particle emitter (hardcoded to
+   `house_scene.json`'s own coordinates) were loading unconditionally in
+   *every* scene, showing up as a stray floating object in the new fidelity
+   scenes. Fixed by gating both behind an `is_house_scene` check in
+   `main.cpp`, derived from the scene path — the same pattern already used
+   for the H-key demo-scene-only hint.
+2. `fidelity_v4_scene.json`'s back wall and door-arch frame didn't fully
+   meet at their shared edges, leaving unintended gaps that showed the
+   renderer's background clear color through as a stray void. Fixed by
+   resizing the wall segments and the arch frame to actually close.
+
+**Honest limitations, stated plainly**: this engine has box primitives
+only — no curves, cylinders, or true arches — so the canopy's sweep and
+every arch/column/tree here are angled or stacked boxes approximating the
+reference's organic and curved forms, not literal geometric recreations.
+There's also no skybox/atmosphere system yet; the `sky` material (a large
+tinted backdrop box) is a cheap stand-in for open sky, and at some camera
+angles in `fidelity_v2_scene.json`/`fidelity_v3_scene.json` specifically
+(not yet retrofitted with a backdrop) the renderer's own dark clear color
+still shows through as a flat void at the edges of the frame.
+
 ### Controls
 
 - **WASD** — move, **arrow keys** — look (house scene)
