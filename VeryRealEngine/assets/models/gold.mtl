@@ -1,0 +1,8 @@
+# Gilded ornamental trim (Figure V.3's arches/cornices/chandelier frame):
+# fully metallic with a fairly tight, warm-tinted highlight — the signature
+# look that separates gold leaf from a plain yellow-painted dielectric.
+newmtl gold
+Kd 1.000 1.000 1.000
+map_Kd ../textures/gold.tga
+Pr 0.3
+Pm 1.0

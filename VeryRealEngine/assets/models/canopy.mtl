@@ -1,0 +1,8 @@
+# Dark painted/oxidized steel: the swooping cantilevered roof blade in
+# Figure V.2 — semi-metallic with a fairly tight highlight, so it reads as
+# painted structural steel rather than flat matte plastic.
+newmtl canopy
+Kd 1.000 1.000 1.000
+map_Kd ../textures/canopy.tga
+Pr 0.35
+Pm 0.55

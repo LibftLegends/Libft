@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 namespace
@@ -42,6 +43,14 @@ float clamp_pitch(float pitch)
 int main(int argc, char **argv)
 {
     const char *scene_path = (argc > 1) ? argv[1] : "assets/scenes/house_scene.json";
+    // The steam emitter and pendulum lamp are hand-placed at world
+    // coordinates that only make sense inside house_scene.json's own room
+    // layout (above its coffee machine, hanging from its ceiling); loading
+    // them unconditionally into an unrelated scene (e.g. the visual-fidelity
+    // demonstration scenes) would just place a stray floating prop in the
+    // middle of someone else's composition. Gated the same way the H-key
+    // hint already documents demo_scene.json-only behavior above.
+    const bool is_house_scene = std::string(scene_path).find("house_scene") != std::string::npos;
 
     vre::Window *window = vre::Window::create();
     if (!window->initialize("VeryRealEngine", 1280, 720))
@@ -346,20 +355,24 @@ int main(int argc, char **argv)
 
         std::vector<vre::RenderItem> items;
         scene.collect_render_items(&items);
-        steam.collect_render_items(&items);
+        if (is_house_scene)
+        {
+            steam.collect_render_items(&items);
 
-        vre::RenderItem pendulum_item;
-        pendulum_item.mesh = pendulum_mesh;
-        pendulum_item.model = pendulum_model;
-        // Left at its default (opted out of occlusion culling — see
-        // RenderItem::occlusion_id's doc comment): this is one small object
-        // near the ceiling, not worth the query-pool bookkeeping, and
-        // opting out just means "always drawn if frustum-visible", not a
-        // correctness issue.
-        items.push_back(pendulum_item);
+            vre::RenderItem pendulum_item;
+            pendulum_item.mesh = pendulum_mesh;
+            pendulum_item.model = pendulum_model;
+            // Left at its default (opted out of occlusion culling — see
+            // RenderItem::occlusion_id's doc comment): this is one small
+            // object near the ceiling, not worth the query-pool
+            // bookkeeping, and opting out just means "always drawn if
+            // frustum-visible", not a correctness issue.
+            items.push_back(pendulum_item);
+        }
 
         renderer.draw_frame(view, projection, player_position, scene.get_lights(),
-            scene.get_ambient(), items, motion_blur_x, motion_blur_y, pendulum_bone_matrices);
+            scene.get_ambient(), items, motion_blur_x, motion_blur_y,
+            is_house_scene ? pendulum_bone_matrices : std::vector<vre::mat4>{});
 
         frame_counter++;
         if (screenshot_path != nullptr && frame_counter == screenshot_after_frame)

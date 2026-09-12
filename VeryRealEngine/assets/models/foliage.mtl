@@ -1,0 +1,7 @@
+# Greenery stand-in (Figure V.2's garden/planters): fully rough, no
+# specular sheen worth modeling for a simple box-primitive plant silhouette.
+newmtl foliage
+Kd 1.000 1.000 1.000
+map_Kd ../textures/foliage.tga
+Pr 0.9
+Pm 0.0

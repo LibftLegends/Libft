@@ -1,0 +1,8 @@
+# Warm brown leather upholstery (Figure V.2's living-room seating):
+# dielectric, moderately smooth for leather's soft sheen — broader and
+# dimmer than the wood door's highlight, tighter than plain matte fabric.
+newmtl leather
+Kd 1.000 1.000 1.000
+map_Kd ../textures/leather.tga
+Pr 0.55
+Pm 0.0

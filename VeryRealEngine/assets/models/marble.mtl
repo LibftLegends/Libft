@@ -1,0 +1,7 @@
+# Polished white/cream marble (Figure V.3's columns and floor): dielectric,
+# smooth and glossy — polished stone's broad, bright sheen.
+newmtl marble
+Kd 1.000 1.000 1.000
+map_Kd ../textures/marble.tga
+Pr 0.2
+Pm 0.0
