@@ -1,0 +1,66 @@
+{
+    "ambient": 0.08,
+    "lights": [
+        {
+            "type": "point",
+            "position": [-3.0, 2.6, 1.0],
+            "color": [1.0, 0.75, 0.4],
+            "intensity": 3.5
+        },
+        {
+            "type": "point",
+            "position": [3.0, 2.5, 0.0],
+            "color": [0.9, 0.95, 1.0],
+            "intensity": 7.0
+        }
+    ],
+    "objects": [
+        { "name": "sky_backdrop", "mesh": "assets/models/cube_sky.obj", "position": [5.5, 5, 0], "scale": [0.4, 16, 12] },
+
+        { "name": "floor", "mesh": "assets/models/cube_slate.obj", "position": [1, -0.05, 0], "scale": [11, 0.1, 7] },
+        { "name": "ceiling", "mesh": "assets/models/cube_wood.obj", "position": [-2, 3.2, 0], "scale": [6, 0.15, 6.5] },
+
+        { "name": "wall_back_left", "mesh": "assets/models/cube_wall.obj", "position": [-3.7, 1.6, -3.2], "scale": [2.6, 3.2, 0.15] },
+        { "name": "wall_back_right", "mesh": "assets/models/cube_wall.obj", "position": [0.1, 1.6, -3.2], "scale": [1.8, 3.2, 0.15] },
+        { "name": "wall_left", "mesh": "assets/models/cube_wall.obj", "position": [-4.9, 1.6, 0], "scale": [0.15, 3.2, 6.5] },
+
+        { "name": "post_1", "mesh": "assets/models/cube_wood.obj", "position": [-1.6, 1.55, -0.2], "scale": [0.4, 3.1, 0.4] },
+        { "name": "post_2", "mesh": "assets/models/cube_wood.obj", "position": [0.4, 1.55, -0.6], "scale": [0.4, 3.1, 0.4] },
+        { "name": "post_3", "mesh": "assets/models/cube_wood.obj", "position": [1.0, 1.55, 1.8], "scale": [0.4, 3.1, 0.4] },
+
+        { "name": "beam_1", "mesh": "assets/models/cube_wood.obj", "position": [-1.0, 3.0, -0.4], "scale": [3.4, 0.3, 0.3] },
+        { "name": "beam_2", "mesh": "assets/models/cube_wood.obj", "position": [0.5, 3.0, 1.0], "scale": [0.3, 0.3, 3.0] },
+
+        { "name": "door_arch_frame", "mesh": "assets/models/cube_concrete.obj", "position": [-1.6, 1.6, -3.15], "scale": [1.6, 3.2, 0.3] },
+        { "name": "door", "mesh": "assets/models/cube_wood.obj", "position": [-1.6, 1.3, -3.05], "scale": [1.15, 2.2, 0.1] },
+
+        { "name": "shield_1", "mesh": "assets/models/cube_bronze.obj", "position": [-3.6, 2.0, -3.1], "scale": [0.5, 0.5, 0.08] },
+        { "name": "shield_2", "mesh": "assets/models/cube_bronze.obj", "position": [-2.7, 2.1, -3.1], "scale": [0.45, 0.45, 0.08] },
+
+        { "name": "lantern_frame", "mesh": "assets/models/cube_handle.obj", "position": [-3.0, 2.6, 1.0], "scale": [0.15, 0.2, 0.15] },
+        { "name": "lantern_chain", "mesh": "assets/models/cube_handle.obj", "position": [-3.0, 2.9, 1.0], "scale": [0.03, 0.4, 0.03] },
+
+        { "name": "workbench_1", "mesh": "assets/models/cube_wood.obj", "position": [-4.0, 0.55, -1.5], "scale": [1.4, 0.1, 0.7] },
+        { "name": "workbench_1_leg_a", "mesh": "assets/models/cube_wood.obj", "position": [-4.5, 0.25, -1.5], "scale": [0.1, 0.5, 0.6] },
+        { "name": "workbench_1_leg_b", "mesh": "assets/models/cube_wood.obj", "position": [-3.5, 0.25, -1.5], "scale": [0.1, 0.5, 0.6] },
+        { "name": "crate_1", "mesh": "assets/models/cube_wood.obj", "position": [-4.2, 0.3, -0.2], "scale": [0.6, 0.6, 0.6] },
+        { "name": "crate_2", "mesh": "assets/models/cube_wood.obj", "position": [-3.4, 0.3, -0.1], "scale": [0.55, 0.55, 0.55] },
+        { "name": "workbench_2", "mesh": "assets/models/cube_wood.obj", "position": [-0.6, 0.6, 0.6], "scale": [1.3, 0.1, 0.8] },
+
+        { "name": "fence_post_1", "mesh": "assets/models/cube_wood.obj", "position": [2.0, 0.6, -2.4], "scale": [0.1, 1.2, 0.1] },
+        { "name": "fence_post_2", "mesh": "assets/models/cube_wood.obj", "position": [2.6, 0.6, -1.5], "scale": [0.1, 1.2, 0.1] },
+        { "name": "fence_post_3", "mesh": "assets/models/cube_wood.obj", "position": [2.9, 0.6, -0.3], "scale": [0.1, 1.2, 0.1] },
+        { "name": "fence_rail", "mesh": "assets/models/cube_wood.obj", "position": [2.5, 0.9, -1.4], "scale": [1.8, 0.08, 0.08], "rotation": [0, 0.35, 0] },
+
+        { "name": "tree_1_trunk", "mesh": "assets/models/cube_wood.obj", "position": [3.2, 0.6, -2.2], "scale": [0.25, 1.2, 0.25] },
+        { "name": "tree_1_leaves", "mesh": "assets/models/cube_foliage.obj", "position": [3.2, 1.7, -2.2], "scale": [1.3, 1.6, 1.3] },
+        { "name": "tree_2_trunk", "mesh": "assets/models/cube_wood.obj", "position": [4.2, 0.6, -0.6], "scale": [0.25, 1.2, 0.25] },
+        { "name": "tree_2_leaves", "mesh": "assets/models/cube_foliage.obj", "position": [4.2, 1.9, -0.6], "scale": [1.5, 1.9, 1.5] },
+        { "name": "tree_3_trunk", "mesh": "assets/models/cube_wood.obj", "position": [3.6, 0.6, 1.3], "scale": [0.22, 1.1, 0.22] },
+        { "name": "tree_3_leaves", "mesh": "assets/models/cube_foliage.obj", "position": [3.6, 1.6, 1.3], "scale": [1.2, 1.4, 1.2] },
+
+        { "name": "barrel", "mesh": "assets/models/cube_wood.obj", "position": [2.0, 0.4, 1.6], "scale": [0.55, 0.8, 0.55] },
+        { "name": "pot", "mesh": "assets/models/cube_wood.obj", "position": [1.5, 0.25, 2.2], "scale": [0.4, 0.5, 0.4] },
+        { "name": "pot_plant", "mesh": "assets/models/cube_foliage.obj", "position": [1.5, 0.65, 2.2], "scale": [0.5, 0.5, 0.5] }
+    ]
+}

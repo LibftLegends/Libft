@@ -1,0 +1,7 @@
+# Dark slate flagstone floor (Figure V.4's tavern/workshop floor):
+# dielectric, fairly rough — worn stone, not a polished surface.
+newmtl slate
+Kd 1.000 1.000 1.000
+map_Kd ../textures/slate.tga
+Pr 0.8
+Pm 0.0

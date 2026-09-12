@@ -1,0 +1,7 @@
+# Dark aged bronze/iron (Figure V.4's wall-mounted shield plaques):
+# metallic with a dulled, worn highlight rather than a bright polished one.
+newmtl bronze
+Kd 1.000 1.000 1.000
+map_Kd ../textures/bronze.tga
+Pr 0.55
+Pm 0.8

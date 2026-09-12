@@ -1,0 +1,10 @@
+# Flat pale sky-blue backdrop: untextured (a plain Kd tint is enough for a
+# distant sky plane), fully rough so it doesn't pick up a distracting
+# specular highlight — this engine has no real skybox/atmosphere system, so
+# a large tinted box far behind the outdoor props is a cheap stand-in for
+# "there's sky back there" instead of the renderer's own dark clear color
+# showing through as a void.
+newmtl sky
+Kd 0.55 0.72 0.92
+Pr 1.0
+Pm 0.0
