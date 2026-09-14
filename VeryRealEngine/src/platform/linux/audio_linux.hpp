@@ -15,11 +15,7 @@
 
 #include "../../audio/audio_system.hpp"
 #include "../../audio/mixer.hpp"
-
-#include <alsa/asoundlib.h>
-
-#include <atomic>
-#include <thread>
+#include "../../vre.hpp"
 
 namespace vre
 {
@@ -27,32 +23,36 @@ namespace vre
 /// ALSA-backed implementation of AudioSystem.
 class AudioLinux : public AudioSystem
 {
-    public:
-        AudioLinux();
-        ~AudioLinux() override;
+  public:
+	AudioLinux();
+	~AudioLinux() override;
 
-        bool initialize() override;
-        void destroy() override;
+	bool initialize() override;
+	void destroy() override;
 
-        SoundHandle load_sound(const char *path) override { return _mixer.load_sound(path); }
-        VoiceHandle play(SoundHandle sound, bool loop, float volume) override
-        {
-            return _mixer.play(sound, loop, volume);
-        }
-        void stop(VoiceHandle voice) override { _mixer.stop(voice); }
-        void stop_all() override { _mixer.stop_all(); }
-        void set_master_volume(float volume) override { _mixer.set_master_volume(volume); }
+	SoundHandle load_sound(const char *path) override;
+	VoiceHandle play(SoundHandle sound, bool loop, float volume) override;
+	void stop(VoiceHandle voice) override;
+	void stop_all() override;
+	void set_master_volume(float volume) override;
 
-    private:
-        /// Writer-thread body: repeatedly mixes a period's worth of frames and writes them to ALSA.
-        void writer_thread_main();
+  private:
+	// Owns a Mixer/std::thread/std::atomic, none of which the standard
+	// library allows to be copied — the pre-C++11 idiom of a private,
+	// never-defined copy constructor/assignment operator (this project
+	// avoids `= delete`).
+	AudioLinux(const AudioLinux &other);
+	AudioLinux &operator=(const AudioLinux &other);
 
-        snd_pcm_t *_pcm_handle = nullptr;
-        Mixer _mixer;
-        std::thread _writer_thread;
-        std::atomic<bool> _running{false};
-        uint32_t _sample_rate = 44100;
-        snd_pcm_uframes_t _period_frames = 0;
+	/// Writer-thread body: repeatedly mixes a period's worth of frames and writes them to ALSA.
+	void writer_thread_main();
+
+	snd_pcm_t *_pcm_handle;
+	Mixer _mixer;
+	std::thread _writer_thread;
+	std::atomic<bool> _running;
+	uint32_t _sample_rate;
+	snd_pcm_uframes_t _period_frames;
 };
 
 } // namespace vre

@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "../animation/animation_clip.hpp"
 #include "../animation/skeleton.hpp"
 #include "../vre.hpp"
 #include "mesh_data.hpp"

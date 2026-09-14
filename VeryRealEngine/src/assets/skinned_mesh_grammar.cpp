@@ -56,8 +56,8 @@ bool SkinnedMeshLoader::read_animation(const JsonValue &root, SkinnedAsset *out_
     if (animation_field == nullptr || !animation_field->is_object())
         return (false);
 
-    out_asset->clip().duration = static_cast<float>(animation_field->find("duration") != nullptr
-        ? animation_field->find("duration")->as_number(1.0) : 1.0);
+    out_asset->clip().set_duration(static_cast<float>(animation_field->find("duration") != nullptr
+        ? animation_field->find("duration")->as_number(1.0) : 1.0));
 
     const JsonValue *tracks_field = animation_field->find("tracks");
     if (tracks_field == nullptr || !tracks_field->is_array())
@@ -66,8 +66,8 @@ bool SkinnedMeshLoader::read_animation(const JsonValue &root, SkinnedAsset *out_
     for (const JsonValue &track_json : tracks_field->array_elements())
     {
         AnimationTrack track;
-        track.bone_index = static_cast<uint32_t>(
-            track_json.find("bone") != nullptr ? track_json.find("bone")->as_number(0) : 0);
+        track.set_bone_index(static_cast<uint32_t>(
+            track_json.find("bone") != nullptr ? track_json.find("bone")->as_number(0) : 0));
 
         const JsonValue *keyframes_field = track_json.find("keyframes");
         if (keyframes_field != nullptr && keyframes_field->is_array())
@@ -75,15 +75,15 @@ bool SkinnedMeshLoader::read_animation(const JsonValue &root, SkinnedAsset *out_
             for (const JsonValue &keyframe_json : keyframes_field->array_elements())
             {
                 Keyframe keyframe;
-                keyframe.time = static_cast<float>(keyframe_json.find("time") != nullptr
-                    ? keyframe_json.find("time")->as_number(0.0) : 0.0);
-                keyframe.rotation = keyframe_json.find("rotation") != nullptr
+                keyframe.set_time(static_cast<float>(keyframe_json.find("time") != nullptr
+                    ? keyframe_json.find("time")->as_number(0.0) : 0.0));
+                keyframe.set_rotation(keyframe_json.find("rotation") != nullptr
                     ? keyframe_json.find("rotation")->as_vec3(vec3(0.0f, 0.0f, 0.0f))
-                    : vec3(0.0f, 0.0f, 0.0f);
-                track.keyframes.push_back(keyframe);
+                    : vec3(0.0f, 0.0f, 0.0f));
+                track.keyframes().push_back(keyframe);
             }
         }
-        out_asset->clip().tracks.push_back(track);
+        out_asset->clip().tracks().push_back(track);
     }
     return (true);
 }

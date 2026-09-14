@@ -21,25 +21,62 @@ namespace
 
 class NullAudioSystem : public AudioSystem
 {
-    public:
-        bool initialize() override { return false; }
-        void destroy() override {}
+  public:
+	NullAudioSystem()
+	{
+	}
 
-        SoundHandle load_sound(const char *path) override { return _mixer.load_sound(path); }
-        VoiceHandle play(SoundHandle, bool, float) override { return kInvalidVoice; }
-        void stop(VoiceHandle) override {}
-        void stop_all() override {}
-        void set_master_volume(float) override {}
+	~NullAudioSystem() override
+	{
+	}
 
-    private:
-        Mixer _mixer; ///< Unused for playback here, just gives load_sound() something real to do.
+	bool initialize() override
+	{
+		return (false);
+	}
+
+	void destroy() override
+	{
+	}
+
+	SoundHandle load_sound(const char *path) override
+	{
+		return (_mixer.load_sound(path));
+	}
+
+	VoiceHandle play(SoundHandle, bool, float) override
+	{
+		return (VoiceHandle::invalid());
+	}
+
+	void stop(VoiceHandle) override
+	{
+	}
+
+	void stop_all() override
+	{
+	}
+
+	void set_master_volume(float) override
+	{
+	}
+
+  private:
+	// Owns a Mixer, which owns a std::mutex — the pre-C++11 idiom of a
+	// private, never-defined copy constructor/assignment operator
+	// (this project avoids `= delete`), same as Mixer's own.
+	NullAudioSystem(const NullAudioSystem &other);
+	NullAudioSystem &operator=(const NullAudioSystem &other);
+
+	/** Unused for playback here, just gives load_sound() something real to do. */
+	Mixer _mixer;
 };
 
 } // namespace
 
 AudioSystem *AudioSystem::create()
 {
-    return new NullAudioSystem();
+	return (new NullAudioSystem());
 }
 
 } // namespace vre

@@ -15,6 +15,8 @@
 #include "physics/physics_world.hpp"
 #include "particles/particle_system.hpp"
 #include "audio/audio_system.hpp"
+#include "animation/animation_clip.hpp"
+#include "animation/animator.hpp"
 #include "animation/skeleton.hpp"
 #include "math/mat4.hpp"
 #include "math/vec3.hpp"
@@ -112,15 +114,15 @@ int main(int argc, char **argv)
     // silently rather than aborting.
     vre::AudioSystem *audio = vre::AudioSystem::create();
     bool audio_available = audio->initialize();
-    vre::SoundHandle ambient_sound = vre::kInvalidSound;
-    vre::SoundHandle click_sound = vre::kInvalidSound;
-    vre::SoundHandle door_creak_sound = vre::kInvalidSound;
+    vre::SoundHandle ambient_sound = vre::SoundHandle::invalid();
+    vre::SoundHandle click_sound = vre::SoundHandle::invalid();
+    vre::SoundHandle door_creak_sound = vre::SoundHandle::invalid();
     if (audio_available)
     {
         ambient_sound = audio->load_sound("assets/sounds/ambient_hum.wav");
         click_sound = audio->load_sound("assets/sounds/click.wav");
         door_creak_sound = audio->load_sound("assets/sounds/door_creak.wav");
-        if (ambient_sound != vre::kInvalidSound)
+        if (ambient_sound.is_valid())
             audio->play(ambient_sound, /*loop=*/true, /*volume=*/0.35f);
     }
 
@@ -286,7 +288,7 @@ int main(int argc, char **argv)
             {
                 door_open = !door_open;
                 std::fprintf(stderr, "Door %s.\n", door_open ? "opened" : "closed");
-                if (door_creak_sound != vre::kInvalidSound)
+                if (door_creak_sound.is_valid())
                     audio->play(door_creak_sound, /*loop=*/false, /*volume=*/0.8f);
             }
         }
@@ -306,7 +308,7 @@ int main(int argc, char **argv)
                 scene.set_light_intensity(room_b_light_index,
                     room_b_light_on ? room_b_light_on_intensity : room_b_light_off_intensity);
                 std::fprintf(stderr, "Room B light %s.\n", room_b_light_on ? "on" : "off");
-                if (click_sound != vre::kInvalidSound)
+                if (click_sound.is_valid())
                     audio->play(click_sound, /*loop=*/false, /*volume=*/0.6f);
             }
         }

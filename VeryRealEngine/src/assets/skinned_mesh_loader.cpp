@@ -37,16 +37,16 @@ bool SkinnedMeshLoader::read_bones(const JsonValue &bones_field, SkinnedAsset *o
     for (const JsonValue &bone_json : bones_field.array_elements())
     {
         Bone bone;
-        bone.name = bone_json.find("name") != nullptr
-            ? bone_json.find("name")->as_string() : std::string();
+        bone.set_name(bone_json.find("name") != nullptr
+            ? bone_json.find("name")->as_string() : std::string());
         const JsonValue *parent_field = bone_json.find("parent");
-        bone.parent_index = (parent_field != nullptr)
-            ? static_cast<int32_t>(parent_field->as_number(-1)) : kNoParentBone;
-        bone.bind_local_position = bone_json.find("position") != nullptr
-            ? bone_json.find("position")->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
-        bone.bind_local_rotation = bone_json.find("rotation") != nullptr
-            ? bone_json.find("rotation")->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
-        out_asset->skeleton().bones.push_back(bone);
+        bone.set_parent_index((parent_field != nullptr)
+            ? static_cast<int32_t>(parent_field->as_number(-1)) : Bone::no_parent_index());
+        bone.set_bind_local_position(bone_json.find("position") != nullptr
+            ? bone_json.find("position")->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f));
+        bone.set_bind_local_rotation(bone_json.find("rotation") != nullptr
+            ? bone_json.find("rotation")->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f));
+        out_asset->skeleton().bones().push_back(bone);
     }
     out_asset->skeleton().compute_bind_pose();
     return (true);
@@ -94,8 +94,8 @@ bool SkinnedMeshLoader::load(const char *path, SkinnedAsset *out_asset)
     std::fprintf(stderr,
         "Renderer: loaded skinned asset \"%s\": %zu bone(s), %zu vertices, %zu indices, "
         "%zu animation track(s)\n",
-        path, asset.skeleton().bones.size(), asset.mesh().vertices().size(),
-        asset.mesh().indices().size(), asset.clip().tracks.size());
+        path, asset.skeleton().bones().size(), asset.mesh().vertices().size(),
+        asset.mesh().indices().size(), asset.clip().tracks().size());
 
     *out_asset = std::move(asset);
     return (true);

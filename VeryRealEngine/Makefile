@@ -51,9 +51,18 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/scene/scene.cpp \
                 src/physics/physics_world.cpp \
                 src/particles/particle_system.cpp \
+                src/audio/sound_handle.cpp \
+                src/audio/voice_handle.cpp \
+                src/audio/wav_clip.cpp \
                 src/audio/wav_loader.cpp \
+                src/audio/audio_system.cpp \
                 src/audio/mixer.cpp \
                 src/assets/skinned_mesh_loader.cpp \
+                src/animation/bone.cpp \
+                src/animation/keyframe.cpp \
+                src/animation/animation_track.cpp \
+                src/animation/animation_clip.cpp \
+                src/animation/animator.cpp \
                 src/animation/skeleton.cpp
 LIB_MM_SRCS  :=
 

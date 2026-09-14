@@ -13,19 +13,13 @@
  */
 #pragma once
 
-#include "audio_system.hpp"
-#include "wav_loader.hpp"
-
-#include <cstdint>
-#include <mutex>
-#include <vector>
+#include "../vre.hpp"
+#include "sound_handle.hpp"
+#include "voice_handle.hpp"
+#include "wav_clip.hpp"
 
 namespace vre
 {
-
-/// Fixed pool size: how many sounds can play at once (background loop(s) + a
-/// handful of simultaneous one-shots is all this engine's demo ever needs).
-constexpr uint32_t kMaxVoices = 32;
 
 /**
  * @brief The mixing engine itself, independent of how its output reaches a
@@ -35,55 +29,70 @@ constexpr uint32_t kMaxVoices = 32;
  */
 class Mixer
 {
-    public:
-        /// Loads a WAV file, returning a handle usable with play(). See AudioSystem::load_sound.
-        SoundHandle load_sound(const char *path);
+  public:
+	Mixer();
+	~Mixer();
 
-        /// Starts a voice; see AudioSystem::play for parameter semantics.
-        VoiceHandle play(SoundHandle sound, bool loop, float volume);
-        /// Stops one voice immediately.
-        void stop(VoiceHandle voice);
-        /// Stops every voice immediately.
-        void stop_all();
+	/** Loads a WAV file, returning a handle usable with play(). See AudioSystem::load_sound. */
+	SoundHandle load_sound(const char *path);
 
-        /// See AudioSystem::set_master_volume.
-        void set_master_volume(float volume) { _master_volume = volume; }
+	/// Starts a voice; see AudioSystem::play for parameter semantics.
+	VoiceHandle play(SoundHandle sound, bool loop, float volume);
+	/// Stops one voice immediately.
+	void stop(VoiceHandle voice);
+	/// Stops every voice immediately.
+	void stop_all();
 
-        /**
-         * @brief Renders `frame_count` stereo frames into `out`, advancing
-         * every active voice and deactivating any non-looping voice that
-         * reaches its end.
-         * @param out Destination buffer for interleaved L/R 16-bit samples;
-         * must hold at least `frame_count * 2` int16_t values.
-         * @param frame_count How many stereo frames to render.
-         * @param out_sample_rate The output device's actual sample rate —
-         * each voice is resampled from its own clip's rate to this one, so
-         * clips authored at any common rate (44100, 48000, ...) play back
-         * at the correct pitch/speed regardless of the device's rate.
-         */
-        void mix(int16_t *out, size_t frame_count, uint32_t out_sample_rate);
+	/// See AudioSystem::set_master_volume.
+	void set_master_volume(float volume);
 
-    private:
-        struct Voice
-        {
-            bool active = false;
-            SoundHandle sound = kInvalidSound;
-            double source_position = 0.0; ///< In source frames (fractional, for resampling).
-            bool loop = false;
-            float volume = 1.0f;
-        };
+	/**
+		* @brief Renders `frame_count` stereo frames into `out`, advancing
+		* every active voice and deactivating any non-looping voice that
+		* reaches its end.
+		* @param out Destination buffer for interleaved L/R 16-bit samples;
+		* must hold at least `frame_count * 2` int16_t values.
+		* @param frame_count How many stereo frames to render.
+		* @param out_sample_rate The output device's actual sample rate —
+		* each voice is resampled from its own clip's rate to this one, so
+		* clips authored at any common rate (44100, 48000, ...) play back
+		* at the correct pitch/speed regardless of the device's rate.
+		*/
+	void mix(int16_t *out, size_t frame_count, uint32_t out_sample_rate);
 
-        std::vector<WavClip> _clips;
-        // VoiceHandle is just this array's index (no generation/ABA counter):
-        // a documented simplification — stop() on a stale handle either hits
-        // an already-inactive slot (a harmless no-op) or, in the rare case a
-        // very-short-lived voice was fully recycled in between, stops
-        // whatever new voice now occupies that slot instead. Acceptable for
-        // this engine's actual usage (a handful of concurrent UI/ambience
-        // sounds, not hundreds of overlapping short-lived ones).
-        Voice _voices[kMaxVoices];
-        std::mutex _mutex; ///< Guards _clips (append-only after load) and _voices.
-        float _master_volume = 1.0f;
+  private:
+	/** Fixed pool size: how many sounds can play at once (background loop(s) + a
+	 * handful of simultaneous one-shots is all this engine's demo ever needs). */
+	static constexpr uint32_t kMaxVoices = 32;
+
+	// Owns a std::mutex, which the standard library itself makes
+	// non-copyable — the pre-C++11 idiom of a private, never-defined
+	// copy constructor/assignment operator (this project avoids
+	// `= delete`), same as Registry's.
+	Mixer(const Mixer &other);
+	Mixer &operator=(const Mixer &other);
+
+	struct			Voice
+	{
+		bool		active = false;
+		SoundHandle	sound = SoundHandle::invalid();
+		/** In source frames (fractional, for resampling). */
+		double source_position = 0.0;
+		bool		loop = false;
+		float		volume = 1.0f;
+	};
+
+	std::vector<WavClip> _clips;
+	// VoiceHandle is just this array's index (no generation/ABA counter):
+	// a documented simplification — stop() on a stale handle either hits
+	// an already-inactive slot (a harmless no-op) or, in the rare case a
+	// very-short-lived voice was fully recycled in between, stops
+	// whatever new voice now occupies that slot instead. Acceptable for
+	// this engine's actual usage (a handful of concurrent UI/ambience
+	// sounds, not hundreds of overlapping short-lived ones).
+	Voice			_voices[kMaxVoices];
+	std::mutex _mutex; ///< Guards _clips (append-only after load) and _voices.
+	float			_master_volume;
 };
 
 } // namespace vre
