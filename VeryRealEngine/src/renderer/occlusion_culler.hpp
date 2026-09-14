@@ -27,7 +27,12 @@ class OcclusionCuller
 	OcclusionCuller();
 	~OcclusionCuller();
 
-	/// @param frames_in_flight One query pool is created per frame-in-flight slot.
+	/**
+	 * @param device Vulkan device to create the pipeline/query pools against.
+	 * @param geometry_render_pass Render pass this pipeline is compatible with (the geometry pass's).
+	 * @param geometry_pipeline_layout Pipeline layout reused verbatim (see the .cpp's create() comment).
+	 * @param frames_in_flight One query pool is created per frame-in-flight slot.
+	 */
 	void create(const VulkanDevice &device, VkRenderPass geometry_render_pass,
 		VkPipelineLayout geometry_pipeline_layout, uint32_t frames_in_flight);
 	void destroy();
@@ -51,11 +56,18 @@ class OcclusionCuller
 		uint32_t frame_index) const;
 
 	/**
-		* @brief Records the occlusion-query pass, inside the geometry
-		* render pass the caller already began (after its real geometry draws).
-		* @param out_query_ids Receives, in the same order queries were
-		* issued, which occlusion_id each one belongs to (see update_results()).
-		*/
+	 * @brief Records the occlusion-query pass, inside the geometry
+	 * render pass the caller already began (after its real geometry draws).
+	 * @param command_buffer Command buffer already inside the geometry render pass.
+	 * @param frame_index Which frame-in-flight slot's query pool to record into.
+	 * @param occlusion_test_items Items to test (already frustum-visible, drawn-for-real items excluded).
+	 * @param mesh_registry Source of vertex/index buffers for the tested items.
+	 * @param texture_registry Source of a valid material descriptor set to bind (see the .cpp's comment).
+	 * @param geometry_pipeline_layout Pipeline layout reused verbatim from the geometry pass.
+	 * @param global_descriptor_set Set 1 (globals), bound the same as the geometry pass.
+	 * @param out_query_ids Receives, in the same order queries were
+	 * issued, which occlusion_id each one belongs to (see update_results()).
+	 */
 	void record(VkCommandBuffer command_buffer, uint32_t frame_index,
 		const std::vector<RenderItem> &occlusion_test_items,
 		const MeshRegistry &mesh_registry,

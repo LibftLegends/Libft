@@ -47,9 +47,15 @@ class ShadowPass
 		*/
 	mat4 compute_light_space_matrix(const Light &shadow_caster) const;
 
-	/// @brief Records one shadow-caster's depth-only render pass.
-	/// @param items Full, unculled render item list (a caster outside the
-	/// camera frustum can still need to cast a shadow into it).
+	/**
+	 * @brief Records one shadow-caster's depth-only render pass.
+	 * @param command_buffer Command buffer to record into.
+	 * @param caster_index Which shadow map (and framebuffer) to render into.
+	 * @param light_space_matrix This caster's light-space (view*projection) matrix.
+	 * @param items Full, unculled render item list (a caster outside the
+	 * camera frustum can still need to cast a shadow into it).
+	 * @param mesh_registry Source of vertex/index buffers for the drawn items.
+	 */
 	void record(VkCommandBuffer command_buffer, uint32_t caster_index,
 		const mat4 &light_space_matrix, const std::vector<RenderItem> &items,
 		const MeshRegistry &mesh_registry) const;

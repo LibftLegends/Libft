@@ -57,7 +57,14 @@ class GeometryPass
 
 	/**
 	 * @brief Fills and uploads the GlobalUbo for one frame-in-flight slot.
+	 * @param frame_index Which frame-in-flight slot's UBO buffer to update.
+	 * @param view Camera view matrix.
+	 * @param projection Camera projection matrix.
 	 * @param light_space_matrices Per-caster light-space matrices, ShadowPass::kMaxShadowCasters entries.
+	 * @param shadow_caster_count Number of active entries in light_space_matrices.
+	 * @param view_position Camera world-space position.
+	 * @param lights Active scene lights.
+	 * @param ambient_intensity Flat ambient term added before per-light shading.
 	 * @param bone_matrices Slot 0 is always identity; caller passes real bones starting at slot 1.
 	 */
 	void update_global_ubo(uint32_t frame_index, const mat4 &view,

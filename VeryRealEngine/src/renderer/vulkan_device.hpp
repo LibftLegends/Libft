@@ -16,8 +16,12 @@ class VulkanDevice
 	VulkanDevice();
 	~VulkanDevice();
 
-	/** Picks a physical device, creates the logical device + queues, and creates the command pool. */
-	/// @param validation_enabled Whether VulkanInstance enabled validation layers (see VulkanInstance::validation_enabled()).
+	/**
+	 * @brief Picks a physical device, creates the logical device + queues, and creates the command pool.
+	 * @param instance Vulkan instance to pick a physical device from.
+	 * @param surface Presentation surface, used to find a present-capable queue family.
+	 * @param validation_enabled Whether VulkanInstance enabled validation layers (see VulkanInstance::validation_enabled()).
+	 */
 	void create(VkInstance instance, VkSurfaceKHR surface,
 		bool validation_enabled);
 	/// Destroys the command pool, then the logical device.
