@@ -10,7 +10,7 @@
 #include "../animation/animator.hpp"
 #include "../animation/skeleton.hpp"
 #include "../math/mat4.hpp"
-#include "../renderer/render_item.hpp"
+#include "../renderer/renderitem.hpp"
 #include "../renderer/renderer.hpp"
 #include "../vre.hpp"
 

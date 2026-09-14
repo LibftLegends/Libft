@@ -17,11 +17,10 @@
 
 #include "entity.hpp"
 #include "pool.hpp"
-#include "pool_base.hpp"
+#include "poolbase.hpp"
 
 namespace vre::ecs
 {
-
 class Registry
 {
   public:
@@ -123,7 +122,7 @@ class Registry
 
 	std::unordered_map<std::type_index, std::unique_ptr<PoolBase>> _pools;
 		///< One pool per component type.
-	uint32_t _next_entity = 0;                                            
+	uint32_t _next_entity = 0;
 		///< Next handle create() will hand out.
 };
 

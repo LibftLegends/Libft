@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Frustum::Frustum()
 {
 	std::memset(_planes, 0, sizeof(_planes));
@@ -53,21 +52,30 @@ void Frustum::set_plane(int index, const float row_a[4], const float row_b[4],
 
 float Frustum::element(const mat4 &m, int row, int col)
 {
-	// Column-major storage (m(col*4+row)): component `col` of row `row` is m(row + col*4).
+	// Column-major storage (m(col*4+row)): component `col` of row `row`
+	// is m(row + col*4).
 	return (m.m(row + col * 4));
 }
 
 Frustum Frustum::from_view_projection(const mat4 &view_projection)
 {
 	Frustum				frustum;
-	float				row0[4] = {element(view_projection, 0, 0), element(view_projection, 0, 1),
-							element(view_projection, 0, 2), element(view_projection, 0, 3)};
-	float				row1[4] = {element(view_projection, 1, 0), element(view_projection, 1, 1),
-							element(view_projection, 1, 2), element(view_projection, 1, 3)};
-	float				row2[4] = {element(view_projection, 2, 0), element(view_projection, 2, 1),
-							element(view_projection, 2, 2), element(view_projection, 2, 3)};
-	float				row3[4] = {element(view_projection, 3, 0), element(view_projection, 3, 1),
-							element(view_projection, 3, 2), element(view_projection, 3, 3)};
+	float				row0[4] = {element(view_projection, 0, 0),
+							element(view_projection, 0, 1),
+							element(view_projection, 0, 2),
+							element(view_projection, 0, 3)};
+	float				row1[4] = {element(view_projection, 1, 0),
+							element(view_projection, 1, 1),
+							element(view_projection, 1, 2),
+							element(view_projection, 1, 3)};
+	float				row2[4] = {element(view_projection, 2, 0),
+							element(view_projection, 2, 1),
+							element(view_projection, 2, 2),
+							element(view_projection, 2, 3)};
+	float				row3[4] = {element(view_projection, 3, 0),
+							element(view_projection, 3, 1),
+							element(view_projection, 3, 2),
+							element(view_projection, 3, 3)};
 	static const float	zero_row[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 	// Left/Right/Bottom/Top: standard row3 +/- row0/row1, unaffected by

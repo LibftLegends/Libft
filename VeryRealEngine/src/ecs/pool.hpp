@@ -10,11 +10,10 @@
 #pragma once
 
 #include "entity.hpp"
-#include "pool_base.hpp"
+#include "poolbase.hpp"
 
 namespace vre::ecs
 {
-
 template <typename T> class Pool : public PoolBase
 {
   public:

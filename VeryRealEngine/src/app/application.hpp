@@ -7,8 +7,8 @@
  */
 #pragma once
 
-#include "../particles/particle_system.hpp"
-#include "../physics/physics_world.hpp"
+#include "../particles/particlesystem.hpp"
+#include "../physics/physicsworld.hpp"
 #include "../platform/window.hpp"
 #include "../renderer/renderer.hpp"
 #include "../scene/scene.hpp"

@@ -19,7 +19,7 @@ bool DemoAudio::initialize()
 	// Sound system (bonus, Chapter VII): a looping ambient room hum plus
 	// one-shot effects on the door and light switch. A false return here
 	// (no device, e.g. a headless/sandboxed session) is not fatal — see
-	// audio_system.hpp's doc comment — the demo just runs silently rather
+	// audiosystem.hpp's doc comment — the demo just runs silently rather
 	// than aborting.
 	_audio = AudioSystem::create();
 	_available = _audio->initialize();

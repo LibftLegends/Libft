@@ -3,8 +3,9 @@
  * @brief Facade over the Vulkan renderer subsystems: instance/device/
  * swapchain setup, shadow/geometry/post-process passes, frustum+occlusion
  * culling, and the mesh/material/texture registries. Owns per-frame
- * orchestration (command buffers, sync objects, draw_frame()'s sequencing)
- * directly; everything else is delegated to one dedicated class per concern.
+ * orchestration (draw_frame()'s sequencing) directly; the command
+ * buffers/semaphores/fences behind it, and everything else, are each
+ * delegated to one dedicated class per concern.
  */
 #pragma once
 
@@ -14,25 +15,26 @@
 #include "../math/vec3.hpp"
 #include "../platform/window.hpp"
 #include "../vre.hpp"
-#include "frame_stats.hpp"
-#include "frustum_culler.hpp"
-#include "geometry_pass.hpp"
+#include "framestats.hpp"
+#include "frustumculler.hpp"
+#include "geometrypass.hpp"
 #include "light.hpp"
-#include "mesh_handle.hpp"
-#include "mesh_registry.hpp"
-#include "occlusion_culler.hpp"
-#include "post_process_pass.hpp"
-#include "render_item.hpp"
-#include "screenshot_capture.hpp"
-#include "shadow_pass.hpp"
-#include "swap_chain.hpp"
-#include "texture_registry.hpp"
-#include "vulkan_device.hpp"
-#include "vulkan_instance.hpp"
+#include "meshhandle.hpp"
+#include "meshregistry.hpp"
+#include "occlusionculler.hpp"
+#include "postprocesspass.hpp"
+#include "renderitem.hpp"
+#include "rendererframesync.hpp"
+#include "screenshotcapture.hpp"
+#include "shadowcasterselector.hpp"
+#include "shadowpass.hpp"
+#include "swapchain.hpp"
+#include "textureregistry.hpp"
+#include "vulkandevice.hpp"
+#include "vulkaninstance.hpp"
 
 namespace vre
 {
-
 class Renderer
 {
   public:
@@ -50,9 +52,11 @@ class Renderer
 		* @return (true on success); false if any setup step failed.
 		*/
 	bool initialize(Window *window);
-	/// Tears down every Vulkan object this Renderer owns, in reverse dependency order.
+	/// Tears down every Vulkan object this Renderer owns, in reverse
+	/// dependency order.
 	void destroy();
-	/// Blocks until the device has finished all submitted work — call before destroy().
+	/// Blocks until the device has finished all submitted work — call
+	/// before destroy().
 	void wait_idle();
 
 	/// Loads an .obj (and any .mtl/.tga it references) and uploads it to
@@ -80,7 +84,7 @@ class Renderer
 		* @param screen_motion_blur_y Same, vertical component.
 		* @param bone_matrices Current skinning matrices; element `i` lands
 		* in slot `i + 1` (slot 0 is always identity). Capped at
-		* GeometryPass::kMaxBones - 1 entries.
+		* GeometryGlobalUbo::kMaxBones - 1 entries.
 		*/
 	void draw_frame(const mat4 &view, const mat4 &projection,
 		const vec3 &view_position, const std::vector<Light> &lights,
@@ -105,9 +109,6 @@ class Renderer
 	// (this project avoids `= delete`).
 	Renderer(const Renderer &other);
 	Renderer &operator=(const Renderer &other);
-
-	void create_command_buffers();
-	void create_sync_objects();
 
 	/// Recreates the swapchain and everything sized from it (e.g. after a resize).
 	void recreate_swapchain();
@@ -137,14 +138,9 @@ class Renderer
 	OcclusionCuller _occlusion_culler;
 	PostProcessPass _post_process_pass;
 	ScreenshotCapture _screenshot_capture;
+	RendererFrameSync _frame_sync;
 
-	std::vector<VkCommandBuffer> _command_buffers;
-	std::vector<VkSemaphore> _image_available_semaphores;
-	std::vector<VkSemaphore> _render_finished_semaphores;
-	std::vector<VkFence> _in_flight_fences;
-	uint32_t _current_frame;
-
-	FrameStats _last_frame_stats;        
+	FrameStats _last_frame_stats;
 		///< Backing storage for get_last_frame_stats().
 	uint32_t _last_presented_image_index;
 		///< Which swapchain image capture_screenshot() reads back.

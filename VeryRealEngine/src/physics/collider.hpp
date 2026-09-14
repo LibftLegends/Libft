@@ -1,7 +1,7 @@
 /**
  * @file collider.hpp
-
-	* @brief A rigid body's collision shape: either an axis-aligned box or a sphere.
+ * @brief A rigid body's collision shape: either an axis-aligned box or a
+ * sphere.
  */
 #pragma once
 
@@ -10,7 +10,6 @@
 
 namespace vre
 {
-
 class Collider
 {
   public:

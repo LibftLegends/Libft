@@ -13,7 +13,7 @@
  * One documented exception: Apple's Cocoa/QuartzCore headers are
  * Objective-C and only parse inside a `.mm` translation unit compiled in
  * Objective-C++ mode. This header is included by plain `.cpp` files too, so
- * it cannot pull those in — `platform/macos/window_macos.mm` includes them
+ * it cannot pull those in — `platform/macos/windowmacos.mm` includes them
  * directly, in addition to this file, which is the one place "a .cpp
  * includes only its own .hpp" cannot hold, because the language leaves no
  * other option. Nothing else in the project ever sees those headers;

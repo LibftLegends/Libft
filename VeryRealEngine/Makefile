@@ -27,44 +27,47 @@ UNAME_S     := $(shell uname -s)
 
 # --- Engine sources (everything that becomes the library) ------------------
 LIB_CPP_SRCS := src/math/vec3.cpp \
+                src/math/mat4inverse.cpp \
                 src/math/mat4.cpp \
-                src/math/mat4_transform.cpp \
                 src/math/aabb.cpp \
                 src/math/frustum.cpp \
                 src/ecs/entity.cpp \
-                src/ecs/pool_base.cpp \
+                src/ecs/poolbase.cpp \
                 src/ecs/registry.cpp \
-                src/renderer/frame_stats.cpp \
-                src/renderer/frustum_culler.cpp \
-                src/renderer/geometry_pass.cpp \
-                src/renderer/geometry_pass_draw.cpp \
-                src/renderer/geometry_pass_layouts.cpp \
-                src/renderer/geometry_pass_pipeline.cpp \
-                src/renderer/geometry_pass_ubo.cpp \
+                src/renderer/framestats.cpp \
+                src/renderer/frustumculler.cpp \
+                src/renderer/geometryrenderpassfactory.cpp \
+                src/renderer/geometrypipelinefactory.cpp \
+                src/renderer/geometryscenetargets.cpp \
+                src/renderer/geometryglobalubo.cpp \
+                src/renderer/geometrypass.cpp \
                 src/renderer/light.cpp \
-                src/renderer/material_handle.cpp \
-                src/renderer/mesh_handle.cpp \
-                src/renderer/mesh_registry.cpp \
-                src/renderer/mesh_registry_upload.cpp \
-                src/renderer/occlusion_culler.cpp \
-                src/renderer/occlusion_culler_record.cpp \
-                src/renderer/post_process_pass.cpp \
-                src/renderer/post_process_pass_pipeline.cpp \
-                src/renderer/post_process_pass_record.cpp \
-                src/renderer/render_item.cpp \
+                src/renderer/materialhandle.cpp \
+                src/renderer/meshhandle.cpp \
+                src/renderer/meshregistry.cpp \
+                src/renderer/occlusionpipelinefactory.cpp \
+                src/renderer/occlusionculler.cpp \
+                src/renderer/postprocesspipelinefactory.cpp \
+                src/renderer/postprocesspass.cpp \
+                src/renderer/renderitem.cpp \
+                src/renderer/rendererframesync.cpp \
+                src/renderer/shadowcasterselector.cpp \
                 src/renderer/renderer.cpp \
-                src/renderer/renderer_draw.cpp \
-                src/renderer/screenshot_capture.cpp \
-                src/renderer/shadow_pass.cpp \
-                src/renderer/shadow_pass_pipeline.cpp \
-                src/renderer/swap_chain.cpp \
-                src/renderer/swapchain_support_details.cpp \
-                src/renderer/texture_handle.cpp \
-                src/renderer/texture_registry.cpp \
-                src/renderer/texture_registry_upload.cpp \
-                src/renderer/vulkan_device.cpp \
-                src/renderer/vulkan_device_resources.cpp \
-                src/renderer/vulkan_instance.cpp \
+                src/renderer/screenshotcapture.cpp \
+                src/renderer/shadowlightmatrix.cpp \
+                src/renderer/shadowpipelinefactory.cpp \
+                src/renderer/shadowpass.cpp \
+                src/renderer/swapchain.cpp \
+                src/renderer/swapchainsupportdetails.cpp \
+                src/renderer/texturehandle.cpp \
+                src/renderer/textureuploader.cpp \
+                src/renderer/textureregistry.cpp \
+                src/renderer/vulkanphysicaldeviceselector.cpp \
+                src/renderer/vulkancommandscope.cpp \
+                src/renderer/vulkanbufferfactory.cpp \
+                src/renderer/vulkanimagefactory.cpp \
+                src/renderer/vulkandevice.cpp \
+                src/renderer/vulkaninstance.cpp \
                 src/assets/jsonvalue.cpp \
                 src/assets/jsonlexer.cpp \
                 src/assets/jsongrammar.cpp \
@@ -80,30 +83,35 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/assets/objloader.cpp \
                 src/assets/tgaloader.cpp \
                 src/assets/skinnedasset.cpp \
-                src/scene/name_component.cpp \
-                src/scene/parent_component.cpp \
-                src/scene/transform_component.cpp \
-                src/scene/world_transform_component.cpp \
-                src/scene/mesh_component.cpp \
-                src/scene/visibility_component.cpp \
-                src/scene/physics_body_component.cpp \
+                src/scene/namecomponent.cpp \
+                src/scene/parentcomponent.cpp \
+                src/scene/transformcomponent.cpp \
+                src/scene/worldtransformcomponent.cpp \
+                src/scene/meshcomponent.cpp \
+                src/scene/visibilitycomponent.cpp \
+                src/scene/physicsbodycomponent.cpp \
+                src/scene/transformcomposer.cpp \
+                src/scene/scenephysicsparser.cpp \
+                src/scene/scenelightparser.cpp \
+                src/scene/sceneobjectloader.cpp \
+                src/scene/scenerendercollector.cpp \
                 src/scene/scene.cpp \
-                src/scene/scene_queries.cpp \
                 src/platform/window.cpp \
-                src/physics/body_handle.cpp \
+                src/physics/bodyhandle.cpp \
                 src/physics/collider.cpp \
-                src/physics/rigid_body_desc.cpp \
-                src/physics/physics_world.cpp \
-                src/physics/physics_collision.cpp \
-                src/physics/physics_narrow_phase.cpp \
-                src/physics/physics_resolve.cpp \
-                src/particles/particle_system_desc.cpp \
-                src/particles/particle_system.cpp \
-                src/audio/sound_handle.cpp \
-                src/audio/voice_handle.cpp \
-                src/audio/wav_clip.cpp \
-                src/audio/wav_loader.cpp \
-                src/audio/audio_system.cpp \
+                src/physics/rigidbodydesc.cpp \
+                src/physics/contact.cpp \
+                src/physics/physicsbody.cpp \
+                src/physics/collisiondetector.cpp \
+                src/physics/contactresolver.cpp \
+                src/physics/physicsworld.cpp \
+                src/particles/particlesystemdesc.cpp \
+                src/particles/particlesystem.cpp \
+                src/audio/soundhandle.cpp \
+                src/audio/voicehandle.cpp \
+                src/audio/wavclip.cpp \
+                src/audio/wavloader.cpp \
+                src/audio/audiosystem.cpp \
                 src/audio/mixer.cpp \
                 src/assets/skinnedmeshbonereader.cpp \
                 src/assets/skinnedmeshvertexreader.cpp \
@@ -118,11 +126,11 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
 LIB_MM_SRCS  :=
 
 ifeq ($(UNAME_S),Linux)
-LIB_CPP_SRCS += src/platform/linux/window_linux.cpp \
-                src/platform/linux/window_linux_events.cpp \
-                src/platform/linux/audio_linux.cpp
+LIB_CPP_SRCS += src/platform/linux/linuxkeymap.cpp \
+                src/platform/linux/windowlinux.cpp \
+                src/platform/linux/audiolinux.cpp
 # -lasound: ALSA, a Linux system library (same category as the XCB the
-# subject names as an allowed example) — see src/platform/linux/audio_linux.hpp.
+# subject names as an allowed example) — see src/platform/linux/audiolinux.hpp.
 LDLIBS       := -lvulkan -lX11 -lasound -lpthread
 else ifeq ($(UNAME_S),Darwin)
 # Homebrew: `brew install vulkan-headers vulkan-loader molten-vk shaderc`.
@@ -138,12 +146,13 @@ endif
 ifeq ($(MOLTENVK_PREFIX),)
 $(error molten-vk not found. Run: brew install vulkan-headers vulkan-loader molten-vk shaderc)
 endif
-# No CoreAudio backend yet (see src/audio/null_audio_system.cpp) — macOS is
+# No CoreAudio backend yet (see src/audio/nullaudiosystem.cpp) — macOS is
 # the local-dev-only platform, Linux is the actual submission target.
-LIB_CPP_SRCS += src/audio/null_audio_system.cpp
-LIB_MM_SRCS  += src/platform/macos/window_macos.mm \
-                src/platform/macos/window_macos_lifecycle.mm \
-                src/platform/macos/window_macos_events.mm
+LIB_CPP_SRCS += src/audio/nullaudiosystem.cpp \
+                src/platform/macos/macoskeymap.cpp
+LIB_MM_SRCS  += src/platform/macos/vremetalview.mm \
+                src/platform/macos/vrewindowdelegate.mm \
+                src/platform/macos/windowmacos.mm
 CXXFLAGS     += -I$(VULKAN_HEADERS_PREFIX)/include -I$(MOLTENVK_PREFIX)/include
 LDLIBS       := -L$(MOLTENVK_PREFIX)/lib -lMoltenVK \
                 -Wl,-rpath,$(MOLTENVK_PREFIX)/lib \

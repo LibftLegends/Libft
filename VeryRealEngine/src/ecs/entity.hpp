@@ -12,7 +12,6 @@
 
 namespace vre::ecs
 {
-
 class Entity
 {
   public:
@@ -28,7 +27,8 @@ class Entity
 	bool operator==(const Entity &other) const;
 	bool operator!=(const Entity &other) const;
 
-	/** @return The sentinel Entity meaning "no entity" (e.g. an entity with no parent). */
+	/// @return The sentinel Entity meaning "no entity" (e.g. an entity
+	/// with no parent).
 	static Entity invalid();
 
   private:
@@ -39,8 +39,8 @@ class Entity
 
 namespace std
 {
-
-/** Lets Entity be used as an unordered_map/unordered_set key (e.g. Pool<T>'s component table). */
+/// Lets Entity be used as an unordered_map/unordered_set key (e.g.
+/// Pool<T>'s component table).
 template <> struct hash<vre::ecs::Entity>
 {
 	size_t operator()(const vre::ecs::Entity &entity) const

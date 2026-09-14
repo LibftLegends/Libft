@@ -2,7 +2,6 @@
 
 namespace vre::ecs
 {
-
 Registry::Registry()
 {
 }

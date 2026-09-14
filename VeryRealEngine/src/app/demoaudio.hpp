@@ -1,13 +1,13 @@
 /**
  * @file demoaudio.hpp
  * @brief Owns the house demo's audio backend and its three loaded clips
- * (ambient hum, click, door creak) — see audio_system.hpp's doc comment
+ * (ambient hum, click, door creak) — see audiosystem.hpp's doc comment
  * for why a failed initialize() isn't fatal.
  */
 #pragma once
 
-#include "../audio/audio_system.hpp"
-#include "../audio/sound_handle.hpp"
+#include "../audio/audiosystem.hpp"
+#include "../audio/soundhandle.hpp"
 #include "../vre.hpp"
 
 namespace vre

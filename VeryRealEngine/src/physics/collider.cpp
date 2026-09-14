@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Collider::Collider() : _type(Type::Box), _half_extents(0.5f, 0.5f, 0.5f),
 	_radius(0.5f)
 {

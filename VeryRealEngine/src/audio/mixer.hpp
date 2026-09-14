@@ -4,23 +4,22 @@
  * and a fixed pool of playing "voices", and renders them down to an
  * interleaved 16-bit PCM buffer on demand.
  *
- * Deliberately separated from audio_linux.cpp's ALSA glue: everything here
+ * Deliberately separated from audiolinux.cpp's ALSA glue: everything here
  * (voice bookkeeping, per-voice resampling, mono→stereo, clipping) is the
  * same regardless of which OS API actually pushes the resulting samples to
  * a sound card, so a future backend (CoreAudio, WASAPI) only needs to open
- * a device and periodically call mix() — see audio_system.hpp's own header
+ * a device and periodically call mix() — see audiosystem.hpp's own header
  * comment.
  */
 #pragma once
 
 #include "../vre.hpp"
-#include "sound_handle.hpp"
-#include "voice_handle.hpp"
-#include "wav_clip.hpp"
+#include "soundhandle.hpp"
+#include "voicehandle.hpp"
+#include "wavclip.hpp"
 
 namespace vre
 {
-
 /**
  * @brief The mixing engine itself, independent of how its output reaches a
  * speaker. Thread-safe: play()/stop()/mix() are all safe to call from
@@ -33,7 +32,8 @@ class Mixer
 	Mixer();
 	~Mixer();
 
-	/** Loads a WAV file, returning a handle usable with play(). See AudioSystem::load_sound. */
+	/** Loads a WAV file, returning a handle usable with play(). See
+	 * AudioSystem::load_sound. */
 	SoundHandle load_sound(const char *path);
 
 	/// Starts a voice; see AudioSystem::play for parameter semantics.

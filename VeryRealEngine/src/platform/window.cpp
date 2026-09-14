@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Window::Window()
 {
 }

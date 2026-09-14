@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 AABB::AABB() : _min(vec3(0.0f, 0.0f, 0.0f)), _max(vec3(0.0f, 0.0f, 0.0f))
 {
 }

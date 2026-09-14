@@ -15,7 +15,6 @@
 
 namespace vre
 {
-
 class AABB
 {
   public:

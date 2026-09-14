@@ -1,9 +1,8 @@
 #include "mixer.hpp"
-#include "wav_loader.hpp"
+#include "wavloader.hpp"
 
 namespace vre
 {
-
 Mixer::Mixer() : _master_volume(1.0f)
 {
 }
@@ -128,7 +127,7 @@ void Mixer::mix(int16_t *out, size_t frame_count, uint32_t out_sample_rate)
 			{
 				// Mono clips duplicate their single channel to both output
 				// channels; stereo clips map channel 0/1 directly (higher
-				// channel counts aren't supported — see wav_loader.hpp).
+				// channel counts aren't supported — see wavloader.hpp).
 				source_channel = (clip.channels() == 1) ? 0 : channel;
 				sample_0 = clip.samples()[frame_index_0 * clip.channels()
 					+ source_channel];

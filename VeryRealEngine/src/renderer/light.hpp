@@ -11,7 +11,6 @@
 
 namespace vre
 {
-
 class Light
 {
   public:
@@ -19,9 +18,11 @@ class Light
 	enum class Type
 	{
 		Directional,
-			///< Parallel rays (e.g. sunlight); direction_or_position() is a unit direction.
-		Point,      
-			///< Radiates from a point; direction_or_position() is a world-space position.
+			///< Parallel rays (e.g. sunlight); direction_or_position()
+			///< is a unit direction.
+		Point,
+			///< Radiates from a point; direction_or_position() is a
+			///< world-space position.
 	};
 
 	Light();
@@ -33,7 +34,8 @@ class Light
 	void set_type(Type value);
 
 	/**
-		* Directional: unit direction the light travels (e.g. (0,-1,0) = straight down).
+		* Directional: unit direction the light travels (e.g. (0,-1,0) =
+		* straight down).
 		* Point: world-space position.
 		*/
 	const vec3 &direction_or_position() const;

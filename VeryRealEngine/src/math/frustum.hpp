@@ -17,7 +17,6 @@
 
 namespace vre
 {
-
 class Frustum
 {
   public:
@@ -38,7 +37,8 @@ class Frustum
 		* case) — never a false negative, which is the direction that would
 		* actually be visibly wrong (popping).
 		* @param box World-space box to test.
-		* @return true if `box` might be visible (is not conclusively outside the frustum).
+		* @return true if `box` might be visible (is not conclusively
+		* outside the frustum).
 		*/
 	bool intersects_aabb(const AABB &box) const;
 

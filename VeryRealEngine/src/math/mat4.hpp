@@ -6,11 +6,11 @@
 #pragma once
 
 #include "../vre.hpp"
+#include "mat4inverse.hpp"
 #include "vec3.hpp"
 
 namespace vre
 {
-
 class mat4
 {
   public:
@@ -79,16 +79,15 @@ class mat4
 		float z_near, float z_far);
 
 	/**
-		* @brief General 4x4 inverse via the cofactor/adjugate method (the
-		* classic public-domain formula, e.g. as used in MESA's
-		* gluInvertMatrix).
+		* @brief General 4x4 inverse (see Mat4Inverse for the algorithm).
 		* @param m Matrix to invert.
-		* @return The inverse of `m`,
-			or the identity matrix if `m` is (numerically) singular.
+		* @return The inverse of `m`, or the identity matrix if `m` is
+		* (numerically) singular.
 		*/
 	static mat4 inverse(const mat4 &m);
 
-	/** @return `p` transformed by affine matrix `m` (implicit w=1, no perspective divide). */
+	/// @return `p` transformed by affine matrix `m` (implicit w=1, no
+	/// perspective divide).
 	static vec3 transform_point(const mat4 &m, const vec3 &p);
 
   private:

@@ -2,7 +2,6 @@
 
 namespace vre::ecs
 {
-
 Entity::Entity() : _value(0)
 {
 }

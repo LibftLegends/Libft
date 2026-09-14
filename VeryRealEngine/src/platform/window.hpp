@@ -16,8 +16,8 @@
 
 namespace vre
 {
-
-/// Abstract per-OS window: native window/event-pump plus enough Vulkan glue to create a VkSurfaceKHR.
+/// Abstract per-OS window: native window/event-pump plus enough Vulkan
+/// glue to create a VkSurfaceKHR.
 class Window
 {
   public:
@@ -63,7 +63,8 @@ class Window
 	/// Destroys the native window and releases any OS resources.
 	virtual void destroy() = 0;
 
-	/** Pumps the native event queue, updating resize/key/close state for this poll. */
+	/// Pumps the native event queue, updating resize/key/close state
+	/// for this poll.
 	virtual void poll_events() = 0;
 	/// @return true once the user has requested the window be closed.
 	virtual bool should_close() const = 0;
@@ -72,7 +73,8 @@ class Window
 	virtual int32_t get_width() const = 0;
 	/// @return Current window height, in pixels.
 	virtual int32_t get_height() const = 0;
-	/** @return true exactly once, the poll_events() call after a resize is observed. */
+	/// @return true exactly once, the poll_events() call after a
+	/// resize is observed.
 	virtual bool was_resized() const = 0;
 	/// Clears the one-shot flag returned by was_resized().
 	virtual void clear_resized_flag() = 0;
@@ -111,7 +113,8 @@ class Window
 	virtual VkResult create_vulkan_surface(VkInstance instance,
 			VkSurfaceKHR *out_surface) const = 0;
 
-	/// @return A newly constructed window backend appropriate for the current platform.
+	/// @return A newly constructed window backend appropriate for the
+	/// current platform.
 	static Window *create();
 };
 

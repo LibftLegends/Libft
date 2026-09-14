@@ -9,8 +9,8 @@
 
 namespace vre
 {
-
-/** A 3-component vector, used throughout the engine for positions, directions, and colors. */
+/// A 3-component vector, used throughout the engine for positions,
+/// directions, and colors.
 class vec3
 {
   public:
@@ -36,7 +36,8 @@ class vec3
 	static float dot(const vec3 &a, const vec3 &b);
 	/// @return The cross product of `a` and `b`.
 	static vec3 cross(const vec3 &a, const vec3 &b);
-	/** @return `v` scaled to unit length, or the zero vector if `v` is (numerically) zero-length. */
+	/// @return `v` scaled to unit length, or the zero vector if `v` is
+	/// (numerically) zero-length.
 	static vec3 normalize(const vec3 &v);
 
   private:

@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Light::Light() : _type(Type::Directional), _color(1.0f, 1.0f, 1.0f),
 	_intensity(1.0f)
 {
