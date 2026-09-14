@@ -1,5 +1,6 @@
 #include "scene.hpp"
 #include "../assets/json_parser.hpp"
+#include "../renderer/renderer.hpp"
 
 namespace vre
 {
@@ -88,20 +89,21 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
             Light light;
             std::string type_name = light_json.find("type") != nullptr
                 ? light_json.find("type")->as_string("directional") : "directional";
-            light.type = (type_name == "point") ? LightType::Point : LightType::Directional;
+            light.set_type((type_name == "point") ? Light::Type::Point : Light::Type::Directional);
 
-            const char *position_field_name = (light.type == LightType::Point) ? "position" : "direction";
+            const char *position_field_name = (light.type() == Light::Type::Point)
+                ? "position" : "direction";
             const JsonValue *position_field = light_json.find(position_field_name);
-            light.direction_or_position = (position_field != nullptr)
-                ? position_field->as_vec3(vec3(0.0f, -1.0f, 0.0f)) : vec3(0.0f, -1.0f, 0.0f);
+            light.set_direction_or_position((position_field != nullptr)
+                ? position_field->as_vec3(vec3(0.0f, -1.0f, 0.0f)) : vec3(0.0f, -1.0f, 0.0f));
 
             const JsonValue *color_field = light_json.find("color");
-            light.color = (color_field != nullptr)
-                ? color_field->as_vec3(vec3(1.0f, 1.0f, 1.0f)) : vec3(1.0f, 1.0f, 1.0f);
+            light.set_color((color_field != nullptr)
+                ? color_field->as_vec3(vec3(1.0f, 1.0f, 1.0f)) : vec3(1.0f, 1.0f, 1.0f));
 
             const JsonValue *intensity_field = light_json.find("intensity");
-            light.intensity = static_cast<float>(
-                (intensity_field != nullptr) ? intensity_field->as_number(1.0) : 1.0);
+            light.set_intensity(static_cast<float>(
+                (intensity_field != nullptr) ? intensity_field->as_number(1.0) : 1.0));
 
             _lights.push_back(light);
         }

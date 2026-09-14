@@ -22,7 +22,8 @@
 #include "../math/mat4.hpp"
 #include "../math/vec3.hpp"
 #include "../physics/physics_world.hpp"
-#include "../renderer/renderer.hpp"
+#include "../renderer/light.hpp"
+#include "../renderer/render_item.hpp"
 #include "mesh_component.hpp"
 #include "name_component.hpp"
 #include "parent_component.hpp"
@@ -33,6 +34,8 @@
 
 namespace vre
 {
+
+class Renderer;
 
 /**
  * @brief Owns the scene's ECS registry and provides the JSON loader plus

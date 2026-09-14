@@ -34,7 +34,37 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/ecs/entity.cpp \
                 src/ecs/pool_base.cpp \
                 src/ecs/registry.cpp \
+                src/renderer/frame_stats.cpp \
+                src/renderer/frustum_culler.cpp \
+                src/renderer/geometry_pass.cpp \
+                src/renderer/geometry_pass_draw.cpp \
+                src/renderer/geometry_pass_layouts.cpp \
+                src/renderer/geometry_pass_pipeline.cpp \
+                src/renderer/geometry_pass_ubo.cpp \
+                src/renderer/light.cpp \
+                src/renderer/material_handle.cpp \
+                src/renderer/mesh_handle.cpp \
+                src/renderer/mesh_registry.cpp \
+                src/renderer/mesh_registry_upload.cpp \
+                src/renderer/occlusion_culler.cpp \
+                src/renderer/occlusion_culler_record.cpp \
+                src/renderer/post_process_pass.cpp \
+                src/renderer/post_process_pass_pipeline.cpp \
+                src/renderer/post_process_pass_record.cpp \
+                src/renderer/render_item.cpp \
                 src/renderer/renderer.cpp \
+                src/renderer/renderer_draw.cpp \
+                src/renderer/screenshot_capture.cpp \
+                src/renderer/shadow_pass.cpp \
+                src/renderer/shadow_pass_pipeline.cpp \
+                src/renderer/swap_chain.cpp \
+                src/renderer/swapchain_support_details.cpp \
+                src/renderer/texture_handle.cpp \
+                src/renderer/texture_registry.cpp \
+                src/renderer/texture_registry_upload.cpp \
+                src/renderer/vulkan_device.cpp \
+                src/renderer/vulkan_device_resources.cpp \
+                src/renderer/vulkan_instance.cpp \
                 src/assets/json_value.cpp \
                 src/assets/json_parser.cpp \
                 src/assets/json_grammar.cpp \

@@ -58,10 +58,8 @@ void Scene::collect_render_items(std::vector<RenderItem> *out_items) const
             // the scene's entity set itself doesn't change shape, which
             // holds for every JSON-authored scene this engine loads (no
             // runtime entity add/remove, only component value changes).
-            RenderItem item;
-            item.mesh = mesh->mesh();
-            item.model = world;
-            item.occlusion_id = entity.value();
+            RenderItem item(mesh->mesh(), world);
+            item.set_occlusion_id(entity.value());
             out_items->push_back(item);
         }
     }
@@ -154,7 +152,7 @@ bool Scene::set_light_intensity(size_t index, float intensity)
 {
     if (index >= _lights.size())
         return false;
-    _lights[index].intensity = intensity;
+    _lights[index].set_intensity(intensity);
     return true;
 }
 

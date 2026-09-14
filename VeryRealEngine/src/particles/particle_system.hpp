@@ -14,7 +14,7 @@
 #pragma once
 
 #include "../math/vec3.hpp"
-#include "../renderer/renderer.hpp"
+#include "../renderer/render_item.hpp"
 #include "../vre.hpp"
 #include "particle_system_desc.hpp"
 

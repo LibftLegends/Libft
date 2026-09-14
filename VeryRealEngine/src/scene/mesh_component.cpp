@@ -38,7 +38,7 @@ void MeshComponent::set_mesh(MeshHandle value)
 
 MeshHandle MeshComponent::no_mesh()
 {
-	return (static_cast<MeshHandle>(-1));
+	return (MeshHandle::invalid());
 }
 
 } // namespace vre

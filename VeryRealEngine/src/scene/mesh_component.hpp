@@ -4,7 +4,7 @@
  */
 #pragma once
 
-#include "../renderer/renderer.hpp"
+#include "../renderer/mesh_handle.hpp"
 #include "../vre.hpp"
 
 namespace vre

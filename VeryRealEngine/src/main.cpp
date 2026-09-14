@@ -362,9 +362,7 @@ int main(int argc, char **argv)
         {
             steam.collect_render_items(&items);
 
-            vre::RenderItem pendulum_item;
-            pendulum_item.mesh = pendulum_mesh;
-            pendulum_item.model = pendulum_model;
+            vre::RenderItem pendulum_item(pendulum_mesh, pendulum_model);
             // Left at its default (opted out of occlusion culling — see
             // RenderItem::occlusion_id's doc comment): this is one small
             // object near the ceiling, not worth the query-pool
@@ -385,12 +383,12 @@ int main(int argc, char **argv)
         fps_report_accumulator += delta_seconds;
         if (fps_report_accumulator >= 1.0f)
         {
-            const vre::Renderer::FrameStats &stats = renderer.get_last_frame_stats();
+            const vre::FrameStats &stats = renderer.get_last_frame_stats();
             std::fprintf(stderr,
                 "FPS: %.1f (%.2f ms/frame) | items: %u total, %u frustum-visible, %u drawn\n",
                 static_cast<float>(frames_this_window) / fps_report_accumulator,
                 1000.0f * fps_report_accumulator / static_cast<float>(frames_this_window),
-                stats.total_items, stats.frustum_visible, stats.drawn);
+                stats.total_items(), stats.frustum_visible(), stats.drawn());
             frames_this_window = 0;
             fps_report_accumulator = 0.0f;
         }
