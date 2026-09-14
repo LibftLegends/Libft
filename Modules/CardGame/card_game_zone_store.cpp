@@ -8,6 +8,18 @@ card_game_zone_store::card_game_zone_store() noexcept
     return ;
 }
 
+static ft_bool card_game_zone_store_definition_equal(
+    const card_game_zone_store_definition &first,
+    const card_game_zone_store_definition &second) noexcept
+{
+    if (first.zone_id != second.zone_id
+        || first.capacity != second.capacity
+        || first.allowed_card_type_mask != second.allowed_card_type_mask
+        || first.owner_scoped != second.owner_scoped)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 card_game_zone_store::~card_game_zone_store() noexcept
 {
     (void)this->destroy();
@@ -143,13 +155,22 @@ ft_bool card_game_zone_store::snapshots_equal(
     const card_game_zone_store_snapshot &first,
     const card_game_zone_store_snapshot &second) noexcept
 {
+    uint32_t definition_index;
+
     if (first.definition_count != second.definition_count
         || first.entry_count != second.entry_count
-        || ft_memcmp(first.definitions, second.definitions,
-            sizeof(first.definitions)) != 0
         || ft_memcmp(first.counts, second.counts, sizeof(first.counts)) != 0
         || ft_memcmp(first.offsets, second.offsets, sizeof(first.offsets)) != 0)
         return (FT_FALSE);
+    definition_index = 0U;
+    while (definition_index < FT_CARD_GAME_MAX_ZONES)
+    {
+        if (card_game_zone_store_definition_equal(
+                first.definitions[definition_index],
+                second.definitions[definition_index]) == FT_FALSE)
+            return (FT_FALSE);
+        definition_index += 1U;
+    }
     if (first.entry_count == 0U)
         return (FT_TRUE);
     if (first.entries == ft_nullptr || second.entries == ft_nullptr)
@@ -168,6 +189,7 @@ int32_t card_game_zone_store::apply_snapshot(
     uint32_t zone_index;
     uint32_t entry_index;
     uint32_t expected_offset;
+    uint32_t definition_index;
     card_game_zone_entry entry;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
@@ -176,9 +198,15 @@ int32_t card_game_zone_store::apply_snapshot(
         || snapshot.entry_count > FT_CARD_GAME_MAX_PLAYERS
             * FT_CARD_GAME_MAX_ZONES * FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (ft_memcmp(snapshot.definitions, this->_definitions,
-            sizeof(this->_definitions)) != 0)
-        return (FT_ERR_INVALID_STATE);
+    definition_index = 0U;
+    while (definition_index < FT_CARD_GAME_MAX_ZONES)
+    {
+        if (card_game_zone_store_definition_equal(
+                snapshot.definitions[definition_index],
+                this->_definitions[definition_index]) == FT_FALSE)
+            return (FT_ERR_INVALID_STATE);
+        definition_index += 1U;
+    }
     expected_offset = 0U;
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)

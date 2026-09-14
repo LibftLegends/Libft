@@ -455,6 +455,13 @@ jobs:
               printf '%s\n' "Sanitizer report: $report"
               cat "$report"
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -474,6 +481,9 @@ jobs:
             Test/asan_original_failures.log
             Test/test_current.log
             Test/asan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
             Test/ci_unix_full_output.log
           if-no-files-found: warn
 
@@ -624,6 +634,13 @@ jobs:
                 >"tsan_core_backtrace.log" 2>&1 || true
               cat tsan_core_backtrace.log
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -646,6 +663,9 @@ jobs:
             Test/tsan_original_failures.log
             Test/test_current.log
             Test/tsan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
           if-no-files-found: warn
 
   crypto-fuzz:

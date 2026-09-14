@@ -3234,6 +3234,50 @@ static int32_t card_game_validate_player_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+static ft_bool card_game_card_instance_equal(
+    const card_game_card_instance &first,
+    const card_game_card_instance &second) noexcept
+{
+    if (first.definition_id != second.definition_id
+        || first.owner_id != second.owner_id
+        || first.attack != second.attack
+        || first.health != second.health
+        || first.damage_taken != second.damage_taken
+        || first.on_board != second.on_board)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static ft_bool card_game_player_snapshots_equal(
+    const card_game_player_snapshot &first,
+    const card_game_player_snapshot &second) noexcept
+{
+    uint32_t index;
+
+    if (first.board_count != second.board_count
+        || first.deck_count != second.deck_count
+        || first.hand_count != second.hand_count
+        || first.health != second.health
+        || first.mana != second.mana
+        || ft_memcmp(first.board, second.board, sizeof(first.board)) != 0
+        || ft_memcmp(first.deck, second.deck, sizeof(first.deck)) != 0
+        || ft_memcmp(first.deck_instance_ids, second.deck_instance_ids,
+            sizeof(first.deck_instance_ids)) != 0
+        || ft_memcmp(first.hand, second.hand, sizeof(first.hand)) != 0
+        || ft_memcmp(first.hand_instance_ids, second.hand_instance_ids,
+            sizeof(first.hand_instance_ids)) != 0)
+        return (FT_FALSE);
+    index = 0U;
+    while (index < FT_CARD_GAME_MAX_CARDS)
+    {
+        if (card_game_card_instance_equal(first.instances[index],
+                second.instances[index]) == FT_FALSE)
+            return (FT_FALSE);
+        index += 1U;
+    }
+    return (FT_TRUE);
+}
+
 static int32_t card_game_copy_player_snapshot(
     card_game_player_snapshot *destination, const uint32_t *board,
     const card_game_card_instance *instances, uint32_t board_count,
@@ -4124,13 +4168,12 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
         candidate.global_state_changed = FT_TRUE;
     if (card_game_usage_limit_ledger::snapshots_equal(
             baseline.usage_limits, current_snapshot.usage_limits) == FT_FALSE)
-        delta->global_state_changed = FT_TRUE;
+        candidate.global_state_changed = FT_TRUE;
     player_id = 0U;
     while (player_id < current_snapshot.player_count)
     {
-        if (ft_memcmp(&baseline.players[player_id],
-            &current_snapshot.players[player_id],
-            sizeof(card_game_player_snapshot)) != 0)
+        if (card_game_player_snapshots_equal(baseline.players[player_id],
+                current_snapshot.players[player_id]) == FT_FALSE)
         {
             candidate.changed_player_mask |= (static_cast<uint64_t>(1U)
                 << player_id);
