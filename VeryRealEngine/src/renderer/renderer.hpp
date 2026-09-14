@@ -13,7 +13,10 @@
 #pragma once
 
 #include "../platform/window.hpp"
-#include "../math/vre_math.hpp"
+#include "../math/aabb.hpp"
+#include "../math/frustum.hpp"
+#include "../math/mat4.hpp"
+#include "../math/vec3.hpp"
 #include "../assets/mesh_data.hpp"
 #include "../animation/skeleton.hpp"
 #include "../assets/tga_loader.hpp"

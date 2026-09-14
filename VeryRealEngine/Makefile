@@ -26,7 +26,12 @@ DEPFLAGS    = -MMD -MP
 UNAME_S     := $(shell uname -s)
 
 # --- Engine sources (everything that becomes the library) ------------------
-LIB_CPP_SRCS := src/renderer/renderer.cpp \
+LIB_CPP_SRCS := src/math/vec3.cpp \
+                src/math/mat4.cpp \
+                src/math/mat4_transform.cpp \
+                src/math/aabb.cpp \
+                src/math/frustum.cpp \
+                src/renderer/renderer.cpp \
                 src/assets/obj_loader.cpp \
                 src/assets/tga_loader.cpp \
                 src/assets/json_parser.cpp \

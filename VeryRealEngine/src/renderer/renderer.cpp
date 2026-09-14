@@ -45,7 +45,7 @@ struct ShadowPushConstants
 // perspective (true for every camera this engine currently builds).
 struct PostPushConstants
 {
-    float proj_params[4];  // x = proj.m[0], y = proj.m[5], z = proj.m[10], w = proj.m[14]
+    float proj_params[4];  // x = proj.m(0), y = proj.m(5), z = proj.m(10), w = proj.m(14)
     float ao_params[4];    // x = radius, y = bias, z = strength, w = unused
     float bloom_params[4]; // x = threshold, y = intensity, z = sample step (texels), w = unused
     float dof_params[4];   // x = focus distance, y = focus range, z = falloff range, w = max CoC (texels)
@@ -1977,22 +1977,22 @@ void Renderer::update_global_ubo(uint32_t frame_index, const mat4 &view, const m
     for (uint32_t i = 0; i < light_count; i++)
     {
         const Light &light = lights[i];
-        ubo.light_direction_or_position[i][0] = light.direction_or_position.x;
-        ubo.light_direction_or_position[i][1] = light.direction_or_position.y;
-        ubo.light_direction_or_position[i][2] = light.direction_or_position.z;
+        ubo.light_direction_or_position[i][0] = light.direction_or_position.x();
+        ubo.light_direction_or_position[i][1] = light.direction_or_position.y();
+        ubo.light_direction_or_position[i][2] = light.direction_or_position.z();
         ubo.light_direction_or_position[i][3] = (light.type == LightType::Point) ? 1.0f : 0.0f;
 
-        ubo.light_color_intensity[i][0] = light.color.x;
-        ubo.light_color_intensity[i][1] = light.color.y;
-        ubo.light_color_intensity[i][2] = light.color.z;
+        ubo.light_color_intensity[i][0] = light.color.x();
+        ubo.light_color_intensity[i][1] = light.color.y();
+        ubo.light_color_intensity[i][2] = light.color.z();
         ubo.light_color_intensity[i][3] = light.intensity;
     }
 
     ubo.light_count_ambient[0] = static_cast<float>(light_count);
     ubo.light_count_ambient[1] = ambient_intensity;
-    ubo.view_position[0] = view_position.x;
-    ubo.view_position[1] = view_position.y;
-    ubo.view_position[2] = view_position.z;
+    ubo.view_position[0] = view_position.x();
+    ubo.view_position[1] = view_position.y();
+    ubo.view_position[2] = view_position.z();
 
     std::memcpy(_global_ubo_mapped[frame_index], &ubo, sizeof(GlobalUbo));
 }
@@ -2389,17 +2389,12 @@ MeshHandle Renderer::upload_mesh_data(const MeshData &mesh_data,
     if (!mesh_data.vertices.empty())
     {
         const MeshVertex &first = mesh_data.vertices[0];
-        mesh.local_bounds.min = mesh.local_bounds.max =
-            vec3(first.position[0], first.position[1], first.position[2]);
+        vec3 first_position(first.position[0], first.position[1], first.position[2]);
+        mesh.local_bounds = AABB(first_position, first_position);
         for (const MeshVertex &vertex : mesh_data.vertices)
         {
             vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
-            mesh.local_bounds.min.x = std::min(mesh.local_bounds.min.x, position.x);
-            mesh.local_bounds.min.y = std::min(mesh.local_bounds.min.y, position.y);
-            mesh.local_bounds.min.z = std::min(mesh.local_bounds.min.z, position.z);
-            mesh.local_bounds.max.x = std::max(mesh.local_bounds.max.x, position.x);
-            mesh.local_bounds.max.y = std::max(mesh.local_bounds.max.y, position.y);
-            mesh.local_bounds.max.z = std::max(mesh.local_bounds.max.z, position.z);
+            mesh.local_bounds.encapsulate(position);
         }
     }
 
@@ -2682,10 +2677,10 @@ void Renderer::record_command_buffer(VkCommandBuffer command_buffer, uint32_t im
         0, 1, &_post_descriptor_set, 0, nullptr);
 
     PostPushConstants post_push{};
-    post_push.proj_params[0] = projection.m[0];
-    post_push.proj_params[1] = projection.m[5];
-    post_push.proj_params[2] = projection.m[10];
-    post_push.proj_params[3] = projection.m[14];
+    post_push.proj_params[0] = projection.m(0);
+    post_push.proj_params[1] = projection.m(5);
+    post_push.proj_params[2] = projection.m(10);
+    post_push.proj_params[3] = projection.m(14);
     post_push.ao_params[0] = 0.18f; // AO sample radius, view-space units
     post_push.ao_params[1] = 0.06f; // depth-comparison bias, avoids self-occlusion
     post_push.ao_params[2] = 0.75f; // occlusion strength (0 = no AO, 1 = full effect)

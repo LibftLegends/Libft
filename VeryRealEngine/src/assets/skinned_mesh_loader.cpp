@@ -80,12 +80,12 @@ bool load_skinned_asset(const char *path, SkinnedAsset *out_asset)
         MeshVertex vertex{};
         vec3 position = read_vec3(vertex_json.find("position"), vec3(0.0f, 0.0f, 0.0f));
         vec3 normal = read_vec3(vertex_json.find("normal"), vec3(0.0f, 1.0f, 0.0f));
-        vertex.position[0] = position.x;
-        vertex.position[1] = position.y;
-        vertex.position[2] = position.z;
-        vertex.normal[0] = normal.x;
-        vertex.normal[1] = normal.y;
-        vertex.normal[2] = normal.z;
+        vertex.position[0] = position.x();
+        vertex.position[1] = position.y();
+        vertex.position[2] = position.z();
+        vertex.normal[0] = normal.x();
+        vertex.normal[1] = normal.y();
+        vertex.normal[2] = normal.z();
 
         const JsonValue *uv_field = vertex_json.find("uv");
         if (uv_field != nullptr && uv_field->is_array() && uv_field->array_value.size() == 2)

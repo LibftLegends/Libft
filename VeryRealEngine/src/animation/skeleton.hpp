@@ -17,7 +17,8 @@
  */
 #pragma once
 
-#include "../math/vre_math.hpp"
+#include "../math/mat4.hpp"
+#include "../math/vec3.hpp"
 
 #include <cstdint>
 #include <string>

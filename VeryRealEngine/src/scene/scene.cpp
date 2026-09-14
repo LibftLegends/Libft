@@ -328,7 +328,7 @@ bool Scene::get_node_position(const std::string &name, vec3 *out_position) const
         world = mat4::multiply(parent_local, world);
         parent = _registry.try_get<ParentComponent>(parent->parent);
     }
-    *out_position = vec3(world.m[12], world.m[13], world.m[14]);
+    *out_position = vec3(world.m(12), world.m(13), world.m(14));
     return true;
 }
 

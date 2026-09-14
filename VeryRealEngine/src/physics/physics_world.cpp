@@ -63,9 +63,9 @@ PhysicsWorld::Aabb PhysicsWorld::compute_aabb(const Body &body)
 
 bool PhysicsWorld::aabb_overlap(const Aabb &a, const Aabb &b)
 {
-    return (a.min_corner.x <= b.max_corner.x && a.max_corner.x >= b.min_corner.x)
-        && (a.min_corner.y <= b.max_corner.y && a.max_corner.y >= b.min_corner.y)
-        && (a.min_corner.z <= b.max_corner.z && a.max_corner.z >= b.min_corner.z);
+    return (a.min_corner.x() <= b.max_corner.x() && a.max_corner.x() >= b.min_corner.x())
+        && (a.min_corner.y() <= b.max_corner.y() && a.max_corner.y() >= b.min_corner.y())
+        && (a.min_corner.z() <= b.max_corner.z() && a.max_corner.z() >= b.min_corner.z());
 }
 
 static PhysicsWorld::Contact collide_box_box(const vec3 &pos_a, const vec3 &half_a,
@@ -74,13 +74,13 @@ static PhysicsWorld::Contact collide_box_box(const vec3 &pos_a, const vec3 &half
     PhysicsWorld::Contact contact;
     vec3 delta = pos_b - pos_a;
 
-    float overlap_x = (half_a.x + half_b.x) - std::fabs(delta.x);
+    float overlap_x = (half_a.x() + half_b.x()) - std::fabs(delta.x());
     if (overlap_x <= 0.0f)
         return contact;
-    float overlap_y = (half_a.y + half_b.y) - std::fabs(delta.y);
+    float overlap_y = (half_a.y() + half_b.y()) - std::fabs(delta.y());
     if (overlap_y <= 0.0f)
         return contact;
-    float overlap_z = (half_a.z + half_b.z) - std::fabs(delta.z);
+    float overlap_z = (half_a.z() + half_b.z()) - std::fabs(delta.z());
     if (overlap_z <= 0.0f)
         return contact;
 
@@ -90,17 +90,17 @@ static PhysicsWorld::Contact collide_box_box(const vec3 &pos_a, const vec3 &half
     if (overlap_x <= overlap_y && overlap_x <= overlap_z)
     {
         contact.penetration = overlap_x;
-        contact.normal = vec3(delta.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f);
+        contact.normal = vec3(delta.x() < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f);
     }
     else if (overlap_y <= overlap_z)
     {
         contact.penetration = overlap_y;
-        contact.normal = vec3(0.0f, delta.y < 0.0f ? -1.0f : 1.0f, 0.0f);
+        contact.normal = vec3(0.0f, delta.y() < 0.0f ? -1.0f : 1.0f, 0.0f);
     }
     else
     {
         contact.penetration = overlap_z;
-        contact.normal = vec3(0.0f, 0.0f, delta.z < 0.0f ? -1.0f : 1.0f);
+        contact.normal = vec3(0.0f, 0.0f, delta.z() < 0.0f ? -1.0f : 1.0f);
     }
     return contact;
 }
@@ -128,9 +128,9 @@ static PhysicsWorld::Contact collide_box_sphere(const vec3 &box_pos, const vec3 
     PhysicsWorld::Contact contact;
     vec3 local = sphere_pos - box_pos;
     vec3 closest(
-        std::clamp(local.x, -half_extents.x, half_extents.x),
-        std::clamp(local.y, -half_extents.y, half_extents.y),
-        std::clamp(local.z, -half_extents.z, half_extents.z));
+        std::clamp(local.x(), -half_extents.x(), half_extents.x()),
+        std::clamp(local.y(), -half_extents.y(), half_extents.y()),
+        std::clamp(local.z(), -half_extents.z(), half_extents.z()));
 
     vec3 delta = local - closest;
     float distance = std::sqrt(vec3::dot(delta, delta));
@@ -148,24 +148,24 @@ static PhysicsWorld::Contact collide_box_sphere(const vec3 &box_pos, const vec3 
     {
         // Sphere center is inside the box: push out along the axis with
         // the least penetration rather than leaving the contact undefined.
-        float px = half_extents.x - std::fabs(local.x);
-        float py = half_extents.y - std::fabs(local.y);
-        float pz = half_extents.z - std::fabs(local.z);
+        float px = half_extents.x() - std::fabs(local.x());
+        float py = half_extents.y() - std::fabs(local.y());
+        float pz = half_extents.z() - std::fabs(local.z());
         contact.valid = true;
         if (px <= py && px <= pz)
         {
             contact.penetration = px + radius;
-            contact.normal = vec3(local.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f);
+            contact.normal = vec3(local.x() < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f);
         }
         else if (py <= pz)
         {
             contact.penetration = py + radius;
-            contact.normal = vec3(0.0f, local.y < 0.0f ? -1.0f : 1.0f, 0.0f);
+            contact.normal = vec3(0.0f, local.y() < 0.0f ? -1.0f : 1.0f, 0.0f);
         }
         else
         {
             contact.penetration = pz + radius;
-            contact.normal = vec3(0.0f, 0.0f, local.z < 0.0f ? -1.0f : 1.0f);
+            contact.normal = vec3(0.0f, 0.0f, local.z() < 0.0f ? -1.0f : 1.0f);
         }
     }
     return contact;

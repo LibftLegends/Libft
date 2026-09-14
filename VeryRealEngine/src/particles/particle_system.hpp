@@ -13,7 +13,7 @@
  */
 #pragma once
 
-#include "../math/vre_math.hpp"
+#include "../math/vec3.hpp"
 #include "../renderer/renderer.hpp"
 
 #include <vector>

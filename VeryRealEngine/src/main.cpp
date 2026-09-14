@@ -16,7 +16,8 @@
 #include "particles/particle_system.hpp"
 #include "audio/audio_system.hpp"
 #include "animation/skeleton.hpp"
-#include "math/vre_math.hpp"
+#include "math/mat4.hpp"
+#include "math/vec3.hpp"
 
 #include <algorithm>
 #include <chrono>

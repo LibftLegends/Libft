@@ -11,7 +11,7 @@
  */
 #pragma once
 
-#include "../math/vre_math.hpp"
+#include "../math/vec3.hpp"
 
 #include <string>
 

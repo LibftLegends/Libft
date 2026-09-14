@@ -18,7 +18,8 @@
 #pragma once
 
 #include "../ecs/registry.hpp"
-#include "../math/vre_math.hpp"
+#include "../math/mat4.hpp"
+#include "../math/vec3.hpp"
 #include "../renderer/renderer.hpp"
 #include "../physics/physics_world.hpp"
 
