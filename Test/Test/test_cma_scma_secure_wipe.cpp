@@ -219,7 +219,7 @@ static int32_t runtime_run_command(const std::string &command)
         runtime_command_thread, &command_state);
     if (thread_result != 0)
         return (0);
-    thread_result = pt_thread_timed_join(command_thread, ft_nullptr, 30000);
+    thread_result = pt_thread_timed_join(command_thread, ft_nullptr, 120000);
     if (thread_result != 0)
     {
         (void)pt_thread_cancel(command_thread);
