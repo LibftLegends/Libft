@@ -228,9 +228,10 @@ with no dependency on FullLibft's `Basic`/`Errno`/`ft_bool` plumbing.
   screenshot and comparing: visibly smoother sphere silhouette edges
   (less staircase pixelation) with AA than without.
 
-Not yet implemented (future steps, see `verdict.md`'s priority order for
-the full list): frustum/occlusion culling + FPS measurement, Doxygen, ECS,
-memory-leak verification, bonus features.
+All of the above landed early in the project; frustum/occlusion culling,
+FPS measurement, Doxygen, the ECS, memory-leak verification, and the bonus
+features (post-processing, particles, sound, skeletal animation) followed —
+see `verdict.md` for the full, currently-verified status of every one.
 
 ### Step 6/7 — the Interactive House Environment (done)
 
