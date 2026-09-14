@@ -53,6 +53,7 @@ struct analytics_runtime_scope_token
     uint32_t region_id;
     uint64_t start_nanoseconds;
     ft_bool active;
+    ft_bool runtime_scope_registered;
 };
 
 enum class analytics_output_format : uint32_t

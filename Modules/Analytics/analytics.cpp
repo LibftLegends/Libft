@@ -154,6 +154,10 @@ static std::atomic<analytics_session *> g_analytics_runtime_session(
 static uint32_t g_analytics_runtime_region_ids[
     static_cast<uint32_t>(analytics_runtime_region::COUNT)] = {};
 static std::atomic<uint32_t> g_analytics_runtime_sample_rate(1U);
+static std::mutex g_analytics_runtime_lifecycle_mutex;
+static std::condition_variable g_analytics_runtime_lifecycle_condition;
+static uint32_t g_analytics_runtime_active_scopes = 0U;
+static ft_bool g_analytics_runtime_shutting_down = FT_FALSE;
 static thread_local uint32_t g_analytics_runtime_sample_counter = 0U;
 
 static const char *analytics_runtime_region_name(
@@ -370,14 +374,24 @@ int32_t analytics_runtime_register_regions(analytics_session *session) noexcept
             return (error_code);
         region_index += 1U;
     }
-    g_analytics_runtime_session.store(session, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(g_analytics_runtime_lifecycle_mutex);
+        g_analytics_runtime_shutting_down = FT_FALSE;
+        g_analytics_runtime_session.store(session, std::memory_order_release);
+    }
     return (FT_ERR_SUCCESS);
 }
 
 int32_t analytics_runtime_shutdown() noexcept
 {
+    std::unique_lock<std::mutex> lock(g_analytics_runtime_lifecycle_mutex);
+
+    g_analytics_runtime_shutting_down = FT_TRUE;
     g_analytics_runtime_session.store(ft_nullptr, std::memory_order_release);
-    g_analytics_runtime_sample_counter = 0U;
+    g_analytics_runtime_lifecycle_condition.wait(lock, []() noexcept
+    {
+        return (g_analytics_runtime_active_scopes == 0U);
+    });
     return (FT_ERR_SUCCESS);
 }
 
@@ -404,19 +418,27 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
     token->region_id = 0U;
     token->start_nanoseconds = 0U;
     token->active = FT_FALSE;
+    token->runtime_scope_registered = FT_FALSE;
     region_index = static_cast<uint32_t>(region);
     if (region_index >= static_cast<uint32_t>(
             analytics_runtime_region::COUNT))
         return (FT_ERR_INVALID_ARGUMENT);
-    session = g_analytics_runtime_session.load(std::memory_order_acquire);
-    if (session == ft_nullptr || session->is_enabled() == FT_FALSE)
-        return (FT_ERR_SUCCESS);
-    sample_rate = g_analytics_runtime_sample_rate.load(
-        std::memory_order_relaxed);
-    g_analytics_runtime_sample_counter += 1U;
-    if (sample_rate > 1U
-        && (g_analytics_runtime_sample_counter % sample_rate) != 0U)
-        return (FT_ERR_SUCCESS);
+    {
+        std::lock_guard<std::mutex> lock(g_analytics_runtime_lifecycle_mutex);
+        if (g_analytics_runtime_shutting_down != FT_FALSE)
+            return (FT_ERR_SUCCESS);
+        session = g_analytics_runtime_session.load(
+            std::memory_order_acquire);
+        if (session == ft_nullptr || session->is_enabled() == FT_FALSE)
+            return (FT_ERR_SUCCESS);
+        sample_rate = g_analytics_runtime_sample_rate.load(
+            std::memory_order_relaxed);
+        g_analytics_runtime_sample_counter += 1U;
+        if (sample_rate > 1U
+            && (g_analytics_runtime_sample_counter % sample_rate) != 0U)
+            return (FT_ERR_SUCCESS);
+        g_analytics_runtime_active_scopes += 1U;
+    }
     token->session = session;
     token->region_id = g_analytics_runtime_region_ids[region_index];
     token->start_nanoseconds = session->now_nanoseconds();
@@ -425,9 +447,16 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
     if (error_code != FT_ERR_SUCCESS)
     {
         token->session = ft_nullptr;
+        {
+            std::lock_guard<std::mutex> lock(
+                g_analytics_runtime_lifecycle_mutex);
+            g_analytics_runtime_active_scopes -= 1U;
+        }
+        g_analytics_runtime_lifecycle_condition.notify_all();
         return (FT_ERR_SUCCESS);
     }
     token->active = FT_TRUE;
+    token->runtime_scope_registered = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -444,6 +473,16 @@ int32_t analytics_runtime_scope_end(
         token->session->now_nanoseconds());
     token->session = ft_nullptr;
     token->active = FT_FALSE;
+    if (token->runtime_scope_registered != FT_FALSE)
+    {
+        {
+            std::lock_guard<std::mutex> lock(
+                g_analytics_runtime_lifecycle_mutex);
+            g_analytics_runtime_active_scopes -= 1U;
+        }
+        token->runtime_scope_registered = FT_FALSE;
+        g_analytics_runtime_lifecycle_condition.notify_all();
+    }
     return (error_code);
 }
 
@@ -722,7 +761,7 @@ int32_t analytics_session::stop_exporter_internal() noexcept
             return (FT_ERR_SUCCESS);
         this->_export_stop = FT_TRUE;
     }
-    this->_export_condition.notify_one();
+    this->_export_condition.notify_all();
     if (this->_export_thread.joinable())
         this->_export_thread.join();
     this->_exporter_started = FT_FALSE;
@@ -735,14 +774,17 @@ void analytics_session::export_worker_main() noexcept
 
     while (this->_export_stop == FT_FALSE)
     {
-        this->_export_condition.wait(lock);
-        if (this->_export_stop == FT_FALSE)
+        this->_export_condition.wait(lock, [this]() noexcept
         {
-            lock.unlock();
-            if (this->flush_exports() != FT_ERR_SUCCESS)
-                this->_export_error.store(FT_ERR_IO, std::memory_order_release);
-            lock.lock();
-        }
+            return (this->_export_stop != FT_FALSE
+                || this->_completed_buffer_count != 0U);
+        });
+        if (this->_export_stop != FT_FALSE)
+            break ;
+        lock.unlock();
+        if (this->flush_exports() != FT_ERR_SUCCESS)
+            this->_export_error.store(FT_ERR_IO, std::memory_order_release);
+        lock.lock();
     }
     lock.unlock();
     if (this->flush_exports() != FT_ERR_SUCCESS)

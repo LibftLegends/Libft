@@ -1477,18 +1477,15 @@ int32_t chunk_mesh_apply_light(chunk_mesh &mesh,
             --z;
         else if (vertex.face == CHUNK_MESH_FACE_SOUTH)
             z += 1;
-        if (x < 0)
-            x = 0;
-        else if (x >= GAME_VOXEL_CHUNK_WIDTH)
-            x = GAME_VOXEL_CHUNK_WIDTH - 1;
-        if (y < 0)
-            y = 0;
-        else if (y >= GAME_VOXEL_CHUNK_HEIGHT)
-            y = GAME_VOXEL_CHUNK_HEIGHT - 1;
-        if (z < 0)
-            z = 0;
-        else if (z >= GAME_VOXEL_CHUNK_DEPTH)
-            z = GAME_VOXEL_CHUNK_DEPTH - 1;
+        /* Boundary vertices may already contain a value sampled from a
+         * neighbouring chunk or open sky.  Clamping them to the local edge
+         * silently replaced that valid halo value with the wrong local cell
+         * and could darken an entire face during a geometry-only publication.
+         * Only overwrite samples that are actually inside this light field. */
+        if (x < 0 || x >= GAME_VOXEL_CHUNK_WIDTH
+            || y < 0 || y >= GAME_VOXEL_CHUNK_HEIGHT
+            || z < 0 || z >= GAME_VOXEL_CHUNK_DEPTH)
+            continue ;
         vertex.packed_light = light.get(x, y, z);
     }
     return (FT_ERR_SUCCESS);

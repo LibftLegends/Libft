@@ -4,6 +4,7 @@
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
 #include "../../Modules/Voxel/voxel_lighting.hpp"
+#include "../../Modules/Voxel/voxel_mesh.hpp"
 #include "../../Modules/Voxel/voxel_api.hpp"
 #include "../../Modules/Voxel/voxel_types.hpp"
 
@@ -21,6 +22,14 @@ struct voxel_lighting_lookup_context
     int32_t second_emitter_x = 0;
     int32_t second_emitter_y = 0;
     int32_t second_emitter_z = 0;
+    ft_bool has_solid_block = FT_FALSE;
+    int32_t solid_x = 0;
+    int32_t solid_y = 0;
+    int32_t solid_z = 0;
+    ft_bool has_leaf_block = FT_FALSE;
+    int32_t leaf_x = 0;
+    int32_t leaf_y = 0;
+    int32_t leaf_z = 0;
 };
 
 static int32_t voxel_lighting_lookup_block(void *user_data,
@@ -34,7 +43,15 @@ static int32_t voxel_lighting_lookup_block(void *user_data,
     if (block_id == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
     context = static_cast<voxel_lighting_lookup_context *>(user_data);
-    if (context != ft_nullptr && context->has_emitter == FT_TRUE
+    if (context != ft_nullptr && context->has_leaf_block == FT_TRUE
+        && world_x == context->leaf_x && world_y == context->leaf_y
+        && world_z == context->leaf_z)
+        *block_id = VOXEL_GENERATOR_OAK_LEAVES_BLOCK;
+    else if (context != ft_nullptr && context->has_solid_block == FT_TRUE
+        && world_x == context->solid_x && world_y == context->solid_y
+        && world_z == context->solid_z)
+        *block_id = VOXEL_GENERATOR_STONE_BLOCK;
+    else if (context != ft_nullptr && context->has_emitter == FT_TRUE
         && ((world_x == context->emitter_x
                 && world_y == context->emitter_y
                 && world_z == context->emitter_z)
@@ -145,6 +162,10 @@ FT_TEST(test_voxel_lighting_metadata_contract_and_edit_equivalence)
         voxel_get_block_metadata(VOXEL_GENERATOR_STONE_BLOCK);
     const voxel_block_metadata &water_metadata =
         voxel_get_block_metadata(VOXEL_GENERATOR_WATER_BLOCK);
+    const voxel_block_metadata &shrub_metadata =
+        voxel_get_block_metadata(VOXEL_GENERATOR_SHRUB_BLOCK);
+    const voxel_block_metadata &leaves_metadata =
+        voxel_get_block_metadata(VOXEL_GENERATOR_OAK_LEAVES_BLOCK);
     voxel_light_chunk edited_light;
     voxel_light_chunk rebuilt_light;
     voxel_light_build_operation operation;
@@ -157,6 +178,10 @@ FT_TEST(test_voxel_lighting_metadata_contract_and_edit_equivalence)
         voxel_block_light_attenuation(VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(water_metadata.light_attenuation,
         voxel_block_light_attenuation(VOXEL_GENERATOR_WATER_BLOCK));
+    /* Decorative transparent flora must not create artificial opaque shadows
+     * while the engine is using the basic 0..15 light mapping. */
+    FT_ASSERT_EQ(FT_FALSE, shrub_metadata.occludes_faces);
+    FT_ASSERT_EQ(FT_FALSE, leaves_metadata.occludes_faces);
     FT_ASSERT(stone_metadata.light_attenuation <= 15U);
     FT_ASSERT(water_metadata.light_attenuation <= 15U);
 
@@ -232,6 +257,32 @@ FT_TEST(test_voxel_lighting_local_all_air_has_direct_skylight)
     return (1);
 }
 
+FT_TEST(test_voxel_lighting_leaves_preserve_basic_skylight)
+{
+    voxel_light_chunk light_chunk;
+    voxel_lighting_lookup_context context;
+
+    context.has_opaque_roof = FT_FALSE;
+    context.roof_height = 0;
+    context.has_side_opening = FT_FALSE;
+    context.opening_x = 0;
+    context.opening_z = 0;
+    context.has_leaf_block = FT_TRUE;
+    context.leaf_x = 3;
+    context.leaf_y = 200;
+    context.leaf_z = 3;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(light_chunk,
+        0, 0, voxel_lighting_lookup_block, &context));
+    FT_ASSERT_EQ(static_cast<uint8_t>(15U),
+        voxel_light_sky(light_chunk.get(3, 200, 3)));
+    FT_ASSERT_EQ(static_cast<uint8_t>(15U),
+        voxel_light_sky(light_chunk.get(3, 199, 3)));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U),
+        voxel_light_block(light_chunk.get(3, 199, 3)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, light_chunk.destroy());
+    return (1);
+}
+
 FT_TEST(test_voxel_lighting_local_opaque_roof_completely_occludes_skylight)
 {
     voxel_light_chunk light_chunk;
@@ -269,6 +320,134 @@ FT_TEST(test_voxel_lighting_local_opaque_roof_completely_occludes_skylight)
         local_z += 1;
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, light_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_mesh_uses_solver_light_mapping)
+{
+    game_voxel_chunk exposed_chunk;
+    voxel_light_chunk exposed_light;
+    chunk_mesh exposed_mesh;
+    ft_size_t exposed_sky_faces;
+    ft_size_t index;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.write_block(8, 100, 8,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    voxel_lighting_lookup_context exposed_context;
+    exposed_context.has_solid_block = FT_TRUE;
+    exposed_context.solid_x = 8;
+    exposed_context.solid_y = 100;
+    exposed_context.solid_z = 8;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(exposed_light,
+        0, 0, voxel_lighting_lookup_block, &exposed_context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(exposed_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(
+        exposed_mesh, exposed_chunk, exposed_light));
+
+    exposed_sky_faces = 0U;
+    index = 0U;
+    while (index < exposed_mesh.vertices.size())
+    {
+        if (exposed_mesh.vertices[index].block_id
+                == VOXEL_GENERATOR_STONE_BLOCK
+            && voxel_light_sky(exposed_mesh.vertices[index].packed_light)
+                == 15U)
+            exposed_sky_faces += 1U;
+        index += 1U;
+    }
+    FT_ASSERT(exposed_sky_faces > 0U);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(exposed_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.destroy());
+    return (1);
+}
+
+static uint8_t voxel_test_mesh_maximum_sky(const chunk_mesh &mesh) noexcept
+{
+    ft_size_t index;
+    uint8_t maximum;
+
+    maximum = 0U;
+    index = 0U;
+    while (index < mesh.vertices.size())
+    {
+        if (voxel_light_sky(mesh.vertices[index].packed_light) > maximum)
+            maximum = voxel_light_sky(mesh.vertices[index].packed_light);
+        index += 1U;
+    }
+    return (maximum);
+}
+
+FT_TEST(test_voxel_mesh_light_mapping_exposed_cave_and_ceiling_column)
+{
+    game_voxel_chunk exposed_chunk;
+    game_voxel_chunk cave_chunk;
+    game_voxel_chunk ceiling_chunk;
+    voxel_light_chunk exposed_light;
+    voxel_light_chunk cave_light;
+    voxel_light_chunk ceiling_light;
+    chunk_mesh exposed_mesh;
+    chunk_mesh cave_mesh;
+    chunk_mesh ceiling_mesh;
+    voxel_lighting_lookup_context exposed_context = {};
+    voxel_lighting_lookup_context cave_context = {};
+    voxel_lighting_lookup_context ceiling_context = {};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cave_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ceiling_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.write_block(8, 100, 8,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cave_chunk.write_block(8, 100, 8,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ceiling_chunk.write_block(8, 119, 8,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    exposed_context.has_solid_block = FT_TRUE;
+    exposed_context.solid_x = 8;
+    exposed_context.solid_y = 100;
+    exposed_context.solid_z = 8;
+    cave_context = exposed_context;
+    cave_context.has_opaque_roof = FT_TRUE;
+    cave_context.roof_height = 120;
+    ceiling_context = cave_context;
+    ceiling_context.solid_y = 119;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(exposed_light,
+        0, 0, voxel_lighting_lookup_block, &exposed_context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(cave_light,
+        0, 0, voxel_lighting_lookup_block, &cave_context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(ceiling_light,
+        0, 0, voxel_lighting_lookup_block, &ceiling_context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(exposed_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(cave_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(ceiling_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(
+        exposed_mesh, exposed_chunk, exposed_light));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(
+        cave_mesh, cave_chunk, cave_light));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_with_light(
+        ceiling_mesh, ceiling_chunk, ceiling_light));
+    FT_ASSERT_EQ(static_cast<uint8_t>(15U),
+        voxel_light_sky(exposed_light.get(8, 101, 8)));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U),
+        voxel_light_sky(cave_light.get(8, 100, 8)));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U),
+        voxel_light_sky(ceiling_light.get(8, 120, 8)));
+    FT_ASSERT_EQ(static_cast<uint8_t>(15U),
+        voxel_test_mesh_maximum_sky(exposed_mesh));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U),
+        voxel_test_mesh_maximum_sky(cave_mesh));
+    FT_ASSERT_EQ(static_cast<uint8_t>(0U),
+        voxel_test_mesh_maximum_sky(ceiling_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(exposed_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(cave_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(ceiling_mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cave_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ceiling_light.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exposed_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cave_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ceiling_chunk.destroy());
     return (1);
 }
 
@@ -488,8 +667,11 @@ FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
     FT_ASSERT_EQ(FT_TRUE, complete);
     FT_ASSERT(step_count > 1U);
     FT_ASSERT_EQ(expected_stats.scanned_cells, actual_stats.scanned_cells);
-    FT_ASSERT_EQ(expected_stats.propagated_cells,
-        actual_stats.propagated_cells);
+    /* Queue coalescing intentionally reduces repeated propagation entries;
+     * the completed light values remain the compatibility contract. */
+    FT_ASSERT(actual_stats.propagated_cells > 0U);
+    FT_ASSERT(actual_stats.propagated_cells
+        <= expected_stats.propagated_cells);
     local_y = 0;
     while (local_y < 256)
     {

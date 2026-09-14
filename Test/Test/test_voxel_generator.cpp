@@ -1588,6 +1588,7 @@ FT_TEST(test_voxel_generation_context_freezes_world_policy)
     config.set_biome_block_palette(0U, VOXEL_GENERATOR_STONE_BLOCK,
         VOXEL_GENERATOR_STONE_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
+    config.set_biome_snow_caps_enabled(0U, FT_TRUE);
     config.layers.enable_snow_caps = FT_TRUE;
     config.layers.snow_cap_minimum_height = 84;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_context_initialize(
@@ -2284,6 +2285,83 @@ FT_TEST(test_voxel_generation_surface_water_depth_contract)
     FT_ASSERT_EQ(0, shrub_count);
     FT_ASSERT_EQ(0, tree_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, deep_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_surface_water_column_is_atomic)
+{
+    game_voxel_chunk obstructed_chunk;
+    game_voxel_chunk reference_chunk;
+    voxel_generation_config config;
+    uint32_t stage_mask;
+    uint32_t block_id;
+    int32_t local_x;
+    int32_t local_z;
+    int32_t local_y;
+    int32_t obstructed_x;
+    int32_t obstructed_z;
+    int32_t obstructed_y;
+    ft_bool found_water_column;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_prepare_surface_water_config(
+        config, FT_TRUE, FT_TRUE, 46, 0, 3U, 3U));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        obstructed_chunk, 0, 0, "surface-water-atomic", config,
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        reference_chunk, 0, 0, "surface-water-atomic", config, stage_mask));
+    found_water_column = FT_FALSE;
+    obstructed_x = 0;
+    obstructed_z = 0;
+    obstructed_y = 0;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH
+        && found_water_column == FT_FALSE)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH
+            && found_water_column == FT_FALSE)
+        {
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.read_block(
+                    local_x, local_y, local_z, &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    found_water_column = FT_TRUE;
+                    obstructed_x = local_x;
+                    obstructed_z = local_z;
+                    obstructed_y = local_y;
+                    break ;
+                }
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_TRUE, found_water_column);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.write_generated_block(
+        obstructed_x, obstructed_y, obstructed_z,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        obstructed_chunk, 0, 0, "surface-water-atomic", config,
+        VOXEL_STAGE_FLUIDS));
+    local_y = 0;
+    while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.read_block(
+            obstructed_x, local_y, obstructed_z, &block_id));
+        FT_ASSERT(block_id != VOXEL_GENERATOR_WATER_BLOCK);
+        local_y += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.destroy());
     return (1);
 }
 

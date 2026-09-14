@@ -766,6 +766,39 @@ FT_TEST(test_analytics_concurrent_producers_and_exporter_drain)
     return (1);
 }
 
+FT_TEST(test_analytics_runtime_shutdown_waits_for_active_scope)
+{
+    analytics_session session;
+    std::atomic<ft_bool> scope_started;
+    std::atomic<ft_bool> scope_finished;
+    std::thread worker;
+
+    scope_started.store(FT_FALSE, std::memory_order_release);
+    scope_finished.store(FT_FALSE, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_register_regions(&session));
+    worker = std::thread([&scope_started, &scope_finished]() -> void
+    {
+        analytics_runtime_scope_token worker_token;
+
+        if (analytics_runtime_scope_begin(analytics_runtime_region::CMA_MALLOC,
+                &worker_token) != FT_ERR_SUCCESS)
+            return ;
+        scope_started.store(FT_TRUE, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if (analytics_runtime_scope_end(&worker_token) == FT_ERR_SUCCESS)
+            scope_finished.store(FT_TRUE, std::memory_order_release);
+        return ;
+    });
+    while (scope_started.load(std::memory_order_acquire) == FT_FALSE)
+        std::this_thread::yield();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_shutdown());
+    worker.join();
+    FT_ASSERT_EQ(FT_TRUE, scope_finished.load(std::memory_order_acquire));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
 FT_TEST(test_analytics_overflow_policies_preserve_buffer_ownership)
 {
     analytics_session session;

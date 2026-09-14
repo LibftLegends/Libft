@@ -37,13 +37,13 @@ FT_TEST(test_voxel_block_metadata_registry_reports_expected_properties)
     FT_ASSERT_EQ(FT_TRUE, shrub_metadata.replaceable);
     FT_ASSERT_EQ(FT_FALSE, shrub_metadata.liquid);
     FT_ASSERT_EQ(1U, shrub_metadata.hardness);
-    FT_ASSERT_EQ(FT_TRUE, shrub_metadata.occludes_faces);
+    FT_ASSERT_EQ(FT_FALSE, shrub_metadata.occludes_faces);
     FT_ASSERT_EQ(FT_FALSE, leaf_metadata.solid);
     FT_ASSERT_EQ(FT_TRUE, leaf_metadata.transparent);
     FT_ASSERT_EQ(FT_TRUE, leaf_metadata.replaceable);
     FT_ASSERT_EQ(FT_FALSE, leaf_metadata.liquid);
     FT_ASSERT_EQ(1U, leaf_metadata.hardness);
-    FT_ASSERT_EQ(FT_TRUE, leaf_metadata.occludes_faces);
+    FT_ASSERT_EQ(FT_FALSE, leaf_metadata.occludes_faces);
     FT_ASSERT_EQ(FT_TRUE, stone_metadata.solid);
     FT_ASSERT_EQ(FT_FALSE, stone_metadata.transparent);
     FT_ASSERT_EQ(FT_FALSE, stone_metadata.replaceable);
@@ -69,8 +69,8 @@ FT_TEST(test_chunk_mesh_respects_transparent_neighbors)
         VOXEL_GENERATOR_SHRUB_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
-    FT_ASSERT_EQ(40, mesh.vertices.size());
-    FT_ASSERT_EQ(60, mesh.indices.size());
+    FT_ASSERT_EQ(44, mesh.vertices.size());
+    FT_ASSERT_EQ(66, mesh.indices.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);

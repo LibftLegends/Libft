@@ -37,19 +37,6 @@ static const uint8_t VOXEL_SURFACE_WATER_RIVER = 1U;
 static const uint8_t VOXEL_SURFACE_WATER_LAKE = 2U;
 static const uint8_t VOXEL_SURFACE_WATER_LEGACY = 3U;
 
-static ft_bool voxel_world_coordinate_on_grid(int32_t coordinate,
-    int32_t spacing, int32_t offset) noexcept
-{
-    int32_t remainder;
-
-    if (spacing <= 0)
-        return (FT_FALSE);
-    remainder = (coordinate - offset) % spacing;
-    if (remainder < 0)
-        remainder += spacing;
-    return (remainder == 0 ? FT_TRUE : FT_FALSE);
-}
-
 static int32_t voxel_floor_division(int32_t value, int32_t divisor) noexcept
 {
     int32_t quotient;
@@ -127,14 +114,6 @@ static ft_bool voxel_surface_water_neighbor_matches(uint64_t seed_value,
     int32_t local_x, int32_t local_z, int32_t offset_x, int32_t offset_z,
     const voxel_generation_config &config, voxel_column_cache *column_cache,
     uint8_t expected_kind, uint64_t expected_feature_id) noexcept;
-
-static ft_bool voxel_surface_water_neighbor_is_compatible(
-    uint64_t seed_value, int32_t world_block_origin_x,
-    int32_t world_block_origin_z, int32_t local_x, int32_t local_z,
-    int32_t offset_x, int32_t offset_z,
-    const voxel_generation_config &config, voxel_column_cache *column_cache,
-    uint8_t expected_kind, uint64_t expected_feature_id,
-    int32_t expected_water_level) noexcept;
 
 static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
     uint32_t previous_mask) noexcept;
@@ -369,8 +348,8 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
     uint32_t sample_index;
     double shrub_chance;
     double tree_chance;
-    uint32_t validation_pass;
-    ft_bool validation_changed;
+    double mountain_weight;
+    double snow_weight;
 
     /* Surface water is sampled per column.  The second pass removes detached
      * candidates, including candidates on a chunk border.  Border columns
@@ -396,6 +375,8 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
             column_cache[column_index].biome_profile.topsoil_depth = 0;
             shrub_chance = 0.0;
             tree_chance = 0.0;
+            mountain_weight = 0.0;
+            snow_weight = 0.0;
             sample_index = 0U;
             while (sample_index < column_cache[column_index].biome_sample.count)
             {
@@ -415,6 +396,14 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                 column_cache[column_index].biome_profile.topsoil_depth +=
                     static_cast<int32_t>(static_cast<double>(config.biomes[
                         sampled_biome].profile.topsoil_depth) * sampled_weight);
+                shrub_chance += sampled_weight * static_cast<double>(config.biomes[
+                    sampled_biome].shrub_chance_percent);
+                tree_chance += sampled_weight * static_cast<double>(config.biomes[
+                    sampled_biome].tree_chance_percent);
+                if (config.biomes[sampled_biome].allow_mountain_ridges == FT_TRUE)
+                    mountain_weight += sampled_weight;
+                if (config.biomes[sampled_biome].allow_snow_caps == FT_TRUE)
+                    snow_weight += sampled_weight;
                 sample_index += 1U;
             }
             column_cache[column_index].column_height
@@ -484,20 +473,27 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                     world_block_z, config);
             column_cache[column_index].deep_block_id = config.biomes[
                 column_cache[column_index].biome].deep_block_id;
-            column_cache[column_index].can_place_shrubs =
-                config.biomes[column_cache[column_index].biome].allow_shrubs;
-            column_cache[column_index].can_place_trees =
-                config.biomes[column_cache[column_index].biome].allow_trees;
-            column_cache[column_index].can_place_snow =
-                config.biomes[column_cache[column_index].biome]
-                    .allow_snow_caps;
-            column_cache[column_index].can_place_mountain_ridges =
-                config.biomes[column_cache[column_index].biome]
-                    .allow_mountain_ridges;
-            shrub_chance = static_cast<double>(config.biomes[
-                column_cache[column_index].biome].shrub_chance_percent);
-            tree_chance = static_cast<double>(config.biomes[
-                column_cache[column_index].biome].tree_chance_percent);
+            column_cache[column_index].can_place_shrubs = FT_FALSE;
+            column_cache[column_index].can_place_trees = FT_FALSE;
+            column_cache[column_index].can_place_snow = FT_FALSE;
+            column_cache[column_index].can_place_mountain_ridges = FT_FALSE;
+            sample_index = 0U;
+            while (sample_index < column_cache[column_index].biome_sample.count)
+            {
+                uint32_t sampled_biome;
+
+                sampled_biome = column_cache[column_index].biome_sample
+                    .biome_indices[sample_index];
+                if (config.biomes[sampled_biome].allow_shrubs == FT_TRUE)
+                    column_cache[column_index].can_place_shrubs = FT_TRUE;
+                if (config.biomes[sampled_biome].allow_trees == FT_TRUE)
+                    column_cache[column_index].can_place_trees = FT_TRUE;
+                sample_index += 1U;
+            }
+            if (snow_weight >= 0.25)
+                column_cache[column_index].can_place_snow = FT_TRUE;
+            if (mountain_weight >= 0.25)
+                column_cache[column_index].can_place_mountain_ridges = FT_TRUE;
             if (shrub_chance > 100.0)
                 shrub_chance = 100.0;
             if (tree_chance > 100.0)
@@ -510,99 +506,59 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
         }
         local_z += 1;
     }
-    validation_pass = 0U;
-    validation_changed = FT_TRUE;
-    while (validation_changed == FT_TRUE
-        && validation_pass < VOXEL_COLUMN_CACHE_COUNT)
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
     {
-        validation_changed = FT_FALSE;
-        local_z = 0;
-        while (local_z < GAME_VOXEL_CHUNK_DEPTH)
-        {
         local_x = 0;
         while (local_x < GAME_VOXEL_CHUNK_WIDTH)
         {
-            ft_bool has_same_feature_neighbor;
-            ft_bool all_neighbors_compatible;
-            int32_t expected_water_level;
+            ft_bool has_compatible_neighbor;
 
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
-            has_same_feature_neighbor = FT_FALSE;
-            all_neighbors_compatible = FT_TRUE;
+            has_compatible_neighbor = FT_FALSE;
             if (column_cache[column_index].has_surface_water == FT_TRUE)
             {
-                expected_water_level = column_cache[column_index]
-                    .surface_water_level;
                 if (voxel_surface_water_neighbor_matches(seed_value,
                         world_block_origin_x, world_block_origin_z, local_x,
                         local_z, -1, 0, config, column_cache,
                         column_cache[column_index].surface_water_kind,
                         column_cache[column_index].surface_water_feature_id)
                         == FT_TRUE)
-                    has_same_feature_neighbor = FT_TRUE;
-                if (voxel_surface_water_neighbor_is_compatible(seed_value,
-                        world_block_origin_x, world_block_origin_z, local_x,
-                        local_z, -1, 0, config, column_cache,
-                        column_cache[column_index].surface_water_kind,
-                        column_cache[column_index].surface_water_feature_id,
-                        expected_water_level) == FT_FALSE)
-                    all_neighbors_compatible = FT_FALSE;
-                if (voxel_surface_water_neighbor_is_compatible(seed_value,
-                        world_block_origin_x, world_block_origin_z, local_x,
-                        local_z, 1, 0, config, column_cache,
-                        column_cache[column_index].surface_water_kind,
-                        column_cache[column_index].surface_water_feature_id,
-                        expected_water_level) == FT_FALSE)
-                    all_neighbors_compatible = FT_FALSE;
-                if (voxel_surface_water_neighbor_matches(seed_value,
+                    has_compatible_neighbor = FT_TRUE;
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
                         world_block_origin_x, world_block_origin_z, local_x,
                         local_z, 1, 0, config, column_cache,
                         column_cache[column_index].surface_water_kind,
                         column_cache[column_index].surface_water_feature_id)
                         == FT_TRUE)
-                    has_same_feature_neighbor = FT_TRUE;
-                if (voxel_surface_water_neighbor_is_compatible(seed_value,
-                        world_block_origin_x, world_block_origin_z, local_x,
-                        local_z, 0, -1, config, column_cache,
-                        column_cache[column_index].surface_water_kind,
-                        column_cache[column_index].surface_water_feature_id,
-                        expected_water_level) == FT_FALSE)
-                    all_neighbors_compatible = FT_FALSE;
-                if (voxel_surface_water_neighbor_matches(seed_value,
+                    has_compatible_neighbor = FT_TRUE;
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
                         world_block_origin_x, world_block_origin_z, local_x,
                         local_z, 0, -1, config, column_cache,
                         column_cache[column_index].surface_water_kind,
                         column_cache[column_index].surface_water_feature_id)
                         == FT_TRUE)
-                    has_same_feature_neighbor = FT_TRUE;
-                if (voxel_surface_water_neighbor_is_compatible(seed_value,
-                        world_block_origin_x, world_block_origin_z, local_x,
-                        local_z, 0, 1, config, column_cache,
-                        column_cache[column_index].surface_water_kind,
-                        column_cache[column_index].surface_water_feature_id,
-                        expected_water_level) == FT_FALSE)
-                    all_neighbors_compatible = FT_FALSE;
-                if (voxel_surface_water_neighbor_matches(seed_value,
+                    has_compatible_neighbor = FT_TRUE;
+                if (has_compatible_neighbor == FT_FALSE
+                    && voxel_surface_water_neighbor_matches(seed_value,
                         world_block_origin_x, world_block_origin_z, local_x,
                         local_z, 0, 1, config, column_cache,
                         column_cache[column_index].surface_water_kind,
                         column_cache[column_index].surface_water_feature_id)
                         == FT_TRUE)
-                    has_same_feature_neighbor = FT_TRUE;
-                if (has_same_feature_neighbor == FT_FALSE
-                    || all_neighbors_compatible == FT_FALSE)
+                    has_compatible_neighbor = FT_TRUE;
+                if (has_compatible_neighbor == FT_FALSE)
                 {
                     column_cache[column_index].has_surface_water = FT_FALSE;
                     column_cache[column_index].surface_water_depth = 0U;
                     column_cache[column_index].surface_water_feature_id = 0U;
-                    validation_changed = FT_TRUE;
                 }
             }
             local_x += 1;
         }
         local_z += 1;
-        }
-        validation_pass += 1U;
     }
     return ;
 }
@@ -972,32 +928,81 @@ static uint32_t voxel_sample_biome_block(
     int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
     uint64_t material_salt, ft_bool subsurface) noexcept
 {
+    uint64_t sample_seed;
+    double sample_value;
+    double accumulated_weight;
+    uint32_t index;
     uint32_t biome;
 
-    (void)seed_value;
-    (void)world_block_x;
-    (void)world_block_y;
-    (void)world_block_z;
-    (void)material_salt;
-    biome = sample.biome_indices[0];
-    if (subsurface == FT_TRUE)
-        return (config.biomes[biome].subsurface_block_id);
-    return (config.biomes[biome].surface_block_id);
+    sample_seed = seed_value ^ material_salt
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_x))
+            * UINT64_C(0xA24BAED4963EE407))
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_y))
+            * UINT64_C(0x9FB21C651E98DF25))
+        ^ (static_cast<uint64_t>(static_cast<uint32_t>(world_block_z))
+            * UINT64_C(0xC13FA9A902A6328F));
+    sample_value = static_cast<double>(voxel_mix_u64(sample_seed)
+        % 100000U) / 100000.0;
+    accumulated_weight = 0.0;
+    index = 0U;
+    while (index < sample.count)
+    {
+        biome = sample.biome_indices[index];
+        accumulated_weight += sample.weights[index];
+        if (sample_value <= accumulated_weight || index + 1U == sample.count)
+        {
+            if (subsurface == FT_TRUE)
+                return (config.biomes[biome].subsurface_block_id);
+            return (config.biomes[biome].surface_block_id);
+        }
+        index += 1U;
+    }
+    return (config.biomes[sample.biome_indices[0]].surface_block_id);
 }
 
 static const voxel_tree_template *voxel_sample_tree_template(
     const voxel_generation_config &config,
     const voxel_biome_sample &sample, uint64_t seed_value)
 {
+    uint32_t index;
     uint32_t selected_biome;
+    double tree_weight_total;
+    double sample_value;
+    double accumulated_weight;
     const voxel_tree_template *tree_template;
 
-    (void)seed_value;
-    selected_biome = sample.biome_indices[0];
-    if (config.biomes[selected_biome].allow_trees != FT_TRUE
-        || (config.biomes[selected_biome].tree_template == ft_nullptr
-            && config.biomes[selected_biome].tree_template_count == 0U))
+    tree_weight_total = 0.0;
+    index = 0U;
+    while (index < sample.count)
+    {
+        selected_biome = sample.biome_indices[index];
+        if (config.biomes[selected_biome].allow_trees == FT_TRUE
+            && (config.biomes[selected_biome].tree_template != ft_nullptr
+                || config.biomes[selected_biome].tree_template_count > 0U))
+            tree_weight_total += sample.weights[index];
+        index += 1U;
+    }
+    if (tree_weight_total <= 0.0)
         return (ft_nullptr);
+    selected_biome = sample.biome_indices[0];
+    sample_value = static_cast<double>(voxel_mix_u64(seed_value)
+        % 100000U) / 100000.0 * tree_weight_total;
+    accumulated_weight = 0.0;
+    index = 0U;
+    while (index < sample.count)
+    {
+        selected_biome = sample.biome_indices[index];
+        if (config.biomes[selected_biome].allow_trees == FT_TRUE
+            && (config.biomes[selected_biome].tree_template != ft_nullptr
+                || config.biomes[selected_biome].tree_template_count > 0U))
+        {
+            selected_biome = sample.biome_indices[index];
+            accumulated_weight += sample.weights[index];
+            if (sample_value <= accumulated_weight)
+                break ;
+        }
+        index += 1U;
+    }
     tree_template = config.biomes[selected_biome].tree_template;
     if (tree_template == ft_nullptr
         && config.biomes[selected_biome].tree_template_count > 0U)
@@ -1529,50 +1534,6 @@ static ft_bool voxel_surface_water_neighbor_matches(uint64_t seed_value,
         && neighbor_feature_id == expected_feature_id);
 }
 
-static ft_bool voxel_surface_water_neighbor_is_compatible(
-    uint64_t seed_value, int32_t world_block_origin_x,
-    int32_t world_block_origin_z, int32_t local_x, int32_t local_z,
-    int32_t offset_x, int32_t offset_z,
-    const voxel_generation_config &config, voxel_column_cache *column_cache,
-    uint8_t expected_kind, uint64_t expected_feature_id,
-    int32_t expected_water_level) noexcept
-{
-    int32_t neighbor_x;
-    int32_t neighbor_z;
-    int32_t neighbor_index;
-    int32_t natural_height;
-    uint8_t neighbor_kind;
-    uint64_t neighbor_feature_id;
-
-    neighbor_x = local_x + offset_x;
-    neighbor_z = local_z + offset_z;
-    if (neighbor_x >= 0 && neighbor_x < GAME_VOXEL_CHUNK_WIDTH
-        && neighbor_z >= 0 && neighbor_z < GAME_VOXEL_CHUNK_DEPTH)
-    {
-        neighbor_index = neighbor_z * GAME_VOXEL_CHUNK_WIDTH + neighbor_x;
-        if (column_cache[neighbor_index].has_surface_water == FT_TRUE
-            && column_cache[neighbor_index].surface_water_kind
-                == expected_kind
-            && column_cache[neighbor_index].surface_water_feature_id
-                == expected_feature_id)
-            return (FT_TRUE);
-        natural_height = column_cache[neighbor_index].column_height;
-        return (natural_height >= expected_water_level ? FT_TRUE : FT_FALSE);
-    }
-    if (voxel_surface_water_candidate_is_valid(seed_value,
-            world_block_origin_x + neighbor_x,
-            world_block_origin_z + neighbor_z, config, &neighbor_kind,
-            &neighbor_feature_id) == FT_TRUE
-        && neighbor_kind == expected_kind
-        && voxel_surface_water_level(neighbor_kind, config.sea_level)
-            == expected_water_level)
-        return (FT_TRUE);
-    natural_height = voxel_smooth_heightfield(seed_value,
-        world_block_origin_x + neighbor_x,
-        world_block_origin_z + neighbor_z, config);
-    return (natural_height >= expected_water_level ? FT_TRUE : FT_FALSE);
-}
-
 static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
     uint32_t previous_mask) noexcept
 {
@@ -2096,7 +2057,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             }
             if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U
                 && config.layers.enable_beaches == FT_TRUE
-                && column_cache[column_index].has_surface_water == FT_TRUE
+                && column_cache[column_index].has_surface_water == FT_FALSE
                 && column_height < config.sea_level)
             {
                 local_y = column_height;
@@ -2138,22 +2099,51 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             {
                 column_index = local_z * GAME_VOXEL_CHUNK_WIDTH + local_x;
                 column_height = column_cache[column_index].column_height;
-                if (column_cache[column_index].has_surface_water == FT_TRUE
-                    && column_height >= 0
-                    && column_height < column_cache[column_index]
-                        .surface_water_level)
-                {
-                    uint32_t bed_block;
-                    if (chunk.read_block(local_x, column_height, local_z,
-                            &bed_block) != FT_ERR_SUCCESS
-                        || voxel_block_is_solid(bed_block) == FT_FALSE)
-                    {
-                        column_cache[column_index].has_surface_water = FT_FALSE;
-                    }
-                    else
-                    {
-                        local_y = column_height + 1;
-                        while (local_y <= column_cache[column_index]
+				if (column_cache[column_index].has_surface_water == FT_TRUE
+					&& column_height >= 0
+					&& column_height < column_cache[column_index]
+						.surface_water_level)
+				{
+					uint32_t bed_block;
+					ft_bool water_column_is_valid;
+					if (chunk.read_block(local_x, column_height, local_z,
+							&bed_block) != FT_ERR_SUCCESS
+						|| voxel_block_is_solid(bed_block) == FT_FALSE)
+					{
+						column_cache[column_index].has_surface_water = FT_FALSE;
+					}
+					else
+					{
+						/* Preflight the complete column before writing anything.
+						 * A solid block above the depression must reject the
+						 * candidate instead of leaving a partially filled pond. */
+						water_column_is_valid = FT_TRUE;
+						local_y = column_height + 1;
+						while (local_y <= column_cache[column_index]
+								.surface_water_level
+							&& local_y < GAME_VOXEL_CHUNK_HEIGHT)
+						{
+							uint32_t existing_block;
+
+							if (chunk.read_block(local_x, local_y, local_z,
+									&existing_block) != FT_ERR_SUCCESS
+								|| (existing_block != VOXEL_GENERATOR_AIR_BLOCK
+									&& voxel_block_is_liquid(existing_block)
+										== FT_FALSE))
+							{
+								water_column_is_valid = FT_FALSE;
+								break ;
+							}
+							local_y += 1;
+						}
+						if (water_column_is_valid == FT_FALSE)
+						{
+							column_cache[column_index].has_surface_water = FT_FALSE;
+							local_x += 1;
+							continue ;
+						}
+						local_y = column_height + 1;
+						while (local_y <= column_cache[column_index]
                                 .surface_water_level
                             && local_y < GAME_VOXEL_CHUNK_HEIGHT)
                         {
@@ -2212,10 +2202,6 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                             < column_height
                         && local_y % (static_cast<int32_t>(config.fluids
                             .underground_lake_depth) + 7) == 4
-                        && voxel_world_coordinate_on_grid(
-                            world_block_origin_x + local_x, 4, 2) == FT_TRUE
-                        && voxel_world_coordinate_on_grid(
-                            world_block_origin_z + local_z, 4, 2) == FT_TRUE
                         && voxel_should_place_feature(seed_value
                             ^ static_cast<uint64_t>(local_y),
                             world_block_origin_x + local_x,
@@ -2289,6 +2275,41 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                             .underground_lake_depth) + 1;
                     }
                     local_y += 1;
+                }
+                local_x += 1;
+            }
+            local_z += 1;
+        }
+    }
+    /* Snow caps are local surface state and must also be generated on chunk
+     * border columns.  Tree and shrub placement keeps its interior margin,
+     * but excluding the border here makes valid snow disappear until a
+     * neighboring chunk happens to be present. */
+    if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
+        && config.layers.enable_snow_caps == FT_TRUE)
+    {
+        local_z = 0;
+        while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            local_x = 0;
+            while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+            {
+                column_index = local_z * GAME_VOXEL_CHUNK_WIDTH + local_x;
+                column_height = column_cache[column_index].column_height;
+                if (column_cache[column_index].has_surface_water == FT_FALSE
+                    && column_cache[column_index].can_place_snow == FT_TRUE
+                    && column_height >= config.layers.snow_cap_minimum_height)
+                {
+                    local_y = column_height;
+                    while (local_y >= 0 && local_y > column_height
+                        - static_cast<int32_t>(config.layers.snow_cap_depth))
+                    {
+                        error_code = chunk.write_generated_block(local_x,
+                            local_y, local_z, config.layers.snow_cap_block_id);
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                        local_y -= 1;
+                    }
                 }
                 local_x += 1;
             }
