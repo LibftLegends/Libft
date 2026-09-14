@@ -66,7 +66,7 @@ bool AudioLinux::initialize()
 	rate = _sample_rate;
 	snd_pcm_hw_params_set_rate_near(_pcm_handle, hw_params, &rate, nullptr);
 	_sample_rate = rate;
-		// ALSA may have picked the nearest rate the device actually supports
+	// ALSA may have picked the nearest rate the device actually supports
 	// A ~20ms period is a reasonable balance: small enough that play()/stop()
 	// feel responsive (a UI click shouldn't wait 200ms to start), large
 	// enough that the writer thread isn't waking up so often it becomes a

@@ -48,7 +48,16 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/assets/tga_loader.cpp \
                 src/assets/skinned_asset.cpp \
                 src/assets/skinned_mesh_grammar.cpp \
+                src/scene/name_component.cpp \
+                src/scene/parent_component.cpp \
+                src/scene/transform_component.cpp \
+                src/scene/world_transform_component.cpp \
+                src/scene/mesh_component.cpp \
+                src/scene/visibility_component.cpp \
+                src/scene/physics_body_component.cpp \
                 src/scene/scene.cpp \
+                src/scene/scene_queries.cpp \
+                src/platform/window.cpp \
                 src/physics/body_handle.cpp \
                 src/physics/collider.cpp \
                 src/physics/rigid_body_desc.cpp \
@@ -75,6 +84,7 @@ LIB_MM_SRCS  :=
 
 ifeq ($(UNAME_S),Linux)
 LIB_CPP_SRCS += src/platform/linux/window_linux.cpp \
+                src/platform/linux/window_linux_events.cpp \
                 src/platform/linux/audio_linux.cpp
 # -lasound: ALSA, a Linux system library (same category as the XCB the
 # subject names as an allowed example) — see src/platform/linux/audio_linux.hpp.
@@ -96,7 +106,9 @@ endif
 # No CoreAudio backend yet (see src/audio/null_audio_system.cpp) — macOS is
 # the local-dev-only platform, Linux is the actual submission target.
 LIB_CPP_SRCS += src/audio/null_audio_system.cpp
-LIB_MM_SRCS  += src/platform/macos/window_macos.mm
+LIB_MM_SRCS  += src/platform/macos/window_macos.mm \
+                src/platform/macos/window_macos_lifecycle.mm \
+                src/platform/macos/window_macos_events.mm
 CXXFLAGS     += -I$(VULKAN_HEADERS_PREFIX)/include -I$(MOLTENVK_PREFIX)/include
 LDLIBS       := -L$(MOLTENVK_PREFIX)/lib -lMoltenVK \
                 -Wl,-rpath,$(MOLTENVK_PREFIX)/lib \

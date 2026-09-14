@@ -237,7 +237,7 @@ int main(int argc, char **argv)
     while (!window->should_close())
     {
         window->poll_events();
-        if (window->was_key_pressed(vre::KeyCode::Escape))
+        if (window->was_key_pressed(vre::Window::Key::Escape))
             break;
 
         auto now = std::chrono::high_resolution_clock::now();
@@ -254,13 +254,13 @@ int main(int argc, char **argv)
         float pitch_before_look = pitch;
 
         // --- Look (arrow keys) ---------------------------------------------
-        if (window->is_key_held(vre::KeyCode::Left))
+        if (window->is_key_held(vre::Window::Key::Left))
             yaw -= look_speed * delta_seconds;
-        if (window->is_key_held(vre::KeyCode::Right))
+        if (window->is_key_held(vre::Window::Key::Right))
             yaw += look_speed * delta_seconds;
-        if (window->is_key_held(vre::KeyCode::Up))
+        if (window->is_key_held(vre::Window::Key::Up))
             pitch = clamp_pitch(pitch + look_speed * delta_seconds);
-        if (window->is_key_held(vre::KeyCode::Down))
+        if (window->is_key_held(vre::Window::Key::Down))
             pitch = clamp_pitch(pitch - look_speed * delta_seconds);
         yaw += auto_yaw_speed * delta_seconds;
 
@@ -269,13 +269,13 @@ int main(int argc, char **argv)
         vre::vec3 flat_forward(std::sin(yaw), 0.0f, -std::cos(yaw));
         vre::vec3 flat_right(std::cos(yaw), 0.0f, std::sin(yaw));
 
-        if (window->is_key_held(vre::KeyCode::W))
+        if (window->is_key_held(vre::Window::Key::W))
             player_position = player_position + flat_forward * (move_speed * delta_seconds);
-        if (window->is_key_held(vre::KeyCode::S))
+        if (window->is_key_held(vre::Window::Key::S))
             player_position = player_position - flat_forward * (move_speed * delta_seconds);
-        if (window->is_key_held(vre::KeyCode::D))
+        if (window->is_key_held(vre::Window::Key::D))
             player_position = player_position + flat_right * (move_speed * delta_seconds);
-        if (window->is_key_held(vre::KeyCode::A))
+        if (window->is_key_held(vre::Window::Key::A))
             player_position = player_position - flat_right * (move_speed * delta_seconds);
 
         // --- Door interaction (E) -------------------------------------------
@@ -284,7 +284,7 @@ int main(int argc, char **argv)
         {
             vre::vec3 to_door = door_hinge_position - player_position;
             float distance = std::sqrt(vre::vec3::dot(to_door, to_door));
-            if (distance <= interact_radius && window->was_key_pressed(vre::KeyCode::E))
+            if (distance <= interact_radius && window->was_key_pressed(vre::Window::Key::E))
             {
                 door_open = !door_open;
                 std::fprintf(stderr, "Door %s.\n", door_open ? "opened" : "closed");
@@ -302,7 +302,7 @@ int main(int argc, char **argv)
         {
             vre::vec3 to_switch = switch_position - player_position;
             float distance = std::sqrt(vre::vec3::dot(to_switch, to_switch));
-            if (distance <= interact_radius && window->was_key_pressed(vre::KeyCode::F))
+            if (distance <= interact_radius && window->was_key_pressed(vre::Window::Key::F))
             {
                 room_b_light_on = !room_b_light_on;
                 scene.set_light_intensity(room_b_light_index,
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
             }
         }
 
-        if (window->was_key_pressed(vre::KeyCode::H))
+        if (window->was_key_pressed(vre::Window::Key::H))
             scene.toggle_visible("rig"); // only meaningful when demo_scene.json is loaded
 
         // --- Physics / scene / particle update -------------------------------

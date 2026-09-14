@@ -17,87 +17,22 @@
  */
 #pragma once
 
+#include "../vre.hpp"
 #include "../ecs/registry.hpp"
 #include "../math/mat4.hpp"
 #include "../math/vec3.hpp"
-#include "../renderer/renderer.hpp"
 #include "../physics/physics_world.hpp"
-
-#include <map>
-#include <string>
-#include <vector>
+#include "../renderer/renderer.hpp"
+#include "mesh_component.hpp"
+#include "name_component.hpp"
+#include "parent_component.hpp"
+#include "physics_body_component.hpp"
+#include "transform_component.hpp"
+#include "visibility_component.hpp"
+#include "world_transform_component.hpp"
 
 namespace vre
 {
-
-/// Sentinel MeshHandle meaning "no mesh" — an organizational or physics-only entity.
-constexpr MeshHandle kNoMesh = static_cast<MeshHandle>(-1);
-
-// --- Components --------------------------------------------------------
-// Plain data, no behavior — every bit of scene logic below (transform
-// composition, parent-chain visibility, render-list collection) lives in
-// Scene's methods, operating generically over entities that have the
-// components each one needs. That split (dumb components, systems that
-// query for combinations of them) is what makes this an ECS rather than
-// SceneNode with extra steps.
-
-/// An entity's human-readable, lookup-by-string name (from the JSON scene file's "name" field).
-struct NameComponent
-{
-    std::string name; ///< Unique name used for lookups (set_visible(), get_node_position(), ...).
-};
-
-/// Marks an entity as a child of another entity, for hierarchical transforms/visibility.
-struct ParentComponent
-{
-    ecs::Entity parent = ecs::Entity::invalid(); ///< The parent entity.
-};
-
-/// An entity's local (parent-relative) transform, as authored in the scene file plus any runtime spin.
-struct TransformComponent
-{
-    vec3 position;
-    vec3 rotation; ///< Static base rotation, radians (from the scene file).
-    vec3 scale{1.0f, 1.0f, 1.0f};
-    vec3 spin;     ///< Continuous rotation speed, radians/second (optional, default 0).
-    vec3 spin_accumulated;
-};
-
-/**
- * @brief Cached world-space transform.
- *
- * Populated every frame by collect_render_items()'s transform pass, for
- * anything that then needs "where is this entity in the world" without
- * re-walking the parent chain itself (get_node_position() below reuses it).
- */
-struct WorldTransformComponent
-{
-    mat4 value = mat4::identity();
-};
-
-/// Marks an entity as having a renderable mesh.
-struct MeshComponent
-{
-    MeshHandle mesh = kNoMesh;
-};
-
-/// An entity's own visibility flag (combined with its ancestors' — see collect_render_items()).
-struct VisibilityComponent
-{
-    bool visible = true; ///< Editable at runtime; hides this entity AND its subtree.
-};
-
-/**
- * @brief Marks an entity as physics-driven.
- *
- * Presence of this component is what "has a rigid body" means — entities
- * without physics simply never get one added, rather than carrying a
- * sentinel "no body" value.
- */
-struct PhysicsBodyComponent
-{
-    BodyHandle body = BodyHandle::invalid();
-};
 
 /**
  * @brief Owns the scene's ECS registry and provides the JSON loader plus
@@ -107,6 +42,9 @@ struct PhysicsBodyComponent
 class Scene
 {
     public:
+        Scene();
+        ~Scene();
+
         /**
          * @brief Parses `path` and loads every referenced mesh through `renderer`.
          *
@@ -154,11 +92,9 @@ class Scene
          */
         void collect_render_items(std::vector<RenderItem> *out_items) const;
 
-        /// Sets an entity's own visibility by name.
-        /// @return false if no entity has that name.
+        /** Sets an entity's own visibility by name. @return false if no entity has that name. */
         bool set_visible(const std::string &name, bool visible);
-        /// Flips an entity's own visibility by name.
-        /// @return false if no entity has that name.
+        /** Flips an entity's own visibility by name. @return false if no entity has that name. */
         bool toggle_visible(const std::string &name);
         /// @return This entity's own visibility flag (not combined with ancestors), or false if not found.
         bool is_visible(const std::string &name) const;
@@ -188,12 +124,12 @@ class Scene
          * field. get_lights()[0], if present, is treated as the shadow
          * caster by Renderer::draw_frame() and must be a Directional light.
          */
-        const std::vector<Light> &get_lights() const { return _lights; }
+        const std::vector<Light> &get_lights() const;
         /// @return The scene's flat ambient intensity term.
-        float get_ambient() const { return _ambient; }
+        float get_ambient() const;
 
         /// @return Number of lights parsed from the scene file.
-        size_t get_light_count() const { return _lights.size(); }
+        size_t get_light_count() const;
         /**
          * @brief Runtime light control for the demo's light switch.
          *
@@ -205,6 +141,16 @@ class Scene
         bool set_light_intensity(size_t index, float intensity);
 
     private:
+        // Owns an ecs::Registry, which the previous phase made non-copyable
+        // (it holds polymorphic component pools behind unique_ptr) — the
+        // pre-C++11 idiom of a private, never-defined copy constructor/
+        // assignment operator (this project avoids `= delete`).
+        Scene(const Scene &other);
+        Scene &operator=(const Scene &other);
+
+        /// @return The local (parent-relative) matrix for `transform`, including accumulated spin.
+        mat4 local_transform(const TransformComponent &transform) const;
+
         ecs::Registry _registry;
         std::map<std::string, ecs::Entity> _name_to_entity;
         /**
@@ -215,10 +161,7 @@ class Scene
          */
         std::vector<ecs::Entity> _load_order;
         std::vector<Light> _lights;
-        float _ambient = 0.12f;
-
-        /// @return The local (parent-relative) matrix for `transform`, including accumulated spin.
-        mat4 local_transform(const TransformComponent &transform) const;
+        float _ambient;
 };
 
 } // namespace vre
