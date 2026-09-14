@@ -9,7 +9,7 @@
 #include "../math/mat4.hpp"
 #include "../vre.hpp"
 #include "light.hpp"
-#include "shadowpass.hpp"
+#include "../shadowpass/pass.hpp"
 
 namespace vre
 {

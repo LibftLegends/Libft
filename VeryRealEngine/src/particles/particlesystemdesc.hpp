@@ -5,7 +5,7 @@
 #pragma once
 
 #include "../math/vec3.hpp"
-#include "../renderer/meshhandle.hpp"
+#include "../rendererresources/meshhandle.hpp"
 #include "../vre.hpp"
 
 namespace vre

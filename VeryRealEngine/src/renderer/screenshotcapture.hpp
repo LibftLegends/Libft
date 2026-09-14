@@ -6,8 +6,8 @@
 #pragma once
 
 #include "../vre.hpp"
-#include "vkcheck.hpp"
-#include "vulkandevice.hpp"
+#include "../vulkan/check.hpp"
+#include "../vulkan/device.hpp"
 
 namespace vre
 {

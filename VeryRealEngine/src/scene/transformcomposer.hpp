@@ -9,7 +9,7 @@
 #pragma once
 
 #include "../math/mat4.hpp"
-#include "transformcomponent.hpp"
+#include "../components/transform.hpp"
 
 namespace vre
 {

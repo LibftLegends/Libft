@@ -18,7 +18,7 @@
 #pragma once
 
 #include "../vre.hpp"
-#include "../assets/jsonparser.hpp"
+#include "../json/parser.hpp"
 #include "../ecs/registry.hpp"
 #include "../math/mat4.hpp"
 #include "../math/vec3.hpp"
@@ -26,17 +26,17 @@
 #include "../renderer/light.hpp"
 #include "../renderer/renderer.hpp"
 #include "../renderer/renderitem.hpp"
-#include "meshcomponent.hpp"
-#include "namecomponent.hpp"
-#include "parentcomponent.hpp"
-#include "physicsbodycomponent.hpp"
-#include "scenelightparser.hpp"
-#include "sceneobjectloader.hpp"
-#include "scenerendercollector.hpp"
-#include "transformcomponent.hpp"
+#include "../components/mesh.hpp"
+#include "../components/name.hpp"
+#include "../components/parent.hpp"
+#include "../components/physicsbody.hpp"
+#include "lightparser.hpp"
+#include "objectloader.hpp"
+#include "rendercollector.hpp"
+#include "../components/transform.hpp"
 #include "transformcomposer.hpp"
-#include "visibilitycomponent.hpp"
-#include "worldtransformcomponent.hpp"
+#include "../components/visibility.hpp"
+#include "../components/worldtransform.hpp"
 
 namespace vre
 {

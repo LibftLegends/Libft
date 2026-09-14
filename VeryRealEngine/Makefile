@@ -36,65 +36,65 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/ecs/registry.cpp \
                 src/renderer/framestats.cpp \
                 src/renderer/frustumculler.cpp \
-                src/renderer/geometryrenderpassfactory.cpp \
-                src/renderer/geometrypipelinefactory.cpp \
-                src/renderer/geometryscenetargets.cpp \
-                src/renderer/geometryglobalubo.cpp \
-                src/renderer/geometrypass.cpp \
                 src/renderer/light.cpp \
-                src/renderer/materialhandle.cpp \
-                src/renderer/meshhandle.cpp \
-                src/renderer/meshregistry.cpp \
-                src/renderer/occlusionpipelinefactory.cpp \
                 src/renderer/occlusionculler.cpp \
-                src/renderer/postprocesspipelinefactory.cpp \
-                src/renderer/postprocesspass.cpp \
                 src/renderer/renderitem.cpp \
-                src/renderer/rendererframesync.cpp \
+                src/renderer/framesync.cpp \
                 src/renderer/shadowcasterselector.cpp \
                 src/renderer/renderer.cpp \
                 src/renderer/screenshotcapture.cpp \
                 src/renderer/shadowlightmatrix.cpp \
-                src/renderer/shadowpipelinefactory.cpp \
-                src/renderer/shadowpass.cpp \
-                src/renderer/swapchain.cpp \
-                src/renderer/swapchainsupportdetails.cpp \
-                src/renderer/texturehandle.cpp \
-                src/renderer/textureuploader.cpp \
-                src/renderer/textureregistry.cpp \
-                src/renderer/vulkanphysicaldeviceselector.cpp \
-                src/renderer/vulkancommandscope.cpp \
-                src/renderer/vulkanbufferfactory.cpp \
-                src/renderer/vulkanimagefactory.cpp \
-                src/renderer/vulkandevice.cpp \
-                src/renderer/vulkaninstance.cpp \
-                src/assets/jsonvalue.cpp \
-                src/assets/jsonlexer.cpp \
-                src/assets/jsongrammar.cpp \
-                src/assets/jsonparser.cpp \
-                src/assets/meshvertex.cpp \
-                src/assets/submesh.cpp \
-                src/assets/materialdata.cpp \
-                src/assets/meshdata.cpp \
-                src/assets/imagedata.cpp \
-                src/assets/mtlloader.cpp \
-                src/assets/objfaceindexparser.cpp \
-                src/assets/objgeometrybuilder.cpp \
-                src/assets/objloader.cpp \
-                src/assets/tgaloader.cpp \
-                src/assets/skinnedasset.cpp \
-                src/scene/namecomponent.cpp \
-                src/scene/parentcomponent.cpp \
-                src/scene/transformcomponent.cpp \
-                src/scene/worldtransformcomponent.cpp \
-                src/scene/meshcomponent.cpp \
-                src/scene/visibilitycomponent.cpp \
-                src/scene/physicsbodycomponent.cpp \
+                src/geometrypass/renderpassfactory.cpp \
+                src/geometrypass/pipelinefactory.cpp \
+                src/geometrypass/scenetargets.cpp \
+                src/geometrypass/globalubo.cpp \
+                src/geometrypass/pass.cpp \
+                src/shadowpass/pipelinefactory.cpp \
+                src/shadowpass/pass.cpp \
+                src/occlusionpass/pipelinefactory.cpp \
+                src/postprocesspass/pipelinefactory.cpp \
+                src/postprocesspass/pass.cpp \
+                src/rendererresources/materialhandle.cpp \
+                src/rendererresources/meshhandle.cpp \
+                src/rendererresources/meshregistry.cpp \
+                src/rendererresources/texturehandle.cpp \
+                src/rendererresources/textureuploader.cpp \
+                src/rendererresources/textureregistry.cpp \
+                src/vulkan/swapchain.cpp \
+                src/vulkan/swapchainsupportdetails.cpp \
+                src/vulkan/physicaldeviceselector.cpp \
+                src/vulkan/commandscope.cpp \
+                src/vulkan/bufferfactory.cpp \
+                src/vulkan/imagefactory.cpp \
+                src/vulkan/device.cpp \
+                src/vulkan/instance.cpp \
+                src/json/value.cpp \
+                src/json/lexer.cpp \
+                src/json/grammar.cpp \
+                src/json/parser.cpp \
+                src/mesh/vertex.cpp \
+                src/mesh/submesh.cpp \
+                src/materials/data.cpp \
+                src/mesh/data.cpp \
+                src/images/data.cpp \
+                src/materials/mtlloader.cpp \
+                src/objloading/faceindexparser.cpp \
+                src/objloading/geometrybuilder.cpp \
+                src/objloading/loader.cpp \
+                src/images/tgaloader.cpp \
+                src/skinnedmesh/asset.cpp \
+                src/components/name.cpp \
+                src/components/parent.cpp \
+                src/components/transform.cpp \
+                src/components/worldtransform.cpp \
+                src/components/mesh.cpp \
+                src/components/visibility.cpp \
+                src/components/physicsbody.cpp \
                 src/scene/transformcomposer.cpp \
-                src/scene/scenephysicsparser.cpp \
-                src/scene/scenelightparser.cpp \
-                src/scene/sceneobjectloader.cpp \
-                src/scene/scenerendercollector.cpp \
+                src/scene/physicsparser.cpp \
+                src/scene/lightparser.cpp \
+                src/scene/objectloader.cpp \
+                src/scene/rendercollector.cpp \
                 src/scene/scene.cpp \
                 src/platform/window.cpp \
                 src/physics/bodyhandle.cpp \
@@ -113,10 +113,10 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/audio/wavloader.cpp \
                 src/audio/audiosystem.cpp \
                 src/audio/mixer.cpp \
-                src/assets/skinnedmeshbonereader.cpp \
-                src/assets/skinnedmeshvertexreader.cpp \
-                src/assets/skinnedmeshanimationreader.cpp \
-                src/assets/skinnedmeshloader.cpp \
+                src/skinnedmesh/bonereader.cpp \
+                src/skinnedmesh/vertexreader.cpp \
+                src/skinnedmesh/animationreader.cpp \
+                src/skinnedmesh/loader.cpp \
                 src/animation/bone.cpp \
                 src/animation/keyframe.cpp \
                 src/animation/animationtrack.cpp \

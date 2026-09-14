@@ -10,11 +10,11 @@
 #pragma once
 
 #include "../vre.hpp"
-#include "meshregistry.hpp"
-#include "occlusionpipelinefactory.hpp"
+#include "../rendererresources/meshregistry.hpp"
+#include "../occlusionpass/pipelinefactory.hpp"
 #include "renderitem.hpp"
-#include "textureregistry.hpp"
-#include "vulkandevice.hpp"
+#include "../rendererresources/textureregistry.hpp"
+#include "../vulkan/device.hpp"
 
 namespace vre
 {

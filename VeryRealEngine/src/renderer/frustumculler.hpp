@@ -9,7 +9,7 @@
 #include "../math/frustum.hpp"
 #include "../math/mat4.hpp"
 #include "../vre.hpp"
-#include "meshregistry.hpp"
+#include "../rendererresources/meshregistry.hpp"
 #include "renderitem.hpp"
 
 namespace vre

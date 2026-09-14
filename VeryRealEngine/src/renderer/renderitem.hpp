@@ -10,7 +10,7 @@
 
 #include "../math/mat4.hpp"
 #include "../vre.hpp"
-#include "meshhandle.hpp"
+#include "../rendererresources/meshhandle.hpp"
 
 namespace vre
 {
