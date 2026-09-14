@@ -89,7 +89,7 @@ void GeometryPass::update_global_ubo(uint32_t frame_index, const mat4 &view,
 	GlobalUbo ubo{};
 	ubo.view_proj = mat4::multiply(projection, view);
 	// Slot 0 is always the identity (every static mesh's vertices are fully
-	// weighted to it — see mesh_data.hpp's MeshVertex doc comment); every
+	// weighted to it — see meshdata.hpp's MeshVertex doc comment); every
 	// other slot also defaults to identity so an out-of-range bone_indices
 	// value on some future asset reads harmless identity rather than
 	// uninitialized/zero (a zero mat4 would collapse every position it

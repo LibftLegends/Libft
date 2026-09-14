@@ -1,4 +1,4 @@
-#include "../assets/mesh_vertex.hpp"
+#include "../assets/meshvertex.hpp"
 #include "mesh_registry.hpp"
 #include "vk_check.hpp"
 

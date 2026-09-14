@@ -1,5 +1,5 @@
 #include "scene.hpp"
-#include "../assets/json_parser.hpp"
+#include "../assets/jsonparser.hpp"
 #include "../renderer/renderer.hpp"
 
 namespace vre

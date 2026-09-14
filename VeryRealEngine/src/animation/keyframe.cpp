@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Keyframe::Keyframe() : _time(0.0f)
 {
 }

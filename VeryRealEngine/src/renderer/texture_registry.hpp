@@ -6,8 +6,8 @@
  */
 #pragma once
 
-#include "../assets/material_data.hpp"
-#include "../assets/tga_loader.hpp"
+#include "../assets/materialdata.hpp"
+#include "../assets/tgaloader.hpp"
 #include "../vre.hpp"
 #include "material_handle.hpp"
 #include "texture_handle.hpp"

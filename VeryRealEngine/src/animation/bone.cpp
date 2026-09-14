@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Bone::Bone() : _parent_index(no_parent_index())
 {
 }

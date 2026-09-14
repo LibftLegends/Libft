@@ -11,7 +11,6 @@
 
 namespace vre
 {
-
 class Skeleton
 {
   public:
@@ -30,7 +29,8 @@ class Skeleton
 		*/
 	void compute_bind_pose();
 
-	/** @return Bone `index`'s cached inverse bind-pose world matrix (see compute_bind_pose()). */
+	/** @return Bone `index`'s cached inverse bind-pose world matrix
+	 * (see compute_bind_pose()). */
 	const mat4 &bind_pose_inverse(size_t index) const;
 
   private:

@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include "../animation/animation_clip.hpp"
+#include "../animation/animationclip.hpp"
 #include "../animation/skeleton.hpp"
 #include "../math/mat4.hpp"
 #include "../math/vec3.hpp"
@@ -58,7 +58,7 @@ class Renderer
 	/// Loads an .obj (and any .mtl/.tga it references) and uploads it to
 	/// GPU-resident buffers, caching by path.
 	MeshHandle load_mesh_from_obj(const char *path);
-	/// Loads a skinned rig (see skinned_mesh_loader.hpp) and uploads its
+	/// Loads a skinned rig (see skinnedmeshloader.hpp) and uploads its
 	/// geometry, ready for GPU linear-blend skinning via draw_frame()'s
 	/// `bone_matrices` parameter.
 	MeshHandle load_skinned_mesh(const char *path, Skeleton *out_skeleton,

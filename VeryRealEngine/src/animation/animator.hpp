@@ -7,12 +7,11 @@
 
 #include "../math/mat4.hpp"
 #include "../vre.hpp"
-#include "animation_clip.hpp"
+#include "animationclip.hpp"
 #include "skeleton.hpp"
 
 namespace vre
 {
-
 class Animator
 {
   public:
@@ -23,7 +22,8 @@ class Animator
 
 	Animator(const Skeleton *skeleton, const AnimationClip *clip);
 
-	/** Advances playback time by `delta_seconds`, looping at the clip's duration. */
+	/** Advances playback time by `delta_seconds`,
+	 * looping at the clip's duration. */
 	void update(float delta_seconds);
 
 	/**
@@ -32,7 +32,8 @@ class Animator
 		* skinning-matrix formula, so a vertex bound at the bind pose ends
 		* up exactly where the animated skeleton currently puts that bone,
 		* not offset by the bind pose's own transform as well.
-		* @param out_matrices Resized to `_skeleton->bones().size()` and filled in bone order.
+		* @param out_matrices Resized to `_skeleton->bones().size()` and
+		* filled in bone order.
 		*/
 	void compute_bone_matrices(std::vector<mat4> *out_matrices) const;
 

@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Skeleton::Skeleton()
 {
 }
@@ -41,11 +40,14 @@ void Skeleton::compute_bind_pose()
 	std::vector<mat4> bind_world(_bones.size());
 	for (size_t i = 0; i < _bones.size(); i++)
 	{
+		// rigid only — see this file's header comment
 		mat4 local = mat4::compose(_bones[i].bind_local_position(),
 				_bones[i].bind_local_rotation(), vec3(1.0f, 1.0f, 1.0f));
-			// rigid only — see this file's header comment
-		bind_world[i] = (_bones[i].parent_index() == Bone::no_parent_index()) ? local : mat4::multiply(bind_world[_bones[i].parent_index()],
-				local);
+		if (_bones[i].parent_index() == Bone::no_parent_index())
+			bind_world[i] = local;
+		else
+			bind_world[i] = mat4::multiply(
+					bind_world[_bones[i].parent_index()], local);
 	}
 	_bind_pose_inverse.resize(_bones.size());
 	for (size_t i = 0; i < _bones.size(); i++)

@@ -1,6 +1,6 @@
-#include "../assets/mesh_vertex.hpp"
-#include "../assets/obj_loader.hpp"
-#include "../assets/skinned_mesh_loader.hpp"
+#include "../assets/meshvertex.hpp"
+#include "../assets/objloader.hpp"
+#include "../assets/skinnedmeshloader.hpp"
 #include "mesh_registry.hpp"
 #include "vk_check.hpp"
 

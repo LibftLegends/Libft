@@ -6,9 +6,9 @@
  */
 #pragma once
 
-#include "../animation/animation_clip.hpp"
+#include "../animation/animationclip.hpp"
 #include "../animation/skeleton.hpp"
-#include "../assets/mesh_data.hpp"
+#include "../assets/meshdata.hpp"
 #include "../math/aabb.hpp"
 #include "../vre.hpp"
 #include "material_handle.hpp"

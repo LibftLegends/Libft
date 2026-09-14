@@ -1,4 +1,4 @@
-#include "../assets/mesh_vertex.hpp"
+#include "../assets/meshvertex.hpp"
 #include "geometry_pass.hpp"
 #include "vk_check.hpp"
 
@@ -31,7 +31,7 @@ void GeometryPass::create_graphics_pipeline(VkDevice device,
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     // Locations 3/4 (bone_indices/bone_weights): GPU linear-blend skinning
-    // support (see mesh_data.hpp's MeshVertex doc comment and
+    // support (see meshdata.hpp's MeshVertex doc comment and
     // mesh.vert's skin_matrix computation). Every static mesh's vertices
     // default to bone_indices=[0,0,0,0]/weights=[1,0,0,0], and
     // GlobalUbo::bone_matrices[0] is always the identity matrix, so this is

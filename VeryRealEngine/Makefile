@@ -65,19 +65,21 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/renderer/vulkan_device.cpp \
                 src/renderer/vulkan_device_resources.cpp \
                 src/renderer/vulkan_instance.cpp \
-                src/assets/json_value.cpp \
-                src/assets/json_parser.cpp \
-                src/assets/json_grammar.cpp \
-                src/assets/mesh_vertex.cpp \
-                src/assets/sub_mesh.cpp \
-                src/assets/material_data.cpp \
-                src/assets/mesh_data.cpp \
-                src/assets/image_data.cpp \
-                src/assets/obj_loader.cpp \
-                src/assets/obj_geometry.cpp \
-                src/assets/tga_loader.cpp \
-                src/assets/skinned_asset.cpp \
-                src/assets/skinned_mesh_grammar.cpp \
+                src/assets/jsonvalue.cpp \
+                src/assets/jsonlexer.cpp \
+                src/assets/jsongrammar.cpp \
+                src/assets/jsonparser.cpp \
+                src/assets/meshvertex.cpp \
+                src/assets/submesh.cpp \
+                src/assets/materialdata.cpp \
+                src/assets/meshdata.cpp \
+                src/assets/imagedata.cpp \
+                src/assets/mtlloader.cpp \
+                src/assets/objfaceindexparser.cpp \
+                src/assets/objgeometrybuilder.cpp \
+                src/assets/objloader.cpp \
+                src/assets/tgaloader.cpp \
+                src/assets/skinnedasset.cpp \
                 src/scene/name_component.cpp \
                 src/scene/parent_component.cpp \
                 src/scene/transform_component.cpp \
@@ -103,11 +105,14 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/audio/wav_loader.cpp \
                 src/audio/audio_system.cpp \
                 src/audio/mixer.cpp \
-                src/assets/skinned_mesh_loader.cpp \
+                src/assets/skinnedmeshbonereader.cpp \
+                src/assets/skinnedmeshvertexreader.cpp \
+                src/assets/skinnedmeshanimationreader.cpp \
+                src/assets/skinnedmeshloader.cpp \
                 src/animation/bone.cpp \
                 src/animation/keyframe.cpp \
-                src/animation/animation_track.cpp \
-                src/animation/animation_clip.cpp \
+                src/animation/animationtrack.cpp \
+                src/animation/animationclip.cpp \
                 src/animation/animator.cpp \
                 src/animation/skeleton.cpp
 LIB_MM_SRCS  :=
@@ -180,10 +185,12 @@ endif
 
 DEMO_SRCS   := src/main.cpp \
                src/app/application.cpp \
-               src/app/application_setup.cpp \
-               src/app/application_loop.cpp \
-               src/app/application_interactions.cpp \
-               src/app/first_person_camera.cpp
+               src/app/debugconfig.cpp \
+               src/app/demoaudio.cpp \
+               src/app/doorinteraction.cpp \
+               src/app/lightswitchinteraction.cpp \
+               src/app/pendulumrig.cpp \
+               src/app/firstpersoncamera.cpp
 
 OBJ_DIR     := obj$(OBJ_DIR_SUFFIX)
 LIB_OBJS    := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(LIB_CPP_SRCS)) \

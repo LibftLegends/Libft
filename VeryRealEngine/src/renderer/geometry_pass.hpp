@@ -28,7 +28,7 @@ class GeometryPass
 	static constexpr uint32_t kMaxLights = 4;
 		///< Upper bound on simultaneously shaded lights.
 	/**
-		* Upper bound on simultaneously skinned bones (see mesh_data.hpp's
+		* Upper bound on simultaneously skinned bones (see meshdata.hpp's
 		* MeshVertex doc comment) — slot 0 is always the identity matrix
 		* for unweighted static-mesh vertices, so kMaxBones - 1 real bones
 		* are actually usable.

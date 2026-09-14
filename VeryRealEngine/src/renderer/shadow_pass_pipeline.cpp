@@ -1,4 +1,4 @@
-#include "../assets/mesh_vertex.hpp"
+#include "../assets/meshvertex.hpp"
 #include "shadow_pass.hpp"
 #include "vk_check.hpp"
 

@@ -1,4 +1,4 @@
-#include "../assets/mesh_vertex.hpp"
+#include "../assets/meshvertex.hpp"
 #include "occlusion_culler.hpp"
 #include "vk_check.hpp"
 

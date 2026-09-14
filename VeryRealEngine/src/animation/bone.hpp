@@ -10,7 +10,6 @@
 
 namespace vre
 {
-
 class Bone
 {
   public:

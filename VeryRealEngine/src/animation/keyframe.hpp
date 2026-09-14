@@ -9,7 +9,6 @@
 
 namespace vre
 {
-
 class Keyframe
 {
   public:

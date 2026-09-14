@@ -2,7 +2,6 @@
 
 namespace vre
 {
-
 Animator::Animator() : _skeleton(nullptr), _clip(nullptr), _time(0.0f)
 {
 }
@@ -37,7 +36,9 @@ void Animator::update(float delta_seconds)
 	_time += delta_seconds;
 	if (_clip->duration() > 0.0f)
 		_time = std::fmod(_time, _clip->duration());
-	if (_time < 0.0f) // fmod can return negative for a negative dividend; not expected here, but cheap to guard
+	// fmod can return negative for a negative dividend; not expected
+	// here, but cheap to guard
+	if (_time < 0.0f)
 		_time += _clip->duration();
 }
 
@@ -85,8 +86,11 @@ void Animator::compute_bone_matrices(std::vector<mat4> *out_matrices) const
 
 		mat4 local = mat4::compose(bones[i].bind_local_position(), rotation,
 				vec3(1.0f, 1.0f, 1.0f));
-		animated_world[i] = (bones[i].parent_index() == Bone::no_parent_index()) ? local : mat4::multiply(animated_world[bones[i].parent_index()],
-				local);
+		if (bones[i].parent_index() == Bone::no_parent_index())
+			animated_world[i] = local;
+		else
+			animated_world[i] = mat4::multiply(
+					animated_world[bones[i].parent_index()], local);
 	}
 
 	for (size_t i = 0; i < bones.size(); i++)
