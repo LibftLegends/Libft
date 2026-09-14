@@ -9,26 +9,27 @@
  */
 #pragma once
 
-#include <cstdint>
-#include <vector>
+#include "../vre.hpp"
+#include "image_data.hpp"
 
 namespace vre
 {
 
-/// Decoded image pixel data.
-struct ImageData
+class TgaLoader
 {
-    std::vector<uint8_t> pixels; ///< Tightly packed RGBA8, row 0 = top of image.
-    uint32_t width = 0;
-    uint32_t height = 0;
-};
+  public:
+	TgaLoader();
+	TgaLoader(const TgaLoader &other);
+	TgaLoader &operator=(const TgaLoader &other);
+	~TgaLoader();
 
-/**
- * @brief Decodes an uncompressed 24/32-bit true-color TGA file.
- * @param path Filesystem path to the .tga file.
- * @param out_image Receives the decoded pixel data.
- * @return true on success.
- */
-bool load_tga(const char *path, ImageData *out_image);
+	/**
+		* @brief Decodes an uncompressed 24/32-bit true-color TGA file.
+		* @param path Filesystem path to the .tga file.
+		* @param out_image Receives the decoded pixel data.
+		* @return true on success.
+		*/
+	static bool load(const char *path, ImageData *out_image);
+};
 
 } // namespace vre

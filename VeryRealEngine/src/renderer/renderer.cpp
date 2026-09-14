@@ -175,7 +175,7 @@ bool Renderer::initialize(Window *window)
 
     _default_white_texture = create_default_white_texture();
     MaterialData default_material_data;
-    default_material_data.name = "__default_white";
+    default_material_data.set_name("__default_white");
     _default_material = create_material(default_material_data);
 
     return true;
@@ -1113,7 +1113,7 @@ void Renderer::create_shadow_pipeline()
     position_attribute.binding = 0;
     position_attribute.location = 0;
     position_attribute.format = VK_FORMAT_R32G32B32_SFLOAT;
-    position_attribute.offset = offsetof(MeshVertex, position);
+    position_attribute.offset = MeshVertex::position_offset();
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1249,23 +1249,23 @@ void Renderer::create_graphics_pipeline()
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributes[0].offset = offsetof(MeshVertex, position);
+    attributes[0].offset = MeshVertex::position_offset();
     attributes[1].binding = 0;
     attributes[1].location = 1;
     attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributes[1].offset = offsetof(MeshVertex, normal);
+    attributes[1].offset = MeshVertex::normal_offset();
     attributes[2].binding = 0;
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attributes[2].offset = offsetof(MeshVertex, uv);
+    attributes[2].offset = MeshVertex::uv_offset();
     attributes[3].binding = 0;
     attributes[3].location = 3;
     attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributes[3].offset = offsetof(MeshVertex, bone_indices);
+    attributes[3].offset = MeshVertex::bone_indices_offset();
     attributes[4].binding = 0;
     attributes[4].location = 4;
     attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributes[4].offset = offsetof(MeshVertex, bone_weights);
+    attributes[4].offset = MeshVertex::bone_weights_offset();
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1404,23 +1404,23 @@ void Renderer::create_occlusion_resources()
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributes[0].offset = offsetof(MeshVertex, position);
+    attributes[0].offset = MeshVertex::position_offset();
     attributes[1].binding = 0;
     attributes[1].location = 1;
     attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributes[1].offset = offsetof(MeshVertex, normal);
+    attributes[1].offset = MeshVertex::normal_offset();
     attributes[2].binding = 0;
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attributes[2].offset = offsetof(MeshVertex, uv);
+    attributes[2].offset = MeshVertex::uv_offset();
     attributes[3].binding = 0;
     attributes[3].location = 3;
     attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributes[3].offset = offsetof(MeshVertex, bone_indices);
+    attributes[3].offset = MeshVertex::bone_indices_offset();
     attributes[4].binding = 0;
     attributes[4].location = 4;
     attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributes[4].offset = offsetof(MeshVertex, bone_weights);
+    attributes[4].offset = MeshVertex::bone_weights_offset();
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -2153,9 +2153,9 @@ void Renderer::copy_buffer_to_image(VkBuffer buffer, VkImage image, uint32_t wid
 TextureHandle Renderer::create_default_white_texture()
 {
     ImageData image;
-    image.width = 1;
-    image.height = 1;
-    image.pixels = {255, 255, 255, 255};
+    image.set_width(1);
+    image.set_height(1);
+    image.pixels() = {255, 255, 255, 255};
     return load_texture_from_image_data(image, "__default_white");
 }
 
@@ -2166,7 +2166,7 @@ TextureHandle Renderer::load_texture(const std::string &path)
         return cached->second;
 
     ImageData image;
-    if (!load_tga(path.c_str(), &image))
+    if (!TgaLoader::load(path.c_str(), &image))
     {
         std::fprintf(stderr, "Renderer: failed to load texture \"%s\", using default white\n",
             path.c_str());
@@ -2180,7 +2180,7 @@ TextureHandle Renderer::load_texture(const std::string &path)
 
 TextureHandle Renderer::load_texture_from_image_data(const ImageData &image, const std::string & /*debug_name*/)
 {
-    VkDeviceSize image_size = static_cast<VkDeviceSize>(image.pixels.size());
+    VkDeviceSize image_size = static_cast<VkDeviceSize>(image.pixels().size());
 
     VkBuffer staging_buffer;
     VkDeviceMemory staging_memory;
@@ -2190,15 +2190,15 @@ TextureHandle Renderer::load_texture_from_image_data(const ImageData &image, con
 
     void *mapped;
     vkMapMemory(_device, staging_memory, 0, image_size, 0, &mapped);
-    std::memcpy(mapped, image.pixels.data(), static_cast<size_t>(image_size));
+    std::memcpy(mapped, image.pixels().data(), static_cast<size_t>(image_size));
     vkUnmapMemory(_device, staging_memory);
 
     GpuTexture texture;
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.extent.width = image.width;
-    image_info.extent.height = image.height;
+    image_info.extent.width = image.width();
+    image_info.extent.height = image.height();
     image_info.extent.depth = 1;
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
@@ -2227,7 +2227,7 @@ TextureHandle Renderer::load_texture_from_image_data(const ImageData &image, con
 
     transition_image_layout(texture.image, image_info.format,
         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    copy_buffer_to_image(staging_buffer, texture.image, image.width, image.height);
+    copy_buffer_to_image(staging_buffer, texture.image, image.width(), image.height());
     transition_image_layout(texture.image, image_info.format,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
@@ -2259,18 +2259,18 @@ static void build_fallback_cube_mesh(MeshData *out_mesh)
     };
     for (const auto &corner : corners)
     {
-        MeshVertex vertex{};
-        vertex.position[0] = corner[0];
-        vertex.position[1] = corner[1];
-        vertex.position[2] = corner[2];
+        MeshVertex vertex;
+        vertex.set_position(0, corner[0]);
+        vertex.set_position(1, corner[1]);
+        vertex.set_position(2, corner[2]);
         float length = std::sqrt(corner[0] * corner[0] + corner[1] * corner[1]
             + corner[2] * corner[2]);
-        vertex.normal[0] = corner[0] / length;
-        vertex.normal[1] = corner[1] / length;
-        vertex.normal[2] = corner[2] / length;
-        vertex.uv[0] = 0.0f;
-        vertex.uv[1] = 0.0f;
-        out_mesh->vertices.push_back(vertex);
+        vertex.set_normal(0, corner[0] / length);
+        vertex.set_normal(1, corner[1] / length);
+        vertex.set_normal(2, corner[2] / length);
+        vertex.set_uv(0, 0.0f);
+        vertex.set_uv(1, 0.0f);
+        out_mesh->vertices().push_back(vertex);
     }
 
     const uint32_t indices[36] = {
@@ -2282,20 +2282,20 @@ static void build_fallback_cube_mesh(MeshData *out_mesh)
         0, 3, 7, 7, 4, 0, // left
     };
     for (uint32_t index : indices)
-        out_mesh->indices.push_back(index);
+        out_mesh->indices().push_back(index);
 
     SubMesh submesh;
-    submesh.index_offset = 0;
-    submesh.index_count = 36;
-    submesh.material_index = -1; // => the renderer's default material
-    out_mesh->submeshes.push_back(submesh);
+    submesh.set_index_offset(0);
+    submesh.set_index_count(36);
+    submesh.set_material_index(-1); // => the renderer's default material
+    out_mesh->submeshes().push_back(submesh);
 }
 
 MaterialHandle Renderer::create_material(const MaterialData &data)
 {
-    TextureHandle texture = data.diffuse_texture_path.empty()
+    TextureHandle texture = data.diffuse_texture_path().empty()
         ? _default_white_texture
-        : load_texture(data.diffuse_texture_path);
+        : load_texture(data.diffuse_texture_path());
 
     VkDescriptorSetAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -2321,11 +2321,11 @@ MaterialHandle Renderer::create_material(const MaterialData &data)
 
     vkUpdateDescriptorSets(_device, 1, &write, 0, nullptr);
 
-    material.diffuse_tint[0] = data.diffuse_color[0];
-    material.diffuse_tint[1] = data.diffuse_color[1];
-    material.diffuse_tint[2] = data.diffuse_color[2];
-    material.roughness = data.roughness;
-    material.metallic = data.metallic;
+    material.diffuse_tint[0] = data.diffuse_color(0);
+    material.diffuse_tint[1] = data.diffuse_color(1);
+    material.diffuse_tint[2] = data.diffuse_color(2);
+    material.roughness = data.roughness();
+    material.metallic = data.metallic();
 
     MaterialHandle handle = _materials.size();
     _materials.push_back(material);
@@ -2340,7 +2340,7 @@ MeshHandle Renderer::load_mesh_from_obj(const char *path)
 
     MeshData mesh_data;
     std::vector<MaterialData> material_data;
-    if (!load_obj(path, &mesh_data, &material_data))
+    if (!ObjLoader::load(path, &mesh_data, &material_data))
     {
         // Deliberately NOT std::abort() here, unlike the genuinely
         // unrecoverable failures elsewhere in this file (no Vulkan device,
@@ -2366,7 +2366,7 @@ MeshHandle Renderer::load_mesh_from_obj(const char *path)
     MeshHandle handle = upload_mesh_data(mesh_data, material_data);
     _mesh_cache[path] = handle;
     std::fprintf(stderr, "Renderer: loaded \"%s\": %zu vertices, %zu indices, %zu submesh(es)\n",
-        path, mesh_data.vertices.size(), mesh_data.indices.size(),
+        path, mesh_data.vertices().size(), mesh_data.indices().size(),
         _meshes[handle].submeshes.size());
     return handle;
 }
@@ -2379,32 +2379,32 @@ MeshHandle Renderer::upload_mesh_data(const MeshData &mesh_data,
         local_to_global_material[i] = create_material(material_data[i]);
 
     GpuMesh mesh;
-    upload_to_device_local_buffer(mesh_data.vertices.data(),
-        sizeof(MeshVertex) * mesh_data.vertices.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    upload_to_device_local_buffer(mesh_data.vertices().data(),
+        sizeof(MeshVertex) * mesh_data.vertices().size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         &mesh.vertex_buffer, &mesh.vertex_buffer_memory);
-    upload_to_device_local_buffer(mesh_data.indices.data(),
-        sizeof(uint32_t) * mesh_data.indices.size(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    upload_to_device_local_buffer(mesh_data.indices().data(),
+        sizeof(uint32_t) * mesh_data.indices().size(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         &mesh.index_buffer, &mesh.index_buffer_memory);
 
-    if (!mesh_data.vertices.empty())
+    if (!mesh_data.vertices().empty())
     {
-        const MeshVertex &first = mesh_data.vertices[0];
-        vec3 first_position(first.position[0], first.position[1], first.position[2]);
+        const MeshVertex &first = mesh_data.vertices()[0];
+        vec3 first_position(first.position(0), first.position(1), first.position(2));
         mesh.local_bounds = AABB(first_position, first_position);
-        for (const MeshVertex &vertex : mesh_data.vertices)
+        for (const MeshVertex &vertex : mesh_data.vertices())
         {
-            vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
+            vec3 position(vertex.position(0), vertex.position(1), vertex.position(2));
             mesh.local_bounds.encapsulate(position);
         }
     }
 
-    for (const auto &submesh : mesh_data.submeshes)
+    for (const auto &submesh : mesh_data.submeshes())
     {
         GpuSubMesh gpu_submesh;
-        gpu_submesh.index_offset = submesh.index_offset;
-        gpu_submesh.index_count = submesh.index_count;
-        gpu_submesh.material = (submesh.material_index >= 0)
-            ? local_to_global_material[submesh.material_index]
+        gpu_submesh.index_offset = submesh.index_offset();
+        gpu_submesh.index_count = submesh.index_count();
+        gpu_submesh.material = (submesh.material_index() >= 0)
+            ? local_to_global_material[submesh.material_index()]
             : _default_material;
         mesh.submeshes.push_back(gpu_submesh);
     }
@@ -2418,7 +2418,7 @@ MeshHandle Renderer::load_skinned_mesh(const char *path, Skeleton *out_skeleton,
     AnimationClip *out_clip)
 {
     SkinnedAsset asset;
-    if (!load_skinned_asset(path, &asset))
+    if (!SkinnedMeshLoader::load(path, &asset))
     {
         // Same policy as load_mesh_from_obj's own failure path: one bad
         // asset shouldn't take the whole demo down. An empty skeleton/clip
@@ -2435,9 +2435,9 @@ MeshHandle Renderer::load_skinned_mesh(const char *path, Skeleton *out_skeleton,
         return upload_mesh_data(fallback_mesh, {});
     }
 
-    *out_skeleton = std::move(asset.skeleton);
-    *out_clip = std::move(asset.clip);
-    return upload_mesh_data(asset.mesh, {});
+    *out_skeleton = std::move(asset.skeleton());
+    *out_clip = std::move(asset.clip());
+    return upload_mesh_data(asset.mesh(), {});
 }
 
 void Renderer::create_command_buffers()

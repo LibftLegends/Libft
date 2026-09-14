@@ -50,7 +50,7 @@ struct NameComponent
 /// Marks an entity as a child of another entity, for hierarchical transforms/visibility.
 struct ParentComponent
 {
-    ecs::Entity parent = ecs::kInvalidEntity; ///< The parent entity.
+    ecs::Entity parent = ecs::Entity::invalid(); ///< The parent entity.
 };
 
 /// An entity's local (parent-relative) transform, as authored in the scene file plus any runtime spin.

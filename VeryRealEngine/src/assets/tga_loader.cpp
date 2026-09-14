@@ -1,36 +1,55 @@
 #include "tga_loader.hpp"
 
-#include <cstdio>
-#include <fstream>
-
 namespace vre
+{
+
+namespace
 {
 
 #pragma pack(push, 1)
 struct TgaHeader
 {
-    uint8_t id_length;
-    uint8_t color_map_type;
-    uint8_t image_type;
-    uint16_t color_map_first_entry;
-    uint16_t color_map_length;
-    uint8_t color_map_entry_size;
-    uint16_t x_origin;
-    uint16_t y_origin;
-    uint16_t width;
-    uint16_t height;
-    uint8_t pixel_depth;
-    uint8_t image_descriptor;
+        uint8_t id_length;
+        uint8_t color_map_type;
+        uint8_t image_type;
+        uint16_t color_map_first_entry;
+        uint16_t color_map_length;
+        uint8_t color_map_entry_size;
+        uint16_t x_origin;
+        uint16_t y_origin;
+        uint16_t width;
+        uint16_t height;
+        uint8_t pixel_depth;
+        uint8_t image_descriptor;
 };
 #pragma pack(pop)
 
-bool load_tga(const char *path, ImageData *out_image)
+} // namespace
+
+TgaLoader::TgaLoader()
+{
+}
+
+TgaLoader::TgaLoader(const TgaLoader &)
+{
+}
+
+TgaLoader &TgaLoader::operator=(const TgaLoader &)
+{
+    return (*this);
+}
+
+TgaLoader::~TgaLoader()
+{
+}
+
+bool TgaLoader::load(const char *path, ImageData *out_image)
 {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open())
     {
         std::fprintf(stderr, "tga_loader: failed to open \"%s\"\n", path);
-        return false;
+        return (false);
     }
 
     TgaHeader header;
@@ -38,7 +57,7 @@ bool load_tga(const char *path, ImageData *out_image)
     if (!file)
     {
         std::fprintf(stderr, "tga_loader: \"%s\" is too short for a TGA header\n", path);
-        return false;
+        return (false);
     }
 
     // Only the uncompressed true-color path (image type 2) is supported —
@@ -49,14 +68,14 @@ bool load_tga(const char *path, ImageData *out_image)
         std::fprintf(stderr,
             "tga_loader: \"%s\" uses unsupported image type %u (only uncompressed "
             "true-color TGA, type 2, is supported)\n", path, header.image_type);
-        return false;
+        return (false);
     }
     if (header.pixel_depth != 24 && header.pixel_depth != 32)
     {
         std::fprintf(stderr,
             "tga_loader: \"%s\" has unsupported pixel depth %u (need 24 or 32)\n",
             path, header.pixel_depth);
-        return false;
+        return (false);
     }
 
     file.seekg(header.id_length, std::ios::cur);
@@ -76,22 +95,22 @@ bool load_tga(const char *path, ImageData *out_image)
     if (!file)
     {
         std::fprintf(stderr, "tga_loader: \"%s\" is truncated\n", path);
-        return false;
+        return (false);
     }
 
     // Bit 5 of the image descriptor: 1 => rows are stored top-to-bottom,
     // 0 (the TGA default) => bottom-to-top. Normalize to top-to-bottom RGBA8.
     bool top_to_bottom = (header.image_descriptor & 0x20) != 0;
 
-    out_image->width = width;
-    out_image->height = height;
-    out_image->pixels.resize(static_cast<size_t>(width) * height * 4);
+    out_image->set_width(width);
+    out_image->set_height(height);
+    out_image->pixels().resize(static_cast<size_t>(width) * height * 4);
 
     for (uint32_t y = 0; y < height; y++)
     {
         uint32_t source_row = top_to_bottom ? y : (height - 1 - y);
         const uint8_t *source = raw.data() + static_cast<size_t>(source_row) * width * bytes_per_pixel;
-        uint8_t *dest = out_image->pixels.data() + static_cast<size_t>(y) * width * 4;
+        uint8_t *dest = out_image->pixels().data() + static_cast<size_t>(y) * width * 4;
 
         for (uint32_t x = 0; x < width; x++)
         {
@@ -108,7 +127,7 @@ bool load_tga(const char *path, ImageData *out_image)
         }
     }
 
-    return true;
+    return (true);
 }
 
 } // namespace vre

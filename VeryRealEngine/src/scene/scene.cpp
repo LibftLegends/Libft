@@ -7,16 +7,6 @@
 namespace vre
 {
 
-static vec3 read_vec3(const JsonValue *value, const vec3 &default_value)
-{
-    if (value == nullptr || !value->is_array() || value->array_value.size() != 3)
-        return default_value;
-    return vec3(
-        static_cast<float>(value->array_value[0].as_number()),
-        static_cast<float>(value->array_value[1].as_number()),
-        static_cast<float>(value->array_value[2].as_number()));
-}
-
 static bool parse_physics(const JsonValue &object_json, const std::string &name,
     const vec3 &position, RigidBodyDesc *out_desc)
 {
@@ -44,7 +34,9 @@ static bool parse_physics(const JsonValue &object_json, const std::string &name,
     out_desc->friction = static_cast<float>(
         (friction_field != nullptr) ? friction_field->as_number(0.5) : 0.5);
 
-    out_desc->velocity = read_vec3(physics_field->find("initial_velocity"), vec3(0.0f, 0.0f, 0.0f));
+    const JsonValue *velocity_field = physics_field->find("initial_velocity");
+    out_desc->velocity = (velocity_field != nullptr)
+        ? velocity_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
 
     std::string shape = physics_field->find("collider") != nullptr
         ? physics_field->find("collider")->as_string("box") : "box";
@@ -58,8 +50,9 @@ static bool parse_physics(const JsonValue &object_json, const std::string &name,
     else
     {
         out_desc->collider.type = ColliderType::Box;
-        out_desc->collider.half_extents = read_vec3(physics_field->find("half_extents"),
-            vec3(0.5f, 0.5f, 0.5f));
+        const JsonValue *half_extents_field = physics_field->find("half_extents");
+        out_desc->collider.half_extents = (half_extents_field != nullptr)
+            ? half_extents_field->as_vec3(vec3(0.5f, 0.5f, 0.5f)) : vec3(0.5f, 0.5f, 0.5f);
     }
 
     return true;
@@ -68,7 +61,7 @@ static bool parse_physics(const JsonValue &object_json, const std::string &name,
 bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_world)
 {
     JsonValue root;
-    if (!load_json_file(path, &root))
+    if (!JsonParser::load_file(path, &root))
         return false;
 
     const JsonValue *objects = root.find("objects");
@@ -85,7 +78,7 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
     const JsonValue *lights_field = root.find("lights");
     if (lights_field != nullptr && lights_field->is_array())
     {
-        for (const JsonValue &light_json : lights_field->array_value)
+        for (const JsonValue &light_json : lights_field->array_elements())
         {
             Light light;
             std::string type_name = light_json.find("type") != nullptr
@@ -93,10 +86,13 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
             light.type = (type_name == "point") ? LightType::Point : LightType::Directional;
 
             const char *position_field_name = (light.type == LightType::Point) ? "position" : "direction";
-            light.direction_or_position = read_vec3(light_json.find(position_field_name),
-                vec3(0.0f, -1.0f, 0.0f));
+            const JsonValue *position_field = light_json.find(position_field_name);
+            light.direction_or_position = (position_field != nullptr)
+                ? position_field->as_vec3(vec3(0.0f, -1.0f, 0.0f)) : vec3(0.0f, -1.0f, 0.0f);
 
-            light.color = read_vec3(light_json.find("color"), vec3(1.0f, 1.0f, 1.0f));
+            const JsonValue *color_field = light_json.find("color");
+            light.color = (color_field != nullptr)
+                ? color_field->as_vec3(vec3(1.0f, 1.0f, 1.0f)) : vec3(1.0f, 1.0f, 1.0f);
 
             const JsonValue *intensity_field = light_json.find("intensity");
             light.intensity = static_cast<float>(
@@ -106,7 +102,7 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
         }
     }
 
-    for (const JsonValue &object_json : objects->array_value)
+    for (const JsonValue &object_json : objects->array_elements())
     {
         std::string name = object_json.find("name") != nullptr
             ? object_json.find("name")->as_string() : std::string();
@@ -119,17 +115,17 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
         ecs::Entity entity = _registry.create();
         _registry.emplace<NameComponent>(entity, NameComponent{name});
 
-        ecs::Entity parent_entity = ecs::kInvalidEntity;
+        ecs::Entity parent_entity = ecs::Entity::invalid();
         const JsonValue *parent_field = object_json.find("parent");
-        if (parent_field != nullptr && parent_field->type == JsonType::String)
+        if (parent_field != nullptr && parent_field->type() == JsonType::String)
         {
-            auto parent_it = _name_to_entity.find(parent_field->string_value);
+            auto parent_it = _name_to_entity.find(parent_field->string_value());
             if (parent_it == _name_to_entity.end())
             {
                 std::fprintf(stderr,
                     "Scene: \"%s\": object \"%s\" references parent \"%s\", which must "
                     "appear earlier in \"objects\"\n",
-                    path, name.c_str(), parent_field->string_value.c_str());
+                    path, name.c_str(), parent_field->string_value().c_str());
                 return false;
             }
             parent_entity = parent_it->second;
@@ -138,16 +134,24 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
 
         MeshHandle mesh = kNoMesh;
         const JsonValue *mesh_field = object_json.find("mesh");
-        if (mesh_field != nullptr && mesh_field->type == JsonType::String)
-            mesh = renderer->load_mesh_from_obj(mesh_field->string_value.c_str());
+        if (mesh_field != nullptr && mesh_field->type() == JsonType::String)
+            mesh = renderer->load_mesh_from_obj(mesh_field->string_value().c_str());
         if (mesh != kNoMesh)
             _registry.emplace<MeshComponent>(entity, MeshComponent{mesh});
 
+        const JsonValue *position_field = object_json.find("position");
+        const JsonValue *rotation_field = object_json.find("rotation");
+        const JsonValue *scale_field = object_json.find("scale");
+        const JsonValue *spin_field = object_json.find("spin");
         TransformComponent transform;
-        transform.position = read_vec3(object_json.find("position"), vec3(0.0f, 0.0f, 0.0f));
-        transform.rotation = read_vec3(object_json.find("rotation"), vec3(0.0f, 0.0f, 0.0f));
-        transform.scale = read_vec3(object_json.find("scale"), vec3(1.0f, 1.0f, 1.0f));
-        transform.spin = read_vec3(object_json.find("spin"), vec3(0.0f, 0.0f, 0.0f));
+        transform.position = (position_field != nullptr)
+            ? position_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
+        transform.rotation = (rotation_field != nullptr)
+            ? rotation_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
+        transform.scale = (scale_field != nullptr)
+            ? scale_field->as_vec3(vec3(1.0f, 1.0f, 1.0f)) : vec3(1.0f, 1.0f, 1.0f);
+        transform.spin = (spin_field != nullptr)
+            ? spin_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
         _registry.emplace<TransformComponent>(entity, transform);
 
         const JsonValue *visible_field = object_json.find("visible");
@@ -159,7 +163,7 @@ bool Scene::load(const char *path, Renderer *renderer, PhysicsWorld *physics_wor
             RigidBodyDesc physics_desc;
             if (parse_physics(object_json, name, transform.position, &physics_desc))
             {
-                if (parent_entity != ecs::kInvalidEntity)
+                if (parent_entity != ecs::Entity::invalid())
                 {
                     std::fprintf(stderr,
                         "Scene: \"%s\": object \"%s\" has both \"physics\" and \"parent\" — "
@@ -231,7 +235,7 @@ void Scene::collect_render_items(std::vector<RenderItem> *out_items) const
 
         mat4 world;
         bool visible;
-        if (parent == nullptr || parent->parent == ecs::kInvalidEntity)
+        if (parent == nullptr || parent->parent == ecs::Entity::invalid())
         {
             world = local;
             visible = self_visible;
@@ -258,7 +262,7 @@ void Scene::collect_render_items(std::vector<RenderItem> *out_items) const
             RenderItem item;
             item.mesh = mesh->mesh;
             item.model = world;
-            item.occlusion_id = entity;
+            item.occlusion_id = entity.value();
             out_items->push_back(item);
         }
     }
@@ -319,7 +323,7 @@ bool Scene::get_node_position(const std::string &name, vec3 *out_position) const
     mat4 world = (transform != nullptr) ? local_transform(*transform) : mat4::identity();
 
     const ParentComponent *parent = _registry.try_get<ParentComponent>(entity);
-    while (parent != nullptr && parent->parent != ecs::kInvalidEntity)
+    while (parent != nullptr && parent->parent != ecs::Entity::invalid())
     {
         const TransformComponent *parent_transform =
             _registry.try_get<TransformComponent>(parent->parent);

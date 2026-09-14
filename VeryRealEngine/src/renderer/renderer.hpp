@@ -17,6 +17,7 @@
 #include "../math/frustum.hpp"
 #include "../math/mat4.hpp"
 #include "../math/vec3.hpp"
+#include "../assets/material_data.hpp"
 #include "../assets/mesh_data.hpp"
 #include "../animation/skeleton.hpp"
 #include "../assets/tga_loader.hpp"

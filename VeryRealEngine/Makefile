@@ -31,10 +31,23 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/math/mat4_transform.cpp \
                 src/math/aabb.cpp \
                 src/math/frustum.cpp \
+                src/ecs/entity.cpp \
+                src/ecs/pool_base.cpp \
+                src/ecs/registry.cpp \
                 src/renderer/renderer.cpp \
-                src/assets/obj_loader.cpp \
-                src/assets/tga_loader.cpp \
+                src/assets/json_value.cpp \
                 src/assets/json_parser.cpp \
+                src/assets/json_grammar.cpp \
+                src/assets/mesh_vertex.cpp \
+                src/assets/sub_mesh.cpp \
+                src/assets/material_data.cpp \
+                src/assets/mesh_data.cpp \
+                src/assets/image_data.cpp \
+                src/assets/obj_loader.cpp \
+                src/assets/obj_geometry.cpp \
+                src/assets/tga_loader.cpp \
+                src/assets/skinned_asset.cpp \
+                src/assets/skinned_mesh_grammar.cpp \
                 src/scene/scene.cpp \
                 src/physics/physics_world.cpp \
                 src/particles/particle_system.cpp \
