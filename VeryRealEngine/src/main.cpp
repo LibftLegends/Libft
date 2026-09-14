@@ -89,8 +89,8 @@ int main(int argc, char **argv)
     // Steam particle emitter above the coffee machine (assets/scenes/house_scene.json
     // places it at [-4.5, 0.4, 2.2] with height 0.8, so its top is at y=0.8).
     vre::ParticleSystemDesc steam_desc;
-    steam_desc.emitter_position = vre::vec3(-4.5f, 0.85f, 2.2f);
-    steam_desc.mesh = renderer.load_mesh_from_obj("assets/models/cube_steam.obj");
+    steam_desc.set_emitter_position(vre::vec3(-4.5f, 0.85f, 2.2f));
+    steam_desc.set_mesh(renderer.load_mesh_from_obj("assets/models/cube_steam.obj"));
     vre::ParticleSystem steam(steam_desc);
 
     // Skeletal animation (bonus, Chapter VII): a small hanging pendulum

@@ -14,45 +14,45 @@ static bool parse_physics(const JsonValue &object_json, const std::string &name,
     if (physics_field == nullptr || !physics_field->is_object())
         return false;
 
-    out_desc->position = position;
-    out_desc->debug_name = name;
+    out_desc->set_position(position);
+    out_desc->set_debug_name(name);
 
     const JsonValue *static_field = physics_field->find("static");
-    out_desc->is_static = (static_field != nullptr) ? static_field->as_bool(false) : false;
+    out_desc->set_static((static_field != nullptr) ? static_field->as_bool(false) : false);
 
     const JsonValue *trigger_field = physics_field->find("trigger");
-    out_desc->is_trigger = (trigger_field != nullptr) ? trigger_field->as_bool(false) : false;
+    out_desc->set_trigger((trigger_field != nullptr) ? trigger_field->as_bool(false) : false);
 
     const JsonValue *mass_field = physics_field->find("mass");
-    out_desc->mass = static_cast<float>((mass_field != nullptr) ? mass_field->as_number(1.0) : 1.0);
+    out_desc->set_mass(static_cast<float>((mass_field != nullptr) ? mass_field->as_number(1.0) : 1.0));
 
     const JsonValue *restitution_field = physics_field->find("restitution");
-    out_desc->restitution = static_cast<float>(
-        (restitution_field != nullptr) ? restitution_field->as_number(0.3) : 0.3);
+    out_desc->set_restitution(static_cast<float>(
+        (restitution_field != nullptr) ? restitution_field->as_number(0.3) : 0.3));
 
     const JsonValue *friction_field = physics_field->find("friction");
-    out_desc->friction = static_cast<float>(
-        (friction_field != nullptr) ? friction_field->as_number(0.5) : 0.5);
+    out_desc->set_friction(static_cast<float>(
+        (friction_field != nullptr) ? friction_field->as_number(0.5) : 0.5));
 
     const JsonValue *velocity_field = physics_field->find("initial_velocity");
-    out_desc->velocity = (velocity_field != nullptr)
-        ? velocity_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f);
+    out_desc->set_velocity((velocity_field != nullptr)
+        ? velocity_field->as_vec3(vec3(0.0f, 0.0f, 0.0f)) : vec3(0.0f, 0.0f, 0.0f));
 
     std::string shape = physics_field->find("collider") != nullptr
         ? physics_field->find("collider")->as_string("box") : "box";
     if (shape == "sphere")
     {
-        out_desc->collider.type = ColliderType::Sphere;
+        out_desc->collider().set_type(Collider::Type::Sphere);
         const JsonValue *radius_field = physics_field->find("radius");
-        out_desc->collider.radius = static_cast<float>(
-            (radius_field != nullptr) ? radius_field->as_number(0.5) : 0.5);
+        out_desc->collider().set_radius(static_cast<float>(
+            (radius_field != nullptr) ? radius_field->as_number(0.5) : 0.5));
     }
     else
     {
-        out_desc->collider.type = ColliderType::Box;
+        out_desc->collider().set_type(Collider::Type::Box);
         const JsonValue *half_extents_field = physics_field->find("half_extents");
-        out_desc->collider.half_extents = (half_extents_field != nullptr)
-            ? half_extents_field->as_vec3(vec3(0.5f, 0.5f, 0.5f)) : vec3(0.5f, 0.5f, 0.5f);
+        out_desc->collider().set_half_extents((half_extents_field != nullptr)
+            ? half_extents_field->as_vec3(vec3(0.5f, 0.5f, 0.5f)) : vec3(0.5f, 0.5f, 0.5f));
     }
 
     return true;
@@ -191,7 +191,7 @@ void Scene::sync_from_physics(const PhysicsWorld &physics_world)
     for (auto &[entity, body] : _registry.storage<PhysicsBodyComponent>())
     {
         TransformComponent *transform = _registry.try_get<TransformComponent>(entity);
-        if (transform != nullptr && body.body != kInvalidBody)
+        if (transform != nullptr && body.body != BodyHandle::invalid())
             transform->position = physics_world.get_position(body.body);
     }
 }

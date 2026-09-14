@@ -49,7 +49,14 @@ LIB_CPP_SRCS := src/math/vec3.cpp \
                 src/assets/skinned_asset.cpp \
                 src/assets/skinned_mesh_grammar.cpp \
                 src/scene/scene.cpp \
+                src/physics/body_handle.cpp \
+                src/physics/collider.cpp \
+                src/physics/rigid_body_desc.cpp \
                 src/physics/physics_world.cpp \
+                src/physics/physics_collision.cpp \
+                src/physics/physics_narrow_phase.cpp \
+                src/physics/physics_resolve.cpp \
+                src/particles/particle_system_desc.cpp \
                 src/particles/particle_system.cpp \
                 src/audio/sound_handle.cpp \
                 src/audio/voice_handle.cpp \

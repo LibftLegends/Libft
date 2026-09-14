@@ -15,53 +15,51 @@
 
 #include "../math/vec3.hpp"
 #include "../renderer/renderer.hpp"
-
-#include <vector>
+#include "../vre.hpp"
+#include "particle_system_desc.hpp"
 
 namespace vre
 {
 
-/// Configuration for a ParticleSystem emitter.
-struct ParticleSystemDesc
-{
-    vec3 emitter_position;
-    MeshHandle mesh = 0;                  ///< Typically a small cube (see cube_steam.obj).
-    float spawn_interval = 0.15f;         ///< Seconds between new particles.
-    float lifetime = 2.2f;                ///< Seconds a particle lives before despawning.
-    float start_scale = 0.14f;
-    vec3 base_velocity{0.0f, 0.5f, 0.0f}; ///< Upward drift, steam-like.
-    float velocity_jitter = 0.12f;        ///< Random horizontal spread.
-    uint32_t random_seed = 1;
-};
-
-/// A simple emitter/lifetime/velocity CPU particle simulation, rendered through the normal mesh pipeline.
+/** A simple emitter/lifetime/velocity CPU particle simulation, rendered through the normal mesh pipeline. */
 class ParticleSystem
 {
-    public:
-        /// Constructs an emitter configured by `desc`.
-        explicit ParticleSystem(const ParticleSystemDesc &desc);
+  public:
+	ParticleSystem();
+	ParticleSystem(const ParticleSystem &other);
+	ParticleSystem &operator=(const ParticleSystem &other);
+	~ParticleSystem();
 
-        /// Spawns new particles (if due) and advances/despawns existing ones by `delta_seconds`.
-        void update(float delta_seconds);
-        /// Appends a RenderItem for every currently-alive particle to `out_items`.
-        void collect_render_items(std::vector<RenderItem> *out_items) const;
+	/// Constructs an emitter configured by `desc`.
+	explicit ParticleSystem(const ParticleSystemDesc &desc);
 
-    private:
-        /// A single live particle's simulation state.
-        struct Particle
-        {
-            vec3 position;
-            vec3 velocity;
-            float age = 0.0f;
-        };
+	/// Spawns new particles (if due) and advances/despawns existing ones by `delta_seconds`.
+	void update(float delta_seconds);
+	/// Appends a RenderItem for every currently-alive particle to `out_items`.
+	void collect_render_items(std::vector<RenderItem> *out_items) const;
 
-        ParticleSystemDesc _desc;
-        std::vector<Particle> _particles;
-        float _spawn_accumulator = 0.0f;
-        uint32_t _rng_state;
+  private:
+	/// A single live particle's simulation state.
+	class Particle
+	{
+		public:
+		Particle();
+		Particle(const Particle &other);
+		Particle &operator=(const Particle &other);
+		~Particle();
 
-        /// @return The next pseudo-random value in [0,1) — a tiny xorshift PRNG, no `<random>` needed.
-        float next_random();
+		vec3 position;
+		vec3 velocity;
+		float age;
+	};
+
+	/** @return The next pseudo-random value in [0,1) — a tiny xorshift PRNG, no `<random>` needed. */
+	float next_random();
+
+	ParticleSystemDesc _desc;
+	std::vector<Particle> _particles;
+	float _spawn_accumulator;
+	uint32_t _rng_state;
 };
 
 } // namespace vre

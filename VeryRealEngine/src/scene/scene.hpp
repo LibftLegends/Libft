@@ -96,7 +96,7 @@ struct VisibilityComponent
  */
 struct PhysicsBodyComponent
 {
-    BodyHandle body = kInvalidBody;
+    BodyHandle body = BodyHandle::invalid();
 };
 
 /**
