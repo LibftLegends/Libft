@@ -54,7 +54,7 @@ FT_TEST(test_file_write_all_atomic_concurrent_writers_keep_complete_payloads)
     (void)file_delete(file_path.c_str());
     for (int32_t writer = 0; writer < writer_count; ++writer)
     {
-        writers.emplace_back([&file_path, &first_error, writer, iterations]()
+        writers.emplace_back([&file_path, &first_error, writer]()
         {
             const std::string payload = "writer-" + std::to_string(writer)
                 + ": complete atomic payload\n";

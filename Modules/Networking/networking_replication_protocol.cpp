@@ -175,19 +175,23 @@ int32_t networking_replication_peer_cursor_serialize(
     ft_byte_buffer encoded;
     int32_t error_code;
     int32_t destroy_error;
+    uint16_t snapshot_acknowledged;
 
     if (cursor.server_instance_id == 0U || cursor.session_id == 0U
         || cursor.subscription_id == 0U
         || (cursor.snapshot_acknowledged != FT_FALSE
             && cursor.snapshot_acknowledged != FT_TRUE))
         return (FT_ERR_INVALID_ARGUMENT);
+    snapshot_acknowledged = 0U;
+    if (cursor.snapshot_acknowledged == FT_TRUE)
+        snapshot_acknowledged = 1U;
     error_code = encoded.initialize();
     if (error_code == FT_ERR_SUCCESS)
         error_code = encoded.append_u16_be(
             static_cast<uint16_t>(NETWORKING_REPLICATION_CURSOR_VERSION));
     if (error_code == FT_ERR_SUCCESS)
         error_code = encoded.append_u16_be(
-            cursor.snapshot_acknowledged == FT_TRUE ? 1U : 0U);
+            snapshot_acknowledged);
     if (error_code == FT_ERR_SUCCESS)
         error_code = encoded.append_u32_be(0U);
     if (error_code == FT_ERR_SUCCESS)
@@ -256,7 +260,9 @@ int32_t networking_replication_peer_cursor_deserialize(
             return (restore_error);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    decoded.snapshot_acknowledged = flags == 1U ? FT_TRUE : FT_FALSE;
+    decoded.snapshot_acknowledged = FT_FALSE;
+    if (flags == 1U)
+        decoded.snapshot_acknowledged = FT_TRUE;
     cursor = decoded;
     return (FT_ERR_SUCCESS);
 }
