@@ -10,6 +10,7 @@
 #include <new>
 #include <string>
 #include "../../Modules/PThread/pthread.hpp"
+#include "../../Modules/Networking/openssl_support.hpp"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <filesystem>
 #else
@@ -590,6 +591,9 @@ static int32_t runtime_compile_and_run_helper(void)
 #else
     compile_command += " -pthread -Wl,--allow-multiple-definition -rdynamic";
     compile_command += " -lz -ldl";
+#endif
+#if defined(NETWORKING_HAS_OPENSSL) && NETWORKING_HAS_OPENSSL
+    compile_command += " -lssl -lcrypto";
 #endif
     compile_command += " -o ";
     compile_command += runtime_shell_quote(file_guard.executable_path);
