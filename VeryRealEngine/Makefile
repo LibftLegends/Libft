@@ -178,7 +178,12 @@ LIB_BASENAME := VeryRealEngine
 OBJ_DIR_SUFFIX :=
 endif
 
-DEMO_SRCS   := src/main.cpp
+DEMO_SRCS   := src/main.cpp \
+               src/app/application.cpp \
+               src/app/application_setup.cpp \
+               src/app/application_loop.cpp \
+               src/app/application_interactions.cpp \
+               src/app/first_person_camera.cpp
 
 OBJ_DIR     := obj$(OBJ_DIR_SUFFIX)
 LIB_OBJS    := $(patsubst src/%.cpp,$(OBJ_DIR)/%.o,$(LIB_CPP_SRCS)) \
