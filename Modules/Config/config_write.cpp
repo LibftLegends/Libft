@@ -34,22 +34,73 @@ static void config_unlock_guard(const config_data *config, ft_bool lock_acquired
     return ;
 }
 
-static int32_t config_handle_write_failure(FILE *file)
+static ft_bool config_ini_text_is_representable(const char *text,
+    ft_bool section_name, ft_bool key_name)
 {
-    if (file)
-        ft_fclose(file);
-    return (FT_ERR_IO);
+    int32_t length;
+    int32_t index;
+    unsigned char character;
+
+    if (!text)
+        return (FT_TRUE);
+    length = ft_strlen(text);
+    if (length <= 0)
+        return (FT_FALSE);
+    character = static_cast<unsigned char>(text[0]);
+    if (ft_isspace(static_cast<int32_t>(character)) == FT_TRUE)
+        return (FT_FALSE);
+    character = static_cast<unsigned char>(text[length - 1]);
+    if (ft_isspace(static_cast<int32_t>(character)) == FT_TRUE)
+        return (FT_FALSE);
+    index = 0;
+    while (index < length)
+    {
+        character = static_cast<unsigned char>(text[index]);
+        if (character == '\r' || character == '\n')
+            return (FT_FALSE);
+        if (section_name == FT_TRUE && character == ']')
+            return (FT_FALSE);
+        if (key_name == FT_TRUE && character == '=')
+            return (FT_FALSE);
+        if (key_name == FT_TRUE && index == 0
+            && (character == ';' || character == '#'))
+            return (FT_FALSE);
+        index += 1;
+    }
+    return (FT_TRUE);
+}
+
+static ft_bool config_ini_entry_is_representable(
+    const config_entry &entry)
+{
+    if (config_ini_text_is_representable(entry.section, FT_TRUE, FT_FALSE)
+        == FT_FALSE)
+        return (FT_FALSE);
+    if (config_ini_text_is_representable(entry.key, FT_FALSE, FT_TRUE)
+        == FT_FALSE)
+        return (FT_FALSE);
+    return (config_ini_text_is_representable(entry.value, FT_FALSE,
+        FT_FALSE));
 }
 
 static int32_t config_write_ini(const config_data *config, const char *filename)
 {
-    FILE *file;
+    ft_string output;
     const char *last_section;
     ft_size_t entry_index;
+    int32_t error_code;
 
-    file = ft_fopen(filename, "w");
-    if (!file)
-        return (FT_ERR_FILE_OPEN_FAILED);
+    entry_index = 0;
+    while (config && entry_index < config->entry_count)
+    {
+        if (config_ini_entry_is_representable(config->entries[entry_index])
+            == FT_FALSE)
+            return (FT_ERR_INVALID_ARGUMENT);
+        entry_index += 1;
+    }
+    error_code = output.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
     last_section = ft_nullptr;
     entry_index = 0;
     while (config && entry_index < config->entry_count)
@@ -59,8 +110,11 @@ static int32_t config_write_ini(const config_data *config, const char *filename)
         {
             if (!last_section || ft_strcmp(entry->section, last_section) != 0)
             {
-                if (ft_fprintf(file, "[%s]\n", entry->section) < 0)
-                    return (config_handle_write_failure(file));
+                error_code = output.append("[");
+                if (error_code == FT_ERR_SUCCESS)
+                    error_code = output.append(entry->section);
+                if (error_code == FT_ERR_SUCCESS)
+                    error_code = output.append("]\n");
             }
             last_section = entry->section;
         }
@@ -68,39 +122,56 @@ static int32_t config_write_ini(const config_data *config, const char *filename)
         {
             if (last_section)
             {
-                if (ft_fprintf(file, "[]\n") < 0)
-                    return (config_handle_write_failure(file));
+                error_code = output.append("[]\n");
             }
             last_section = ft_nullptr;
         }
-        if (entry->key && entry->value)
+        if (error_code == FT_ERR_SUCCESS && entry->key && entry->value)
         {
-            if (ft_fprintf(file, "%s=%s\n", entry->key, entry->value) < 0)
-                return (config_handle_write_failure(file));
+            error_code = output.append(entry->key);
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append("=");
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append(entry->value);
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append("\n");
         }
-        else if (entry->key)
+        else if (error_code == FT_ERR_SUCCESS && entry->key)
         {
-            if (ft_fprintf(file, "%s=\n", entry->key) < 0)
-                return (config_handle_write_failure(file));
+            error_code = output.append(entry->key);
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append("=\n");
         }
-        else if (entry->value)
+        else if (error_code == FT_ERR_SUCCESS && entry->value)
         {
-            if (ft_fprintf(file, "=%s\n", entry->value) < 0)
-                return (config_handle_write_failure(file));
+            error_code = output.append("=");
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append(entry->value);
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = output.append("\n");
+        }
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            int32_t destroy_error = output.destroy();
+            if (destroy_error != FT_ERR_SUCCESS)
+                return (destroy_error);
+            return (error_code);
         }
         ++entry_index;
     }
-    if (ft_fclose(file) == EOF)
-        return (FT_ERR_IO);
-    return (FT_ERR_SUCCESS);
+    error_code = file_replace_safe(filename, output.c_str(), output.size());
+    if (output.destroy() != FT_ERR_SUCCESS && error_code == FT_ERR_SUCCESS)
+        error_code = FT_ERR_INTERNAL;
+    return (error_code);
 }
 
-static json_group *config_find_or_create_group(json_group **groups_head, const char *section_name)
+static json_group *config_find_or_create_group(json_group **groups_head,
+    json_group **groups_tail, const char *section_name)
 {
     const char *name;
     json_group *current;
 
-    if (!groups_head)
+    if (!groups_head || !groups_tail)
     {
         return (ft_nullptr);
     }
@@ -120,21 +191,21 @@ static json_group *config_find_or_create_group(json_group **groups_head, const c
     if (!(*groups_head))
         *groups_head = new_group;
     else
-    {
-        current = *groups_head;
-        while (current->next)
-            current = current->next;
-        current->next = new_group;
-    }
+        (*groups_tail)->next = new_group;
+    *groups_tail = new_group;
     return (new_group);
 }
 
 static int32_t config_write_json(const config_data *config, const char *filename)
 {
     json_group *groups;
+    json_group *groups_tail;
+    char *serialized_content;
+    int32_t write_result;
     ft_size_t entry_index;
 
     groups = ft_nullptr;
+    groups_tail = ft_nullptr;
     entry_index = 0;
     while (config && entry_index < config->entry_count)
     {
@@ -144,7 +215,8 @@ static int32_t config_write_json(const config_data *config, const char *filename
             json_free_groups(groups);
             return (FT_ERR_INVALID_ARGUMENT);
         }
-        json_group *group = config_find_or_create_group(&groups, entry->section);
+        json_group *group = config_find_or_create_group(&groups, &groups_tail,
+            entry->section);
         if (!group)
         {
             json_free_groups(groups);
@@ -159,13 +231,17 @@ static int32_t config_write_json(const config_data *config, const char *filename
         json_add_item_to_group(group, item);
         ++entry_index;
     }
-    if (json_write_to_file(filename, groups) != FT_ERR_SUCCESS)
+    serialized_content = json_write_to_string(groups);
+    if (!serialized_content)
     {
         json_free_groups(groups);
-        return (FT_ERR_IO);
+        return (FT_ERR_NO_MEMORY);
     }
+    write_result = file_replace_safe(filename, serialized_content,
+        ft_strlen(serialized_content));
+    cma_free(serialized_content);
     json_free_groups(groups);
-    return (FT_ERR_SUCCESS);
+    return (write_result);
 }
 
 int32_t config_write_file(const config_data *config, const char *filename)

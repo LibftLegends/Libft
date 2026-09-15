@@ -21,12 +21,12 @@ LIBFT_GLOBAL_CC ?= gcc
 LIBFT_GLOBAL_MV ?= mv
 
 
-LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
+LIBFT_GLOBAL_MODULE_NAMES := Basic BMP Advanced Compatebility Debug Errno CMA SCMA \
     GetNextLine DUMB Math Geometry System_utils Printf ReadLine Regex PThread \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
     Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \
-    Filesystem XML Storage Networking URI API Application Observability Sink \
-    Logger Parser Lua Game Voxel GPGR
+    Filesystem XML Storage Networking URI API Application Observability Analytics CardGame Sink \
+    Logger Parser Scripting Game Voxel GPGR
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 
@@ -40,27 +40,37 @@ LIBFT_GLOBAL_$(1)_DIRECTORY := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)
 LIBFT_GLOBAL_$(1)_TARGET := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$(patsubst %.a,%$(LIBFT_GLOBAL_ARCHIVE_SUFFIX).a,$$($(1)_TARGET))
 LIBFT_GLOBAL_$(1)_DEBUG_TARGET := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$(patsubst %.a,%$(LIBFT_GLOBAL_ARCHIVE_SUFFIX).a,$$($(1)_DEBUG_TARGET))
 LIBFT_GLOBAL_$(1)_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_SOURCES))
+LIBFT_GLOBAL_$(1)_TEST_ONLY_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_TEST_ONLY_SOURCES))
 LIBFT_GLOBAL_$(1)_MM_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_MM_SOURCES))
 LIBFT_GLOBAL_$(1)_CPP_FLAGS := $$($(1)_CPP_FLAGS)
 LIBFT_GLOBAL_$(1)_MM_FLAGS := $$($(1)_MM_FLAGS)
-LIBFT_GLOBAL_$(1)_C_FLAGS := $$(subst -I$$($(1)_LUA_VENDOR_DIR),-I$(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$($(1)_LUA_VENDOR_DIR),$$($(1)_C_FLAGS))
+LIBFT_GLOBAL_$(1)_C_FLAGS := $$($(1)_C_FLAGS)
 LIBFT_GLOBAL_MANIFEST_LOAD :=
 endef
 
 $(foreach module_name,$(LIBFT_GLOBAL_MODULE_NAMES),$(eval $(call LIBFT_LOAD_GLOBAL_MANIFEST,$(module_name))))
 
-LIBFT_GLOBAL_RELEASE_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_TARGET))
-LIBFT_GLOBAL_DEBUG_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_DEBUG_TARGET))
-LIBFT_GLOBAL_TEST_ARCHIVES := $(patsubst %.a,%_test.a,$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
-LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES := $(patsubst %.a,%_test_debug.a,$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
+LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_TARGET))
+LIBFT_GLOBAL_RELEASE_ARCHIVES := $(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES)
+ifneq ($(filter 1,$(FT_VOX_ANALYTICS)),1)
+LIBFT_GLOBAL_RELEASE_ARCHIVES := $(filter-out $(LIBFT_GLOBAL_Analytics_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
+endif
+LIBFT_GLOBAL_ALL_DEBUG_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_DEBUG_TARGET))
+LIBFT_GLOBAL_DEBUG_ARCHIVES := $(LIBFT_GLOBAL_ALL_DEBUG_ARCHIVES)
+ifneq ($(filter 1,$(FT_VOX_ANALYTICS)),1)
+LIBFT_GLOBAL_DEBUG_ARCHIVES := $(filter-out $(LIBFT_GLOBAL_Analytics_DEBUG_TARGET),$(LIBFT_GLOBAL_DEBUG_ARCHIVES))
+endif
+LIBFT_GLOBAL_TEST_ARCHIVES := $(patsubst %.a,%_test.a,$(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES))
+LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES := $(patsubst %.a,%_test_debug.a,$(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES))
 
 define LIBFT_DEFINE_GLOBAL_MODULE
-LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
-LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
+LIBFT_GLOBAL_$(1)_RELEASE_SOURCES := $$(filter-out $$(LIBFT_GLOBAL_$(1)_TEST_ONLY_SOURCES),$$(LIBFT_GLOBAL_$(1)_SOURCES))
+LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.mm,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.mm,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))

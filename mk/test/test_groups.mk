@@ -89,6 +89,9 @@ GET_NEXT_LINE_TEST_FILES := \
 BUFFER_TEST_FILES := \
 	Test/test_buffer_byte_buffer.cpp
 
+BMP_TEST_FILES := \
+	Test/test_bmp.cpp
+
 FILE_TEST_FILES := \
 	Test/test_file_copy.cpp \
 	Test/test_file_copy_directory.cpp \
@@ -114,6 +117,9 @@ VOXEL_TEST_FILES := \
 	Test/test_voxel_block_metadata.cpp \
 	Test/test_voxel_generator.cpp \
 	Test/test_voxel_terrain_transitions.cpp \
+	Test/test_voxel_lighting.cpp \
+	Test/test_voxel_lighting_mesh_boundaries.cpp \
+	Test/test_voxel_shadow.cpp \
 	Test/test_voxel_mesh.cpp \
 	Test/test_terrain_script_register_api.cpp \
 	Test/test_terrain_script_execute.cpp \

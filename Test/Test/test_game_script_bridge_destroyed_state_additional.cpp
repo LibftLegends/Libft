@@ -4,7 +4,7 @@
 
 static void bridge_destroyed_set_language(game_script_bridge &value)
 {
-    value.set_language("lua");
+    value.set_language("custom");
     return ;
 }
 

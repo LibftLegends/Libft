@@ -37,6 +37,14 @@ static ft_bool csv_is_space_character(char character)
     return (FT_FALSE);
 }
 
+static ft_bool csv_is_valid_delimiter(char delimiter)
+{
+    if (delimiter == '\0' || delimiter == '"' || delimiter == '\n'
+        || delimiter == '\r')
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
 static ft_bool csv_field_needs_quotes(const char *field, char delimiter)
 {
     ft_size_t index;
@@ -124,7 +132,10 @@ static int32_t csv_finalize_row(ft_vector<ft_size_t> &row_offsets,
         return (error_code);
     error_code = row_lengths.push_back(row_length);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        row_offsets.pop_back();
         return (error_code);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -209,6 +220,8 @@ int32_t ft_csv_document::parse_content(const char *content, char delimiter,
 
     if (content == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     error_code = current_field.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
@@ -361,7 +374,8 @@ int32_t ft_csv_document::parse_content(const char *content, char delimiter,
         (void)current_field.destroy();
         return (FT_ERR_INVALID_OPERATION);
     }
-    if (field_started == FT_TRUE || current_field.size() > 0)
+    if (row_field_count > 0 || field_started == FT_TRUE
+        || current_field.size() > 0)
     {
         error_code = csv_finalize_field(this->_fields, current_field);
         if (error_code != FT_ERR_SUCCESS)
@@ -392,6 +406,8 @@ int32_t ft_csv_document::initialize(const char *content, char delimiter,
 {
     int32_t error_code;
 
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (ft_csv_document::set_error(FT_ERR_INVALID_ARGUMENT));
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         error_code = this->destroy();
@@ -1093,10 +1109,13 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
     ft_bool in_quotes;
     ft_bool field_started;
     ft_bool quote_closed;
+    ft_size_t field_count;
     int32_t error_code;
 
     if (line == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (fields.is_initialised() == FT_FALSE)
     {
         error_code = fields.initialize();
@@ -1112,6 +1131,7 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
     in_quotes = FT_FALSE;
     field_started = FT_FALSE;
     quote_closed = FT_FALSE;
+    field_count = 0U;
     while (line[index] != '\0')
     {
         if (quote_closed == FT_TRUE)
@@ -1134,6 +1154,7 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
                 }
                 field_started = FT_FALSE;
                 quote_closed = FT_FALSE;
+                field_count += 1U;
                 index += 1;
                 continue ;
             }
@@ -1194,6 +1215,7 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
                 return (error_code);
             }
             field_started = FT_FALSE;
+            field_count += 1U;
             index += 1;
             continue ;
         }
@@ -1226,7 +1248,8 @@ int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
         fields.clear();
         return (FT_ERR_INVALID_OPERATION);
     }
-    if (field_started == FT_TRUE || current_field.size() > 0)
+    if (field_count > 0 || field_started == FT_TRUE
+        || current_field.size() > 0)
     {
         error_code = fields.push_back(current_field);
         if (error_code != FT_ERR_SUCCESS)

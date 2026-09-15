@@ -31,72 +31,38 @@ static char *cmp_path_duplicate_c_string(const char *source)
 }
 
 #if defined(_WIN32) || defined(_WIN64)
+# include <windows.h>
+
 int32_t cmp_path_canonical(const char *path, char **output_path)
 {
+    HANDLE path_handle;
     DWORD written_size;
-    char *current_directory;
-    ft_string *joined_path;
-    ft_string *normalized_path;
+    DWORD path_error;
     char *canonical_path;
-    ft_bool path_is_absolute;
+    char resolved_path[32768];
 
     if (output_path == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
     *output_path = ft_nullptr;
     if (path == ft_nullptr || path[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    if (file_get_type(path) == FILE_TYPE_MISSING)
-        return (FT_ERR_NOT_FOUND);
-    path_is_absolute = file_path_is_absolute(path);
-    if (path_is_absolute == FT_TRUE)
-        normalized_path = file_path_normalize(path);
-    else
-    {
-        current_directory = static_cast<char *>(cma_malloc(32768U));
-        if (current_directory == ft_nullptr)
-            return (FT_ERR_NO_MEMORY);
-        written_size = GetCurrentDirectoryA(32768U, current_directory);
-        if (written_size == 0)
-        {
-            cma_free(current_directory);
-            return (FT_ERR_INVALID_PATH);
-        }
-        if (written_size >= 32768U)
-        {
-            cma_free(current_directory);
-            return (FT_ERR_PATH_TOO_LONG);
-        }
-        joined_path = file_path_join(current_directory, path);
-        cma_free(current_directory);
-        if (joined_path == ft_nullptr)
-            return (FT_ERR_NO_MEMORY);
-        if (joined_path->get_error() != FT_ERR_SUCCESS)
-        {
-            int32_t joined_error;
-
-            joined_error = joined_path->get_error();
-            (void)joined_path->destroy();
-            delete joined_path;
-            return (joined_error);
-        }
-        normalized_path = joined_path;
-    }
-    if (normalized_path == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    if (normalized_path->get_error() != FT_ERR_SUCCESS)
-    {
-        int32_t normalization_error;
-
-        normalization_error = normalized_path->get_error();
-        (void)normalized_path->destroy();
-        delete normalized_path;
-        return (normalization_error);
-    }
-    canonical_path = cmp_path_duplicate_c_string(normalized_path->c_str());
-    (void)normalized_path->destroy();
-    delete normalized_path;
+    path_handle = CreateFileA(path, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (path_handle == INVALID_HANDLE_VALUE)
+        return (cmp_file_error_to_errno(static_cast<int32_t>(GetLastError())));
+    written_size = GetFinalPathNameByHandleA(path_handle, resolved_path,
+        static_cast<DWORD>(sizeof(resolved_path)), FILE_NAME_NORMALIZED);
+    path_error = GetLastError();
+    CloseHandle(path_handle);
+    if (written_size == 0)
+        return (cmp_file_error_to_errno(static_cast<int32_t>(path_error)));
+    if (written_size >= sizeof(resolved_path))
+        return (FT_ERR_PATH_TOO_LONG);
+    canonical_path = cmp_path_duplicate_c_string(resolved_path);
     if (canonical_path == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
+    cmp_normalize_slashes(canonical_path);
     *output_path = canonical_path;
     return (FT_ERR_SUCCESS);
 }

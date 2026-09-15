@@ -9,6 +9,30 @@
 # include <fcntl.h>
 #endif
 
+#if defined(LIBFT_TEST_BUILD)
+static int32_t g_test_file_sync_failure = FT_ERR_SUCCESS;
+static int32_t g_test_directory_sync_failure = FT_ERR_SUCCESS;
+
+void cmp_test_set_file_sync_failure(int32_t error_code)
+{
+    g_test_file_sync_failure = error_code;
+    return ;
+}
+
+void cmp_test_set_directory_sync_failure(int32_t error_code)
+{
+    g_test_directory_sync_failure = error_code;
+    return ;
+}
+
+void cmp_test_clear_sync_failures(void)
+{
+    g_test_file_sync_failure = FT_ERR_SUCCESS;
+    g_test_directory_sync_failure = FT_ERR_SUCCESS;
+    return ;
+}
+#endif
+
 static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 {
     if (error_code_out != ft_nullptr)
@@ -165,6 +189,7 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
     char *native_source_path;
     char *native_destination_path;
     DWORD last_error;
+    uint32_t move_attempt;
     int32_t stored_error;
     int32_t delete_error;
     int32_t copy_error;
@@ -186,15 +211,25 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
     }
     if (global_force_cross_device_move == FT_FALSE)
     {
-        if (MoveFileExA(native_source_path, native_destination_path,
-                MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING))
+        move_attempt = 0U;
+        while (move_attempt < 16U)
         {
-            cma_free(native_source_path);
-            cma_free(native_destination_path);
-            cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-            return (FT_ERR_SUCCESS);
+            if (MoveFileExA(native_source_path, native_destination_path,
+                    MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING))
+            {
+                cma_free(native_source_path);
+                cma_free(native_destination_path);
+                cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
+                return (FT_ERR_SUCCESS);
+            }
+            last_error = GetLastError();
+            if (last_error != ERROR_SHARING_VIOLATION
+                && last_error != ERROR_LOCK_VIOLATION
+                && last_error != ERROR_ACCESS_DENIED)
+                break;
+            Sleep(1U);
+            ++move_attempt;
         }
-        last_error = GetLastError();
     }
     else
         last_error = ERROR_NOT_SAME_DEVICE;
@@ -930,6 +965,14 @@ int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
     HANDLE file_handle;
     int32_t error_code;
 
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_file_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_file_sync_failure);
+        return (g_test_file_sync_failure);
+    }
+#endif
+
     file_handle = cmp_retrieve_handle(file_descriptor);
     if (file_handle == INVALID_HANDLE_VALUE)
     {
@@ -948,6 +991,13 @@ int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
 
 int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 {
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_directory_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_directory_sync_failure);
+        return (g_test_directory_sync_failure);
+    }
+#endif
     (void)path;
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -956,6 +1006,14 @@ int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
 {
     int32_t error_code;
+
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_file_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_file_sync_failure);
+        return (g_test_file_sync_failure);
+    }
+#endif
 
     if (fsync(file_descriptor) == 0)
     {
@@ -971,6 +1029,14 @@ int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 {
     int32_t directory_descriptor;
     int32_t error_code;
+
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_directory_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_directory_sync_failure);
+        return (g_test_directory_sync_failure);
+    }
+#endif
 
     if (path == ft_nullptr)
     {

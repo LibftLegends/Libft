@@ -17,7 +17,7 @@ FT_TEST(test_game_script_bridge_unsupported_language_reports_argument)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
     value.set_language("python");
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
 

@@ -15,11 +15,15 @@ Networking_SOURCES := networking_socket_class.cpp \
         networking_tls_aead.cpp \
         networking_quic_experimental.cpp \
         networking_message_transport.cpp \
-        networking_crypto_backend.cpp \
         networking_secure_channel.cpp \
         networking_handshake.cpp \
         networking_simulator.cpp \
         networking_nat_traversal.cpp \
+        networking_replication_protocol.cpp \
+        networking_replication_revision_tracker.cpp \
+        networking_replication_apply_budget.cpp \
+        networking_replication_client.cpp \
+        networking_replication_retention_window.cpp \
         networking_nonblocking.cpp \
         networking_event_loop.cpp \
         networking_http_client.cpp \
@@ -56,11 +60,15 @@ Networking_HEADERS := socket_class.hpp \
            networking_tls_aead.hpp \
            networking_quic_experimental.hpp \
            message_transport.hpp \
-           networking_crypto_backend.hpp \
            networking_secure_channel.hpp \
            networking_handshake.hpp \
            networking_simulator.hpp \
            networking_nat_traversal.hpp \
+           networking_replication_protocol.hpp \
+           networking_replication_revision_tracker.hpp \
+           networking_replication_apply_budget.hpp \
+           networking_replication_client.hpp \
+           networking_replication_retention_window.hpp \
            http_client.hpp \
            http2_client.hpp \
            http_server.hpp \

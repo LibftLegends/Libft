@@ -2,6 +2,7 @@
 #include <limits>
 #include <new>
 #include <cstdio>
+#include <cerrno>
 #include "../System_utils/system_utils.hpp"
 #include "../Printf/printf.hpp"
 #include "compression.hpp"
@@ -68,9 +69,15 @@ void t_compress_stream_options::abort_if_not_initialised(const char *method_name
 
 int t_compress_stream_options::enable_thread_safety()
 {
+    std::lock_guard<std::mutex> transition_lock(
+        this->_thread_safety_transition_mutex);
+
     this->abort_if_not_initialised("enable_thread_safety");
     if (this->_mutex != ft_nullptr)
+    {
+        this->_thread_safety_enabled.store(FT_TRUE, std::memory_order_release);
         return (FT_ERR_SUCCESS);
+    }
     pt_recursive_mutex *mutex_pointer = ft_nullptr;
     int mutex_error;
 
@@ -84,27 +91,57 @@ int t_compress_stream_options::enable_thread_safety()
         return (mutex_error);
     }
     this->_mutex = mutex_pointer;
+    this->_thread_safety_enabled.store(FT_TRUE, std::memory_order_release);
     return (FT_ERR_SUCCESS);
+}
+
+int t_compress_stream_options::lock_for_access() const
+{
+    int lock_error;
+
+    this->_thread_safety_transition_mutex.lock();
+    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        this->_thread_safety_transition_mutex.unlock();
+    return (lock_error);
+}
+
+int t_compress_stream_options::unlock_for_access() const
+{
+    int unlock_error;
+
+    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->_thread_safety_transition_mutex.unlock();
+    return (unlock_error);
 }
 
 int t_compress_stream_options::disable_thread_safety()
 {
-    int destroy_error;
+    std::lock_guard<std::mutex> transition_lock(
+        this->_thread_safety_transition_mutex);
 
     this->abort_if_not_initialised("disable_thread_safety");
     if (this->_mutex == ft_nullptr)
         return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
+    this->_thread_safety_enabled.store(FT_FALSE, std::memory_order_release);
+    return (FT_ERR_SUCCESS);
 }
 
 bool t_compress_stream_options::is_thread_safe() const
 {
+    std::lock_guard<std::mutex> transition_lock(
+        this->_thread_safety_transition_mutex);
+
     this->abort_if_not_initialised("is_thread_safe");
-    return (this->_mutex != ft_nullptr);
+    return (this->_mutex != ft_nullptr
+        && this->_thread_safety_enabled.load(std::memory_order_acquire)
+            != FT_FALSE);
 }
+
+#define COMPRESSION_STREAM_OPTIONS_LOCK() this->lock_for_access()
+#define COMPRESSION_STREAM_OPTIONS_UNLOCK() this->unlock_for_access()
+#define pt_recursive_mutex_lock_if_not_null(mutex) this->lock_for_access()
+#define pt_recursive_mutex_unlock_if_not_null(mutex) this->unlock_for_access()
 
 t_compress_stream_options::t_compress_stream_options(void)
 {
@@ -118,6 +155,7 @@ t_compress_stream_options::t_compress_stream_options(void)
     this->_memory_level = 0;
     this->_strategy = Z_DEFAULT_STRATEGY;
     this->_mutex = ft_nullptr;
+    this->_thread_safety_enabled.store(FT_FALSE, std::memory_order_relaxed);
     this->_initialised_state = this->_state_uninitialised;
     return ;
 }
@@ -139,13 +177,22 @@ int t_compress_stream_options::initialize(void)
 
 int t_compress_stream_options::destroy(void)
 {
-    int disable_error;
+    int destroy_error;
+    std::lock_guard<std::mutex> transition_lock(
+        this->_thread_safety_transition_mutex);
 
     if (this->_initialised_state != this->_state_initialised)
         return (FT_ERR_INVALID_STATE);
-    disable_error = this->disable_thread_safety();
+    this->_thread_safety_enabled.store(FT_FALSE, std::memory_order_release);
+    destroy_error = FT_ERR_SUCCESS;
+    if (this->_mutex != ft_nullptr)
+    {
+        destroy_error = this->_mutex->destroy();
+        delete this->_mutex;
+        this->_mutex = ft_nullptr;
+    }
     this->_initialised_state = this->_state_destroyed;
-    return (disable_error);
+    return (destroy_error);
 }
 
 int t_compress_stream_options::reset(void)
@@ -153,7 +200,7 @@ int t_compress_stream_options::reset(void)
     int lock_error;
     int unlock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);    if (lock_error != FT_ERR_SUCCESS)
+    lock_error = this->lock_for_access();    if (lock_error != FT_ERR_SUCCESS)
     {
         return (lock_error);
     }
@@ -166,7 +213,7 @@ int t_compress_stream_options::reset(void)
     this->_window_bits = 0;
     this->_memory_level = 0;
     this->_strategy = Z_DEFAULT_STRATEGY;
-    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);    if (unlock_error != FT_ERR_SUCCESS)
+    unlock_error = this->unlock_for_access();    if (unlock_error != FT_ERR_SUCCESS)
     {
         return (unlock_error);
     }
@@ -178,12 +225,12 @@ int t_compress_stream_options::set_input_buffer_size(std::size_t input_buffer_si
     int lock_error;
     int unlock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);    if (lock_error != FT_ERR_SUCCESS)
+    lock_error = COMPRESSION_STREAM_OPTIONS_LOCK();    if (lock_error != FT_ERR_SUCCESS)
     {
         return (lock_error);
     }
     this->_input_buffer_size = input_buffer_size;
-    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);    if (unlock_error != FT_ERR_SUCCESS)
+    unlock_error = COMPRESSION_STREAM_OPTIONS_UNLOCK();    if (unlock_error != FT_ERR_SUCCESS)
     {
         return (unlock_error);
     }
@@ -497,6 +544,11 @@ pt_recursive_mutex *t_compress_stream_options::get_mutex_for_validation() const
 }
 #endif
 
+#undef pt_recursive_mutex_lock_if_not_null
+#undef pt_recursive_mutex_unlock_if_not_null
+#undef COMPRESSION_STREAM_OPTIONS_LOCK
+#undef COMPRESSION_STREAM_OPTIONS_UNLOCK
+
 void    ft_compress_stream_apply_speed_preset(t_compress_stream_options *options)
 {
     int memory_level;
@@ -630,6 +682,33 @@ static void compression_stream_release_buffers(unsigned char *input_buffer, unsi
     return ;
 }
 
+static int compression_stream_write_all(int output_file_descriptor,
+    const unsigned char *output_buffer, std::size_t output_size)
+{
+    std::size_t written_total;
+    ssize_t written_bytes;
+
+    if (output_size == 0)
+        return (0);
+    if (output_buffer == ft_nullptr)
+        return (1);
+    written_total = 0;
+    while (written_total < output_size)
+    {
+        written_bytes = su_write(output_file_descriptor,
+            output_buffer + written_total, output_size - written_total);
+        if (written_bytes > 0)
+        {
+            written_total += static_cast<std::size_t>(written_bytes);
+            continue ;
+        }
+        if (written_bytes < 0 && errno == EINTR)
+            continue ;
+        return (1);
+    }
+    return (0);
+}
+
 static int  compression_stream_allocate_buffers(const t_compress_stream_options *options,
         unsigned char **input_buffer,
         std::size_t *input_buffer_size,
@@ -707,6 +786,7 @@ static int decompress_stream_default_inflate(z_stream *stream, int flush_mode)
 
 static t_compress_stream_deflate_init_hook    g_compress_stream_deflate_init_hook = compress_stream_default_deflate_init;
 static t_compress_stream_deflate_hook         g_compress_stream_deflate_hook = compress_stream_default_deflate;
+static t_compress_stream_read_hook            g_compress_stream_read_hook = ft_nullptr;
 static t_decompress_stream_inflate_init_hook  g_decompress_stream_inflate_init_hook = decompress_stream_default_inflate_init;
 static t_decompress_stream_inflate_hook       g_decompress_stream_inflate_hook = decompress_stream_default_inflate;
 
@@ -773,6 +853,12 @@ void ft_compress_stream_set_deflate_hook(t_compress_stream_deflate_hook hook)
     return ;
 }
 
+void ft_compress_stream_set_read_hook(t_compress_stream_read_hook hook)
+{
+    g_compress_stream_read_hook = hook;
+    return ;
+}
+
 void ft_decompress_stream_set_inflate_init_hook(t_decompress_stream_inflate_init_hook hook)
 {
     if (hook)
@@ -833,7 +919,12 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
             compression_stream_release_buffers(input_buffer, output_buffer);
             return (1);
         }
-        read_bytes = su_read(input_file_descriptor, input_buffer, input_buffer_size);
+        if (g_compress_stream_read_hook != ft_nullptr)
+            read_bytes = g_compress_stream_read_hook(input_file_descriptor,
+                input_buffer, input_buffer_size);
+        else
+            read_bytes = su_read(input_file_descriptor, input_buffer,
+                input_buffer_size);
         if (read_bytes < 0)
         {
             deflateEnd(&stream);
@@ -858,7 +949,7 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
             compression_stream_release_buffers(input_buffer, output_buffer);
             return (1);
         }
-        if (static_cast<std::size_t>(read_bytes) < input_buffer_size)
+        if (read_bytes == 0)
             flush_mode = Z_FINISH;
         else
             flush_mode = Z_NO_FLUSH;
@@ -876,7 +967,8 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
             std::size_t produced_bytes;
 
             produced_bytes = output_buffer_size - static_cast<std::size_t>(stream.avail_out);
-            if (su_write(output_file_descriptor, output_buffer, produced_bytes) != static_cast<ssize_t>(produced_bytes))
+            if (compression_stream_write_all(output_file_descriptor,
+                    output_buffer, produced_bytes) != 0)
             {
                 deflateEnd(&stream);
                 compression_stream_release_buffers(input_buffer, output_buffer);
@@ -1006,7 +1098,8 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
 
             produced_bytes = output_buffer_size - static_cast<std::size_t>(stream.avail_out);
             if (produced_bytes != 0
-                && su_write(output_file_descriptor, output_buffer, produced_bytes) != static_cast<ssize_t>(produced_bytes))
+                && compression_stream_write_all(output_file_descriptor,
+                    output_buffer, produced_bytes) != 0)
             {
                 inflateEnd(&stream);
                 compression_stream_release_buffers(input_buffer, output_buffer);

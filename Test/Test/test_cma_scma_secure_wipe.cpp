@@ -6,8 +6,11 @@
 #include "../../Modules/Basic/limits.hpp"
 #include <cstdlib>
 #include <cstdio>
+#include <atomic>
+#include <new>
 #include <string>
 #include "../../Modules/PThread/pthread.hpp"
+#include "../../Modules/Networking/openssl_support.hpp"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <filesystem>
 #else
@@ -23,6 +26,7 @@ struct s_runtime_file_guard
     char executable_path[8192];
     ft_bool source_path_active;
     ft_bool executable_path_active;
+    ft_bool preserve_diagnostics;
 
     s_runtime_file_guard(void)
     {
@@ -30,15 +34,19 @@ struct s_runtime_file_guard
         this->executable_path[0] = '\0';
         this->source_path_active = FT_FALSE;
         this->executable_path_active = FT_FALSE;
+        this->preserve_diagnostics = FT_FALSE;
         return ;
     }
 
     ~s_runtime_file_guard(void)
     {
         this->destroy();
-        (void)unlink("secure_wipe_runtime.err");
-        (void)unlink("secure_wipe_runtime.log");
-        (void)unlink("secure_wipe_runtime.cmd");
+        if (this->preserve_diagnostics == FT_FALSE)
+        {
+            (void)unlink("secure_wipe_runtime.err");
+            (void)unlink("secure_wipe_runtime.log");
+            (void)unlink("secure_wipe_runtime.cmd");
+        }
         return ;
     }
 
@@ -189,8 +197,9 @@ static int32_t runtime_write_source_file(const char *source_path,
 
 struct s_runtime_command_state
 {
-    const char *command;
+    std::string command;
     int32_t system_status;
+    std::atomic<ft_bool> detached;
 };
 
 static void *runtime_command_thread(void *argument)
@@ -200,34 +209,45 @@ static void *runtime_command_thread(void *argument)
 
     state = static_cast<s_runtime_command_state *>(argument);
     logged_command = state->command;
-    logged_command += " > secure_wipe_runtime.err 2>&1";
+    logged_command += " >> secure_wipe_runtime.err 2>&1";
     state->system_status = system(logged_command.c_str());
+    if (state->detached.load(std::memory_order_acquire) == FT_TRUE)
+        delete state;
     return (ft_nullptr);
 }
 
 static int32_t runtime_run_command(const std::string &command)
 {
-    s_runtime_command_state command_state;
+    s_runtime_command_state *command_state;
     pthread_t command_thread;
     int thread_result;
     int system_status;
     FILE *log_file;
 
-    command_state.command = command.c_str();
-    command_state.system_status = -1;
-    thread_result = pt_thread_create(&command_thread, ft_nullptr,
-        runtime_command_thread, &command_state);
-    if (thread_result != 0)
+    command_state = new (std::nothrow) s_runtime_command_state();
+    if (command_state == ft_nullptr)
         return (0);
-    thread_result = pt_thread_timed_join(command_thread, ft_nullptr, 30000);
+    command_state->command = command;
+    command_state->system_status = -1;
+    command_state->detached.store(FT_FALSE, std::memory_order_relaxed);
+    thread_result = pt_thread_create(&command_thread, ft_nullptr,
+        runtime_command_thread, command_state);
     if (thread_result != 0)
     {
+        delete command_state;
+        return (0);
+    }
+    thread_result = pt_thread_timed_join(command_thread, ft_nullptr, 120000);
+    if (thread_result != 0)
+    {
+        command_state->detached.store(FT_TRUE, std::memory_order_release);
         (void)pt_thread_cancel(command_thread);
         (void)pt_thread_detach(command_thread);
         runtime_cleanup_stale_child_process();
         return (0);
     }
-    system_status = command_state.system_status;
+    system_status = command_state->system_status;
+    delete command_state;
     if (system_status == 0)
         return (1);
     if (system_status != 0)
@@ -510,7 +530,10 @@ static int32_t runtime_compile_and_run_helper(void)
     if (formatted_length < 0
         || static_cast<ft_size_t>(formatted_length)
             >= sizeof(file_guard.source_path))
+    {
+        file_guard.preserve_diagnostics = FT_TRUE;
         return (0);
+    }
     file_guard.source_path_active = FT_TRUE;
     formatted_length = pf_snprintf(file_guard.executable_path,
         sizeof(file_guard.executable_path), "%s",
@@ -518,11 +541,17 @@ static int32_t runtime_compile_and_run_helper(void)
     if (formatted_length < 0
         || static_cast<ft_size_t>(formatted_length)
             >= sizeof(file_guard.executable_path))
+    {
+        file_guard.preserve_diagnostics = FT_TRUE;
         return (0);
+    }
     file_guard.executable_path_active = FT_TRUE;
     if (runtime_write_source_file(file_guard.source_path,
             runtime_child_source()) == 0)
+    {
+        file_guard.preserve_diagnostics = FT_TRUE;
         return (0);
+    }
     compiler = ft_nullptr;
     compiler = getenv("CXX");
     if (compiler == ft_nullptr || compiler[0] == '\0')
@@ -561,17 +590,26 @@ static int32_t runtime_compile_and_run_helper(void)
     compile_command += " -lz -lws2_32 -lgdi32 -lwinmm -ldbghelp -lopengl32";
 #else
     compile_command += " -pthread -Wl,--allow-multiple-definition -rdynamic";
-    compile_command += " -lz -ldl -lssl -lcrypto";
+    compile_command += " -lz -ldl";
+#endif
+#if defined(NETWORKING_HAS_OPENSSL) && NETWORKING_HAS_OPENSSL
+    compile_command += " -lssl -lcrypto";
 #endif
     compile_command += " -o ";
     compile_command += runtime_shell_quote(file_guard.executable_path);
     if (runtime_run_command(compile_command) == 0)
+    {
+        file_guard.preserve_diagnostics = FT_TRUE;
         return (0);
+    }
     (void)unlink(file_guard.source_path);
     file_guard.source_path_active = FT_FALSE;
     run_command = runtime_shell_quote(file_guard.executable_path);
     if (runtime_run_command(run_command) == 0)
+    {
+        file_guard.preserve_diagnostics = FT_TRUE;
         return (0);
+    }
     file_guard.destroy();
     return (1);
 }
