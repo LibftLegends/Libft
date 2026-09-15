@@ -14,10 +14,10 @@ VulkanDevice::~VulkanDevice()
 {
 }
 
+#ifdef __APPLE__
 void VulkanDevice::create_logical_device()
 {
 	float	queue_priority;
-
 	std::set<uint32_t> unique_queue_families = {_graphics_queue_family,
 		_present_queue_family};
 	std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
@@ -35,11 +35,6 @@ void VulkanDevice::create_logical_device()
 	device_features.samplerAnisotropy = VK_TRUE;
 	std::vector<const char *> device_extensions = {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-#ifdef __APPLE__
-	// MoltenVK devices advertise VK_KHR_portability_subset; the spec
-	// requires enabling it whenever a device supports it. Checked
-	// dynamically (rather than assumed) so this has no effect running
-	// against a real Vulkan driver that doesn't expose it.
 	uint32_t available_extension_count = 0;
 	vkEnumerateDeviceExtensionProperties(_physical_device, nullptr,
 		&available_extension_count, nullptr);
@@ -56,7 +51,6 @@ void VulkanDevice::create_logical_device()
 			break ;
 		}
 	}
-#endif
 	VkDeviceCreateInfo create_info{};
 	create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	create_info.queueCreateInfoCount =
@@ -76,6 +70,47 @@ void VulkanDevice::create_logical_device()
 	vkGetDeviceQueue(_device, _graphics_queue_family, 0, &_graphics_queue);
 	vkGetDeviceQueue(_device, _present_queue_family, 0, &_present_queue);
 }
+#else
+void VulkanDevice::create_logical_device()
+{
+	float	queue_priority;
+	std::set<uint32_t> unique_queue_families = {_graphics_queue_family,
+		_present_queue_family};
+	std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+	queue_priority = 1.0f;
+	for (uint32_t family : unique_queue_families)
+	{
+		VkDeviceQueueCreateInfo queue_create_info{};
+		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queue_create_info.queueFamilyIndex = family;
+		queue_create_info.queueCount = 1;
+		queue_create_info.pQueuePriorities = &queue_priority;
+		queue_create_infos.push_back(queue_create_info);
+	}
+	VkPhysicalDeviceFeatures device_features{};
+	device_features.samplerAnisotropy = VK_TRUE;
+	std::vector<const char *> device_extensions = {
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+	VkDeviceCreateInfo create_info{};
+	create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+	create_info.queueCreateInfoCount =
+		static_cast<uint32_t>(queue_create_infos.size());
+	create_info.pQueueCreateInfos = queue_create_infos.data();
+	create_info.pEnabledFeatures = &device_features;
+	create_info.enabledExtensionCount =
+		static_cast<uint32_t>(device_extensions.size());
+	create_info.ppEnabledExtensionNames = device_extensions.data();
+	if (_validation_enabled)
+	{
+		create_info.enabledLayerCount = 1;
+		create_info.ppEnabledLayerNames = &kValidationLayer;
+	}
+	VK_CHECK(vkCreateDevice(_physical_device, &create_info, nullptr,
+			&_device));
+	vkGetDeviceQueue(_device, _graphics_queue_family, 0, &_graphics_queue);
+	vkGetDeviceQueue(_device, _present_queue_family, 0, &_present_queue);
+}
+#endif
 
 void VulkanDevice::create_command_pool()
 {

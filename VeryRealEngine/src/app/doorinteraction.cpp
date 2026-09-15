@@ -54,6 +54,9 @@ void DoorInteraction::update(float delta_seconds, Scene *scene,
 	if (scene->get_node_position("door_hinge", &hinge_position))
 	{
 		to_door = hinge_position - camera_position;
+		to_door.set_y(0.0f); // ignore height: door_hinge sits at floor
+			// level while the camera eye height doesn't, so 3D distance
+			// would leave almost no horizontal tolerance
 		distance = std::sqrt(vec3::dot(to_door, to_door));
 		if (distance <= kInteractRadius
 			&& window->was_key_pressed(Window::Key::E))
