@@ -48,9 +48,6 @@ bool JsonGrammar::parse_value(JsonValue *out_value)
 
 bool JsonGrammar::parse_object(JsonValue *out_value)
 {
-	JsonValue	key_value;
-	JsonValue	member;
-
 	if (!_lexer->expect('{'))
 		return (false);
 	out_value->set_type(JsonType::Object);
@@ -62,6 +59,9 @@ bool JsonGrammar::parse_object(JsonValue *out_value)
 	}
 	while (true)
 	{
+		JsonValue	key_value;
+		JsonValue	member;
+
 		_lexer->skip_whitespace();
 		if (!parse_string_value(&key_value))
 			return (false);
@@ -82,8 +82,6 @@ bool JsonGrammar::parse_object(JsonValue *out_value)
 
 bool JsonGrammar::parse_array(JsonValue *out_value)
 {
-	JsonValue	element;
-
 	if (!_lexer->expect('['))
 		return (false);
 	out_value->set_type(JsonType::Array);
@@ -95,6 +93,8 @@ bool JsonGrammar::parse_array(JsonValue *out_value)
 	}
 	while (true)
 	{
+		JsonValue	element;
+
 		if (!parse_value(&element))
 			return (false);
 		out_value->push_array_element(element);
