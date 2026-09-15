@@ -88,11 +88,10 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   current lane send rate.
 - `networking_udp_datagram_io` - Non-blocking production UDP adapter for the
   transport layer.
-- `networking_crypto_backend.hpp` - Libft-owned cryptographic backend boundary;
-  it has no OpenSSL dependency and adapts the standalone `Modules/Crypto`
-  implementation to the transport. It does not contain the primitive algorithms;
-  it exposes directional session-key derivation, secure randomness, and wiping
-  for the handshake layer.
+- `networking_crypto_backend.hpp` - source-compatible forwarding alias for the
+  Crypto module's `crypto_network_backend`. Networking consumes the narrow
+  byte-oriented crypto boundary but does not own cryptographic implementation
+  code. OpenSSL-specific TLS adapters remain isolated to the HTTP/TLS paths.
 - `networking_secure_channel.hpp` - Encrypted channel wrapper with packet
   number-derived nonces, authenticated headers, and a replay window.
   Applications must provide key material; the message transport enables
