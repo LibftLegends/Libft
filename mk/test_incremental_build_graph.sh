@@ -325,7 +325,16 @@ for parent_archive in "$parent_one/Full_Libft.a" \
     archive_members_are_unique "$parent_archive"
 done
 
-if ! git diff --check -- . >"$log_directory/diff_check.log" 2>&1; then
+diff_check_directory="$checkout_directory"
+if ! git -C "$diff_check_directory" rev-parse --is-inside-work-tree \
+    >/dev/null 2>&1; then
+    printf '%s\n' \
+        'disposable checkout has no Git metadata; checking source repository' \
+        >"$log_directory/diff_check.log"
+    diff_check_directory="$source_directory"
+fi
+if ! git -C "$diff_check_directory" diff --check -- \
+    >>"$log_directory/diff_check.log" 2>&1; then
     cat "$log_directory/diff_check.log" >&2
     exit 1
 fi
