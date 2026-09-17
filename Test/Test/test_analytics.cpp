@@ -598,6 +598,23 @@ FT_TEST(test_analytics_frame_and_flow_reject_clock_regression)
     return (1);
 }
 
+FT_TEST(test_analytics_worker_frame_failure_releases_thread_state)
+{
+    analytics_session session;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 20U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope_at(&session, 999U,
+        session.now_nanoseconds()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope_at(&session,
+        session.now_nanoseconds()));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, analytics_end_thread_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 21U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_thread_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
 FT_TEST(test_analytics_world_classification_is_captured_at_scope_start)
 {
     analytics_session session;
