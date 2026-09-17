@@ -42,6 +42,24 @@ FT_TEST(test_cross_process_write_rejects_unterminated_shared_memory_name)
     return (1);
 }
 
+FT_TEST(test_cross_process_write_rejects_error_address_below_base)
+{
+    cross_process_message message;
+    const uint8_t payload[1] = {1U};
+    int32_t result;
+
+    std::memset(&message, 0, sizeof(message));
+    message.stack_base_address = 0x100000U;
+    message.remote_memory_address = message.stack_base_address + 1U;
+    message.remote_memory_size = 16U;
+    message.error_memory_address = message.stack_base_address - 1U;
+    errno = 0;
+    result = cp_write_memory(message, payload, sizeof(payload), 0);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, result);
+    FT_ASSERT_EQ(EINVAL, errno);
+    return (1);
+}
+
 FT_TEST(test_cross_process_descriptor_wire_round_trip)
 {
     cross_process_message source;

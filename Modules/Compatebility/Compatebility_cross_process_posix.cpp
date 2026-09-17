@@ -11,6 +11,7 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <cstdio>
+#include <limits>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -25,12 +26,24 @@ static ft_bool g_cross_process_fail_next_unlock = FT_FALSE;
 static int32_t compute_offset(uint64_t pointer_value, uint64_t base_value,
     ft_size_t &offset)
 {
-    if (pointer_value < base_value)
+    uint64_t difference;
+
+    if (pointer_value == 0U || base_value == 0U
+        || pointer_value < base_value)
     {
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    offset = pointer_value - base_value;
+    difference = pointer_value - base_value;
+    if constexpr (sizeof(ft_size_t) < sizeof(uint64_t))
+    {
+        if (difference > std::numeric_limits<ft_size_t>::max())
+        {
+            errno = EINVAL;
+            return (FT_ERR_INVALID_ARGUMENT);
+        }
+    }
+    offset = static_cast<ft_size_t>(difference);
     return (FT_ERR_SUCCESS);
 }
 
@@ -80,6 +93,11 @@ int32_t cmp_cross_process_send_descriptor(int32_t socket_file_descriptor, const 
                 continue;
             return (cmp_map_system_error_to_ft(errno));
         }
+        if (written == 0)
+        {
+            errno = ECONNRESET;
+            return (cmp_map_system_error_to_ft(errno));
+        }
         offset += static_cast<ft_size_t>(written);
     }
     return (FT_ERR_SUCCESS);
@@ -127,6 +145,14 @@ int32_t cmp_cross_process_open_mapping(const cross_process_message &message, cmp
     {
         errno = EINVAL;
         return (cmp_map_system_error_to_ft(errno));
+    }
+    if constexpr (sizeof(ft_size_t) < sizeof(uint64_t))
+    {
+        if (message.remote_memory_size > std::numeric_limits<ft_size_t>::max())
+        {
+            errno = EINVAL;
+            return (cmp_map_system_error_to_ft(errno));
+        }
     }
 
     shared_memory_fd = shm_open(message.shared_memory_name, O_RDWR, 0600);

@@ -14,11 +14,14 @@ The `CrossProcess` module moves descriptors and memory payload metadata between 
 - `cp_receive_memory(int32_t socket_file_descriptor, cross_process_read_result &result)` - Receives shared-memory metadata and loads the payload into `result`.
 - `cp_write_memory(const cross_process_message &message, const uint8_t *payload, ft_size_t payload_length, int32_t error_code)` - Writes a payload and error code into the remote/shared memory described by a message.
 
-Descriptor validation rejects zero mappings, unterminated shared-memory names,
-addresses below the advertised mapping base, and offsets outside the mapping.
-POSIX receivers verify the backing object's size before mapping it. Descriptor
-decoding is transactional: malformed or unsupported wire data leaves the
-caller-provided message unchanged.
+Descriptor validation rejects zero mappings, sizes that cannot be represented by
+the host mapping type, unterminated shared-memory names, null or below-base
+addresses, and offsets outside the mapping. Address differences are checked
+before narrowing to `ft_size_t`. POSIX receivers verify the backing object's
+size before mapping it. Descriptor decoding is transactional: malformed or
+unsupported wire data leaves the caller-provided message unchanged. Descriptor
+sends treat a zero-byte write as a connection failure instead of retrying
+forever.
 
 `cross_process_read_result::consumed` is set only after the payload and error
 slot have been cleared. If a later unlock or unmap operation fails, the

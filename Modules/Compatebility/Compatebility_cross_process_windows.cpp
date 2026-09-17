@@ -16,12 +16,24 @@ static ft_bool g_cross_process_fail_next_unlock = FT_FALSE;
 static int32_t compute_offset(uint64_t pointer_value, uint64_t base_value,
     ft_size_t &offset)
 {
-    if (pointer_value < base_value)
+    uint64_t difference;
+
+    if (pointer_value == 0U || base_value == 0U
+        || pointer_value < base_value)
     {
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    offset = pointer_value - base_value;
+    difference = pointer_value - base_value;
+    if constexpr (sizeof(ft_size_t) < sizeof(uint64_t))
+    {
+        if (difference > std::numeric_limits<ft_size_t>::max())
+        {
+            errno = EINVAL;
+            return (FT_ERR_INVALID_ARGUMENT);
+        }
+    }
+    offset = static_cast<ft_size_t>(difference);
     return (FT_ERR_SUCCESS);
 }
 
@@ -110,6 +122,14 @@ int32_t cmp_cross_process_open_mapping(const cross_process_message &message, cmp
     {
         errno = EINVAL;
         return (cmp_map_system_error_to_ft(errno));
+    }
+    if constexpr (sizeof(ft_size_t) < sizeof(uint64_t))
+    {
+        if (message.remote_memory_size > std::numeric_limits<ft_size_t>::max())
+        {
+            errno = EINVAL;
+            return (cmp_map_system_error_to_ft(errno));
+        }
     }
     maximum_view_size = std::numeric_limits<SIZE_T>::max();
     if (message.remote_memory_size > static_cast<uint64_t>(maximum_view_size))

@@ -493,7 +493,7 @@ FT_TEST(test_cross_process_write_memory_invalid_mutex_offset)
     FT_ASSERT_EQ(0, create_shared_memory("/cross_process_write_invalid_mutex", 8, message, mapping_ptr, mapping, data_offset,
         error_offset));
     shared_mutex = reinterpret_cast<pthread_mutex_t *>(mapping);
-    message.shared_mutex_address = message.stack_base_address + message.remote_memory_size;
+    message.shared_mutex_address = message.stack_base_address - 1U;
     errno = 0;
     write_result = cp_write_memory(message, reinterpret_cast<const unsigned char *>("payload"), 7, 31);
     FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, write_result);

@@ -563,7 +563,7 @@ FT_TEST(test_cross_process_receive_memory_invalid_mutex_offset)
     FT_ASSERT_EQ(0, create_shared_memory("/cross_process_invalid_mutex", payload, payload_length, message, mapping_ptr, mapping,
         data_offset, error_offset));
     shared_mutex = reinterpret_cast<pthread_mutex_t *>(mapping);
-    message.shared_mutex_address = message.stack_base_address + message.remote_memory_size;
+    message.shared_mutex_address = message.stack_base_address - 1U;
     FT_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
     send_result = cp_send_descriptor(sockets[0], message);
     FT_ASSERT_EQ(0, send_result);
