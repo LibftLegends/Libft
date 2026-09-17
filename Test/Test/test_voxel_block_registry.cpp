@@ -25,17 +25,17 @@ static void voxel_test_set_registration(
     registration.metadata.hardness = 1U;
     registration.metadata.breakable = FT_TRUE;
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_TOP] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_BOTTOM] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_NORTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_SOUTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_EAST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_WEST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     return ;
 }
 
@@ -84,17 +84,17 @@ FT_TEST(test_voxel_builtin_and_runtime_block_ids_are_disjoint)
         registration.metadata.hardness = 1U;
         registration.metadata.breakable = FT_TRUE;
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_TOP] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_BOTTOM] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_NORTH] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_SOUTH] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_EAST] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_WEST] =
-            "Lua/export_values.lua";
+            "Test/Scripting/export_values.asset";
         block_id = 0U;
         error_code = voxel_register_block(registration, &block_id);
         FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
@@ -134,17 +134,17 @@ FT_TEST(test_voxel_block_names_round_trip_to_current_ids)
     registration.metadata.hardness = 1U;
     registration.metadata.breakable = FT_TRUE;
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_TOP] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_BOTTOM] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_NORTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_SOUTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_EAST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_WEST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     error_code = voxel_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
     error_code = voxel_find_block_id_by_name("voxel:stone",
@@ -238,17 +238,17 @@ FT_TEST(test_voxel_ore_metadata_rejects_ore_hosts_by_default)
     registration.metadata.hardness = 4U;
     registration.metadata.breakable = FT_TRUE;
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_TOP] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_BOTTOM] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_NORTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_SOUTH] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_EAST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_WEST] =
-        "Lua/export_values.lua";
+        "Test/Scripting/export_values.asset";
     error_code = voxel_register_block(registration, &block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
     FT_ASSERT_EQ(FT_FALSE, voxel_block_can_host_ore(block_id));

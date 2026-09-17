@@ -495,6 +495,109 @@ FT_TEST(test_analytics_world_output_is_separate_from_menu_output)
     return (1);
 }
 
+FT_TEST(test_analytics_world_only_output_starts_exporter)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame;
+    std::FILE *world_file;
+    char buffer[512];
+    ft_size_t bytes_read;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.world_output_path = "analytics_world_only_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.start_exporter = FT_TRUE;
+    frame = {};
+    frame.frame_number = 17U;
+    frame.duration_nanoseconds = 25U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    world_file = std::fopen(configuration.world_output_path, "rb");
+    FT_ASSERT(world_file != ft_nullptr);
+    bytes_read = std::fread(buffer, 1U, sizeof(buffer) - 1U, world_file);
+    buffer[bytes_read] = '\0';
+    FT_ASSERT(ft_str_contains(buffer, "\"frame\":17"));
+    FT_ASSERT_EQ(0, std::fclose(world_file));
+    FT_ASSERT_EQ(0, std::remove(configuration.world_output_path));
+    return (1);
+}
+
+FT_TEST(test_analytics_scope_rejects_clock_regression_without_popping)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_test_manual_clock clock;
+    uint32_t region_id;
+    analytics_region_statistics statistics;
+
+    region_id = 0U;
+    clock.now_nanoseconds = 100U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("regression",
+        "test", &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session, region_id));
+    clock.now_nanoseconds = 99U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
+        &statistics));
+    FT_ASSERT_EQ(0U, statistics.invocation_count);
+    clock.now_nanoseconds = 101U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
+        &statistics));
+    FT_ASSERT_EQ(1U, statistics.invocation_count);
+    FT_ASSERT_EQ(1U, statistics.minimum_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_frame_and_flow_reject_clock_regression)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_test_manual_clock clock;
+    analytics_flow_token flow_token;
+    analytics_region_statistics statistics;
+    uint32_t region_id;
+
+    region_id = 0U;
+    clock.now_nanoseconds = 200U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.clock_callback = analytics_test_manual_clock_now;
+    configuration.clock_user_data = &clock;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("timed",
+        "test", &region_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 2U));
+    clock.now_nanoseconds = 199U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, analytics_end_frame(&session));
+    clock.now_nanoseconds = 201U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    clock.now_nanoseconds = 300U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_flow(&session, 4U,
+        region_id, &flow_token));
+    clock.now_nanoseconds = 299U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, analytics_end_flow(flow_token));
+    clock.now_nanoseconds = 305U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_flow(flow_token));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_region_statistics(region_id,
+        &statistics));
+    FT_ASSERT_EQ(1U, statistics.invocation_count);
+    FT_ASSERT_EQ(5U, statistics.minimum_nanoseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
 FT_TEST(test_analytics_world_classification_is_captured_at_scope_start)
 {
     analytics_session session;
