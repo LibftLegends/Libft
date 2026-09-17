@@ -122,7 +122,8 @@ int32_t cp_receive_memory(int32_t socket_file_descriptor,
             message.stack_base_address, error_offset);
         if (operation_error != FT_ERR_SUCCESS
             || error_offset > message.remote_memory_size
-            || sizeof(int32_t) > message.remote_memory_size - error_offset)
+            || sizeof(int32_t) > message.remote_memory_size - error_offset
+            || error_offset < data_offset)
         {
             errno = EINVAL;
             return (cleanup_and_fail(FT_ERR_INVALID_ARGUMENT));
