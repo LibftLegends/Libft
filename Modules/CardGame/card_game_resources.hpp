@@ -109,6 +109,8 @@ class card_game_resource_ledger
         ft_bool unit_matches(const card_game_resource_unit &unit,
             const card_game_resource_requirement &requirement) const noexcept;
         int32_t rebuild_pool(uint32_t pool_index) noexcept;
+        int32_t split_unit_lock(uint32_t unit_index, uint32_t amount,
+            uint64_t unlock_epoch) noexcept;
         int32_t create_payment_plan_excluding(uint32_t owner_id,
             const card_game_resource_requirement &requirement,
             const card_game_payment_unit *reserved_units,

@@ -54,6 +54,7 @@ int32_t card_game_resource_ledger::lock_units(uint32_t owner_id,
     uint32_t pool_index;
     uint32_t unit_index;
     uint32_t remaining;
+    uint32_t required_splits;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
@@ -64,6 +65,35 @@ int32_t card_game_resource_ledger::lock_units(uint32_t owner_id,
         return (result);
     if (amount > this->_pools[pool_index].current_amount
         - this->_pools[pool_index].locked_amount)
+        return (FT_ERR_FULL);
+    required_splits = 0U;
+    remaining = amount;
+    unit_index = 0U;
+    while (unit_index < this->_unit_count && remaining > 0U)
+    {
+        if (this->_units[unit_index].owner_id == owner_id
+            && this->_units[unit_index].resource_type_id == resource_type_id)
+        {
+            uint32_t available_amount;
+
+            available_amount = this->_units[unit_index].amount
+                - this->_units[unit_index].locked_amount;
+            if (available_amount != 0U)
+            {
+                if (available_amount > remaining)
+                    available_amount = remaining;
+                if (this->_units[unit_index].locked_amount != 0U
+                    && this->_units[unit_index].unlock_epoch != 0U)
+                    required_splits += 1U;
+                remaining -= available_amount;
+            }
+        }
+        unit_index += 1U;
+    }
+    if (remaining != 0U || required_splits
+        > FT_CARD_GAME_MAX_RESOURCE_UNITS - this->_unit_count
+        || (required_splits != 0U && this->_next_unit_id
+            == UINT32_MAX))
         return (FT_ERR_FULL);
     remaining = amount;
     unit_index = 0U;
@@ -79,6 +109,19 @@ int32_t card_game_resource_ledger::lock_units(uint32_t owner_id,
                 - this->_units[unit_index].locked_amount;
             if (available_amount == 0U)
             {
+                unit_index += 1U;
+                continue ;
+            }
+            if (this->_units[unit_index].locked_amount != 0U
+                && this->_units[unit_index].unlock_epoch != 0U)
+            {
+                locked_now = available_amount;
+                if (locked_now > remaining)
+                    locked_now = remaining;
+                result = this->split_unit_lock(unit_index, locked_now, 0U);
+                if (result != FT_ERR_SUCCESS)
+                    return (result);
+                remaining -= locked_now;
                 unit_index += 1U;
                 continue ;
             }
@@ -109,6 +152,7 @@ int32_t card_game_resource_ledger::lock_units_until(uint32_t owner_id,
     uint32_t remaining;
     uint32_t available_amount;
     uint32_t locked_now;
+    uint32_t required_splits;
     uint64_t eligible_amount;
     int32_t result;
 
@@ -126,14 +170,39 @@ int32_t card_game_resource_ledger::lock_units_until(uint32_t owner_id,
     while (unit_index < this->_unit_count)
     {
         if (this->_units[unit_index].owner_id == owner_id
-            && this->_units[unit_index].resource_type_id == resource_type_id
-            && (this->_units[unit_index].unlock_epoch == 0U
-                || this->_units[unit_index].unlock_epoch == unlock_epoch))
+            && this->_units[unit_index].resource_type_id == resource_type_id)
             eligible_amount += this->_units[unit_index].amount
                 - this->_units[unit_index].locked_amount;
         unit_index += 1U;
     }
     if (eligible_amount < amount)
+        return (FT_ERR_FULL);
+    required_splits = 0U;
+    remaining = amount;
+    unit_index = 0U;
+    while (unit_index < this->_unit_count && remaining > 0U)
+    {
+        if (this->_units[unit_index].owner_id == owner_id
+            && this->_units[unit_index].resource_type_id == resource_type_id)
+        {
+            available_amount = this->_units[unit_index].amount
+                - this->_units[unit_index].locked_amount;
+            if (available_amount != 0U)
+            {
+                if (available_amount > remaining)
+                    available_amount = remaining;
+                if (this->_units[unit_index].locked_amount != 0U
+                    && this->_units[unit_index].unlock_epoch != unlock_epoch)
+                    required_splits += 1U;
+                remaining -= available_amount;
+            }
+        }
+        unit_index += 1U;
+    }
+    if (remaining != 0U || required_splits
+        > FT_CARD_GAME_MAX_RESOURCE_UNITS - this->_unit_count
+        || (required_splits != 0U && this->_next_unit_id
+            == UINT32_MAX))
         return (FT_ERR_FULL);
     remaining = amount;
     unit_index = 0U;
@@ -142,16 +211,24 @@ int32_t card_game_resource_ledger::lock_units_until(uint32_t owner_id,
         if (this->_units[unit_index].owner_id == owner_id
             && this->_units[unit_index].resource_type_id == resource_type_id)
         {
-            if (this->_units[unit_index].unlock_epoch != 0U
-                && this->_units[unit_index].unlock_epoch != unlock_epoch)
-                {
-                    unit_index += 1U;
-                    continue ;
-                }
             available_amount = this->_units[unit_index].amount
                 - this->_units[unit_index].locked_amount;
             if (available_amount == 0U)
             {
+                unit_index += 1U;
+                continue ;
+            }
+            if (this->_units[unit_index].locked_amount != 0U
+                && this->_units[unit_index].unlock_epoch != unlock_epoch)
+            {
+                locked_now = available_amount;
+                if (locked_now > remaining)
+                    locked_now = remaining;
+                result = this->split_unit_lock(unit_index, locked_now,
+                    unlock_epoch);
+                if (result != FT_ERR_SUCCESS)
+                    return (result);
+                remaining -= locked_now;
                 unit_index += 1U;
                 continue ;
             }
@@ -170,6 +247,38 @@ int32_t card_game_resource_ledger::lock_units_until(uint32_t owner_id,
     if (remaining != 0U)
         return (FT_ERR_FULL);
     return (this->rebuild_pool(pool_index));
+}
+
+int32_t card_game_resource_ledger::split_unit_lock(uint32_t unit_index,
+    uint32_t amount, uint64_t unlock_epoch) noexcept
+{
+    card_game_resource_unit *source_unit;
+    card_game_resource_unit *locked_unit;
+    uint32_t locked_unit_index;
+
+    if (unit_index >= this->_unit_count || amount == 0U
+        || amount > this->_units[unit_index].amount
+            - this->_units[unit_index].locked_amount
+        || this->_unit_count >= FT_CARD_GAME_MAX_RESOURCE_UNITS
+        || this->_next_unit_id == 0U || this->_next_unit_id == UINT32_MAX)
+        return (FT_ERR_FULL);
+    source_unit = &this->_units[unit_index];
+    locked_unit_index = this->_unit_count;
+    locked_unit = &this->_units[locked_unit_index];
+    *locked_unit = *source_unit;
+    locked_unit->unit_id = this->_next_unit_id;
+    locked_unit->amount = amount;
+    locked_unit->locked_amount = amount;
+    locked_unit->locked = FT_TRUE;
+    locked_unit->unlock_epoch = unlock_epoch;
+    source_unit->amount -= amount;
+    if (source_unit->locked_amount == source_unit->amount)
+        source_unit->locked = FT_TRUE;
+    else
+        source_unit->locked = FT_FALSE;
+    this->_next_unit_id += 1U;
+    this->_unit_count += 1U;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_resource_ledger::refresh(uint32_t epoch) noexcept
@@ -214,4 +323,3 @@ int32_t card_game_resource_ledger::refresh(uint32_t epoch) noexcept
     }
     return (FT_ERR_SUCCESS);
 }
-

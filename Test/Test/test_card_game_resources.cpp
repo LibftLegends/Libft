@@ -395,10 +395,11 @@ FT_TEST(test_card_game_resources_cost_components_share_units_transactionally)
     return (1);
 }
 
-FT_TEST(test_card_game_resources_conflicting_lock_schedule_is_atomic)
+FT_TEST(test_card_game_resources_conflicting_lock_schedule_is_split)
 {
     card_game_resource_ledger ledger;
     card_game_resource_unit unit;
+    card_game_resource_pool pool;
     uint32_t pool_id;
     uint32_t unit_id;
 
@@ -407,10 +408,39 @@ FT_TEST(test_card_game_resources_conflicting_lock_schedule_is_atomic)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 1U, 5U, 0U, 0U,
         FT_FALSE, &unit_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units_until(1U, 1U, 2U, 4U));
-    FT_ASSERT_EQ(FT_ERR_FULL, ledger.lock_units_until(1U, 1U, 1U, 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units_until(1U, 1U, 1U, 5U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_unit(unit_id, &unit));
     FT_ASSERT_EQ(2U, unit.locked_amount);
     FT_ASSERT_EQ(4U, unit.unlock_epoch);
+    FT_ASSERT_EQ(2U, ledger.unit_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.refresh(4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 1U, &pool));
+    FT_ASSERT_EQ(1U, pool.locked_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.refresh(5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 1U, &pool));
+    FT_ASSERT_EQ(0U, pool.locked_amount);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_indefinite_lock_preserves_scheduled_lock)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_pool pool;
+    uint32_t pool_id;
+    uint32_t unit_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(1U, 1U, 10U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 1U, 5U, 0U, 0U,
+        FT_FALSE, &unit_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units_until(1U, 1U, 2U, 4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units(1U, 1U, 1U));
+    FT_ASSERT_EQ(2U, ledger.unit_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.refresh(4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 1U, &pool));
+    FT_ASSERT_EQ(1U, pool.locked_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    (void)unit_id;
     return (1);
 }
