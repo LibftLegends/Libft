@@ -8,7 +8,15 @@ temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/libft-incremental-build.XXXXXX")
 checkout_directory="$temporary_root/checkout"
 log_directory="$temporary_root/logs"
 make_jobs=${LIBFT_INCREMENTAL_JOBS:-4}
-make_timeout_seconds=${LIBFT_INCREMENTAL_TIMEOUT_SECONDS:-900}
+# A clean Windows test graph contains hundreds of test translation units and
+# can legitimately exceed fifteen minutes on a four-job runner.  Keep the
+# timeout bounded, but avoid classifying a slow clean build as a hang.  CI can
+# still override this explicitly with LIBFT_INCREMENTAL_TIMEOUT_SECONDS.
+if [ "${OS:-}" = "Windows_NT" ]; then
+    make_timeout_seconds=${LIBFT_INCREMENTAL_TIMEOUT_SECONDS:-3600}
+else
+    make_timeout_seconds=${LIBFT_INCREMENTAL_TIMEOUT_SECONDS:-900}
+fi
 heartbeat_seconds=${LIBFT_CI_HEARTBEAT_SECONDS:-30}
 mkdir -p "$log_directory"
 
@@ -324,6 +332,31 @@ for parent_archive in "$parent_one/Full_Libft.a" \
     fi
     archive_members_are_unique "$parent_archive"
 done
+
+# Two Make processes can also consume the exact same Libft checkout.  Keep
+# objects and manifests warm so this scenario isolates concurrent archive
+# staging rather than compiling the same source twice.
+find Modules -type f -name '*.a' -delete
+rm -f Full_Libft.a
+make --no-print-directory -j"$make_jobs" global-all \
+    >"$log_directory/shared_tree_one.log" 2>&1 &
+shared_tree_one_pid=$!
+make --no-print-directory -j"$make_jobs" global-all \
+    >"$log_directory/shared_tree_two.log" 2>&1 &
+shared_tree_two_pid=$!
+if ! wait "$shared_tree_one_pid"; then
+    cat "$log_directory/shared_tree_one.log" >&2
+    exit 1
+fi
+if ! wait "$shared_tree_two_pid"; then
+    cat "$log_directory/shared_tree_two.log" >&2
+    exit 1
+fi
+if [ ! -f Full_Libft.a ]; then
+    printf '%s\n' 'shared-tree concurrent aggregate archive missing' >&2
+    exit 1
+fi
+archive_members_are_unique Full_Libft.a
 
 diff_check_directory="$checkout_directory"
 if ! git -C "$diff_check_directory" rev-parse --is-inside-work-tree \

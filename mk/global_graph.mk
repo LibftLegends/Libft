@@ -19,6 +19,11 @@ LIBFT_GLOBAL_TEST_ROOT := $(LIBFT_GLOBAL_ROOT)/test
 LIBFT_GLOBAL_TEST_DEBUG_ROOT := $(LIBFT_GLOBAL_ROOT)/test_debug
 LIBFT_GLOBAL_CC ?= gcc
 LIBFT_GLOBAL_MV ?= mv
+# Keep archive staging names stable across the recipe's separate shell
+# invocations, while making them unique to this Make process.  This prevents
+# concurrent parent builds sharing one checkout from deleting or renaming one
+# another's temporary archive.
+LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX := .tmp.$(shell printf '%s' $$$$)
 
 
 LIBFT_GLOBAL_MODULE_NAMES := Basic BMP Advanced Compatebility Debug Errno CMA SCMA \
@@ -103,9 +108,9 @@ $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP): $$(LIBFT_GLOBAL_$(1)_MANIFEST)
 $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -115,9 +120,9 @@ $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $$(LIBFT_GLO
 $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -127,9 +132,9 @@ $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $$(LIBFT
 $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -139,9 +144,9 @@ $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TES
 $$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \

@@ -44,15 +44,15 @@ define LIBFT_GLOBAL_ARCHIVE_RULE
 $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/global_graph.mk
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
 	@$(MKDIR) $(dir $$@)
-	@$(RM) $$@.tmp
+	@$(RM) $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		libtool -static -o "$$@.tmp" $(2); \
+		libtool -static -o "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)" $(2); \
 	else \
-		{ printf 'CREATE %s\n' "$$@.tmp"; \
+		{ printf 'CREATE %s\n' "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)"; \
 		  for lib in $(2); do printf 'ADDLIB %s\n' "$$$$lib"; done; \
 		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
 	fi
-	@mv $$@.tmp $$@
+	@mv $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft "$(1)" || true; \
 	else \
