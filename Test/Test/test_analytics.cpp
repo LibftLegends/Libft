@@ -919,6 +919,36 @@ FT_TEST(test_analytics_runtime_shutdown_waits_for_active_scope)
     return (1);
 }
 
+FT_TEST(test_analytics_runtime_gate_closes_scope_admission)
+{
+    analytics_session session;
+    analytics_runtime_scope_token token;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_register_regions(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_shutdown());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_MALLOC, &token));
+    FT_ASSERT_EQ(FT_FALSE, token.active);
+    FT_ASSERT_EQ(FT_FALSE, token.runtime_scope_registered);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_end(&token));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_runtime_registration_rejects_duplicate)
+{
+    analytics_session session;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_register_regions(&session));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_INITIALISED,
+        analytics_runtime_register_regions(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_shutdown());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
 FT_TEST(test_analytics_overflow_policies_preserve_buffer_ownership)
 {
     analytics_session session;

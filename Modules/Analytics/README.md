@@ -41,6 +41,13 @@ exporter and trace formatting changing the workload being measured.
 - `analytics_session::destroy()` drains the exporter, flushes the file, and
   releases the session resources.
 - `analytics_session::get_export_error()` reports asynchronous file errors.
+- `analytics_runtime_register_regions()` installs the Libft runtime regions
+  once. A second registration while a runtime session is active returns
+  `FT_ERR_ALREADY_INITIALISED`; call `analytics_runtime_shutdown()` before
+  installing another session. Runtime scope admission uses an atomic gate so
+  instrumented CMA and mutex operations do not acquire the lifecycle mutex on
+  the measured hot path. Shutdown closes admission first and waits for every
+  admitted scope to release its reference before the session is destroyed.
 - `analytics_session::set_world_active()` changes the classification for
   subsequently captured records. Frame, scope, and flow state is captured at
   start time, so transitions cannot reclassify already-recorded work. The
