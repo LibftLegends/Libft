@@ -37,6 +37,7 @@ The `File` module provides filesystem operations, directory iteration, path help
 
 - `file_path_is_inside_root(...)` - Reports whether a path stays inside a root.
 - `file_validate_path_inside_root(...)` - Returns an error if a candidate path escapes the root.
+- `file_validate_path_resolution_inside_root(...)` - Canonicalizes the root and existing parent, rejects symlink/reparse-point escapes, and permits only a missing final component for a new file path. This is a point-in-time validation; the caller must still use an appropriate secure open/replace operation to avoid a later TOCTOU race.
 - `file_validate_regular_file_inside_root(...)` - Validates that a path resolves to a regular file inside the canonical root, rejecting missing paths, directories, symlinks, and root escapes.
 - `file_path_join(...)` - Allocates a joined path.
 - `file_path_normalize(...)` - Allocates a normalized path.

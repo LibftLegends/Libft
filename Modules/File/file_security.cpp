@@ -266,6 +266,76 @@ int32_t file_validate_path_inside_root(const char *root_path,
     return (FT_ERR_INVALID_PATH);
 }
 
+int32_t file_validate_path_resolution_inside_root(const char *root_path,
+    const char *candidate_path)
+{
+    ft_string *parent_path;
+    char *canonical_root;
+    char *canonical_parent;
+    char *canonical_candidate;
+    file_type candidate_type;
+    int32_t error_code;
+
+    if (root_path == ft_nullptr || candidate_path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (file_path_is_inside_root(root_path, candidate_path) == FT_FALSE)
+        return (FT_ERR_INVALID_PATH);
+    parent_path = file_path_dirname_string(candidate_path);
+    if (parent_path == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    canonical_root = ft_nullptr;
+    error_code = cmp_path_canonical(root_path, &canonical_root);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        file_security_delete_string(parent_path);
+        return (error_code);
+    }
+    canonical_parent = ft_nullptr;
+    error_code = cmp_path_canonical(parent_path->c_str(), &canonical_parent);
+    file_security_delete_string(parent_path);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        cma_free(canonical_root);
+        return (error_code);
+    }
+    if (file_security_has_root_boundary(canonical_root,
+            canonical_parent) == FT_FALSE)
+    {
+        cma_free(canonical_root);
+        cma_free(canonical_parent);
+        return (FT_ERR_INVALID_PATH);
+    }
+    candidate_type = file_get_type(candidate_path);
+    if (candidate_type == FILE_TYPE_MISSING)
+    {
+        cma_free(canonical_root);
+        cma_free(canonical_parent);
+        return (FT_ERR_SUCCESS);
+    }
+    if (candidate_type == FILE_TYPE_SYMLINK
+        || candidate_type == FILE_TYPE_UNKNOWN)
+    {
+        cma_free(canonical_root);
+        cma_free(canonical_parent);
+        return (FT_ERR_INVALID_PATH);
+    }
+    canonical_candidate = ft_nullptr;
+    error_code = cmp_path_canonical(candidate_path, &canonical_candidate);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        cma_free(canonical_root);
+        cma_free(canonical_parent);
+        return (error_code);
+    }
+    if (file_security_has_root_boundary(canonical_root,
+            canonical_candidate) == FT_FALSE)
+        error_code = FT_ERR_INVALID_PATH;
+    cma_free(canonical_root);
+    cma_free(canonical_parent);
+    cma_free(canonical_candidate);
+    return (error_code);
+}
+
 int32_t file_validate_regular_file_inside_root(const char *root_path,
     const char *candidate_path)
 {

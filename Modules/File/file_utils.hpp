@@ -39,6 +39,8 @@ int32_t       file_secure_temp_file(const char *directory_path, const char *pref
 int32_t       file_close_descriptor(int32_t file_descriptor);
 ft_bool       file_path_is_inside_root(const char *root_path, const char *candidate_path);
 int32_t       file_validate_path_inside_root(const char *root_path, const char *candidate_path);
+int32_t       file_validate_path_resolution_inside_root(const char *root_path,
+                const char *candidate_path);
 int32_t       file_validate_regular_file_inside_root(const char *root_path,
                 const char *candidate_path);
 int32_t       file_replace_safe(const char *path, const char *data, ft_size_t size);

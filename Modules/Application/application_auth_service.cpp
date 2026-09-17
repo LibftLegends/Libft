@@ -7,6 +7,7 @@
 #include "../Encryption/encryption.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Errno/errno.hpp"
+#include "../File/file_utils.hpp"
 #include "../Filesystem/filesystem.hpp"
 #include "../Printf/printf.hpp"
 #include "../Storage/kv_store.hpp"
@@ -57,6 +58,14 @@ static int32_t application_auth_build_database_path(const char *database_root_pa
     joined_path = filesystem_safe_join_path(database_root_path, database_relative_path);
     if (joined_path == ft_nullptr)
         return (FT_ERR_INVALID_PATH);
+    error_code = file_validate_path_resolution_inside_root(
+            database_root_path, joined_path->c_str());
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)joined_path->destroy();
+        delete joined_path;
+        return (error_code);
+    }
     (void)database_path.destroy();
     error_code = database_path.initialize(joined_path->c_str());
     (void)joined_path->destroy();
