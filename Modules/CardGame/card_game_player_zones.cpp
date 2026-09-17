@@ -266,8 +266,10 @@ int32_t card_game_engine::play_card_from_hand(uint32_t player_id,
     uint32_t instance_id, uint32_t target_instance, void *context) noexcept
 {
     card_game_deck_card card;
-    card_game_snapshot before_state;
     uint32_t hand_index;
+    uint32_t restore_index;
+    uint32_t move_index;
+    uint64_t original_state_sequence;
     int32_t result;
 
     if (this->_initialised_state != 2U || player_id >= this->_player_count
@@ -287,19 +289,26 @@ int32_t card_game_engine::play_card_from_hand(uint32_t player_id,
     }
     if (result != FT_ERR_SUCCESS)
         return (result);
-    result = this->get_snapshot(&before_state);
+    restore_index = hand_index;
+    original_state_sequence = this->_state_sequence;
+    result = this->hand_remove_instance(player_id, instance_id, ft_nullptr);
     if (result != FT_ERR_SUCCESS)
         return (result);
     result = this->play_card(player_id, card.card_id, target_instance, context);
     if (result != FT_ERR_SUCCESS)
-        return (result);
-    result = this->hand_remove_instance(player_id, instance_id, ft_nullptr);
-    if (result != FT_ERR_SUCCESS)
     {
-        int32_t restore_error = this->apply_snapshot(before_state);
-
-        if (restore_error != FT_ERR_SUCCESS)
-            return (restore_error);
+        if (this->_hand_count[player_id] >= FT_CARD_GAME_MAX_CARDS)
+            return (FT_ERR_INVALID_STATE);
+        move_index = this->_hand_count[player_id];
+        while (move_index > restore_index)
+        {
+            this->_hand[player_id][move_index] =
+                this->_hand[player_id][move_index - 1U];
+            move_index -= 1U;
+        }
+        this->_hand[player_id][restore_index] = card;
+        this->_hand_count[player_id] += 1U;
+        this->_state_sequence = original_state_sequence;
         return (result);
     }
     return (FT_ERR_SUCCESS);
@@ -308,13 +317,35 @@ int32_t card_game_engine::play_card_from_hand(uint32_t player_id,
 int32_t card_game_engine::allocate_deck_instance_id(
     uint32_t *instance_id) noexcept
 {
+    uint32_t candidate;
+    uint32_t first_candidate;
+    ft_bool exhausted;
+
     if (instance_id == ft_nullptr || this->_next_deck_instance_id == 0U)
         return (FT_ERR_OUT_OF_RANGE);
-    *instance_id = this->_next_deck_instance_id;
-    this->_next_deck_instance_id += 1U;
-    if (this->_next_deck_instance_id == 0U)
-        this->_next_deck_instance_id = 1U;
-    return (FT_ERR_SUCCESS);
+    candidate = this->_next_deck_instance_id;
+    if (candidate == UINT32_MAX)
+        candidate = 1U;
+    first_candidate = candidate;
+    exhausted = FT_FALSE;
+    while (exhausted == FT_FALSE)
+    {
+        if (this->deck_instance_exists(candidate) == FT_FALSE)
+        {
+            *instance_id = candidate;
+            this->_next_deck_instance_id = candidate + 1U;
+            if (this->_next_deck_instance_id == 0U
+                || this->_next_deck_instance_id == UINT32_MAX)
+                this->_next_deck_instance_id = 1U;
+            return (FT_ERR_SUCCESS);
+        }
+        candidate += 1U;
+        if (candidate == 0U || candidate == UINT32_MAX)
+            candidate = 1U;
+        if (candidate == first_candidate)
+            exhausted = FT_TRUE;
+    }
+    return (FT_ERR_FULL);
 }
 
 ft_bool card_game_engine::deck_instance_exists(uint32_t instance_id) const noexcept
@@ -333,6 +364,14 @@ ft_bool card_game_engine::deck_instance_exists(uint32_t instance_id) const noexc
         while (hand_index < this->_hand_count[player_id])
         {
             if (this->_hand[player_id][hand_index].instance_id == instance_id)
+                return (FT_TRUE);
+            hand_index += 1U;
+        }
+        hand_index = 0U;
+        while (hand_index < this->_board_count[player_id])
+        {
+            if (this->_instances[player_id][hand_index].instance_id
+                == instance_id)
                 return (FT_TRUE);
             hand_index += 1U;
         }
@@ -360,4 +399,3 @@ ft_bool card_game_engine::zone_instance_exists(uint32_t player_id,
     }
     return (FT_FALSE);
 }
-

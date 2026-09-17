@@ -4,7 +4,7 @@ card_game_snapshot::card_game_snapshot() noexcept
     : format_version(0U), state_sequence(0U), player_count(0U),
       turn_number(0U), active_player(0U), current_phase_id(0U),
       event_count(0U), event_sequence(0U), random_state(0U),
-      modifier_count(0U),
+      next_deck_instance_id(0U), next_modifier_id(0U), modifier_count(0U),
       event_capacity(0U), events(ft_nullptr), zones(), resources(),
       allowances(), choices(), usage_limits(), players()
 {
@@ -31,7 +31,8 @@ card_game_delta::card_game_delta() noexcept
       target_state_sequence(0U), changed_player_mask(0U),
       global_state_changed(FT_FALSE), player_count(0U), turn_number(0U),
       active_player(0U), current_phase_id(0U), event_count(0U),
-      event_sequence(0U), random_state(0U), modifier_count(0U),
+      event_sequence(0U), random_state(0U), next_deck_instance_id(0U),
+      next_modifier_id(0U), modifier_count(0U),
       event_capacity(0U),
       events(ft_nullptr), zones(), resources(), allowances(), choices(),
       usage_limits(), players()
@@ -491,4 +492,3 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     (void)other.destroy();
     return (FT_ERR_SUCCESS);
 }
-

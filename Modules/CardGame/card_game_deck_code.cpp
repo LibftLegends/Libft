@@ -108,6 +108,30 @@ static void deck_code_sort_zone(card_game_deck_zone *zone) noexcept
     }
 }
 
+static void deck_code_sort_zones(card_game_deck *deck) noexcept
+{
+    uint32_t index;
+    uint32_t previous_index;
+    card_game_deck_zone value;
+
+    index = 1U;
+    while (index < deck->zone_count)
+    {
+        value = deck->zones[index];
+        previous_index = index;
+        while (previous_index > 0U
+            && deck->zones[previous_index - 1U].zone_id > value.zone_id)
+        {
+            deck->zones[previous_index] =
+                deck->zones[previous_index - 1U];
+            previous_index -= 1U;
+        }
+        deck->zones[previous_index] = value;
+        index += 1U;
+    }
+    return ;
+}
+
 static int32_t card_game_deck_build_binary(const card_game_deck &source,
     uint8_t *output, uint32_t *output_size, ft_bool include_checksum) noexcept
 {
@@ -148,6 +172,18 @@ static int32_t card_game_deck_build_binary(const card_game_deck &source,
                 .entries[entry_index].quantity;
             entry_index += 1U;
         }
+        {
+            uint32_t previous_zone;
+
+            previous_zone = 0U;
+            while (previous_zone < zone_index)
+            {
+                if (canonical.zones[previous_zone].zone_id
+                    == canonical.zones[zone_index].zone_id)
+                    return (FT_ERR_INVALID_ARGUMENT);
+                previous_zone += 1U;
+            }
+        }
         if (total_cards > FT_CARD_GAME_DECK_CODE_MAX_TOTAL_CARDS)
             return (FT_ERR_OUT_OF_RANGE);
         deck_code_sort_zone(&canonical.zones[zone_index]);
@@ -168,6 +204,7 @@ static int32_t card_game_deck_build_binary(const card_game_deck &source,
         }
         zone_index += 1U;
     }
+    deck_code_sort_zones(&canonical);
     offset = 0U;
     if (deck_code_write_u32(output, FT_CARD_GAME_DECK_CODE_MAX_BYTES, &offset,
         FT_CARD_GAME_DECK_CODE_VERSION) != FT_ERR_SUCCESS
@@ -220,6 +257,8 @@ static int32_t card_game_deck_build_binary(const card_game_deck &source,
     }
     if (include_checksum != FT_FALSE)
     {
+        if (offset > FT_CARD_GAME_DECK_CODE_MAX_BYTES - 4U)
+            return (FT_ERR_FULL);
         checksum = deck_code_crc32c(output, offset);
         output[offset] = static_cast<uint8_t>(checksum & 255U);
         output[offset + 1U] = static_cast<uint8_t>((checksum >> 8U) & 255U);

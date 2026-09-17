@@ -22,6 +22,7 @@ static void card_game_format_fill(card_game_format_config *config) noexcept
     config->ban_count = 1U;
     config->bans[0].card_id = 20U;
     config->bans[0].copy_limit = 1U;
+    config->bans[0].zone_mask = 1U;
     config->bans[0].source_revision = 4U;
     config->exception_count = 1U;
     config->exceptions[0].exception_id = 90U;
@@ -54,7 +55,7 @@ FT_TEST(test_card_game_format_resolves_legality_hash_and_exception)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, format.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, format.initialize(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, format.get_hash(&second_hash));
-    FT_ASSERT(std::memcmp(first_hash.bytes, second_hash.bytes, 32U) == 0);
+    FT_ASSERT(ft_memcmp(first_hash.bytes, second_hash.bytes, 32U) == 0);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, format.destroy());
     return (1);
 }
@@ -88,5 +89,58 @@ FT_TEST(test_card_game_format_validates_deck_transactionally)
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
         format.validate_deck(deck, &diagnostic));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, format.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_format_rejects_malformed_deck_entries)
+{
+    card_game_format format;
+    static card_game_format_config config;
+    card_game_format_diagnostic diagnostic;
+    card_game_deck deck;
+
+    card_game_format_fill(&config);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, format.initialize(config));
+    ft_bzero(&deck, sizeof(deck));
+    deck.profile_id = 3U;
+    deck.format_id = 7U;
+    deck.corpus_version = 11U;
+    deck.zone_count = 1U;
+    deck.zones[0].zone_id = CARD_GAME_DECK_ZONE_MAIN;
+    deck.zones[0].entry_count = FT_CARD_GAME_DECK_CODE_MAX_ENTRIES + 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        format.validate_deck(deck, &diagnostic));
+    deck.zones[0].entry_count = 2U;
+    deck.zones[0].entries[0].definition_id = 10U;
+    deck.zones[0].entries[0].quantity = 1U;
+    deck.zones[0].entries[1].definition_id = 10U;
+    deck.zones[0].entries[1].quantity = 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        format.validate_deck(deck, &diagnostic));
+    deck.zones[0].entry_count = 1U;
+    deck.zones[0].entries[0].quantity = 0U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        format.validate_deck(deck, &diagnostic));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, format.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_format_rejects_conflicting_config_rules)
+{
+    card_game_format format;
+    static card_game_format_config config;
+
+    card_game_format_fill(&config);
+    config.ban_count = 2U;
+    config.bans[1] = config.bans[0];
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, format.initialize(config));
+    card_game_format_fill(&config);
+    config.exceptions[1] = config.exceptions[0];
+    config.exception_count = 2U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, format.initialize(config));
+    card_game_format_fill(&config);
+    config.legal_cards[0].policy = static_cast<
+        card_game_format_card_policy>(255U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, format.initialize(config));
     return (1);
 }

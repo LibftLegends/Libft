@@ -173,20 +173,30 @@ int32_t card_game_engine::register_resource_pool(uint32_t owner_id,
     uint32_t resource_type_id, uint32_t maximum_amount,
     uint32_t *pool_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_resources.register_pool(owner_id, resource_type_id,
-        maximum_amount, pool_id));
+    result = this->_resources.register_pool(owner_id, resource_type_id,
+        maximum_amount, pool_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::add_resource_units(uint32_t owner_id,
     uint32_t resource_type_id, uint32_t amount, uint32_t tags,
     uint64_t expiry_epoch, ft_bool temporary, uint32_t *unit_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_resources.add_units(owner_id, resource_type_id, amount,
-        tags, expiry_epoch, temporary, unit_id));
+    result = this->_resources.add_units(owner_id, resource_type_id, amount,
+        tags, expiry_epoch, temporary, unit_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::get_resource_pool(uint32_t owner_id,
@@ -201,13 +211,19 @@ int32_t card_game_engine::lock_resource_units(uint32_t owner_id,
     uint32_t resource_type_id, uint32_t amount,
     uint64_t unlock_epoch) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (unlock_epoch == 0U)
-        return (this->_resources.lock_units(owner_id, resource_type_id,
-            amount));
-    return (this->_resources.lock_units_until(owner_id, resource_type_id,
-        amount, unlock_epoch));
+        result = this->_resources.lock_units(owner_id, resource_type_id,
+            amount);
+    else
+        result = this->_resources.lock_units_until(owner_id, resource_type_id,
+            amount, unlock_epoch);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::create_resource_payment_plan(uint32_t owner_id,
@@ -222,9 +238,14 @@ int32_t card_game_engine::create_resource_payment_plan(uint32_t owner_id,
 int32_t card_game_engine::spend_resource_payment(
     const card_game_payment_plan &plan) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_resources.spend(plan));
+    result = this->_resources.spend(plan);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::create_resource_cost_plan(uint32_t owner_id,
@@ -240,9 +261,14 @@ int32_t card_game_engine::create_resource_cost_plan(uint32_t owner_id,
 int32_t card_game_engine::spend_resource_cost(
     const card_game_cost_plan &plan) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_resources.spend_cost(plan));
+    result = this->_resources.spend_cost(plan);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::register_allowance_predicate(uint32_t predicate_id,
@@ -260,21 +286,31 @@ int32_t card_game_engine::grant_action_allowance(uint32_t owner_id,
     uint32_t predicate_id, uint32_t predicate_context_id,
     uint32_t *allowance_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_allowances.grant(owner_id, action_id, action_tags, uses,
+    result = this->_allowances.grant(owner_id, action_id, action_tags, uses,
         expiry_epoch, source_instance, source_effect_id, predicate_id,
-        predicate_context_id, allowance_id));
+        predicate_context_id, allowance_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::consume_action_allowance(uint32_t owner_id,
     uint32_t action_id, uint32_t action_tags, uint64_t epoch,
     uint32_t *allowance_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_allowances.consume_first(owner_id, action_id, action_tags,
-        epoch, allowance_id));
+    result = this->_allowances.consume_first(owner_id, action_id, action_tags,
+        epoch, allowance_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::register_usage_limit(uint32_t key_id,
@@ -282,11 +318,16 @@ int32_t card_game_engine::register_usage_limit(uint32_t key_id,
     uint32_t maximum_uses, card_game_usage_attempt_policy attempt_policy,
     uint32_t source_instance, uint32_t *limit_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_usage_limits.register_limit(key_id, subject_id, scope,
+    result = this->_usage_limits.register_limit(key_id, subject_id, scope,
         window_epoch, maximum_uses, attempt_policy, source_instance,
-        limit_id));
+        limit_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::get_usage_limit(uint32_t limit_id,
@@ -300,42 +341,67 @@ int32_t card_game_engine::get_usage_limit(uint32_t limit_id,
 int32_t card_game_engine::consume_usage_limit(uint32_t limit_id,
     uint32_t amount, uint64_t current_epoch) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_usage_limits.consume(limit_id, amount, current_epoch));
+    result = this->_usage_limits.consume(limit_id, amount, current_epoch);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::reset_usage_limits(uint64_t current_epoch) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_usage_limits.reset_epoch(current_epoch));
+    result = this->_usage_limits.reset_epoch(current_epoch);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::open_choice(uint32_t player_id,
     card_game_choice_kind kind, uint64_t deadline_epoch,
     uint32_t default_option_id, uint32_t *choice_id) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_choices.open(player_id, kind, deadline_epoch,
-        default_option_id, choice_id));
+    result = this->_choices.open(player_id, kind, deadline_epoch,
+        default_option_id, choice_id);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::add_choice_option(uint32_t choice_id,
     const card_game_choice_option &option) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_choices.add_option(choice_id, option));
+    result = this->_choices.add_option(choice_id, option);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::choose_option(uint32_t choice_id,
     uint32_t player_id, uint32_t option_id, uint64_t epoch) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    return (this->_choices.choose(choice_id, player_id, option_id, epoch));
+    result = this->_choices.choose(choice_id, player_id, option_id, epoch);
+    if (result == FT_ERR_SUCCESS)
+        this->_state_sequence += 1U;
+    return (result);
 }
 
 int32_t card_game_engine::get_choice(uint32_t choice_id,
@@ -383,6 +449,7 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     uint32_t type_id;
     uint32_t existing_type_id;
     uint32_t board_index;
+    uint32_t board_instance_id;
     uint32_t type_copy_count;
     uint32_t board_capacity;
     uint32_t zone_index;
@@ -438,9 +505,14 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     snapshot_error = this->get_snapshot(&before_state);
     if (snapshot_error != FT_ERR_SUCCESS)
         return (snapshot_error);
+    snapshot_error = this->allocate_deck_instance_id(&board_instance_id);
+    if (snapshot_error != FT_ERR_SUCCESS)
+        return (snapshot_error);
     this->_mana[player_id] -= definition->cost;
     instance_index = this->_board_count[player_id];
     this->_board[player_id][instance_index] = instance_index;
+    this->_instances[player_id][instance_index].instance_id =
+        board_instance_id;
     this->_instances[player_id][instance_index].definition_id = card_id;
     this->_instances[player_id][instance_index].owner_id = player_id;
     this->_instances[player_id][instance_index].attack = definition->attack;
@@ -458,14 +530,14 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         card_game_operation operation;
         uint32_t operation_index;
         effect_context.event_type = 0U;
-        effect_context.source_instance = instance_index;
+        effect_context.source_instance = board_instance_id;
         effect_context.target_instance = target_instance;
         effect_context.active_player = this->_active_player;
         effect_context.turn_number = this->_turn_number;
         effect_error = operations.initialize();
         if (effect_error != FT_ERR_SUCCESS)
         {
-            restore_error = this->apply_snapshot(before_state);
+            restore_error = this->apply_snapshot_internal(before_state);
             if (restore_error != FT_ERR_SUCCESS)
                 return (restore_error);
             return (effect_error);
@@ -475,7 +547,7 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
             this->_effect_user_data[definition->effect_id]);
         if (effect_error != FT_ERR_SUCCESS)
         {
-            restore_error = this->apply_snapshot(before_state);
+            restore_error = this->apply_snapshot_internal(before_state);
             if (restore_error != FT_ERR_SUCCESS)
                 return (restore_error);
             return (effect_error);
@@ -486,7 +558,7 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
             if (operations.get(operation_index, &operation)
                 != FT_ERR_SUCCESS)
             {
-                restore_error = this->apply_snapshot(before_state);
+            restore_error = this->apply_snapshot_internal(before_state);
                 if (restore_error != FT_ERR_SUCCESS)
                     return (restore_error);
                 return (FT_ERR_INVALID_STATE);
@@ -494,7 +566,7 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
             effect_error = this->apply_operation(operation);
             if (effect_error != FT_ERR_SUCCESS)
             {
-                restore_error = this->apply_snapshot(before_state);
+            restore_error = this->apply_snapshot_internal(before_state);
                 if (restore_error != FT_ERR_SUCCESS)
                     return (restore_error);
                 return (effect_error);
@@ -508,10 +580,10 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         && this->_effects[definition->effect_id] != ft_nullptr)
     {
         effect_error = this->_effects[definition->effect_id](*this,
-            instance_index, target_instance, context);
+            board_instance_id, target_instance, context);
         if (effect_error != FT_ERR_SUCCESS)
         {
-            restore_error = this->apply_snapshot(before_state);
+            restore_error = this->apply_snapshot_internal(before_state);
             if (restore_error != FT_ERR_SUCCESS)
                 return (restore_error);
             return (effect_error);
@@ -542,7 +614,7 @@ int32_t card_game_engine::end_turn() noexcept
     resolve_error = this->resolve_events();
     if (resolve_error != FT_ERR_SUCCESS)
     {
-        restore_error = this->apply_snapshot(before_state);
+        restore_error = this->apply_snapshot_internal(before_state);
         if (restore_error != FT_ERR_SUCCESS)
             return (restore_error);
         return (resolve_error);
@@ -550,7 +622,7 @@ int32_t card_game_engine::end_turn() noexcept
     resolve_error = this->expire_turn_modifiers();
     if (resolve_error != FT_ERR_SUCCESS)
     {
-        restore_error = this->apply_snapshot(before_state);
+        restore_error = this->apply_snapshot_internal(before_state);
         if (restore_error != FT_ERR_SUCCESS)
             return (restore_error);
         return (resolve_error);
@@ -558,4 +630,3 @@ int32_t card_game_engine::end_turn() noexcept
     this->_state_sequence += 1U;
     return (resolve_error);
 }
-

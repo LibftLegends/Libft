@@ -27,6 +27,8 @@ FT_TEST(test_card_game_deck_code_round_trips_canonically)
     card_game_deck second;
     ft_string encoded;
     ft_string reordered;
+    card_game_deck zone_reordered;
+    ft_string zone_encoded;
 
     card_game_deck_code_fill(&first);
     first.zones[0].entries[0].printing_id = 55U;
@@ -35,6 +37,7 @@ FT_TEST(test_card_game_deck_code_round_trips_canonically)
     first.zones[0].entries[0].definition_id = 500U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reordered.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, zone_encoded.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_deck_encode(first, &encoded));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_deck_decode(encoded, &second));
     FT_ASSERT_EQ(first.profile_id, second.profile_id);
@@ -51,8 +54,15 @@ FT_TEST(test_card_game_deck_code_round_trips_canonically)
     first.zones[0].entries[1].quantity = 3U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_deck_encode(first, &reordered));
     FT_ASSERT(encoded == reordered);
+    zone_reordered = first;
+    zone_reordered.zones[0] = first.zones[1];
+    zone_reordered.zones[1] = first.zones[0];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_deck_encode(zone_reordered, &zone_encoded));
+    FT_ASSERT(encoded == zone_encoded);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reordered.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, zone_encoded.destroy());
     return (1);
 }
 

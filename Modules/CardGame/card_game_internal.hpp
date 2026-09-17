@@ -2,6 +2,9 @@
 # define CARD_GAME_INTERNAL_HPP
 
 #include "card_game.hpp"
+#include <new>
+#include "../CMA/CMA.hpp"
+#include "../Basic/class_nullptr.hpp"
 
 inline uint64_t card_game_match_random_next(uint64_t *state) noexcept
 {
@@ -14,9 +17,24 @@ inline uint64_t card_game_match_random_next(uint64_t *state) noexcept
     *state = value;
     return (value * 2685821657736338717ULL);
 }
-#include "../CMA/CMA.hpp"
+inline card_game_snapshot *card_game_create_snapshot() noexcept
+{
+    void *memory;
 
-#include "../Basic/class_nullptr.hpp"
+    memory = cma_malloc(sizeof(card_game_snapshot));
+    if (memory == ft_nullptr)
+        return (ft_nullptr);
+    return (::new (memory) card_game_snapshot());
+}
+
+inline int32_t card_game_destroy_snapshot(card_game_snapshot *snapshot) noexcept
+{
+    if (snapshot == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    snapshot->~card_game_snapshot();
+    cma_free(snapshot);
+    return (FT_ERR_SUCCESS);
+}
 
 inline void card_game_hash_u32(uint64_t *hash, uint32_t value) noexcept
 {
@@ -35,6 +53,7 @@ inline void card_game_hash_u64(uint64_t *hash, uint64_t value) noexcept
 inline void card_game_hash_instance(uint64_t *hash,
     const card_game_card_instance &instance) noexcept
 {
+    card_game_hash_u32(hash, instance.instance_id);
     card_game_hash_u32(hash, instance.definition_id);
     card_game_hash_u32(hash, instance.owner_id);
     card_game_hash_u32(hash, static_cast<uint32_t>(instance.attack));
@@ -113,6 +132,7 @@ inline int32_t card_game_validate_player_snapshot(
     uint32_t max_board_spaces, uint32_t max_hand_size) noexcept
 {
     uint32_t index;
+    uint32_t previous_index;
 
     if (player.board_count > max_board_spaces
         || player.board_count > FT_CARD_GAME_MAX_CARDS)
@@ -127,9 +147,18 @@ inline int32_t card_game_validate_player_snapshot(
     {
         if (player.board[index] >= player.board_count
             || player.instances[index].on_board == FT_FALSE
+            || player.instances[index].instance_id == 0U
             || player.instances[index].owner_id != player_id
             || player.instances[index].damage_taken < 0)
             return (FT_ERR_INVALID_ARGUMENT);
+        previous_index = 0U;
+        while (previous_index < index)
+        {
+            if (player.instances[previous_index].instance_id
+                == player.instances[index].instance_id)
+                return (FT_ERR_INVALID_ARGUMENT);
+            previous_index += 1U;
+        }
         index += 1U;
     }
     return (FT_ERR_SUCCESS);
@@ -140,6 +169,7 @@ inline ft_bool card_game_card_instance_equal(
     const card_game_card_instance &second) noexcept
 {
     if (first.definition_id != second.definition_id
+        || first.instance_id != second.instance_id
         || first.owner_id != second.owner_id
         || first.attack != second.attack
         || first.health != second.health

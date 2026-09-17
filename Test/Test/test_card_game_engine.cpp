@@ -12,6 +12,18 @@ static int32_t card_game_test_effect(card_game_engine &engine,
         static_cast<uint32_t *>(context)[0], 3));
 }
 
+static int32_t card_game_test_draw_card(card_game_engine &engine,
+    uint32_t player_id, uint32_t card_id) noexcept
+{
+    card_game_deck_card card;
+    int32_t result;
+
+    result = engine.deck_push_bottom(player_id, card_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (engine.draw_to_hand(player_id, &card));
+}
+
 static int32_t card_game_test_event_effect(const card_game_engine &engine,
     const card_game_effect_context &context,
     card_game_operation_buffer &operations, void *user_data) noexcept
@@ -873,6 +885,8 @@ FT_TEST(test_card_game_engine_validates_authoritative_command_envelopes)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.submit_command(command, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(engine, 0U, 210U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.submit_command(command, ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.submit_command(command,
         ft_nullptr));
@@ -927,9 +941,11 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(first, 0U, 220U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(second, 0U, 220U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.get_rules_hash(&first_rules_hash));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.get_rules_hash(&second_rules_hash));
     FT_ASSERT_EQ(first_rules_hash, second_rules_hash);
@@ -944,6 +960,8 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(
+        replay_engine, 0U, 220U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.replay_command_records(&record,
         1U, ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_engine.get_state_hash(
@@ -954,6 +972,8 @@ FT_TEST(test_card_game_engine_records_authoritative_commands)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(
+        failed_replay_engine, 0U, 220U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, failed_replay_engine.get_state_hash(
         &hash_before_failure));
     FT_ASSERT_EQ(FT_ERR_INVALID_STATE, failed_replay_engine
@@ -1010,6 +1030,7 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_test_draw_card(source, 0U, 221U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_command(command, ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(serialized,
         sizeof(serialized), &serialized_size));

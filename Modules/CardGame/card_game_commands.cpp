@@ -32,6 +32,8 @@ int32_t card_game_engine::submit_command(
     uint64_t rules_hash;
     uint64_t state_hash_before;
     uint64_t state_hash_after;
+    uint32_t hand_index;
+    uint32_t hand_instance_id;
 
     if (this->_initialised_state != 2U
         || command.command_sequence == 0U
@@ -55,8 +57,25 @@ int32_t card_game_engine::submit_command(
         || this->get_state_hash(&state_hash_before) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (command.type == CARD_GAME_INTENT_PLAY_CARD)
-        command_error = this->play_card(command.player_id, command.card_id,
-            command.target_instance, context);
+    {
+        hand_instance_id = 0U;
+        hand_index = 0U;
+        while (hand_index < this->_hand_count[command.player_id])
+        {
+            if (this->_hand[command.player_id][hand_index].card_id
+                == command.card_id)
+            {
+                hand_instance_id = this->_hand[command.player_id]
+                    [hand_index].instance_id;
+                break ;
+            }
+            hand_index += 1U;
+        }
+        if (hand_instance_id == 0U)
+            return (FT_ERR_NOT_FOUND);
+        command_error = this->play_card_from_hand(command.player_id,
+            hand_instance_id, command.target_instance, context);
+    }
     else if (command.type == CARD_GAME_INTENT_END_TURN)
         command_error = this->end_turn();
     else if (command.type == CARD_GAME_INTENT_ADVANCE_PHASE)
@@ -322,7 +341,7 @@ int32_t card_game_engine::replay_command_records(
             || this->get_state_hash(&state_hash) != FT_ERR_SUCCESS
             || state_hash != records[index].state_hash_before)
         {
-            restore_error = this->apply_snapshot(starting_snapshot);
+            restore_error = this->apply_snapshot_internal(starting_snapshot);
             this->_command_record_count = 0U;
             this->_last_command_sequence = 0U;
             if (restore_error != FT_ERR_SUCCESS)
@@ -332,7 +351,7 @@ int32_t card_game_engine::replay_command_records(
         command_error = this->submit_command(records[index].command, context);
         if (command_error != FT_ERR_SUCCESS)
         {
-            restore_error = this->apply_snapshot(starting_snapshot);
+            restore_error = this->apply_snapshot_internal(starting_snapshot);
             this->_command_record_count = 0U;
             this->_last_command_sequence = 0U;
             if (restore_error != FT_ERR_SUCCESS)
@@ -345,7 +364,7 @@ int32_t card_game_engine::replay_command_records(
             || executed_record.state_hash_after
                 != records[index].state_hash_after)
         {
-            restore_error = this->apply_snapshot(starting_snapshot);
+            restore_error = this->apply_snapshot_internal(starting_snapshot);
             this->_command_record_count = 0U;
             this->_last_command_sequence = 0U;
             if (restore_error != FT_ERR_SUCCESS)
@@ -356,4 +375,3 @@ int32_t card_game_engine::replay_command_records(
     }
     return (FT_ERR_SUCCESS);
 }
-

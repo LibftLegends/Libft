@@ -1,6 +1,6 @@
 #include "card_game_internal.hpp"
 
-int32_t card_game_engine::apply_snapshot(
+int32_t card_game_engine::apply_snapshot_internal(
     const card_game_snapshot &snapshot) noexcept
 {
     uint32_t player_id;
@@ -13,6 +13,8 @@ int32_t card_game_engine::apply_snapshot(
     uint32_t next_deck_instance_id;
     uint32_t next_modifier_id;
     uint32_t previous_player_id;
+    uint32_t target_index;
+    ft_bool target_found;
     ft_bool phase_found;
 
     if (this->_initialised_state != 2U
@@ -23,6 +25,9 @@ int32_t card_game_engine::apply_snapshot(
         || (snapshot.event_count != 0U && snapshot.events == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
     if (snapshot.random_state == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.next_deck_instance_id == 0U
+        || snapshot.next_modifier_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (snapshot.usage_limits.count > FT_CARD_GAME_MAX_USAGE_LIMITS
         || snapshot.usage_limits.capacity < snapshot.usage_limits.count
@@ -53,11 +58,29 @@ int32_t card_game_engine::apply_snapshot(
     index = 0U;
     while (index < snapshot.modifier_count)
     {
+        target_found = FT_FALSE;
+        target_index = 0U;
+        if (snapshot.modifiers[index].target_player_id < snapshot.player_count)
+        {
+            while (target_index < snapshot.players[snapshot.modifiers[index]
+                .target_player_id].board_count)
+            {
+                if ((snapshot.modifiers[index].target_instance_id != 0U
+                    && snapshot.players[snapshot.modifiers[index]
+                        .target_player_id].instances[target_index].instance_id
+                        == snapshot.modifiers[index].target_instance_id)
+                    || (snapshot.modifiers[index].target_instance_id == 0U
+                        && target_index
+                            == snapshot.modifiers[index].target_instance_index))
+                {
+                    target_found = FT_TRUE;
+                    break ;
+                }
+                target_index += 1U;
+            }
+        }
         if (snapshot.modifiers[index].modifier_id == 0U
-            || snapshot.modifiers[index].target_player_id >= snapshot.player_count
-            || snapshot.modifiers[index].target_instance_index
-                >= snapshot.players[snapshot.modifiers[index]
-                    .target_player_id].board_count
+            || target_found == FT_FALSE
             || (snapshot.modifiers[index].duration
                 != CARD_GAME_MODIFIER_PERMANENT
                 && snapshot.modifiers[index].duration
@@ -173,17 +196,8 @@ int32_t card_game_engine::apply_snapshot(
         }
         player_id += 1U;
     }
-    next_deck_instance_id = 1U;
-    next_modifier_id = 1U;
-    index = 0U;
-    while (index < snapshot.modifier_count)
-    {
-        if (snapshot.modifiers[index].modifier_id
-                >= next_modifier_id
-            && snapshot.modifiers[index].modifier_id != UINT32_MAX)
-            next_modifier_id = snapshot.modifiers[index].modifier_id + 1U;
-        index += 1U;
-    }
+    next_deck_instance_id = snapshot.next_deck_instance_id;
+    next_modifier_id = snapshot.next_modifier_id;
     if (this->_event_capacity < snapshot.event_count)
     {
         while (this->_event_capacity < snapshot.event_count)
@@ -275,6 +289,26 @@ int32_t card_game_engine::apply_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::apply_snapshot(
+    const card_game_snapshot &snapshot) noexcept
+{
+    card_game_snapshot before_state;
+    int32_t result;
+    int32_t restore_error;
+
+    result = this->get_snapshot(&before_state);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->apply_snapshot_internal(snapshot);
+    if (result != FT_ERR_SUCCESS)
+    {
+        restore_error = this->apply_snapshot_internal(before_state);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
+    }
+    return (result);
+}
+
 int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     card_game_delta *delta) const noexcept
 {
@@ -314,6 +348,8 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     candidate.event_count = current_snapshot.event_count;
     candidate.event_sequence = current_snapshot.event_sequence;
     candidate.random_state = current_snapshot.random_state;
+    candidate.next_deck_instance_id = current_snapshot.next_deck_instance_id;
+    candidate.next_modifier_id = current_snapshot.next_modifier_id;
     candidate.modifier_count = current_snapshot.modifier_count;
     candidate.event_capacity = current_snapshot.event_count;
     if (card_game_zone_store::clone_snapshot(current_snapshot.zones,
@@ -344,6 +380,10 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
                         * sizeof(card_game_event)) != 0)))
         candidate.global_state_changed = FT_TRUE;
     if (baseline.random_state != current_snapshot.random_state)
+        candidate.global_state_changed = FT_TRUE;
+    if (baseline.next_deck_instance_id
+            != current_snapshot.next_deck_instance_id
+        || baseline.next_modifier_id != current_snapshot.next_modifier_id)
         candidate.global_state_changed = FT_TRUE;
     if (baseline.modifier_count != current_snapshot.modifier_count
         || ft_memcmp(baseline.modifiers, current_snapshot.modifiers,
@@ -396,6 +436,8 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     delta->event_count = candidate.event_count;
     delta->event_sequence = candidate.event_sequence;
     delta->random_state = candidate.random_state;
+    delta->next_deck_instance_id = candidate.next_deck_instance_id;
+    delta->next_modifier_id = candidate.next_modifier_id;
     delta->modifier_count = candidate.modifier_count;
     delta->event_capacity = candidate.event_capacity;
     delta->events = candidate.events;
@@ -416,12 +458,15 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
+int32_t card_game_engine::apply_delta_internal(
+    const card_game_delta &delta) noexcept
 {
     uint32_t player_id;
     uint32_t deck_index;
     uint32_t hand_index;
+    uint32_t next_deck_instance_id;
     uint32_t next_modifier_id;
+    uint32_t target_index;
     card_game_zone_store_snapshot current_zones;
     card_game_resource_snapshot current_resources;
     card_game_allowance_snapshot current_allowances;
@@ -432,6 +477,7 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
     ft_bool allowances_match;
     ft_bool choices_match;
     ft_bool usage_limits_match;
+    ft_bool target_found;
     int32_t release_error;
 
     ft_bzero(&current_zones, sizeof(current_zones));
@@ -443,6 +489,7 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
     if (this->_initialised_state != 2U
         || delta.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
         || delta.base_state_sequence != this->_state_sequence
+        || delta.target_state_sequence < delta.base_state_sequence
         || delta.player_count != this->_player_count
         || delta.event_count > FT_CARD_GAME_MAX_EVENTS
         || (delta.event_count != 0U && delta.events == ft_nullptr)
@@ -456,8 +503,13 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
         return (FT_ERR_INVALID_ARGUMENT);
     if (delta.modifier_count > FT_CARD_GAME_MAX_MODIFIERS)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.next_deck_instance_id == 0U
+        || delta.next_modifier_id == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (delta.global_state_changed == FT_FALSE
         && (delta.modifier_count != this->_modifier_count
+            || delta.next_deck_instance_id != this->_next_deck_instance_id
+            || delta.next_modifier_id != this->_next_modifier_id
             || ft_memcmp(delta.modifiers, this->_modifiers,
                 sizeof(this->_modifiers)) != 0))
         return (FT_ERR_INVALID_ARGUMENT);
@@ -527,24 +579,50 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
     {
         uint32_t target_player_id;
         uint32_t previous_modifier_index;
+        uint32_t target_board_count;
+        const card_game_card_instance *target_instances;
 
         target_player_id = delta.modifiers[player_id].target_player_id;
+        target_index = 0U;
+        target_found = FT_FALSE;
+        if (target_player_id < delta.player_count)
+        {
+            if ((delta.changed_player_mask & (static_cast<uint64_t>(1U)
+                    << target_player_id)) != 0U)
+            {
+                target_board_count =
+                    delta.players[target_player_id].board_count;
+                target_instances =
+                    delta.players[target_player_id].instances;
+            }
+            else
+            {
+                target_board_count = this->_board_count[target_player_id];
+                target_instances = this->_instances[target_player_id];
+            }
+            while (target_index < target_board_count)
+            {
+                if ((delta.modifiers[player_id].target_instance_id != 0U
+                    && target_instances[target_index].instance_id
+                        == delta.modifiers[player_id].target_instance_id)
+                    || (delta.modifiers[player_id].target_instance_id == 0U
+                        && target_index
+                            == delta.modifiers[player_id].target_instance_index))
+                {
+                    target_found = FT_TRUE;
+                    break ;
+                }
+                target_index += 1U;
+            }
+        }
         if (delta.modifiers[player_id].modifier_id == 0U
-            || target_player_id >= delta.player_count
+            || target_found == FT_FALSE
             || (delta.modifiers[player_id].duration
                 != CARD_GAME_MODIFIER_PERMANENT
                 && delta.modifiers[player_id].duration
                     != CARD_GAME_MODIFIER_UNTIL_END_TURN))
             return (FT_ERR_INVALID_ARGUMENT);
-        if ((delta.changed_player_mask & (static_cast<uint64_t>(1U)
-                << target_player_id)) != 0U)
-        {
-            if (delta.modifiers[player_id].target_instance_index
-                >= delta.players[target_player_id].board_count)
-                return (FT_ERR_INVALID_ARGUMENT);
-        }
-        else if (delta.modifiers[player_id].target_instance_index
-            >= this->_board_count[target_player_id])
+        if (target_found == FT_FALSE)
             return (FT_ERR_INVALID_ARGUMENT);
         previous_modifier_index = 0U;
         while (previous_modifier_index < player_id)
@@ -619,17 +697,8 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
             ft_memcpy(this->_events, delta.events,
                 static_cast<ft_size_t>(delta.event_count)
                     * sizeof(card_game_event));
-        next_modifier_id = 1U;
-        player_id = 0U;
-        while (player_id < delta.modifier_count)
-        {
-            if (delta.modifiers[player_id].modifier_id
-                >= next_modifier_id
-                && delta.modifiers[player_id].modifier_id != UINT32_MAX)
-                next_modifier_id = delta.modifiers[player_id].modifier_id
-                    + 1U;
-            player_id += 1U;
-        }
+        next_deck_instance_id = delta.next_deck_instance_id;
+        next_modifier_id = delta.next_modifier_id;
         this->_turn_number = delta.turn_number;
         this->_active_player = delta.active_player;
         this->_current_phase_id = delta.current_phase_id;
@@ -637,6 +706,7 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
         this->_event_sequence = delta.event_sequence;
         this->_random_state = delta.random_state;
         this->_modifier_count = delta.modifier_count;
+        this->_next_deck_instance_id = next_deck_instance_id;
         this->_next_modifier_id = next_modifier_id;
         ft_memcpy(this->_modifiers, delta.modifiers,
             sizeof(this->_modifiers));
@@ -700,3 +770,21 @@ int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
+{
+    card_game_snapshot before_state;
+    int32_t result;
+    int32_t restore_error;
+
+    result = this->get_snapshot(&before_state);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->apply_delta_internal(delta);
+    if (result != FT_ERR_SUCCESS)
+    {
+        restore_error = this->apply_snapshot_internal(before_state);
+        if (restore_error != FT_ERR_SUCCESS)
+            return (restore_error);
+    }
+    return (result);
+}

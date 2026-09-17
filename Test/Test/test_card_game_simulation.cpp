@@ -84,6 +84,12 @@ FT_TEST(test_card_game_simulation_authoritative_delta_between_players)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.start_match(2U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.deck_push_bottom(0U, 100U));
+    {
+        card_game_deck_card card;
+
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, server.draw_to_hand(0U, &card));
+    }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.get_snapshot(&baseline));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.apply_snapshot(baseline));
     command.command_sequence = 1U;
@@ -403,6 +409,70 @@ FT_TEST(test_card_game_simulation_combat_uses_effective_stats_and_removes_dead)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U, &instance));
     FT_ASSERT_EQ(14, instance.attack);
     FT_ASSERT_EQ(6, instance.health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_modifier_follows_instance_after_compaction)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition fragile;
+    card_game_card_definition durable;
+    card_game_card_definition attacker;
+    card_game_card_instance first_instance;
+    card_game_card_instance second_instance;
+    card_game_card_instance remaining_instance;
+    uint32_t modifier_id;
+    int32_t attack;
+    int32_t health;
+
+    rules = card_game_simulation_rules();
+    rules.max_board_spaces = 3U;
+    card_game_simulation_setup_definition(fragile, 82U, 0U,
+        CARD_GAME_NO_EFFECT);
+    fragile.attack = 1;
+    fragile.health = 1;
+    card_game_simulation_setup_definition(durable, 83U, 0U,
+        CARD_GAME_NO_EFFECT);
+    durable.attack = 5;
+    durable.health = 5;
+    card_game_simulation_setup_definition(attacker, 84U, 0U,
+        CARD_GAME_NO_EFFECT);
+    attacker.attack = 100;
+    attacker.health = 1;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(fragile));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(durable));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(attacker));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, fragile.card_id, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U,
+        &first_instance));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(1U, attacker.card_id, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, durable.card_id, 0U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 1U,
+        &second_instance));
+    FT_ASSERT(first_instance.instance_id != 0U);
+    FT_ASSERT(second_instance.instance_id != 0U);
+    FT_ASSERT(first_instance.instance_id != second_instance.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_card_modifier(0U, 1U, 10, 0,
+        CARD_GAME_MODIFIER_PERMANENT, 13U, &modifier_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_combat(1U, 0U, 0U, 0U,
+        CARD_GAME_COMBAT_ORDERED));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U,
+        &remaining_instance));
+    FT_ASSERT_EQ(second_instance.instance_id, remaining_instance.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_effective_instance_stats(0U, 0U,
+        &attack, &health));
+    FT_ASSERT_EQ(15, attack);
+    FT_ASSERT_EQ(5, health);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

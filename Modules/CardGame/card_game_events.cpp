@@ -190,7 +190,7 @@ int32_t card_game_engine::resolve_events() noexcept
                         &usage_limit);
                     if (usage_error != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                        restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         return (usage_error);
@@ -200,7 +200,7 @@ int32_t card_game_engine::resolve_events() noexcept
                         usage_limit.limit_id, 1U, context.turn_number);
                     if (usage_error != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                        restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         return (usage_error);
@@ -222,7 +222,7 @@ int32_t card_game_engine::resolve_events() noexcept
                     this->_effect_user_data[selected_effect_index]);
                 if (error_code != FT_ERR_SUCCESS)
                 {
-                    restore_error = this->apply_snapshot(before_state);
+                    restore_error = this->apply_snapshot_internal(before_state);
                     if (restore_error != FT_ERR_SUCCESS)
                         return (restore_error);
                     if (usage_limit_bound == FT_TRUE
@@ -244,7 +244,7 @@ int32_t card_game_engine::resolve_events() noexcept
                         usage_limit.limit_id, 1U, context.turn_number);
                     if (usage_error != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                    restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         return (usage_error);
@@ -256,7 +256,7 @@ int32_t card_game_engine::resolve_events() noexcept
                     if (operations.get(operation_index, &operation)
                         != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                        restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         if (usage_limit_bound == FT_TRUE
@@ -274,7 +274,7 @@ int32_t card_game_engine::resolve_events() noexcept
                     error_code = this->apply_operation(operation);
                     if (error_code != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                        restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         if (usage_limit_bound == FT_TRUE
@@ -299,7 +299,7 @@ int32_t card_game_engine::resolve_events() noexcept
                         usage_limit.limit_id, 1U, context.turn_number);
                     if (usage_error != FT_ERR_SUCCESS)
                     {
-                        restore_error = this->apply_snapshot(before_state);
+                        restore_error = this->apply_snapshot_internal(before_state);
                         if (restore_error != FT_ERR_SUCCESS)
                             return (restore_error);
                         return (usage_error);
@@ -343,7 +343,7 @@ int32_t card_game_engine::advance_phase() noexcept
                     this->_phases[index].exit_event_type, 0U, 0U);
                 if (emit_error != FT_ERR_SUCCESS)
                 {
-                    restore_error = this->apply_snapshot(before_state);
+                    restore_error = this->apply_snapshot_internal(before_state);
                     if (restore_error != FT_ERR_SUCCESS)
                         return (restore_error);
                     return (emit_error);
@@ -368,7 +368,7 @@ int32_t card_game_engine::advance_phase() noexcept
                     this->_phases[index].entry_event_type, 0U, 0U);
                 if (emit_error != FT_ERR_SUCCESS)
                 {
-                    restore_error = this->apply_snapshot(before_state);
+                    restore_error = this->apply_snapshot_internal(before_state);
                     if (restore_error != FT_ERR_SUCCESS)
                         return (restore_error);
                     return (emit_error);
@@ -377,7 +377,7 @@ int32_t card_game_engine::advance_phase() noexcept
             resolve_error = this->resolve_events();
             if (resolve_error != FT_ERR_SUCCESS)
             {
-                restore_error = this->apply_snapshot(before_state);
+                restore_error = this->apply_snapshot_internal(before_state);
                 if (restore_error != FT_ERR_SUCCESS)
                     return (restore_error);
                 return (resolve_error);
@@ -386,9 +386,8 @@ int32_t card_game_engine::advance_phase() noexcept
         }
         index += 1U;
     }
-    restore_error = this->apply_snapshot(before_state);
+    restore_error = this->apply_snapshot_internal(before_state);
     if (restore_error != FT_ERR_SUCCESS)
         return (restore_error);
     return (FT_ERR_NOT_FOUND);
 }
-

@@ -162,6 +162,7 @@ struct card_game_deck_card
 
 struct card_game_card_instance
 {
+    uint32_t instance_id;
     uint32_t definition_id;
     uint32_t owner_id;
     int32_t attack;
@@ -175,6 +176,7 @@ struct card_game_card_modifier
     uint32_t modifier_id;
     uint32_t source_effect_id;
     uint32_t target_player_id;
+    uint32_t target_instance_id;
     uint32_t target_instance_index;
     int32_t attack_delta;
     int32_t health_delta;
@@ -259,6 +261,8 @@ struct card_game_snapshot
     uint32_t event_count;
     uint64_t event_sequence;
     uint64_t random_state;
+    uint32_t next_deck_instance_id;
+    uint32_t next_modifier_id;
     uint32_t modifier_count;
     card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     uint32_t event_capacity;
@@ -292,6 +296,8 @@ struct card_game_delta
     uint32_t event_count;
     uint64_t event_sequence;
     uint64_t random_state;
+    uint32_t next_deck_instance_id;
+    uint32_t next_modifier_id;
     uint32_t modifier_count;
     card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     uint32_t event_capacity;
@@ -429,6 +435,9 @@ class card_game_engine
         int32_t resolve_start_override(
             card_game_start_override_field field, uint32_t player_id,
             uint32_t baseline, uint32_t *value) const noexcept;
+        int32_t apply_snapshot_internal(
+            const card_game_snapshot &snapshot) noexcept;
+        int32_t apply_delta_internal(const card_game_delta &delta) noexcept;
         int32_t remove_board_instance(uint32_t player_id,
             uint32_t instance_index) noexcept;
 

@@ -3,7 +3,7 @@
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 
-static void card_game_format_hash_u32(crypto_sha256 &hash,
+static int32_t card_game_format_hash_u32(crypto_sha256 &hash,
     uint32_t value) noexcept
 {
     uint8_t bytes[4];
@@ -12,15 +12,7 @@ static void card_game_format_hash_u32(crypto_sha256 &hash,
     bytes[1] = static_cast<uint8_t>((value >> 8U) & 255U);
     bytes[2] = static_cast<uint8_t>((value >> 16U) & 255U);
     bytes[3] = static_cast<uint8_t>((value >> 24U) & 255U);
-    (void)hash.update(bytes, sizeof(bytes));
-    return ;
-}
-
-static void card_game_format_hash_bytes(crypto_sha256 &hash,
-    const void *data, ft_size_t size) noexcept
-{
-    (void)hash.update(data, size);
-    return ;
+    return (hash.update(bytes, sizeof(bytes)));
 }
 
 static void card_game_format_sort_card_rules(
@@ -137,7 +129,9 @@ int32_t card_game_format::validate_config(
     {
         if (config.legal_cards[index].card_id == 0U
             || config.legal_cards[index].copy_limit == 0U
-            || config.legal_cards[index].copy_limit > config.global_copy_limit)
+            || config.legal_cards[index].copy_limit > config.global_copy_limit
+            || config.legal_cards[index].policy
+                > CARD_GAME_FORMAT_CARD_RESTRICTED)
             return (FT_ERR_INVALID_ARGUMENT);
         inner_index = index + 1U;
         while (inner_index < config.legal_card_count)
@@ -153,8 +147,19 @@ int32_t card_game_format::validate_config(
     while (index < config.ban_count)
     {
         if (config.bans[index].card_id == 0U
-            || config.bans[index].copy_limit > config.global_copy_limit)
+            || config.bans[index].copy_limit > config.global_copy_limit
+            || config.bans[index].zone_mask == 0U)
             return (FT_ERR_INVALID_ARGUMENT);
+        inner_index = index + 1U;
+        while (inner_index < config.ban_count)
+        {
+            if (config.bans[index].card_id
+                    == config.bans[inner_index].card_id
+                && config.bans[index].zone_mask
+                    == config.bans[inner_index].zone_mask)
+                return (FT_ERR_INVALID_ARGUMENT);
+            inner_index += 1U;
+        }
         index += 1U;
     }
     index = 0U;
@@ -164,6 +169,18 @@ int32_t card_game_format::validate_config(
             || config.exceptions[index].card_id == 0U
             || config.exceptions[index].rule_id == 0U)
             return (FT_ERR_INVALID_ARGUMENT);
+        inner_index = index + 1U;
+        while (inner_index < config.exception_count)
+        {
+            if (config.exceptions[index].exception_id
+                    == config.exceptions[inner_index].exception_id
+                || (config.exceptions[index].card_id
+                        == config.exceptions[inner_index].card_id
+                    && config.exceptions[index].rule_id
+                        == config.exceptions[inner_index].rule_id))
+                return (FT_ERR_INVALID_ARGUMENT);
+            inner_index += 1U;
+        }
         index += 1U;
     }
     return (FT_ERR_SUCCESS);
@@ -181,41 +198,94 @@ int32_t card_game_format::calculate_hash(
     result = context.initialize();
     if (result != FT_ERR_SUCCESS)
         return (result);
-    card_game_format_hash_u32(context, FT_CARD_GAME_FORMAT_SCHEMA_VERSION);
-    card_game_format_hash_u32(context, config.format_id);
-    card_game_format_hash_u32(context, config.revision);
-    card_game_format_hash_u32(context, config.profile_id);
-    card_game_format_hash_u32(context, config.corpus_version);
-    card_game_format_hash_u32(context, config.global_copy_limit);
-    card_game_format_hash_u32(context, config.minimum_main_cards);
-    card_game_format_hash_u32(context, config.maximum_main_cards);
-    card_game_format_hash_u32(context, config.minimum_extra_cards);
-    card_game_format_hash_u32(context, config.maximum_extra_cards);
-    card_game_format_hash_u32(context, config.minimum_side_cards);
-    card_game_format_hash_u32(context, config.maximum_side_cards);
+    result = card_game_format_hash_u32(context,
+        FT_CARD_GAME_FORMAT_SCHEMA_VERSION);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.format_id);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.revision);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.profile_id);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.corpus_version);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.global_copy_limit);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.minimum_main_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.maximum_main_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.minimum_extra_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.maximum_extra_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.minimum_side_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.maximum_side_cards);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.legal_card_count);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.ban_count);
+    if (result == FT_ERR_SUCCESS)
+        result = card_game_format_hash_u32(context, config.exception_count);
     index = 0U;
-    while (index < config.legal_card_count)
+    while (result == FT_ERR_SUCCESS && index < config.legal_card_count)
     {
-        card_game_format_hash_bytes(context, &config.legal_cards[index],
-            sizeof(card_game_format_card_rule));
+        result = card_game_format_hash_u32(context,
+            config.legal_cards[index].card_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.legal_cards[index].copy_limit);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.legal_cards[index].limit_group_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                static_cast<uint32_t>(config.legal_cards[index].policy));
         index += 1U;
     }
     index = 0U;
-    while (index < config.ban_count)
+    while (result == FT_ERR_SUCCESS && index < config.ban_count)
     {
-        card_game_format_hash_bytes(context, &config.bans[index],
-            sizeof(card_game_format_ban_entry));
+        result = card_game_format_hash_u32(context, config.bans[index].card_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.bans[index].copy_limit);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.bans[index].zone_mask);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.bans[index].source_revision);
         index += 1U;
     }
     index = 0U;
-    while (index < config.exception_count)
+    while (result == FT_ERR_SUCCESS && index < config.exception_count)
     {
-        card_game_format_hash_bytes(context, &config.exceptions[index],
-            sizeof(card_game_format_exception));
+        result = card_game_format_hash_u32(context,
+            config.exceptions[index].exception_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.exceptions[index].card_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.exceptions[index].rule_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.exceptions[index].replacement_program_id);
+        if (result == FT_ERR_SUCCESS)
+            result = card_game_format_hash_u32(context,
+                config.exceptions[index].priority);
         index += 1U;
     }
-    result = context.final(hash->bytes);
-    (void)context.destroy();
+    if (result == FT_ERR_SUCCESS)
+        result = context.final(hash->bytes);
+    {
+        int32_t destroy_error = context.destroy();
+
+        if (result == FT_ERR_SUCCESS)
+            result = destroy_error;
+    }
     return (result);
 }
 
@@ -379,6 +449,7 @@ int32_t card_game_format::validate_deck(const card_game_deck &deck,
     uint32_t minimum_cards;
     uint32_t maximum_cards;
     uint32_t total_cards;
+    uint32_t previous_index;
     int32_t result;
 
     if (diagnostic == ft_nullptr)
@@ -404,6 +475,59 @@ int32_t card_game_format::validate_deck(const card_game_deck &deck,
     zone_index = 0U;
     while (zone_index < deck.zone_count)
     {
+        if (deck.zones[zone_index].entry_count
+            > FT_CARD_GAME_DECK_CODE_MAX_ENTRIES)
+        {
+            diagnostic->error_code = FT_ERR_INVALID_ARGUMENT;
+            diagnostic->zone_id = deck.zones[zone_index].zone_id;
+            return (diagnostic->error_code);
+        }
+        previous_index = 0U;
+        while (previous_index < zone_index)
+        {
+            if (deck.zones[previous_index].zone_id
+                == deck.zones[zone_index].zone_id)
+            {
+                diagnostic->error_code = FT_ERR_INVALID_ARGUMENT;
+                diagnostic->zone_id = deck.zones[zone_index].zone_id;
+                return (diagnostic->error_code);
+            }
+            previous_index += 1U;
+        }
+        entry_index = 0U;
+        while (entry_index < deck.zones[zone_index].entry_count)
+        {
+            if (deck.zones[zone_index].entries[entry_index].quantity == 0U)
+            {
+                diagnostic->error_code = FT_ERR_INVALID_ARGUMENT;
+                diagnostic->card_id = deck.zones[zone_index]
+                    .entries[entry_index].definition_id;
+                diagnostic->zone_id = deck.zones[zone_index].zone_id;
+                return (diagnostic->error_code);
+            }
+            previous_index = 0U;
+            while (previous_index < entry_index)
+            {
+                if (deck.zones[zone_index].entries[previous_index]
+                        .definition_id
+                    == deck.zones[zone_index].entries[entry_index]
+                        .definition_id)
+                {
+                    diagnostic->error_code = FT_ERR_INVALID_ARGUMENT;
+                    diagnostic->card_id = deck.zones[zone_index]
+                        .entries[entry_index].definition_id;
+                    diagnostic->zone_id = deck.zones[zone_index].zone_id;
+                    return (diagnostic->error_code);
+                }
+                previous_index += 1U;
+            }
+            entry_index += 1U;
+        }
+        zone_index += 1U;
+    }
+    zone_index = 0U;
+    while (zone_index < deck.zone_count)
+    {
         total_cards = 0U;
         entry_index = 0U;
         while (entry_index < deck.zones[zone_index].entry_count)
@@ -419,7 +543,7 @@ int32_t card_game_format::validate_deck(const card_game_deck &deck,
                 diagnostic->zone_id = deck.zones[zone_index].zone_id;
                 diagnostic->observed_count = deck.zones[zone_index]
                     .entries[entry_index].quantity;
-                diagnostic->permitted_count = copy_limit;
+                diagnostic->permitted_count = 0U;
                 return (result);
             }
             if (deck.zones[zone_index].entries[entry_index].quantity

@@ -30,13 +30,40 @@ int32_t card_game_engine::get_instance(uint32_t player_id, uint32_t index,
 
 int32_t card_game_engine::allocate_modifier_id(uint32_t *modifier_id) noexcept
 {
+    uint32_t candidate;
+    uint32_t first_candidate;
+    uint32_t index;
+    ft_bool exhausted;
+
     if (modifier_id == ft_nullptr || this->_next_modifier_id == 0U)
         return (FT_ERR_OUT_OF_RANGE);
-    *modifier_id = this->_next_modifier_id;
-    this->_next_modifier_id += 1U;
-    if (this->_next_modifier_id == 0U)
-        this->_next_modifier_id = 1U;
-    return (FT_ERR_SUCCESS);
+    candidate = this->_next_modifier_id;
+    if (candidate == UINT32_MAX)
+        candidate = 1U;
+    first_candidate = candidate;
+    exhausted = FT_FALSE;
+    while (exhausted == FT_FALSE)
+    {
+        index = 0U;
+        while (index < this->_modifier_count
+            && this->_modifiers[index].modifier_id != candidate)
+            index += 1U;
+        if (index == this->_modifier_count)
+        {
+            *modifier_id = candidate;
+            this->_next_modifier_id = candidate + 1U;
+            if (this->_next_modifier_id == 0U
+                || this->_next_modifier_id == UINT32_MAX)
+                this->_next_modifier_id = 1U;
+            return (FT_ERR_SUCCESS);
+        }
+        candidate += 1U;
+        if (candidate == 0U || candidate == UINT32_MAX)
+            candidate = 1U;
+        if (candidate == first_candidate)
+            exhausted = FT_TRUE;
+    }
+    return (FT_ERR_FULL);
 }
 
 int32_t card_game_engine::get_effective_instance_stats(uint32_t player_id,
@@ -75,7 +102,11 @@ int32_t card_game_engine::get_effective_instance_stats(uint32_t player_id,
         const card_game_card_modifier &modifier = this->_modifiers[index];
 
         if (modifier.target_player_id == player_id
-            && modifier.target_instance_index == instance_index)
+            && ((modifier.target_instance_id != 0U
+                && modifier.target_instance_id
+                    == this->_instances[player_id][instance_index].instance_id)
+                || (modifier.target_instance_id == 0U
+                    && modifier.target_instance_index == instance_index)))
         {
             calculated_attack += modifier.attack_delta;
             calculated_health += modifier.health_delta;
@@ -118,6 +149,8 @@ int32_t card_game_engine::add_card_modifier(uint32_t player_id,
     modifier->modifier_id = *modifier_id;
     modifier->source_effect_id = source_effect_id;
     modifier->target_player_id = player_id;
+    modifier->target_instance_id =
+        this->_instances[player_id][instance_index].instance_id;
     modifier->target_instance_index = instance_index;
     modifier->attack_delta = attack_delta;
     modifier->health_delta = health_delta;
@@ -198,10 +231,13 @@ int32_t card_game_engine::remove_board_instance(uint32_t player_id,
     uint32_t instance_index) noexcept
 {
     uint32_t move_index;
+    uint32_t modifier_index;
+    uint32_t removed_instance_id;
 
     if (player_id >= FT_CARD_GAME_MAX_PLAYERS
         || instance_index >= this->_board_count[player_id])
         return (FT_ERR_INVALID_ARGUMENT);
+    removed_instance_id = this->_instances[player_id][instance_index].instance_id;
     move_index = instance_index + 1U;
     while (move_index < this->_board_count[player_id])
     {
@@ -214,6 +250,32 @@ int32_t card_game_engine::remove_board_instance(uint32_t player_id,
     this->_board_count[player_id] -= 1U;
     this->_instances[player_id][this->_board_count[player_id]].on_board =
         FT_FALSE;
+    modifier_index = 0U;
+    while (modifier_index < this->_modifier_count)
+    {
+        if (this->_modifiers[modifier_index].target_player_id == player_id
+            && ((this->_modifiers[modifier_index].target_instance_id != 0U
+                && this->_modifiers[modifier_index].target_instance_id
+                    == removed_instance_id)
+                || (this->_modifiers[modifier_index].target_instance_id == 0U
+                    && this->_modifiers[modifier_index].target_instance_index
+                        == instance_index)))
+        {
+            if (this->remove_card_modifier(
+                    this->_modifiers[modifier_index].modifier_id)
+                != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+        }
+        else
+        {
+            if (this->_modifiers[modifier_index].target_player_id == player_id
+                && this->_modifiers[modifier_index].target_instance_id == 0U
+                && this->_modifiers[modifier_index].target_instance_index
+                    > instance_index)
+                this->_modifiers[modifier_index].target_instance_index -= 1U;
+            modifier_index += 1U;
+        }
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -302,4 +364,3 @@ int32_t card_game_engine::resolve_combat(uint32_t attacking_player,
     this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
-
