@@ -4,7 +4,6 @@
 #include "../Errno/errno.hpp"
 
 #include <cerrno>
-#include <cstring>
 
 namespace
 {
@@ -60,7 +59,7 @@ int32_t cmp_cross_process_encode_wire(const cross_process_message &message,
     ft_size_t offset;
 
     if (wire == ft_nullptr || wire_size < CMP_CROSS_PROCESS_WIRE_SIZE
-        || std::memchr(message.shared_memory_name, '\0',
+        || ft_memchr(message.shared_memory_name, '\0',
             sizeof(message.shared_memory_name)) == ft_nullptr)
     {
         errno = EINVAL;
@@ -114,7 +113,7 @@ int32_t cmp_cross_process_decode_wire(const uint8_t *wire,
     offset += 8U;
     ft_memcpy(decoded.shared_memory_name, wire + offset,
         sizeof(decoded.shared_memory_name));
-    if (std::memchr(decoded.shared_memory_name, '\0',
+    if (ft_memchr(decoded.shared_memory_name, '\0',
         sizeof(decoded.shared_memory_name)) == ft_nullptr)
     {
         errno = EINVAL;

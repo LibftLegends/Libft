@@ -6,7 +6,9 @@
 #include "../System_utils/system_utils.hpp"
 #include "../Printf/printf.hpp"
 #include "compression.hpp"
+#ifdef LIBFT_TEST_BUILD
 #include "compression_stream_test_hooks.hpp"
+#endif
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -100,6 +102,9 @@ int t_compress_stream_options::lock_for_access() const
     int lock_error;
 
     this->_thread_safety_transition_mutex.lock();
+    if (this->_thread_safety_enabled.load(std::memory_order_acquire)
+        == FT_FALSE)
+        return (FT_ERR_SUCCESS);
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         this->_thread_safety_transition_mutex.unlock();
@@ -110,7 +115,10 @@ int t_compress_stream_options::unlock_for_access() const
 {
     int unlock_error;
 
-    unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    unlock_error = FT_ERR_SUCCESS;
+    if (this->_thread_safety_enabled.load(std::memory_order_acquire)
+        != FT_FALSE)
+        unlock_error = pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     this->_thread_safety_transition_mutex.unlock();
     return (unlock_error);
 }
@@ -640,7 +648,9 @@ static int  compression_stream_validate_tuning(const t_compress_stream_options *
     return (0);
 }
 
+#ifdef LIBFT_TEST_BUILD
 static t_compress_stream_deflate_init_hook compression_stream_get_deflate_init_hook(void);
+#endif
 
 static int  compression_stream_begin_deflate(z_stream *stream, const t_compress_stream_options *options)
 {
@@ -670,7 +680,11 @@ static int  compression_stream_begin_deflate(z_stream *stream, const t_compress_
             return (deflateInit2(stream, compression_level, Z_DEFLATED, window_bits, memory_level, strategy));
         }
     }
+#ifdef LIBFT_TEST_BUILD
     return (compression_stream_get_deflate_init_hook()(stream, compression_level));
+#else
+    return (deflateInit(stream, compression_level));
+#endif
 }
 
 static void compression_stream_release_buffers(unsigned char *input_buffer, unsigned char *output_buffer)
@@ -764,6 +778,7 @@ static int  compression_stream_allocate_buffers(const t_compress_stream_options 
     return (0);
 }
 
+#ifdef LIBFT_TEST_BUILD
 static int compress_stream_default_deflate_init(z_stream *stream, int compression_level)
 {
     return (deflateInit(stream, compression_level));
@@ -783,7 +798,9 @@ static int decompress_stream_default_inflate(z_stream *stream, int flush_mode)
 {
     return (inflate(stream, flush_mode));
 }
+#endif
 
+#ifdef LIBFT_TEST_BUILD
 static t_compress_stream_deflate_init_hook    g_compress_stream_deflate_init_hook = compress_stream_default_deflate_init;
 static t_compress_stream_deflate_hook         g_compress_stream_deflate_hook = compress_stream_default_deflate;
 static t_compress_stream_read_hook            g_compress_stream_read_hook = ft_nullptr;
@@ -793,6 +810,25 @@ static t_decompress_stream_inflate_hook       g_decompress_stream_inflate_hook =
 static t_compress_stream_deflate_init_hook compression_stream_get_deflate_init_hook(void)
 {
     return (g_compress_stream_deflate_init_hook);
+}
+#endif
+
+static int compression_stream_deflate(z_stream *stream, int flush_mode)
+{
+#ifdef LIBFT_TEST_BUILD
+    return (g_compress_stream_deflate_hook(stream, flush_mode));
+#else
+    return (deflate(stream, flush_mode));
+#endif
+}
+
+static int compression_stream_inflate(z_stream *stream, int flush_mode)
+{
+#ifdef LIBFT_TEST_BUILD
+    return (g_decompress_stream_inflate_hook(stream, flush_mode));
+#else
+    return (inflate(stream, flush_mode));
+#endif
 }
 
 static int  compression_stream_dispatch_progress(const t_compress_stream_options *options, const t_compress_stream_progress *progress)
@@ -835,6 +871,7 @@ static int  compression_stream_check_cancel(const t_compress_stream_options *opt
     return (0);
 }
 
+#ifdef LIBFT_TEST_BUILD
 void ft_compress_stream_set_deflate_init_hook(t_compress_stream_deflate_init_hook hook)
 {
     if (hook)
@@ -876,6 +913,7 @@ void ft_decompress_stream_set_inflate_hook(t_decompress_stream_inflate_hook hook
         g_decompress_stream_inflate_hook = decompress_stream_default_inflate;
     return ;
 }
+#endif
 
 int ft_compress_stream_with_options(int input_file_descriptor, int output_file_descriptor, const t_compress_stream_options *options)
 {
@@ -919,13 +957,16 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
             compression_stream_release_buffers(input_buffer, output_buffer);
             return (1);
         }
+#ifdef LIBFT_TEST_BUILD
         if (g_compress_stream_read_hook != ft_nullptr)
             read_bytes = g_compress_stream_read_hook(input_file_descriptor,
                 input_buffer, input_buffer_size);
         else
+#endif
             read_bytes = su_read(input_file_descriptor, input_buffer,
                 input_buffer_size);
-        if (read_bytes < 0)
+        if (read_bytes < 0
+            || static_cast<std::size_t>(read_bytes) > input_buffer_size)
         {
             deflateEnd(&stream);
             compression_stream_release_buffers(input_buffer, output_buffer);
@@ -957,7 +998,7 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
         {
             stream.next_out = output_buffer;
             stream.avail_out = static_cast<unsigned int>(output_buffer_size);
-            deflate_status = g_compress_stream_deflate_hook(&stream, flush_mode);
+            deflate_status = compression_stream_deflate(&stream, flush_mode);
             if (deflate_status == Z_STREAM_ERROR || deflate_status == Z_BUF_ERROR)
             {
                 deflateEnd(&stream);
@@ -991,7 +1032,8 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
                 return (1);
             }
         }
-        while (stream.avail_out == 0);
+        while (stream.avail_in != 0
+            || (flush_mode == Z_FINISH && deflate_status != Z_STREAM_END));
     }
     deflateEnd(&stream);
     compression_stream_release_buffers(input_buffer, output_buffer);
@@ -1025,7 +1067,11 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
             &output_buffer, &output_buffer_size) != 0)
         return (1);
     ft_bzero(&stream, sizeof(stream));
+#ifdef LIBFT_TEST_BUILD
     inflate_status = g_decompress_stream_inflate_init_hook(&stream);
+#else
+    inflate_status = inflateInit(&stream);
+#endif
     if (inflate_status != Z_OK)
     {
         compression_stream_release_buffers(input_buffer, output_buffer);
@@ -1075,7 +1121,7 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
         {
             stream.next_out = output_buffer;
             stream.avail_out = static_cast<unsigned int>(output_buffer_size);
-            inflate_status = g_decompress_stream_inflate_hook(&stream, flush_mode);
+            inflate_status = compression_stream_inflate(&stream, flush_mode);
             if (inflate_status == Z_STREAM_END)
                 stream_finished = 1;
             if (inflate_status == Z_BUF_ERROR && stream_finished == 0)
@@ -1122,7 +1168,7 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
                 return (1);
             }
         }
-        while (stream.avail_out == 0 && stream_finished == 0 && stream.avail_in != 0);
+        while (stream_finished == 0 && stream.avail_in != 0);
         if (stream_finished != 0 && stream.avail_in != 0)
         {
             inflateEnd(&stream);

@@ -833,7 +833,8 @@ FT_TEST(test_ft_compress_stream_preserves_fragmented_producer_input)
 {
     int input_pipe[2];
     int compressed_file_descriptor;
-    char compressed_path[] = "/tmp/libft_compression_streamXXXXXX";
+    char compressed_path[512];
+    const char *compressed_template;
     const char *first_fragment;
     const char *second_fragment;
     unsigned char compressed_buffer[1024];
@@ -848,11 +849,12 @@ FT_TEST(test_ft_compress_stream_preserves_fragmented_producer_input)
 
     first_fragment = "fragment-one-";
     second_fragment = "fragment-two";
+    compressed_template = "libft_compression_streamXXXXXX";
     first_size = ft_strlen_size_t(first_fragment);
     second_size = ft_strlen_size_t(second_fragment);
     FT_ASSERT_EQ(0, pipe(input_pipe));
     compressed_file_descriptor = test_create_temp_file_from_template(
-        compressed_path, sizeof(compressed_path), compressed_path);
+        compressed_path, sizeof(compressed_path), compressed_template);
     FT_ASSERT(compressed_file_descriptor >= 0);
     unlink(compressed_path);
     close(input_pipe[1]);

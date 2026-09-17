@@ -3,7 +3,6 @@
 #include "compatebility_cross_process.hpp"
 #include "compatebility_internal.hpp"
 #include <cerrno>
-#include <cstring>
 #include <limits>
 #include <winsock2.h>
 #include <windows.h>
@@ -28,7 +27,7 @@ static int32_t compute_offset(uint64_t pointer_value, uint64_t base_value,
 
 static ft_bool has_terminated_name(const char *name)
 {
-    return (std::memchr(name, '\0',
+    return (ft_memchr(name, '\0',
         CROSS_PROCESS_SHARED_MEMORY_NAME_CAPACITY)
         != ft_nullptr ? FT_TRUE : FT_FALSE);
 }
