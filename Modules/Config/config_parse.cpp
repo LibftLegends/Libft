@@ -311,6 +311,7 @@ config_data *config_parse(const char *filename)
         ft_fclose(file);
         return (ft_nullptr);
     }
+    error_code = FT_ERR_SUCCESS;
     current_section = ft_nullptr;
     while (ft_fgets(buffer, sizeof(buffer), file))
     {

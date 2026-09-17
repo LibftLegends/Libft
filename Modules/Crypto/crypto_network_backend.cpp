@@ -88,8 +88,7 @@ int32_t crypto_network_backend::wipe(void *data, ft_size_t length) noexcept
 {
     if (data == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    (void)crypto_secure_wipe(data, length);
-    return (FT_ERR_SUCCESS);
+    return (crypto_secure_wipe(data, length));
 }
 
 int32_t crypto_network_backend::destroy() noexcept
@@ -171,5 +170,4 @@ ft_bool crypto_network_backend::open(const uint8_t nonce[12],
         return (FT_TRUE);
     return (FT_FALSE);
 }
-
 

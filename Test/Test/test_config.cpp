@@ -182,6 +182,32 @@ FT_TEST(test_config_parse_long_physical_line_is_one_entry)
     return (1);
 }
 
+FT_TEST(test_config_parse_empty_file_returns_empty_config)
+{
+    const char *filename = "config_empty.ini";
+    config_data *config;
+    FILE *file;
+
+    file = std::fopen(filename, "w");
+    if (!file)
+        return (0);
+    if (std::fclose(file) != 0)
+    {
+        cleanup_file(filename);
+        return (0);
+    }
+    config = config_parse(filename);
+    FT_ASSERT(config != ft_nullptr);
+    if (config != ft_nullptr)
+    {
+        FT_ASSERT_EQ(0U, config->entry_count);
+        FT_ASSERT_EQ(ft_nullptr, config->entries);
+        config_data_free(config);
+    }
+    cleanup_file(filename);
+    return (1);
+}
+
 FT_TEST(test_config_write_ini_round_trip)
 {
     const char *filename = "config_round_trip.ini";

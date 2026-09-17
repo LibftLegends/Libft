@@ -14,11 +14,16 @@ mkdir -p "$log_directory"
 
 cleanup()
 {
+    cleanup_status=$?
     if [ "${LIBFT_KEEP_INCREMENTAL_WORKTREE:-0}" = "1" ]; then
         printf '%s\n' "incremental-build worktree retained: $temporary_root"
-    else
-        rm -rf "$temporary_root"
+        return 0
     fi
+    if [ "$cleanup_status" -ne 0 ]; then
+        printf '%s\n' "incremental-build failed; worktree retained: $temporary_root" >&2
+        return 0
+    fi
+    rm -rf "$temporary_root"
 }
 
 trap cleanup EXIT INT TERM HUP
@@ -26,28 +31,42 @@ trap cleanup EXIT INT TERM HUP
 copy_checkout()
 {
     mkdir -p "$checkout_directory"
-    cp -a "$source_directory/." "$checkout_directory/"
-    rm -rf "$checkout_directory/build"
-    rm -f "$checkout_directory/Full_Libft.a"
-    rm -f "$checkout_directory/Full_Libft_debug.a"
-    rm -f "$checkout_directory/Test/Full_Libft_test.a"
-    rm -f "$checkout_directory/Test/Full_Libft_test_debug.a"
-    rm -f "$checkout_directory/Test/libft_tests" \
-        "$checkout_directory/Test/libft_tests.exe"
+    (
+        cd "$source_directory"
+        tar -cf - \
+            --exclude='./.git' \
+            --exclude='./build' \
+            --exclude='*.a' \
+            --exclude='*.d' \
+            --exclude='*.o' \
+            --exclude='*.exe' \
+            --exclude='*.log' \
+            --exclude='*.jsonl' \
+            .
+    ) | (
+        cd "$checkout_directory"
+        tar -xf -
+    )
 }
 
 run_make()
 {
     log_name=$1
     shift
+    printf '%s\n' "incremental-build: starting $log_name: make --no-print-directory -j$make_jobs $*" >&2
     if ! LIBFT_CI_HEARTBEAT_SECONDS="$heartbeat_seconds" \
         sh "$script_directory/ci_run_with_timeout.sh" "$make_timeout_seconds" \
         make --no-print-directory "-j$make_jobs" "$@" \
         >"$log_directory/$log_name.log" 2>&1; then
         printf '%s\n' "make failed: $*" >&2
-        cat "$log_directory/$log_name.log" >&2
+        if [ -f "$log_directory/$log_name.log" ]; then
+            cat "$log_directory/$log_name.log" >&2
+        else
+            printf '%s\n' "scenario log was not created: $log_directory/$log_name.log" >&2
+        fi
         exit 1
     fi
+    printf '%s\n' "incremental-build: completed $log_name" >&2
 }
 
 run_optional_sanitizer_build()
@@ -147,6 +166,7 @@ archive_members_are_unique()
 
 copy_checkout
 cd "$checkout_directory"
+printf '%s\n' "incremental-build temporary checkout: $temporary_root" >&2
 
 run_make baseline global-all
 release_root=$(find build/libft -type d -name release -print | head -n 1)

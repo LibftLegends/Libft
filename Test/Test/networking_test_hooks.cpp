@@ -66,15 +66,20 @@ int32_t networking_test_failure_fail_next(
 int32_t networking_test_failure_fail_after(
     networking_test_failure_point point, uint64_t successful_calls) noexcept
 {
+    uint64_t attempt_count;
     uint8_t point_index;
 
     if (networking_test_failure_valid_point(point) == FT_FALSE
         || g_active.load(std::memory_order_acquire) == FT_FALSE)
         return (FT_ERR_INVALID_STATE);
+    if (successful_calls == UINT64_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
     point_index = static_cast<uint8_t>(point);
+    attempt_count = g_attempts[point_index].load(std::memory_order_acquire);
+    if (attempt_count > UINT64_MAX - successful_calls - 1U)
+        return (FT_ERR_OUT_OF_RANGE);
     g_failure_calls[point_index].store(
-        g_attempts[point_index].load(std::memory_order_acquire)
-            + successful_calls + 1U, std::memory_order_release);
+        attempt_count + successful_calls + 1U, std::memory_order_release);
     return (FT_ERR_SUCCESS);
 }
 
