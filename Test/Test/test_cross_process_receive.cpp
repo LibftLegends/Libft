@@ -427,7 +427,7 @@ FT_TEST(test_cross_process_receive_memory_rejects_error_before_payload)
             mapping[data_offset + index]);
         index++;
     }
-    std::memcpy(&stored_error_value, mapping + error_offset,
+    ft_memcpy(&stored_error_value, mapping + error_offset,
         sizeof(stored_error_value));
     FT_ASSERT_EQ(123, stored_error_value);
     FT_ASSERT_EQ(0, pthread_mutex_destroy(

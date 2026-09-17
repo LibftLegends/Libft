@@ -140,6 +140,7 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
     uint8_t next_receive_initialization_vector[12];
     networking_crypto_backend next_send_backend;
     networking_crypto_backend next_receive_backend;
+    networking_crypto_backend next_previous_receive_backend;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -162,6 +163,13 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
         result = this->_receive_backend.derive_key_update(this->_receive_key,
             next_epoch, next_receive_key, next_receive_initialization_vector);
     if (result == FT_ERR_SUCCESS
+        && NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_INIT_PREVIOUS)
+            != FT_FALSE)
+        result = FT_ERR_NO_MEMORY;
+    if (result == FT_ERR_SUCCESS)
+        result = next_previous_receive_backend.initialize(this->_receive_key,
+            sizeof(this->_receive_key));
+    if (result == FT_ERR_SUCCESS
         && NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_INIT_SEND)
             != FT_FALSE)
         result = FT_ERR_NO_MEMORY;
@@ -182,9 +190,23 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
         result = this->_send_backend.swap(next_send_backend);
         if (result == FT_ERR_SUCCESS)
             result = this->_receive_backend.swap(next_receive_backend);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_previous_receive_backend.swap(
+                next_previous_receive_backend);
     }
     if (result == FT_ERR_SUCCESS)
     {
+        ft_memcpy(this->_previous_receive_key, this->_receive_key,
+            sizeof(this->_previous_receive_key));
+        ft_memcpy(this->_previous_receive_initialization_vector,
+            this->_receive_initialization_vector,
+            sizeof(this->_previous_receive_initialization_vector));
+        this->_previous_receive_key_epoch = this->_receive_key_epoch;
+        this->_previous_highest_received_packet =
+            this->_highest_received_packet;
+        this->_previous_received_window = this->_received_window;
+        this->_has_previous_received_packet = this->_has_received_packet;
+        this->_has_previous_receive_key = FT_TRUE;
         ft_memcpy(this->_send_key, next_send_key, sizeof(this->_send_key));
         ft_memcpy(this->_receive_key, next_receive_key,
             sizeof(this->_receive_key));
