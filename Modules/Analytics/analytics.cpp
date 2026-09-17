@@ -619,7 +619,10 @@ int32_t analytics_session::initialize(
     this->_export_buffers = static_cast<analytics_export_buffer *>(cma_malloc(
         sizeof(analytics_export_buffer) * this->_buffer_count));
     if (this->_export_buffers == ft_nullptr)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_NO_MEMORY);
+    }
     ft_memset(this->_export_buffers, 0,
         sizeof(analytics_export_buffer) * this->_buffer_count);
     this->_completed_buffer_count = 0U;

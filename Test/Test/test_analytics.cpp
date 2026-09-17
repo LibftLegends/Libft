@@ -1,5 +1,7 @@
 #include "../test_internal.hpp"
+#define private public
 #include "../../Modules/Analytics/analytics.hpp"
+#undef private
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_cma_failure_injection.hpp"
 #include <atomic>
@@ -819,6 +821,32 @@ FT_TEST(test_analytics_recording_does_not_allocate_after_initialization)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         test_cma_failure_controller_destroy(controller));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_initialize_allocation_failure_leaves_destroyed_state)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    test_cma_failure_controller controller;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, session._initialised_state);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_destroy(controller));
     return (1);
 }
 
