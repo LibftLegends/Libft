@@ -19,12 +19,11 @@ int32_t card_game_resource_ledger::get_snapshot(
 {
     card_game_resource_pool *pools;
     card_game_resource_unit *units;
+    card_game_resource_pool *old_pools;
+    card_game_resource_unit *old_units;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_resource_ledger::release_snapshot(snapshot)
-        != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
     pools = ft_nullptr;
     units = ft_nullptr;
@@ -54,11 +53,17 @@ int32_t card_game_resource_ledger::get_snapshot(
             static_cast<ft_size_t>(this->_unit_count)
                 * sizeof(card_game_resource_unit));
     }
+    old_pools = snapshot->pools;
+    old_units = snapshot->units;
     snapshot->pool_count = this->_pool_count;
     snapshot->unit_count = this->_unit_count;
     snapshot->next_unit_id = this->_next_unit_id;
     snapshot->pools = pools;
     snapshot->units = units;
+    if (old_pools != ft_nullptr)
+        cma_free(old_pools);
+    if (old_units != ft_nullptr)
+        cma_free(old_units);
     return (FT_ERR_SUCCESS);
 }
 
@@ -66,46 +71,58 @@ int32_t card_game_resource_ledger::clone_snapshot(
     const card_game_resource_snapshot &source,
     card_game_resource_snapshot *destination) noexcept
 {
+    card_game_resource_pool *pools;
+    card_game_resource_unit *units;
+    card_game_resource_pool *old_pools;
+    card_game_resource_unit *old_units;
+
     if (destination == ft_nullptr
         || source.pool_count > FT_CARD_GAME_MAX_RESOURCE_POOLS
         || source.unit_count > FT_CARD_GAME_MAX_RESOURCE_UNITS
         || (source.pool_count != 0U && source.pools == ft_nullptr)
         || (source.unit_count != 0U && source.units == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_resource_ledger::release_snapshot(destination)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    destination->pool_count = source.pool_count;
-    destination->unit_count = source.unit_count;
-    destination->next_unit_id = source.next_unit_id;
+    if (destination == &source)
+        return (FT_ERR_SUCCESS);
+    pools = ft_nullptr;
+    units = ft_nullptr;
     if (source.pool_count != 0U)
     {
-        destination->pools = static_cast<card_game_resource_pool *>(cma_malloc(
+        pools = static_cast<card_game_resource_pool *>(cma_malloc(
             static_cast<ft_size_t>(source.pool_count)
                 * sizeof(card_game_resource_pool)));
-        if (destination->pools == ft_nullptr)
-        {
-            (void)card_game_resource_ledger::release_snapshot(destination);
+        if (pools == ft_nullptr)
             return (FT_ERR_NO_MEMORY);
-        }
-        ft_memcpy(destination->pools, source.pools,
+        ft_memcpy(pools, source.pools,
             static_cast<ft_size_t>(source.pool_count)
                 * sizeof(card_game_resource_pool));
     }
     if (source.unit_count != 0U)
     {
-        destination->units = static_cast<card_game_resource_unit *>(cma_malloc(
+        units = static_cast<card_game_resource_unit *>(cma_malloc(
             static_cast<ft_size_t>(source.unit_count)
                 * sizeof(card_game_resource_unit)));
-        if (destination->units == ft_nullptr)
+        if (units == ft_nullptr)
         {
-            (void)card_game_resource_ledger::release_snapshot(destination);
+            if (pools != ft_nullptr)
+                cma_free(pools);
             return (FT_ERR_NO_MEMORY);
         }
-        ft_memcpy(destination->units, source.units,
+        ft_memcpy(units, source.units,
             static_cast<ft_size_t>(source.unit_count)
                 * sizeof(card_game_resource_unit));
     }
+    old_pools = destination->pools;
+    old_units = destination->units;
+    destination->pool_count = source.pool_count;
+    destination->unit_count = source.unit_count;
+    destination->next_unit_id = source.next_unit_id;
+    destination->pools = pools;
+    destination->units = units;
+    if (old_pools != ft_nullptr)
+        cma_free(old_pools);
+    if (old_units != ft_nullptr)
+        cma_free(old_units);
     return (FT_ERR_SUCCESS);
 }
 

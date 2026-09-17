@@ -2,6 +2,7 @@
 #include "../../Modules/CardGame/card_game_resources.hpp"
 #include "../../Modules/CardGame/card_game.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include "test_cma_failure_injection.hpp"
 
 static ft_bool card_game_resource_test_creature_only(uint32_t action_id,
     uint32_t action_tags, void *user_data) noexcept
@@ -268,6 +269,92 @@ FT_TEST(test_card_game_resources_snapshot_rejects_next_unit_collision)
     FT_ASSERT_EQ(1U, pool.current_amount);
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         card_game_resource_ledger::release_snapshot(&snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_snapshot_failures_preserve_destination)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_snapshot snapshot;
+    card_game_resource_snapshot clone;
+    card_game_resource_pool pool;
+    test_cma_failure_controller controller;
+    card_game_resource_pool *snapshot_pools;
+    card_game_resource_unit *snapshot_units;
+    uint32_t pool_id;
+    uint32_t unit_id;
+    uint32_t snapshot_pool_count;
+    uint32_t snapshot_unit_count;
+    uint32_t snapshot_next_unit_id;
+    int32_t error_code;
+
+    ft_bzero(&snapshot, sizeof(snapshot));
+    ft_bzero(&clone, sizeof(clone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(1U, 1U, 10U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 1U, 3U, 0U, 0U,
+        FT_FALSE, &unit_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_snapshot(&snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_resource_ledger::clone_snapshot(snapshot, &clone));
+    snapshot_pools = snapshot.pools;
+    snapshot_units = snapshot.units;
+    snapshot_pool_count = snapshot.pool_count;
+    snapshot_unit_count = snapshot.unit_count;
+    snapshot_next_unit_id = snapshot.next_unit_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
+    error_code = ledger.get_snapshot(&snapshot);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error_code);
+    FT_ASSERT_EQ(snapshot_pools, snapshot.pools);
+    FT_ASSERT_EQ(snapshot_units, snapshot.units);
+    FT_ASSERT_EQ(snapshot_pool_count, snapshot.pool_count);
+    FT_ASSERT_EQ(snapshot_unit_count, snapshot.unit_count);
+    FT_ASSERT_EQ(snapshot_next_unit_id, snapshot.next_unit_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_after(controller,
+            TEST_CMA_FAILURE_ALLOCATE, 1U));
+    error_code = ledger.get_snapshot(&snapshot);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error_code);
+    FT_ASSERT_EQ(snapshot_pools, snapshot.pools);
+    FT_ASSERT_EQ(snapshot_units, snapshot.units);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
+    snapshot_pools = clone.pools;
+    snapshot_units = clone.units;
+    snapshot_pool_count = clone.pool_count;
+    snapshot_unit_count = clone.unit_count;
+    snapshot_next_unit_id = clone.next_unit_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
+    error_code = card_game_resource_ledger::clone_snapshot(snapshot, &clone);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error_code);
+    FT_ASSERT_EQ(snapshot_pools, clone.pools);
+    FT_ASSERT_EQ(snapshot_units, clone.units);
+    FT_ASSERT_EQ(snapshot_pool_count, clone.pool_count);
+    FT_ASSERT_EQ(snapshot_unit_count, clone.unit_count);
+    FT_ASSERT_EQ(snapshot_next_unit_id, clone.next_unit_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_resource_ledger::release_snapshot(&snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_resource_ledger::release_snapshot(&clone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 1U, &pool));
+    FT_ASSERT_EQ(3U, pool.current_amount);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
     return (1);
 }
