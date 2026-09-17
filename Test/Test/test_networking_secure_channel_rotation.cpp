@@ -39,20 +39,23 @@ static int32_t networking_test_old_packet_is_usable(
 
 FT_TEST(test_networking_secure_channel_combined_rotation_is_transactional)
 {
-    const networking_test_failure_point failure_points[6] = {
+    const networking_test_failure_point failure_points[9] = {
         NETWORKING_TEST_SECURE_DERIVE_SEND,
         NETWORKING_TEST_SECURE_DERIVE_RECEIVE,
         NETWORKING_TEST_SECURE_INIT_PREVIOUS,
         NETWORKING_TEST_SECURE_INIT_SEND,
         NETWORKING_TEST_SECURE_INIT_RECEIVE,
-        NETWORKING_TEST_SECURE_BACKEND_SWAP};
+        NETWORKING_TEST_SECURE_BACKEND_SWAP,
+        NETWORKING_TEST_SECURE_SWAP_SEND,
+        NETWORKING_TEST_SECURE_SWAP_RECEIVE,
+        NETWORKING_TEST_SECURE_SWAP_PREVIOUS};
     networking_secure_channel sender;
     networking_secure_channel receiver;
     uint32_t failure_index;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
     failure_index = 0U;
-    while (failure_index < 6U)
+    while (failure_index < 9U)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(sender));
         FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(receiver));
@@ -139,19 +142,41 @@ FT_TEST(test_networking_secure_channel_move_failure_preserves_source)
 {
     networking_secure_channel source;
     networking_secure_channel destination;
+    const networking_test_failure_point failure_points[7] = {
+        NETWORKING_TEST_SECURE_BACKEND_SWAP,
+        NETWORKING_TEST_SECURE_MOVE_INIT_SEND,
+        NETWORKING_TEST_SECURE_MOVE_INIT_RECEIVE,
+        NETWORKING_TEST_SECURE_MOVE_INIT_PREVIOUS,
+        NETWORKING_TEST_SECURE_MOVE_SWAP_SEND,
+        NETWORKING_TEST_SECURE_MOVE_SWAP_RECEIVE,
+        NETWORKING_TEST_SECURE_MOVE_SWAP_PREVIOUS};
+    uint32_t failure_index;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(source));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        networking_test_initialize_channel(destination));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
-        NETWORKING_TEST_SECURE_BACKEND_SWAP));
-    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, destination.move(source));
-    FT_ASSERT_EQ(0U, source.get_key_epoch());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        networking_test_old_packet_is_usable(source, destination));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+    failure_index = 0U;
+    while (failure_index < 7U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            networking_test_initialize_channel(source));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            networking_test_initialize_channel(destination));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.update_receive_key_epoch(1U));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+            failure_points[failure_index]));
+        FT_ASSERT_EQ(FT_ERR_NO_MEMORY, destination.move(source));
+        FT_ASSERT_EQ(0U, source.get_send_key_epoch());
+        FT_ASSERT_EQ(1U, source.get_receive_key_epoch());
+        FT_ASSERT_EQ(0U, destination.get_send_key_epoch());
+        FT_ASSERT_EQ(0U, destination.get_receive_key_epoch());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            networking_test_old_packet_is_usable(source, destination));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+        FT_ASSERT_EQ(0U, destination.get_send_key_epoch());
+        FT_ASSERT_EQ(1U, destination.get_receive_key_epoch());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+        failure_index += 1U;
+    }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     return (1);
 }

@@ -141,6 +141,9 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
     networking_crypto_backend next_send_backend;
     networking_crypto_backend next_receive_backend;
     networking_crypto_backend next_previous_receive_backend;
+    ft_bool send_backend_swapped;
+    ft_bool receive_backend_swapped;
+    ft_bool previous_receive_backend_swapped;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -148,6 +151,9 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
     if (next_epoch <= this->_send_key_epoch
         || next_epoch <= this->_receive_key_epoch)
         return (FT_ERR_INVALID_ARGUMENT);
+    send_backend_swapped = FT_FALSE;
+    receive_backend_swapped = FT_FALSE;
+    previous_receive_backend_swapped = FT_FALSE;
     result = FT_ERR_SUCCESS;
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_DERIVE_SEND)
         != FT_FALSE)
@@ -187,12 +193,52 @@ int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcep
         result = FT_ERR_NO_MEMORY;
     if (result == FT_ERR_SUCCESS)
     {
-        result = this->_send_backend.swap(next_send_backend);
+        if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_SWAP_SEND)
+            != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_send_backend.swap(next_send_backend);
         if (result == FT_ERR_SUCCESS)
-            result = this->_receive_backend.swap(next_receive_backend);
+            send_backend_swapped = FT_TRUE;
         if (result == FT_ERR_SUCCESS)
-            result = this->_previous_receive_backend.swap(
+        {
+            if (NETWORKING_TEST_SHOULD_FAIL(
+                    NETWORKING_TEST_SECURE_SWAP_RECEIVE) != FT_FALSE)
+                result = FT_ERR_NO_MEMORY;
+            else
+                result = this->_receive_backend.swap(next_receive_backend);
+            if (result == FT_ERR_SUCCESS)
+                receive_backend_swapped = FT_TRUE;
+        }
+        if (result == FT_ERR_SUCCESS)
+        {
+            if (NETWORKING_TEST_SHOULD_FAIL(
+                    NETWORKING_TEST_SECURE_SWAP_PREVIOUS) != FT_FALSE)
+                result = FT_ERR_NO_MEMORY;
+            else
+                result = this->_previous_receive_backend.swap(
+                    next_previous_receive_backend);
+            if (result == FT_ERR_SUCCESS)
+                previous_receive_backend_swapped = FT_TRUE;
+        }
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        int32_t rollback_result;
+
+        rollback_result = FT_ERR_SUCCESS;
+        if (previous_receive_backend_swapped != FT_FALSE)
+            rollback_result = this->_previous_receive_backend.swap(
                 next_previous_receive_backend);
+        if (rollback_result == FT_ERR_SUCCESS
+            && receive_backend_swapped != FT_FALSE)
+            rollback_result = this->_receive_backend.swap(
+                next_receive_backend);
+        if (rollback_result == FT_ERR_SUCCESS
+            && send_backend_swapped != FT_FALSE)
+            rollback_result = this->_send_backend.swap(next_send_backend);
+        if (rollback_result != FT_ERR_SUCCESS)
+            result = rollback_result;
     }
     if (result == FT_ERR_SUCCESS)
     {
@@ -265,7 +311,13 @@ int32_t networking_secure_channel::update_send_key_epoch(
             != FT_FALSE)
         result = FT_ERR_NO_MEMORY;
     if (result == FT_ERR_SUCCESS)
-        result = this->_send_backend.swap(next_backend);
+    {
+        if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_SWAP_SEND)
+            != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_send_backend.swap(next_backend);
+    }
     if (result == FT_ERR_SUCCESS)
     {
         ft_memcpy(this->_send_key, next_key, sizeof(this->_send_key));
@@ -290,12 +342,16 @@ int32_t networking_secure_channel::update_receive_key_epoch(
     uint8_t next_initialization_vector[12];
     networking_crypto_backend next_backend;
     networking_crypto_backend next_previous_backend;
+    ft_bool receive_backend_swapped;
+    ft_bool previous_backend_swapped;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (next_epoch <= this->_receive_key_epoch)
         return (FT_ERR_INVALID_ARGUMENT);
+    receive_backend_swapped = FT_FALSE;
+    previous_backend_swapped = FT_FALSE;
     result = FT_ERR_SUCCESS;
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_DERIVE_RECEIVE)
         != FT_FALSE)
@@ -322,10 +378,38 @@ int32_t networking_secure_channel::update_receive_key_epoch(
         result = FT_ERR_NO_MEMORY;
     if (result == FT_ERR_SUCCESS)
     {
-        result = this->_receive_backend.swap(next_backend);
+        if (NETWORKING_TEST_SHOULD_FAIL(
+                NETWORKING_TEST_SECURE_SWAP_RECEIVE) != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_receive_backend.swap(next_backend);
         if (result == FT_ERR_SUCCESS)
-            result = this->_previous_receive_backend.swap(
+            receive_backend_swapped = FT_TRUE;
+        if (result == FT_ERR_SUCCESS)
+        {
+            if (NETWORKING_TEST_SHOULD_FAIL(
+                    NETWORKING_TEST_SECURE_SWAP_PREVIOUS) != FT_FALSE)
+                result = FT_ERR_NO_MEMORY;
+            else
+                result = this->_previous_receive_backend.swap(
+                    next_previous_backend);
+            if (result == FT_ERR_SUCCESS)
+                previous_backend_swapped = FT_TRUE;
+        }
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        int32_t rollback_result;
+
+        rollback_result = FT_ERR_SUCCESS;
+        if (previous_backend_swapped != FT_FALSE)
+            rollback_result = this->_previous_receive_backend.swap(
                 next_previous_backend);
+        if (rollback_result == FT_ERR_SUCCESS
+            && receive_backend_swapped != FT_FALSE)
+            rollback_result = this->_receive_backend.swap(next_backend);
+        if (rollback_result != FT_ERR_SUCCESS)
+            result = rollback_result;
     }
     if (result == FT_ERR_SUCCESS)
     {
@@ -401,56 +485,137 @@ int32_t networking_secure_channel::move(networking_secure_channel &other) noexce
     networking_crypto_backend next_send_backend;
     networking_crypto_backend next_receive_backend;
     networking_crypto_backend next_previous_receive_backend;
+    ft_bool send_backend_swapped;
+    ft_bool receive_backend_swapped;
+    ft_bool previous_receive_backend_swapped;
     int32_t result;
 
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
-    result = next_send_backend.initialize(other._send_key,
-        sizeof(other._send_key));
+    send_backend_swapped = FT_FALSE;
+    receive_backend_swapped = FT_FALSE;
+    previous_receive_backend_swapped = FT_FALSE;
+    result = FT_ERR_SUCCESS;
+    if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_MOVE_INIT_SEND)
+        != FT_FALSE)
+        result = FT_ERR_NO_MEMORY;
+    if (result == FT_ERR_SUCCESS)
+        result = next_send_backend.initialize(other._send_key,
+            sizeof(other._send_key));
     if (result != FT_ERR_SUCCESS)
         return (result);
-    result = next_receive_backend.initialize(other._receive_key,
-        sizeof(other._receive_key));
+    if (NETWORKING_TEST_SHOULD_FAIL(
+            NETWORKING_TEST_SECURE_MOVE_INIT_RECEIVE) != FT_FALSE)
+        result = FT_ERR_NO_MEMORY;
+    if (result == FT_ERR_SUCCESS)
+        result = next_receive_backend.initialize(other._receive_key,
+            sizeof(other._receive_key));
     if (result != FT_ERR_SUCCESS)
     {
-        (void)next_send_backend.destroy();
+        int32_t cleanup_result;
+
+        cleanup_result = next_send_backend.destroy();
+        if (result == FT_ERR_SUCCESS && cleanup_result != FT_ERR_SUCCESS)
+            result = cleanup_result;
         return (result);
     }
     if (other._has_previous_receive_key != FT_FALSE)
     {
-        result = next_previous_receive_backend.initialize(
-            other._previous_receive_key, sizeof(other._previous_receive_key));
+        if (NETWORKING_TEST_SHOULD_FAIL(
+                NETWORKING_TEST_SECURE_MOVE_INIT_PREVIOUS) != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        if (result == FT_ERR_SUCCESS)
+            result = next_previous_receive_backend.initialize(
+                other._previous_receive_key,
+                sizeof(other._previous_receive_key));
         if (result != FT_ERR_SUCCESS)
         {
-            (void)next_send_backend.destroy();
-            (void)next_receive_backend.destroy();
+            int32_t cleanup_result;
+
+            cleanup_result = next_send_backend.destroy();
+            if (result == FT_ERR_SUCCESS
+                && cleanup_result != FT_ERR_SUCCESS)
+                result = cleanup_result;
+            cleanup_result = next_receive_backend.destroy();
+            if (result == FT_ERR_SUCCESS
+                && cleanup_result != FT_ERR_SUCCESS)
+                result = cleanup_result;
             return (result);
         }
     }
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SECURE_BACKEND_SWAP)
         != FT_FALSE)
     {
-        (void)next_send_backend.destroy();
-        (void)next_receive_backend.destroy();
-        (void)next_previous_receive_backend.destroy();
-        return (FT_ERR_NO_MEMORY);
+        int32_t cleanup_result;
+
+        result = FT_ERR_NO_MEMORY;
+        cleanup_result = next_send_backend.destroy();
+        if (result == FT_ERR_SUCCESS
+            && cleanup_result != FT_ERR_SUCCESS)
+            result = cleanup_result;
+        cleanup_result = next_receive_backend.destroy();
+        if (result == FT_ERR_SUCCESS
+            && cleanup_result != FT_ERR_SUCCESS)
+            result = cleanup_result;
+        cleanup_result = next_previous_receive_backend.destroy();
+        if (result == FT_ERR_SUCCESS
+            && cleanup_result != FT_ERR_SUCCESS)
+            result = cleanup_result;
+        return (result);
     }
-    (void)this->destroy();
-    result = this->_send_backend.swap(next_send_backend);
+    if (NETWORKING_TEST_SHOULD_FAIL(
+            NETWORKING_TEST_SECURE_MOVE_SWAP_SEND) != FT_FALSE)
+        result = FT_ERR_NO_MEMORY;
+    else
+        result = this->_send_backend.swap(next_send_backend);
     if (result == FT_ERR_SUCCESS)
-        result = this->_receive_backend.swap(next_receive_backend);
-    if (result == FT_ERR_SUCCESS && other._has_previous_receive_key
-        != FT_FALSE)
-        result = this->_previous_receive_backend.swap(
-            next_previous_receive_backend);
+        send_backend_swapped = FT_TRUE;
+    if (result == FT_ERR_SUCCESS)
+    {
+        if (NETWORKING_TEST_SHOULD_FAIL(
+                NETWORKING_TEST_SECURE_MOVE_SWAP_RECEIVE) != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_receive_backend.swap(next_receive_backend);
+        if (result == FT_ERR_SUCCESS)
+            receive_backend_swapped = FT_TRUE;
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        if (NETWORKING_TEST_SHOULD_FAIL(
+                NETWORKING_TEST_SECURE_MOVE_SWAP_PREVIOUS) != FT_FALSE)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_previous_receive_backend.swap(
+                next_previous_receive_backend);
+        if (result == FT_ERR_SUCCESS)
+            previous_receive_backend_swapped = FT_TRUE;
+    }
     if (result != FT_ERR_SUCCESS)
     {
-        (void)next_send_backend.destroy();
-        (void)next_receive_backend.destroy();
-        (void)next_previous_receive_backend.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        int32_t rollback_result;
+
+        rollback_result = FT_ERR_SUCCESS;
+        if (previous_receive_backend_swapped != FT_FALSE)
+            rollback_result = this->_previous_receive_backend.swap(
+                next_previous_receive_backend);
+        if (rollback_result == FT_ERR_SUCCESS
+            && receive_backend_swapped != FT_FALSE)
+            rollback_result = this->_receive_backend.swap(
+                next_receive_backend);
+        if (rollback_result == FT_ERR_SUCCESS
+            && send_backend_swapped != FT_FALSE)
+            rollback_result = this->_send_backend.swap(next_send_backend);
+        if (rollback_result != FT_ERR_SUCCESS)
+            result = rollback_result;
+        if (next_send_backend.destroy() != FT_ERR_SUCCESS)
+            result = FT_ERR_INTERNAL;
+        if (next_receive_backend.destroy() != FT_ERR_SUCCESS)
+            result = FT_ERR_INTERNAL;
+        if (next_previous_receive_backend.destroy() != FT_ERR_SUCCESS)
+            result = FT_ERR_INTERNAL;
         return (result);
     }
     ft_memcpy(this->_send_initialization_vector,
@@ -481,10 +646,15 @@ int32_t networking_secure_channel::move(networking_secure_channel &other) noexce
     this->_has_previous_received_packet = other._has_previous_received_packet;
     this->_has_previous_receive_key = other._has_previous_receive_key;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    (void)next_send_backend.destroy();
-    (void)next_receive_backend.destroy();
-    (void)next_previous_receive_backend.destroy();
-    (void)other.destroy();
+    if (next_send_backend.destroy() != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    if (next_receive_backend.destroy() != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    if (next_previous_receive_backend.destroy() != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     return (FT_ERR_SUCCESS);
 }
 

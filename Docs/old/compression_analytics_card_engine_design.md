@@ -1524,10 +1524,10 @@ fails.
 
 | Area | Current behavior | Required disposition |
 | --- | --- | --- |
-| Send key rotation | Derives the new material, destroys the live backend, then initializes the replacement | Fix transactionally before relying on rotation for recovery |
-| Combined key rotation | Destroys both live backends before initializing replacements; one backend can be new while public metadata is old | Fix as one all-or-nothing commit |
-| Receive key rotation | Publishes previous-key fields before the new current backend is known to be usable | Prepare both backend objects and all metadata privately |
-| Channel move | Copies metadata and moves backends sequentially; a later move failure leaves partial ownership | Make move prevalidated/infallible or commit through a complete temporary state |
+| Send key rotation | Derives and initializes a replacement backend before swapping it into the channel; metadata is committed only after the swap | Implemented; retain failure-injection coverage for preparation and swap admission |
+| Combined key rotation | Prepares both directional backends and the previous receive backend, then swaps all three with rollback on an injected/intermediate failure | Implemented; verify all swap stages under sanitizers |
+| Receive key rotation | Prepares current and previous backends privately, rolls back the current swap if the previous swap cannot commit, then publishes metadata | Implemented; retain previous-key expiry and replay-window coverage |
+| Channel move | Builds all source backends first, swaps them into the destination with reverse-order rollback, then commits metadata and destroys the source | Implemented; verify preparation, each swap stage, and destination-preservation failures |
 | RW-lock reader ownership | Fixed TLS array rejects the 65th distinct held lock with `FT_ERR_NO_MEMORY` | Document and replace with a distinct capacity result plus a spill strategy |
 | Cancelled writer tickets | Repeatedly scans and erases a buffer, shifting entries | Add contention benchmarks; replace with ordered/indexed cancellation if measurable |
 
