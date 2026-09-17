@@ -45,16 +45,16 @@ int32_t card_game_zone_store::get_snapshot(
     uint32_t entry_index;
     uint32_t offset;
     card_game_zone_entry *entries;
+    card_game_zone_store_snapshot candidate;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
+    ft_bzero(&candidate, sizeof(candidate));
     entries = ft_nullptr;
-    if (this->release_snapshot(snapshot) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    snapshot->definition_count = this->_definition_count;
-    ft_memcpy(snapshot->definitions, this->_definitions,
-        sizeof(snapshot->definitions));
+    candidate.definition_count = this->_definition_count;
+    ft_memcpy(candidate.definitions, this->_definitions,
+        sizeof(candidate.definitions));
     offset = 0U;
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
@@ -62,31 +62,28 @@ int32_t card_game_zone_store::get_snapshot(
         zone_index = 0U;
         while (zone_index < FT_CARD_GAME_MAX_ZONES)
         {
-            snapshot->offsets[player_id][zone_index] = offset;
-            snapshot->counts[player_id][zone_index] = 0U;
+            candidate.offsets[player_id][zone_index] = offset;
+            candidate.counts[player_id][zone_index] = 0U;
             if (zone_index < this->_definition_count)
             {
-                snapshot->counts[player_id][zone_index] =
+                candidate.counts[player_id][zone_index] =
                     this->_zones[player_id][zone_index].size();
-                offset += snapshot->counts[player_id][zone_index];
+                offset += candidate.counts[player_id][zone_index];
             }
             zone_index += 1U;
         }
         player_id += 1U;
     }
-    snapshot->entry_count = offset;
-    snapshot->entry_capacity = offset;
+    candidate.entry_count = offset;
+    candidate.entry_capacity = offset;
     if (offset != 0U)
     {
         entries = static_cast<card_game_zone_entry *>(cma_malloc(
             static_cast<ft_size_t>(offset) * sizeof(card_game_zone_entry)));
         if (entries == ft_nullptr)
-        {
-            this->release_snapshot(snapshot);
             return (FT_ERR_NO_MEMORY);
-        }
     }
-    snapshot->entries = entries;
+    candidate.entries = entries;
     entry_index = 0U;
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
@@ -97,12 +94,13 @@ int32_t card_game_zone_store::get_snapshot(
             uint32_t local_index;
 
             local_index = 0U;
-            while (local_index < snapshot->counts[player_id][zone_index])
+            while (local_index < candidate.counts[player_id][zone_index])
             {
                 if (this->_zones[player_id][zone_index].get_entry(local_index,
-                        &snapshot->entries[entry_index]) != FT_ERR_SUCCESS)
+                        &candidate.entries[entry_index]) != FT_ERR_SUCCESS)
                 {
-                    this->release_snapshot(snapshot);
+                    if (candidate.entries != ft_nullptr)
+                        cma_free(candidate.entries);
                     return (FT_ERR_INVALID_STATE);
                 }
                 entry_index += 1U;
@@ -112,6 +110,10 @@ int32_t card_game_zone_store::get_snapshot(
         }
         player_id += 1U;
     }
+    entries = snapshot->entries;
+    *snapshot = candidate;
+    if (entries != ft_nullptr)
+        cma_free(entries);
     return (FT_ERR_SUCCESS);
 }
 
@@ -119,12 +121,32 @@ int32_t card_game_zone_store::clone_snapshot(
     const card_game_zone_store_snapshot &source,
     card_game_zone_store_snapshot *destination) noexcept
 {
+    card_game_zone_entry *entries;
+    card_game_zone_entry *old_entries;
+
     if (destination == ft_nullptr || (source.entry_count != 0U
             && source.entries == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_zone_store::release_snapshot(destination)
-        != FT_ERR_SUCCESS)
+    if (source.definition_count > FT_CARD_GAME_MAX_ZONES
+        || source.entry_capacity < source.entry_count
+        || source.entry_count > FT_CARD_GAME_MAX_PLAYERS
+            * FT_CARD_GAME_MAX_ZONES * FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (destination == &source)
+        return (FT_ERR_SUCCESS);
+    entries = ft_nullptr;
+    if (source.entry_count != 0U)
+    {
+        entries = static_cast<card_game_zone_entry *>(cma_malloc(
+            static_cast<ft_size_t>(source.entry_count)
+                * sizeof(card_game_zone_entry)));
+        if (entries == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        ft_memcpy(entries, source.entries,
+            static_cast<ft_size_t>(source.entry_count)
+                * sizeof(card_game_zone_entry));
+    }
+    old_entries = destination->entries;
     destination->definition_count = source.definition_count;
     ft_memcpy(destination->definitions, source.definitions,
         sizeof(destination->definitions));
@@ -133,21 +155,10 @@ int32_t card_game_zone_store::clone_snapshot(
     ft_memcpy(destination->offsets, source.offsets,
         sizeof(destination->offsets));
     destination->entry_count = source.entry_count;
-    destination->entry_capacity = source.entry_count;
-    if (source.entry_count != 0U)
-    {
-        destination->entries = static_cast<card_game_zone_entry *>(cma_malloc(
-            static_cast<ft_size_t>(source.entry_count)
-                * sizeof(card_game_zone_entry)));
-        if (destination->entries == ft_nullptr)
-        {
-            card_game_zone_store::release_snapshot(destination);
-            return (FT_ERR_NO_MEMORY);
-        }
-        ft_memcpy(destination->entries, source.entries,
-            static_cast<ft_size_t>(source.entry_count)
-                * sizeof(card_game_zone_entry));
-    }
+    destination->entry_capacity = source.entry_capacity;
+    destination->entries = entries;
+    if (old_entries != ft_nullptr)
+        cma_free(old_entries);
     return (FT_ERR_SUCCESS);
 }
 

@@ -79,12 +79,10 @@ int32_t card_game_choice_ledger::get_snapshot(
     card_game_choice_snapshot *snapshot) const noexcept
 {
     card_game_choice *choices;
+    card_game_choice *old_choices;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_choice_ledger::release_snapshot(snapshot)
-        != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
     choices = ft_nullptr;
     if (this->_count != 0U)
@@ -96,9 +94,12 @@ int32_t card_game_choice_ledger::get_snapshot(
         ft_memcpy(choices, this->_choices,
             static_cast<ft_size_t>(this->_count) * sizeof(card_game_choice));
     }
+    old_choices = snapshot->choices;
     snapshot->count = this->_count;
     snapshot->next_id = this->_next_id;
     snapshot->choices = choices;
+    if (old_choices != ft_nullptr)
+        cma_free(old_choices);
     return (FT_ERR_SUCCESS);
 }
 
@@ -106,27 +107,31 @@ int32_t card_game_choice_ledger::clone_snapshot(
     const card_game_choice_snapshot &source,
     card_game_choice_snapshot *destination) noexcept
 {
+    card_game_choice *choices;
+    card_game_choice *old_choices;
+
     if (destination == ft_nullptr || source.count > FT_CARD_GAME_MAX_CHOICES
         || source.next_id == 0U
         || (source.count != 0U && source.choices == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_choice_ledger::release_snapshot(destination)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    destination->count = source.count;
-    destination->next_id = source.next_id;
+    if (destination == &source)
+        return (FT_ERR_SUCCESS);
+    choices = ft_nullptr;
     if (source.count != 0U)
     {
-        destination->choices = static_cast<card_game_choice *>(cma_malloc(
+        choices = static_cast<card_game_choice *>(cma_malloc(
             static_cast<ft_size_t>(source.count) * sizeof(card_game_choice)));
-        if (destination->choices == ft_nullptr)
-        {
-            (void)card_game_choice_ledger::release_snapshot(destination);
+        if (choices == ft_nullptr)
             return (FT_ERR_NO_MEMORY);
-        }
-        ft_memcpy(destination->choices, source.choices,
+        ft_memcpy(choices, source.choices,
             static_cast<ft_size_t>(source.count) * sizeof(card_game_choice));
     }
+    old_choices = destination->choices;
+    destination->count = source.count;
+    destination->next_id = source.next_id;
+    destination->choices = choices;
+    if (old_choices != ft_nullptr)
+        cma_free(old_choices);
     return (FT_ERR_SUCCESS);
 }
 

@@ -16,12 +16,10 @@ int32_t card_game_allowance_ledger::get_snapshot(
     card_game_allowance_snapshot *snapshot) const noexcept
 {
     card_game_action_allowance *allowances;
+    card_game_action_allowance *old_allowances;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_allowance_ledger::release_snapshot(snapshot)
-        != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
     allowances = ft_nullptr;
     if (this->_count != 0U)
@@ -35,9 +33,12 @@ int32_t card_game_allowance_ledger::get_snapshot(
             static_cast<ft_size_t>(this->_count)
                 * sizeof(card_game_action_allowance));
     }
+    old_allowances = snapshot->allowances;
     snapshot->count = this->_count;
     snapshot->next_id = this->_next_id;
     snapshot->allowances = allowances;
+    if (old_allowances != ft_nullptr)
+        cma_free(old_allowances);
     return (FT_ERR_SUCCESS);
 }
 
@@ -45,31 +46,34 @@ int32_t card_game_allowance_ledger::clone_snapshot(
     const card_game_allowance_snapshot &source,
     card_game_allowance_snapshot *destination) noexcept
 {
+    card_game_action_allowance *allowances;
+    card_game_action_allowance *old_allowances;
+
     if (destination == ft_nullptr
         || source.count > FT_CARD_GAME_MAX_ALLOWANCES
         || source.next_id == 0U
         || (source.count != 0U && source.allowances == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_allowance_ledger::release_snapshot(destination)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    destination->count = source.count;
-    destination->next_id = source.next_id;
+    if (destination == &source)
+        return (FT_ERR_SUCCESS);
+    allowances = ft_nullptr;
     if (source.count != 0U)
     {
-        destination->allowances =
-            static_cast<card_game_action_allowance *>(cma_malloc(
+        allowances = static_cast<card_game_action_allowance *>(cma_malloc(
                 static_cast<ft_size_t>(source.count)
                     * sizeof(card_game_action_allowance)));
-        if (destination->allowances == ft_nullptr)
-        {
-            (void)card_game_allowance_ledger::release_snapshot(destination);
+        if (allowances == ft_nullptr)
             return (FT_ERR_NO_MEMORY);
-        }
-        ft_memcpy(destination->allowances, source.allowances,
+        ft_memcpy(allowances, source.allowances,
             static_cast<ft_size_t>(source.count)
                 * sizeof(card_game_action_allowance));
     }
+    old_allowances = destination->allowances;
+    destination->count = source.count;
+    destination->next_id = source.next_id;
+    destination->allowances = allowances;
+    if (old_allowances != ft_nullptr)
+        cma_free(old_allowances);
     return (FT_ERR_SUCCESS);
 }
 
@@ -412,4 +416,3 @@ uint32_t card_game_allowance_ledger::size() const noexcept
 {
     return (this->_count);
 }
-

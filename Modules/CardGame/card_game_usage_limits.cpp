@@ -29,16 +29,11 @@ int32_t card_game_usage_limit_ledger::get_snapshot(
     card_game_usage_limit_snapshot *snapshot) const noexcept
 {
     card_game_usage_limit *limits;
+    card_game_usage_limit *old_limits;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_usage_limit_ledger::release_snapshot(snapshot)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    snapshot->count = this->_count;
-    snapshot->next_id = this->_next_id;
-    snapshot->capacity = FT_CARD_GAME_MAX_USAGE_LIMITS;
     limits = ft_nullptr;
     if (this->_count != 0U)
     {
@@ -46,15 +41,18 @@ int32_t card_game_usage_limit_ledger::get_snapshot(
             static_cast<ft_size_t>(this->_count)
                 * sizeof(card_game_usage_limit)));
         if (limits == ft_nullptr)
-        {
-            card_game_usage_limit_ledger::release_snapshot(snapshot);
             return (FT_ERR_NO_MEMORY);
-        }
         ft_memcpy(limits, this->_limits,
             static_cast<ft_size_t>(this->_count)
                 * sizeof(card_game_usage_limit));
     }
+    old_limits = snapshot->limits;
+    snapshot->count = this->_count;
+    snapshot->next_id = this->_next_id;
+    snapshot->capacity = FT_CARD_GAME_MAX_USAGE_LIMITS;
     snapshot->limits = limits;
+    if (old_limits != ft_nullptr)
+        cma_free(old_limits);
     return (FT_ERR_SUCCESS);
 }
 
@@ -62,30 +60,34 @@ int32_t card_game_usage_limit_ledger::clone_snapshot(
     const card_game_usage_limit_snapshot &source,
     card_game_usage_limit_snapshot *destination) noexcept
 {
+    card_game_usage_limit *limits;
+    card_game_usage_limit *old_limits;
+
     if (destination == ft_nullptr
         || source.count > FT_CARD_GAME_MAX_USAGE_LIMITS
         || (source.count != 0U && source.limits == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (card_game_usage_limit_ledger::release_snapshot(destination)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    destination->count = source.count;
-    destination->next_id = source.next_id;
-    destination->capacity = source.capacity;
+    if (destination == &source)
+        return (FT_ERR_SUCCESS);
+    limits = ft_nullptr;
     if (source.count != 0U)
     {
-        destination->limits = static_cast<card_game_usage_limit *>(cma_malloc(
+        limits = static_cast<card_game_usage_limit *>(cma_malloc(
             static_cast<ft_size_t>(source.count)
                 * sizeof(card_game_usage_limit)));
-        if (destination->limits == ft_nullptr)
-        {
-            card_game_usage_limit_ledger::release_snapshot(destination);
+        if (limits == ft_nullptr)
             return (FT_ERR_NO_MEMORY);
-        }
-        ft_memcpy(destination->limits, source.limits,
+        ft_memcpy(limits, source.limits,
             static_cast<ft_size_t>(source.count)
                 * sizeof(card_game_usage_limit));
     }
+    old_limits = destination->limits;
+    destination->count = source.count;
+    destination->next_id = source.next_id;
+    destination->capacity = source.capacity;
+    destination->limits = limits;
+    if (old_limits != ft_nullptr)
+        cma_free(old_limits);
     return (FT_ERR_SUCCESS);
 }
 
