@@ -212,6 +212,66 @@ FT_TEST(test_card_game_resources_rejected_add_is_transactional)
     return (1);
 }
 
+FT_TEST(test_card_game_resources_failed_payment_plan_preserves_output)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_requirement requirement;
+    card_game_payment_plan plan;
+    card_game_payment_plan original_plan;
+    uint32_t pool_id;
+    uint32_t unit_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(1U, 1U, 10U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 1U, 1U, 0U, 0U,
+        FT_FALSE, &unit_id));
+    plan.count = 9U;
+    plan.total_amount = 99U;
+    plan.units[0].unit_id = 700U;
+    plan.units[0].amount = 99U;
+    original_plan = plan;
+    requirement.resource_type_id = 1U;
+    requirement.amount = 2U;
+    requirement.required_tags = 0U;
+    requirement.forbidden_tags = 0U;
+    FT_ASSERT_EQ(FT_ERR_FULL, ledger.create_payment_plan(1U, requirement,
+        &plan));
+    FT_ASSERT_EQ(original_plan.count, plan.count);
+    FT_ASSERT_EQ(original_plan.total_amount, plan.total_amount);
+    FT_ASSERT_EQ(original_plan.units[0].unit_id, plan.units[0].unit_id);
+    FT_ASSERT_EQ(original_plan.units[0].amount, plan.units[0].amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    (void)unit_id;
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_snapshot_rejects_next_unit_collision)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_snapshot snapshot;
+    card_game_resource_pool pool;
+    card_game_resource_unit unit;
+    uint32_t pool_id;
+    uint32_t unit_id;
+
+    ft_bzero(&snapshot, sizeof(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(1U, 1U, 10U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 1U, 1U, 0U, 0U,
+        FT_FALSE, &unit_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_snapshot(&snapshot));
+    pool = snapshot.pools[0];
+    unit = snapshot.units[0];
+    snapshot.next_unit_id = unit.unit_id;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 1U, &pool));
+    FT_ASSERT_EQ(1U, pool.current_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_resource_ledger::release_snapshot(&snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_resources_snapshot_restores_units_and_pools)
 {
     card_game_resource_ledger ledger;

@@ -115,14 +115,15 @@ int32_t card_game_resource_ledger::apply_snapshot(
     card_game_resource_ledger replacement;
     uint32_t index;
     uint32_t compare_index;
+    uint32_t highest_unit_id;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot.pool_count > FT_CARD_GAME_MAX_RESOURCE_POOLS
         || snapshot.unit_count > FT_CARD_GAME_MAX_RESOURCE_UNITS
-        || snapshot.next_unit_id == 0U
         || (snapshot.pool_count != 0U && snapshot.pools == ft_nullptr)
         || (snapshot.unit_count != 0U && snapshot.units == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
+    highest_unit_id = 0U;
     index = 0U;
     while (index < snapshot.pool_count)
     {
@@ -156,6 +157,8 @@ int32_t card_game_resource_ledger::apply_snapshot(
             || snapshot.units[index].locked_amount > snapshot.units[index].amount
             || snapshot.units[index].temporary > FT_TRUE)
             return (FT_ERR_INVALID_ARGUMENT);
+        if (snapshot.units[index].unit_id > highest_unit_id)
+            highest_unit_id = snapshot.units[index].unit_id;
         matching_pool = FT_FALSE;
         compare_index = 0U;
         while (compare_index < snapshot.pool_count)
@@ -182,6 +185,12 @@ int32_t card_game_resource_ledger::apply_snapshot(
         }
         index += 1U;
     }
+    if ((snapshot.unit_count == 0U && snapshot.next_unit_id == 0U)
+        || (snapshot.next_unit_id != 0U
+            && snapshot.next_unit_id <= highest_unit_id)
+        || (snapshot.next_unit_id == 0U
+            && highest_unit_id != UINT32_MAX))
+        return (FT_ERR_INVALID_ARGUMENT);
     if (replacement.initialize() != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
     replacement._pool_count = snapshot.pool_count;
@@ -244,4 +253,3 @@ ft_bool card_game_resource_ledger::snapshots_equal(
         return (FT_FALSE);
     return (FT_TRUE);
 }
-

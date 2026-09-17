@@ -16,14 +16,15 @@ int32_t card_game_resource_ledger::create_payment_plan_excluding(
 {
     uint32_t unit_index;
     uint32_t remaining;
+    card_game_payment_plan candidate;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || plan == ft_nullptr || requirement.amount == 0U
         || reserved_count > FT_CARD_GAME_MAX_PAYMENT_UNITS
         || (reserved_count != 0U && reserved_units == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    plan->count = 0U;
-    plan->total_amount = 0U;
+    candidate.count = 0U;
+    candidate.total_amount = 0U;
     remaining = requirement.amount;
     unit_index = 0U;
     while (unit_index < this->_unit_count && remaining > 0U)
@@ -61,27 +62,29 @@ int32_t card_game_resource_ledger::create_payment_plan_excluding(
                 unit_index += 1U;
                 continue ;
             }
-            if (plan->count >= FT_CARD_GAME_MAX_PAYMENT_UNITS)
+            if (candidate.count >= FT_CARD_GAME_MAX_PAYMENT_UNITS)
                 return (FT_ERR_FULL);
-            plan->units[plan->count].unit_id = this->_units[unit_index].unit_id;
+            candidate.units[candidate.count].unit_id =
+                this->_units[unit_index].unit_id;
             if (available_amount >= remaining)
             {
-                plan->units[plan->count].amount = remaining;
-                plan->total_amount += remaining;
+                candidate.units[candidate.count].amount = remaining;
+                candidate.total_amount += remaining;
                 remaining = 0U;
             }
             else
             {
-                plan->units[plan->count].amount = available_amount;
-                plan->total_amount += available_amount;
+                candidate.units[candidate.count].amount = available_amount;
+                candidate.total_amount += available_amount;
                 remaining -= available_amount;
             }
-            plan->count += 1U;
+            candidate.count += 1U;
         }
         unit_index += 1U;
     }
     if (remaining != 0U)
         return (FT_ERR_FULL);
+    *plan = candidate;
     return (FT_ERR_SUCCESS);
 }
 
@@ -347,4 +350,3 @@ uint32_t card_game_resource_ledger::unit_count() const noexcept
 {
     return (this->_unit_count);
 }
-
