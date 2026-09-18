@@ -347,7 +347,7 @@ FT_TEST(test_networking_message_reassembly_failure_does_not_publish_partial_data
     return (1);
 }
 
-FT_TEST(test_networking_message_received_allocation_failure_drops_only_message)
+FT_TEST(test_networking_message_received_allocation_failure_retries_message)
 {
     networking_memory_io client_io;
     networking_memory_io server_io;
@@ -378,11 +378,16 @@ FT_TEST(test_networking_message_received_allocation_failure_drops_only_message)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
         NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_NEQ(FT_ERR_SUCCESS, server.poll());
     FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
         NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE));
     FT_ASSERT_EQ(FT_ERR_EMPTY, server.receive_message(received));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    client_io.advance(configuration.retransmission_timeout_milliseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.receive_message(received));
+    FT_ASSERT_EQ(19U, received.payload.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.destroy());
     return (1);
@@ -577,6 +582,66 @@ FT_TEST(test_networking_message_transport_authenticated_key_update_request)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server_connection.request_key_update(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    options.delivery = networking_message_delivery::RELIABLE_ORDERED;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.send_message(payload,
+        sizeof(payload) - 1U, options));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.receive_message(received));
+    FT_ASSERT_EQ(sizeof(payload) - 1U, received.payload.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_message_transport_key_update_failure_does_not_ack)
+{
+    networking_memory_io client_io;
+    networking_memory_io server_io;
+    networking_message_transport_config configuration;
+    networking_message_transport client;
+    networking_message_transport server;
+    networking_message_endpoint endpoint;
+    networking_message_connection client_connection;
+    networking_message_connection server_connection;
+    networking_message_event event;
+    networking_message_send_options options;
+    networking_received_message received;
+    const char payload[] = "after failed rotation";
+    int32_t poll_result;
+
+    client_io.connect(server_io);
+    server_io.connect(client_io);
+    networking_message_prepare_endpoint(endpoint);
+    configuration.enable_authenticated_handshake = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.initialize(configuration, client_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration, server_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.listen(endpoint));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.open_connection(endpoint,
+        client_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.receive_event(event));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.accept(event.connection_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.get_connection(event.connection_id,
+        server_connection));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_SECURE_INIT_RECEIVE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.request_key_update(1U));
+    poll_result = server.poll();
+    FT_ASSERT_NEQ(FT_ERR_SUCCESS, poll_result);
+    FT_ASSERT_EQ(1U, networking_test_failure_count(
+        NETWORKING_TEST_SECURE_INIT_RECEIVE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+
+    client_io.advance(configuration.retransmission_timeout_milliseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
     options.delivery = networking_message_delivery::RELIABLE_ORDERED;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.send_message(payload,

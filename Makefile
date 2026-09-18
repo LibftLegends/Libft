@@ -280,11 +280,11 @@ incremental-build-tests:
 agents-policy-scan:
 	@sh mk/check_agents_policy.sh
 
-test-coverage-manifest:
-	@sh mk/check_test_coverage_manifest.sh
-	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/crypto_test_hooks.tsv
-	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/networking_test_hooks.tsv
-	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/compression_stream_test_hooks.tsv
+test-coverage-manifest: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/test_failure_controller.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/crypto_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/networking_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/compression_stream_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
