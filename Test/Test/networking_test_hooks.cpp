@@ -48,6 +48,21 @@ namespace
         "secure_move_swap_receive",
         "secure_move_swap_previous"};
 
+    static void networking_test_failure_reset_points() noexcept
+    {
+        uint32_t index;
+
+        index = 0U;
+        while (index < NETWORKING_TEST_FAILURE_POINT_COUNT)
+        {
+            g_attempts[index].store(0U, std::memory_order_release);
+            g_failure_calls[index].store(0U, std::memory_order_release);
+            g_failures[index].store(0U, std::memory_order_release);
+            index += 1U;
+        }
+        return ;
+    }
+
     static ft_bool networking_test_failure_valid_point(
         networking_test_failure_point point) noexcept
     {
@@ -60,17 +75,8 @@ namespace
 
 int32_t networking_test_failure_initialize() noexcept
 {
-    uint32_t index;
-
     g_active.store(FT_FALSE, std::memory_order_release);
-    index = 0U;
-    while (index < NETWORKING_TEST_FAILURE_POINT_COUNT)
-    {
-        g_attempts[index].store(0U, std::memory_order_release);
-        g_failure_calls[index].store(0U, std::memory_order_release);
-        g_failures[index].store(0U, std::memory_order_release);
-        index += 1U;
-    }
+    networking_test_failure_reset_points();
     return (FT_ERR_SUCCESS);
 }
 
@@ -135,6 +141,14 @@ int32_t networking_test_failure_reset(
     g_attempts[point_index].store(0U, std::memory_order_release);
     g_failure_calls[point_index].store(0U, std::memory_order_release);
     g_failures[point_index].store(0U, std::memory_order_release);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t networking_test_failure_reset_all() noexcept
+{
+    if (g_active.load(std::memory_order_acquire) == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    networking_test_failure_reset_points();
     return (FT_ERR_SUCCESS);
 }
 

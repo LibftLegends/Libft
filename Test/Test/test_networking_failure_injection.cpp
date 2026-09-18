@@ -68,8 +68,19 @@ FT_TEST(test_networking_failure_injection_metadata_and_reset)
         NETWORKING_TEST_CONNECTION_ALLOCATE));
     FT_ASSERT_EQ(0U, networking_test_failure_count(
         NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_DATAGRAM_SEND));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_reset_all());
+    FT_ASSERT_EQ(0U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_DATAGRAM_SEND));
+    FT_ASSERT_EQ(0U, networking_test_failure_count(
+        NETWORKING_TEST_DATAGRAM_SEND));
+    FT_ASSERT(!networking_test_failure_should_fail(
+        NETWORKING_TEST_DATAGRAM_SEND));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
         networking_test_failure_reset(NETWORKING_TEST_FAILURE_POINT_COUNT));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED,
+        networking_test_failure_reset_all());
     return (1);
 }

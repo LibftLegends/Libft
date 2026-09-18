@@ -54,6 +54,7 @@ int32_t networking_test_failure_fail_after(
     networking_test_failure_point point, uint64_t successful_calls) noexcept;
 int32_t networking_test_failure_reset(
     networking_test_failure_point point) noexcept;
+int32_t networking_test_failure_reset_all() noexcept;
 const char *networking_test_failure_point_name(
     networking_test_failure_point point) noexcept;
 uint64_t networking_test_failure_attempt_count(
