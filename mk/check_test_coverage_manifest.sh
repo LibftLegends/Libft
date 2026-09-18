@@ -3,17 +3,11 @@
 set -eu
 
 manifest_path="${1:-docs/test_coverage/test_failure_controller.tsv}"
-header_path="Test/Test/test_failure_controller.hpp"
 
 if [ ! -f "$manifest_path" ]; then
     printf '%s\n' "coverage manifest is missing: $manifest_path" >&2
     exit 1
 fi
-if [ ! -f "$header_path" ]; then
-    printf '%s\n' "coverage declaration header is missing: $header_path" >&2
-    exit 1
-fi
-
 line_number=0
 entry_count=0
 while IFS='|' read -r kind symbol declaration_path test_path coverage; do
@@ -28,8 +22,8 @@ while IFS='|' read -r kind symbol declaration_path test_path coverage; do
         printf '%s\n' "malformed coverage manifest row: $line_number" >&2
         exit 1
     fi
-    if [ "$declaration_path" != "$header_path" ]; then
-        printf '%s\n' "unexpected declaration path at row $line_number: $declaration_path" >&2
+    if [ ! -f "$declaration_path" ]; then
+        printf '%s\n' "coverage declaration file is missing at row $line_number: $declaration_path" >&2
         exit 1
     fi
     if [ ! -f "$test_path" ]; then

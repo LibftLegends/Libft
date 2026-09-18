@@ -7,6 +7,7 @@ FT_TEST(test_networking_failure_injection_rejects_invalid_schedule)
     networking_test_failure_point invalid_point;
 
     invalid_point = NETWORKING_TEST_FAILURE_POINT_COUNT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
     FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
         networking_test_failure_fail_next(
             NETWORKING_TEST_CONNECTION_ALLOCATE));
