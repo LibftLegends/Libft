@@ -155,7 +155,7 @@ FT_TEST(test_file_validate_path_resolution_inside_root_rejects_symlink_escape)
         (void)rmdir(outside_path.c_str());
         return (1);
     }
-    write_result = static_cast<int64_t>(write(file_descriptor, "x", 1U));
+    write_result = write(file_descriptor, "x", 1U);
     (void)close(file_descriptor);
     FT_ASSERT_EQ(static_cast<int64_t>(1), write_result);
     link_created = FT_FALSE;
