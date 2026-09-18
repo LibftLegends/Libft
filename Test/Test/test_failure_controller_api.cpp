@@ -23,8 +23,17 @@ FT_TEST(test_failure_controller_metadata_and_reset)
         TEST_FAILURE_CARD_GAME_CALLBACK));
     FT_ASSERT_EQ(1U, test_failure_controller_failures(
         TEST_FAILURE_CARD_GAME_CALLBACK));
+    FT_ASSERT_EQ(FT_TRUE, test_failure_controller_last_failure_point_name()
+        != ft_nullptr);
+    FT_ASSERT_EQ(FT_TRUE, ft_strcmp(
+        "card_game_callback",
+        test_failure_controller_last_failure_point_name()) == 0);
+    FT_ASSERT_EQ(1U, test_failure_controller_last_failure_occurrence());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_reset(
         TEST_FAILURE_CARD_GAME_CALLBACK));
+    FT_ASSERT(test_failure_controller_last_failure_point_name()
+        == ft_nullptr);
+    FT_ASSERT_EQ(0U, test_failure_controller_last_failure_occurrence());
     FT_ASSERT_EQ(0U, test_failure_controller_attempts(
         TEST_FAILURE_CARD_GAME_CALLBACK));
     FT_ASSERT_EQ(0U, test_failure_controller_failures(

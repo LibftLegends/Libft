@@ -7,6 +7,8 @@ struct test_failure_controller_state
     std::atomic<uint64_t> attempts[TEST_FAILURE_POINT_COUNT];
     std::atomic<uint64_t> failure_targets[TEST_FAILURE_POINT_COUNT];
     std::atomic<uint64_t> failures[TEST_FAILURE_POINT_COUNT];
+    std::atomic<uint16_t> last_failure_point;
+    std::atomic<uint64_t> last_failure_occurrence;
 };
 
 static test_failure_controller_state g_test_failure_controller;
@@ -40,6 +42,10 @@ static void test_failure_controller_reset_points() noexcept
             std::memory_order_relaxed);
         index += 1U;
     }
+    g_test_failure_controller.last_failure_point.store(
+        TEST_FAILURE_POINT_COUNT, std::memory_order_relaxed);
+    g_test_failure_controller.last_failure_occurrence.store(0U,
+        std::memory_order_relaxed);
     return ;
 }
 
@@ -110,6 +116,14 @@ int32_t test_failure_controller_reset(test_failure_point point) noexcept
         std::memory_order_release);
     g_test_failure_controller.failures[point].store(0U,
         std::memory_order_release);
+    if (g_test_failure_controller.last_failure_point.load(
+            std::memory_order_acquire) == static_cast<uint16_t>(point))
+    {
+        g_test_failure_controller.last_failure_point.store(
+            TEST_FAILURE_POINT_COUNT, std::memory_order_release);
+        g_test_failure_controller.last_failure_occurrence.store(0U,
+            std::memory_order_release);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -128,6 +142,23 @@ const char *test_failure_controller_point_name(
     if (test_failure_controller_valid_point(point) == FT_FALSE)
         return (ft_nullptr);
     return (g_test_failure_point_names[point]);
+}
+
+const char *test_failure_controller_last_failure_point_name() noexcept
+{
+    uint16_t point;
+
+    point = g_test_failure_controller.last_failure_point.load(
+        std::memory_order_acquire);
+    if (point >= TEST_FAILURE_POINT_COUNT)
+        return (ft_nullptr);
+    return (g_test_failure_point_names[point]);
+}
+
+uint64_t test_failure_controller_last_failure_occurrence() noexcept
+{
+    return (g_test_failure_controller.last_failure_occurrence.load(
+        std::memory_order_acquire));
 }
 
 uint64_t test_failure_controller_attempts(test_failure_point point) noexcept
@@ -167,5 +198,9 @@ ft_bool test_failure_controller_should_fail(test_failure_point point) noexcept
         return (FT_FALSE);
     g_test_failure_controller.failures[point].fetch_add(1U,
         std::memory_order_acq_rel);
+    g_test_failure_controller.last_failure_point.store(
+        static_cast<uint16_t>(point), std::memory_order_release);
+    g_test_failure_controller.last_failure_occurrence.store(attempt_number,
+        std::memory_order_release);
     return (FT_TRUE);
 }
