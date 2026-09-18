@@ -125,14 +125,18 @@ int t_compress_stream_options::unlock_for_access() const
 
 int t_compress_stream_options::disable_thread_safety()
 {
+    int destroy_error;
     std::lock_guard<std::mutex> transition_lock(
         this->_thread_safety_transition_mutex);
 
     this->abort_if_not_initialised("disable_thread_safety");
+    this->_thread_safety_enabled.store(FT_FALSE, std::memory_order_release);
     if (this->_mutex == ft_nullptr)
         return (FT_ERR_SUCCESS);
-    this->_thread_safety_enabled.store(FT_FALSE, std::memory_order_release);
-    return (FT_ERR_SUCCESS);
+    destroy_error = this->_mutex->destroy();
+    delete this->_mutex;
+    this->_mutex = ft_nullptr;
+    return (destroy_error);
 }
 
 bool t_compress_stream_options::is_thread_safe() const

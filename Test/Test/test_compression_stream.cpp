@@ -69,6 +69,22 @@ FT_TEST(test_compress_stream_options_thread_safety_transitions_are_safe)
     return (1);
 }
 
+FT_TEST(test_compress_stream_options_disable_thread_safety_releases_mutex)
+{
+    t_compress_stream_options options;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.enable_thread_safety());
+    FT_ASSERT(options.get_mutex_for_validation() != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.disable_thread_safety());
+    FT_ASSERT_EQ(FT_FALSE, options.is_thread_safe());
+    FT_ASSERT_EQ(ft_nullptr, options.get_mutex_for_validation());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.enable_thread_safety());
+    FT_ASSERT(options.get_mutex_for_validation() != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, options.destroy());
+    return (1);
+}
+
 static int compression_stream_fail_deflate_init(z_stream *stream, int compression_level)
 {
     (void)stream;

@@ -320,6 +320,24 @@ FT_TEST(test_csv_split_line_preserves_consecutive_empty_fields)
     return (1);
 }
 
+FT_TEST(test_csv_split_line_preserves_trailing_empty_fields)
+{
+    ft_vector<ft_string> fields;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fields.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, csv_split_line("a,b,", fields));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), fields.size());
+    FT_ASSERT_EQ(FT_TRUE, fields[0] == "a");
+    FT_ASSERT_EQ(FT_TRUE, fields[1] == "b");
+    FT_ASSERT_EQ(FT_TRUE, fields[2] == "");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, csv_split_line("\"a\",", fields));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(2), fields.size());
+    FT_ASSERT_EQ(FT_TRUE, fields[0] == "a");
+    FT_ASSERT_EQ(FT_TRUE, fields[1] == "");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fields.destroy());
+    return (1);
+}
+
 FT_TEST(test_csv_rejects_structural_delimiters)
 {
     ft_csv_document document;
@@ -328,6 +346,8 @@ FT_TEST(test_csv_rejects_structural_delimiters)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize("a,b"));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, document.initialize("a\nb", '\n'));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, csv_split_line("a,b", fields, '"'));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, csv_split_line("a,b", fields, '\0'));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, csv_split_line("a,b", fields, '\r'));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, document.destroy());
     return (1);
 }
