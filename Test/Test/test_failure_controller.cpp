@@ -1,4 +1,5 @@
 #include "test_failure_controller.hpp"
+#include "../../Modules/Basic/class_nullptr.hpp"
 
 struct test_failure_controller_state
 {
@@ -9,6 +10,12 @@ struct test_failure_controller_state
 };
 
 static test_failure_controller_state g_test_failure_controller;
+
+static const char *const g_test_failure_point_names[
+    TEST_FAILURE_POINT_COUNT] = {
+    "card_game_callback",
+    "card_game_operation",
+    "scenario_step"};
 
 static ft_bool test_failure_controller_valid_point(
     test_failure_point point) noexcept
@@ -88,6 +95,30 @@ int32_t test_failure_controller_fail_after(test_failure_point point,
 int32_t test_failure_controller_fail_next(test_failure_point point) noexcept
 {
     return (test_failure_controller_fail_after(point, 0U));
+}
+
+int32_t test_failure_controller_reset(test_failure_point point) noexcept
+{
+    if (test_failure_controller_valid_point(point) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (g_test_failure_controller.active.load(std::memory_order_acquire)
+        == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    g_test_failure_controller.attempts[point].store(0U,
+        std::memory_order_release);
+    g_test_failure_controller.failure_targets[point].store(0U,
+        std::memory_order_release);
+    g_test_failure_controller.failures[point].store(0U,
+        std::memory_order_release);
+    return (FT_ERR_SUCCESS);
+}
+
+const char *test_failure_controller_point_name(
+    test_failure_point point) noexcept
+{
+    if (test_failure_controller_valid_point(point) == FT_FALSE)
+        return (ft_nullptr);
+    return (g_test_failure_point_names[point]);
 }
 
 uint64_t test_failure_controller_attempts(test_failure_point point) noexcept
