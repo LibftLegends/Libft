@@ -246,6 +246,7 @@ ft_bool card_game_allowance_ledger::matches(
             != FT_ERR_SUCCESS)
             return (FT_FALSE);
         if (this->_predicates[predicate_index].predicate(action_id, action_tags,
+            allowance.predicate_context_id,
             this->_predicates[predicate_index].user_data) == FT_FALSE)
             return (FT_FALSE);
     }

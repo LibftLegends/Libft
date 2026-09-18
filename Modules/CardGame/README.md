@@ -174,3 +174,10 @@ effect groups, hero powers, summon procedures, and arbitrary configured
 actions. Limits identify a stable key and subject independently and support
 action, chain, phase, turn, round, match, and custom windows with explicit
 attempt, activation, or resolution consumption policies.
+
+Allowance predicates are registered by a stable predicate ID and receive the
+allowance's stable predicate-context ID during evaluation. The context ID is
+part of snapshots, deltas, and state hashes; the callback registry itself is
+process-local and must be registered by the receiving process before a
+snapshot is applied. Function pointers and user-data pointers are never part
+of serialized match state.

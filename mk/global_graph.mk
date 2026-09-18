@@ -184,10 +184,10 @@ ifeq ($(strip $(LIBFT_GLOBAL_GRAPH_PREFIX)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_RELEASE_DEPENDENCY_FILES) \
             $(LIBFT_GLOBAL_DEBUG_DEPENDENCY_FILES)
     endif
-    ifneq ($(filter tests global-tests test-executable run-tests asan-tests run-asan-tests ubsan-tests run-ubsan-tests asan-ubsan-tests run-asan-ubsan-tests re-tests,$(MAKECMDGOALS)),)
+    ifneq ($(filter tests global-tests test-executable run-tests asan-tests run-asan-tests ubsan-tests run-ubsan-tests asan-ubsan-tests run-asan-ubsan-tests re-tests Test/libft_tests%,$(MAKECMDGOALS)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_TEST_DEPENDENCY_FILES)
     endif
-    ifneq ($(filter debug-tests run-debug-tests,$(MAKECMDGOALS)),)
+    ifneq ($(filter debug-tests run-debug-tests Test/libft_tests_debug%,$(MAKECMDGOALS)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_TEST_DEBUG_DEPENDENCY_FILES)
     endif
 endif

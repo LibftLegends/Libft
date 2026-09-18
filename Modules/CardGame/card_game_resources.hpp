@@ -164,7 +164,8 @@ class card_game_resource_ledger
 };
 
 typedef ft_bool (*card_game_allowance_predicate)(uint32_t action_id,
-    uint32_t action_tags, void *user_data) noexcept;
+    uint32_t action_tags, uint32_t predicate_context_id,
+    void *user_data) noexcept;
 
 static const uint32_t FT_CARD_GAME_MAX_ALLOWANCE_PREDICATES = 64U;
 

@@ -8,9 +8,11 @@
 #include "test_cma_failure_injection.hpp"
 
 static ft_bool card_game_snapshot_test_predicate(uint32_t action_id,
-    uint32_t action_tags, void *user_data) noexcept
+    uint32_t action_tags, uint32_t predicate_context_id,
+    void *user_data) noexcept
 {
     (void)action_id;
+    (void)predicate_context_id;
     (void)user_data;
     if ((action_tags & 1U) == 0U)
         return (FT_FALSE);

@@ -5,11 +5,25 @@
 #include "test_cma_failure_injection.hpp"
 
 static ft_bool card_game_resource_test_creature_only(uint32_t action_id,
-    uint32_t action_tags, void *user_data) noexcept
+    uint32_t action_tags, uint32_t predicate_context_id,
+    void *user_data) noexcept
 {
     (void)action_id;
+    (void)predicate_context_id;
     (void)user_data;
     if ((action_tags & 1U) == 0U)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static ft_bool card_game_resource_test_context(uint32_t action_id,
+    uint32_t action_tags, uint32_t predicate_context_id,
+    void *user_data) noexcept
+{
+    (void)action_id;
+    (void)action_tags;
+    (void)user_data;
+    if (predicate_context_id != 42U)
         return (FT_FALSE);
     return (FT_TRUE);
 }
@@ -105,6 +119,31 @@ FT_TEST(test_card_game_allowances_support_conditional_additional_summons)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.reset_epoch(5U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get(base_allowance, &allowance));
     FT_ASSERT_EQ(1U, allowance.remaining_uses);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_allowances_pass_predicate_context)
+{
+    card_game_allowance_ledger ledger;
+    uint32_t matching_allowance;
+    uint32_t non_matching_allowance;
+    uint32_t count;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_predicate(9U,
+        card_game_resource_test_context, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U, 0U, 0U,
+        9U, 42U, &matching_allowance));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U, 0U, 0U,
+        9U, 7U, &non_matching_allowance));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.count_eligible(1U, 1U, 0U, 0U,
+        &count));
+    FT_ASSERT_EQ(1U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.consume(matching_allowance, 1U, 1U,
+        0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, ledger.consume(non_matching_allowance,
+        1U, 1U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
     return (1);
 }
