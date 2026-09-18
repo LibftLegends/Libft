@@ -3,6 +3,7 @@
 #include "../../Modules/Errno/errno.hpp"
 
 #include <cstdint>
+#include <cstdio>
 
 int main()
 {
@@ -28,6 +29,12 @@ int main()
         ft_memcpy(scalar, result, sizeof(scalar));
         ft_memcpy(u_coordinate, old_scalar, sizeof(u_coordinate));
         iteration += 1U;
+        if (iteration % 100000U == 0U)
+        {
+            if (std::printf("crypto_x25519_million: %u/1000000\n",
+                    iteration) < 0)
+                return (1);
+        }
     }
     if (ft_memcmp(scalar, expected, sizeof(expected)) != 0)
         return (1);
