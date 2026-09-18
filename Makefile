@@ -41,18 +41,18 @@ LIBFT_GLOBAL_TEST_DEBUG_TARGET := $(TEST_DEBUG_TARGET)
 LIBFT_LEGACY_OBJECT_ROOTS := $(wildcard Modules/*/objs_* Test/objs_*)
 
 define LIBFT_GLOBAL_ARCHIVE_RULE
-$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/global_graph.mk
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
 	@$(MKDIR) $(dir $$@)
-	@$(RM) $$@.tmp
+	@$(RM) $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		libtool -static -o "$$@.tmp" $(2); \
+		libtool -static -o "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)" $(2); \
 	else \
-		{ printf 'CREATE %s\n' "$$@.tmp"; \
+		{ printf 'CREATE %s\n' "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)"; \
 		  for lib in $(2); do printf 'ADDLIB %s\n' "$$$$lib"; done; \
 		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
 	fi
-	@mv $$@.tmp $$@
+	@mv $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft "$(1)" || true; \
 	else \
@@ -72,8 +72,22 @@ ssh:
 	git remote set-url origin git@github.com:Adyem/Libft.git
 	git remote -v
 
-all:
+all: normal analytics
+
+normal:
 	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
+
+analytics:
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-all
+
+analytics-debug:
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-debug
 
 plan:
 	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
@@ -219,7 +233,7 @@ crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
 		Modules/Crypto/crypto.a Modules/Basic/Basic.a $(LINK_OPT_FLAGS)
 
 terrain-persistence-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && FT_TEST_NAME_FILTER="test_terrain_json_unsigned_boundaries_and_transaction,test_terrain_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+	@cd Test && FT_TEST_NAME_FILTER="test_voxel_json_unsigned_boundaries_and_transaction,test_voxel_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 crypto-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 	@cd Test && FT_TEST_NAME_FILTER="test_crypto_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
@@ -250,6 +264,8 @@ $(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,Full_Libft,$(LIBFT_GLOBAL_TARG
 
 archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS)
 	@sh mk/check_archive_no_test_symbols.sh $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
+	@sh mk/check_archive_no_analytics.sh "$(LIBFT_GLOBAL_TARGET)"
+	@sh mk/check_networking_crypto_boundary.sh
 	@sh mk/check_archive_rebuild.sh "$(LIBFT_GLOBAL_Basic_TARGET)" "$(LIBFT_GLOBAL_Basic_MANIFEST)" $(LIBFT_GLOBAL_Basic_RELEASE_OBJECTS)
 	+$(MAKE) --no-print-directory global-all
 	@sh mk/check_archive_noop.sh capture "$(LIBFT_ARCHIVE_NOOP_STATE)" $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
@@ -263,6 +279,12 @@ incremental-build-tests:
 
 agents-policy-scan:
 	@sh mk/check_agents_policy.sh
+
+test-coverage-manifest: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/test_failure_controller.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/crypto_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/networking_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/compression_stream_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
@@ -342,7 +364,8 @@ clean:
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a
 
 fclean:
 	@$(RMDIR) build/libft
@@ -351,9 +374,10 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a
 
-.PHONY: all plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
+.PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests agents-policy-scan test-coverage-manifest print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
           run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
           run-tsan-tests asan asan-tests ubsan ubsan-tests tsan tsan-tests \
           asan-ubsan asan-ubsan-tests

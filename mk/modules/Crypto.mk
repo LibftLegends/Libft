@@ -7,12 +7,15 @@ Crypto_SOURCES := crypto_primitives.cpp \
         crypto_aead.cpp \
         crypto_x25519.cpp \
         crypto_random.cpp \
-        crypto_session.cpp
+        crypto_session.cpp \
+        crypto_network_backend.cpp
 
 Crypto_HEADERS := crypto_primitives.hpp \
+        crypto_test_hooks.hpp \
         crypto_chacha20.hpp \
         crypto_poly1305.hpp \
         crypto_aead.hpp \
         crypto_x25519.hpp \
         crypto_random.hpp \
-        crypto_session.hpp
+        crypto_session.hpp \
+        crypto_network_backend.hpp

@@ -12,8 +12,12 @@ std::atomic<int> pt_recursive_mutex_lock_override_error_code(FT_ERR_SUCCESS);
 #include "pthread.hpp"
 #include "recursive_mutex.hpp"
 #include "pthread_lock_tracking.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 
-int pt_recursive_mutex::lock() const
+int pt_recursive_mutex::lock_uninstrumented() const
 {
     int ensure_error = this->ensure_native_mutex();
     int notify_error;
@@ -125,4 +129,27 @@ int pt_recursive_mutex::lock() const
     }
 
     return (FT_ERR_SUCCESS);
+}
+
+int pt_recursive_mutex::lock() const
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int analytics_error;
+    int result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RECURSIVE_MUTEX_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (this->lock_uninstrumented());
+    result = this->lock_uninstrumented();
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_recursive_mutex_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (this->lock_uninstrumented());
+#endif
 }

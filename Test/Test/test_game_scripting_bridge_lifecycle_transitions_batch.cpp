@@ -25,10 +25,10 @@ FT_TEST(test_game_script_bridge_move_copies_initialized_language_and_limit)
     game_script_bridge destination;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
-    source.set_language("python");
+    source.set_language("custom");
     source.set_max_operations(9);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
-    FT_ASSERT_STR_EQ("python", destination.get_language().c_str());
+    FT_ASSERT_STR_EQ("custom", destination.get_language().c_str());
     FT_ASSERT_EQ(9, destination.get_max_operations());
     return (1);
 }

@@ -21,7 +21,7 @@ The `Compression` module provides zlib-style buffer compression, stream compress
 
 - `t_compress_stream_options()` / `~t_compress_stream_options()` - Construct and destroy the options object.
 - `initialize()` / `destroy()` - Enter and leave the initialized lifecycle state.
-- `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` - Manage optional synchronization for option access.
+- `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` - Manage optional synchronization for option access. Transition operations serialize with active accessors; disabling waits for an active accessor and destroys the heap mutex before returning.
 - `reset()` - Restores default option values.
 - `set_input_buffer_size(...)` / `set_output_buffer_size(...)` - Configure stream chunk sizes.
 - `set_progress_callback(...)` / `set_cancel_callback(...)` / `set_callbacks(...)` - Configure progress and cancellation callbacks plus user data.

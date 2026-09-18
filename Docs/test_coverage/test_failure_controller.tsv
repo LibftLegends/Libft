@@ -1,0 +1,16 @@
+# kind|symbol|declaration|test|required coverage
+api|test_failure_controller_begin|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|begin,duplicate begin,clean state
+api|test_failure_controller_end|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|end,idempotent inactive state
+api|test_failure_controller_fail_next|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|next occurrence
+api|test_failure_controller_fail_after|Test/Test/test_failure_controller.hpp|Test/Test/test_card_game_simulation.cpp|delayed occurrence
+api|test_failure_controller_reset|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|reset one point,invalid point
+api|test_failure_controller_reset_all|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|reset all,inactive rejection
+api|test_failure_controller_point_name|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|valid names,invalid point
+api|test_failure_controller_last_failure_point_name|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|last point,cleared reset,end
+api|test_failure_controller_last_failure_occurrence|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|occurrence,cleared reset,end
+api|test_failure_controller_attempts|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|attempt accounting
+api|test_failure_controller_failures|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|failure accounting
+api|test_failure_controller_should_fail|Test/Test/test_failure_controller.hpp|Test/Test/test_card_game_simulation.cpp|armed failure,unarmed call
+point|TEST_FAILURE_CARD_GAME_CALLBACK|Test/Test/test_failure_controller.hpp|Test/Test/test_failure_controller_api.cpp|fail-next callback point
+point|TEST_FAILURE_CARD_GAME_OPERATION|Test/Test/test_failure_controller.hpp|Test/Test/test_card_game_simulation.cpp|delayed operation point
+point|TEST_FAILURE_SCENARIO_STEP|Test/Test/test_failure_controller.hpp|Test/Test/test_card_game_simulation.cpp|point enumeration and scenario use

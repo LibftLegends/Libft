@@ -345,7 +345,7 @@ uint32_t sphere::lock_pair(const sphere &other, const sphere *&lower,
     upper_error = FT_ERR_MUTEX_ALREADY_LOCKED;
     while (true)
     {
-        lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
+        lower_error = pt_recursive_mutex_try_lock_if_not_null(lower->_mutex);
         if (lower_error != FT_ERR_SUCCESS)
         {
             if (lower_error != FT_ERR_MUTEX_ALREADY_LOCKED)
@@ -353,7 +353,7 @@ uint32_t sphere::lock_pair(const sphere &other, const sphere *&lower,
             (void)pt_thread_yield();
             continue ;
         }
-        upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
+        upper_error = pt_recursive_mutex_try_lock_if_not_null(upper->_mutex);
         if (upper_error == FT_ERR_SUCCESS)
             return (FT_ERR_SUCCESS);
         (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);

@@ -224,6 +224,15 @@ Every module that allocates through this layer inherits the same mechanisms for 
   Observability/ keeps samples and events in sync with the rest of the tree so instrumentation never feels like an afterthought.
   It exists to let service authors wire up telemetry without per-module experimentation, ensuring consistent visibility across deployments.
 
+- `Analytics/`: Provides low-overhead runtime timing for frames and named scopes, including invocation counts, rolling samples, percentiles, and export callbacks.
+  It is intended for game render and world-generation profiling, with collection controlled by the build and runtime session configuration.
+
+- `CardGame/`: Provides a configuration-driven card-game state engine.
+- `Scripting/`: Provides a deterministic, sandboxed custom scripting runtime
+  with typed native callbacks. It is the replacement target for the legacy Lua
+  integration and does not expose raw host pointers.
+  Card definitions, board limits, turn limits, and effect function pointers are supplied by the game, so the library dispatches mechanics without hard-coding a particular ruleset.
+
 - `PThread/`: Wraps the low-level threading and synchronization primitives such as mutexes, condition variables, rwlocks, and native thread helpers.
   Every helper normalizes platform differences and integrates with the error/runtime conventions so concurrent modules share consistent safety practices.
   PThread/ exists to hide the raw pthread or platform APIs while letting callers still express locking intent directly.

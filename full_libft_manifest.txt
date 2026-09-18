@@ -7,6 +7,8 @@ Modules/API/api_request_signing.hpp
 Modules/API/promise.hpp
 Modules/API/tls_client.hpp
 Modules/Advanced/advanced.hpp
+Modules/Analytics/analytics.hpp
+Modules/Analytics/analytics_instrumentation.hpp
 Modules/Basic/basic.hpp
 Modules/Basic/class_nullptr.hpp
 Modules/Basic/config.hpp
@@ -31,6 +33,7 @@ Modules/CPP_class/class_string.hpp
 Modules/CPP_class/class_stringbuf.hpp
 Modules/CPP_class/thread_pool.hpp
 Modules/CSV/csv.hpp
+Modules/CardGame/card_game.hpp
 Modules/Compatebility/compatebility_cma_platform.hpp
 Modules/Compatebility/compatebility_cross_process.hpp
 Modules/Compatebility/compatebility_dumb_controls_internal.hpp
@@ -149,6 +152,11 @@ Modules/Networking/http_client.hpp
 Modules/Networking/http_server.hpp
 Modules/Networking/networking.hpp
 Modules/Networking/networking_quic_experimental.hpp
+Modules/Networking/networking_replication_apply_budget.hpp
+Modules/Networking/networking_replication_client.hpp
+Modules/Networking/networking_replication_protocol.hpp
+Modules/Networking/networking_replication_retention_window.hpp
+Modules/Networking/networking_replication_revision_tracker.hpp
 Modules/Networking/networking_tls_aead.hpp
 Modules/Networking/openssl_support.hpp
 Modules/Networking/socket_class.hpp
@@ -182,6 +190,7 @@ Modules/ReadLine/readline.hpp
 Modules/ReadLine/readline_internal.hpp
 Modules/SCMA/SCMA.hpp
 Modules/SCMA/scma_internal.hpp
+Modules/Scripting/scripting.hpp
 Modules/Storage/kv_store.hpp
 Modules/System_utils/system_utils.hpp
 Modules/System_utils/test_system_utils_runner.hpp
@@ -230,11 +239,13 @@ Modules/Threading/unique_lock.hpp
 Modules/Time/time.hpp
 Modules/Time/time_fps.hpp
 Modules/Time/time_timer.hpp
-Modules/Voxel/terrain_api.hpp
-Modules/Voxel/terrain_config.hpp
-Modules/Voxel/terrain_generation.hpp
-Modules/Voxel/terrain_types.hpp
+Modules/Voxel/voxel_api.hpp
+Modules/Voxel/voxel_config.hpp
+Modules/Voxel/voxel_generation.hpp
+Modules/Voxel/voxel_lighting.hpp
 Modules/Voxel/voxel_mesh.hpp
+Modules/Voxel/voxel_shadow.hpp
+Modules/Voxel/voxel_types.hpp
 Modules/XML/xml.hpp
 Modules/XML/xml_document.hpp
 Modules/XML/xml_dom_bridge.hpp

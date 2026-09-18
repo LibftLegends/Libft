@@ -6,8 +6,12 @@
 #include "../Errno/errno.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 
-int pt_mutex::unlock() const
+int pt_mutex::unlock_uninstrumented() const
 {
     int ensure_error = this->ensure_native_mutex();
     pt_thread_id_type thread_id;
@@ -42,4 +46,27 @@ int pt_mutex::unlock() const
     (void)pt_lock_tracking::notify_released(thread_id,
             static_cast<const void *>(this));
     return (FT_ERR_SUCCESS);
+}
+
+int pt_mutex::unlock() const
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int analytics_error;
+    int result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_MUTEX_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (this->unlock_uninstrumented());
+    result = this->unlock_uninstrumented();
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_mutex_unlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (this->unlock_uninstrumented());
+#endif
 }

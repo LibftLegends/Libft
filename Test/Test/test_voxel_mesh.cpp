@@ -5,7 +5,7 @@
 
 #include "../../Modules/Voxel/voxel_mesh.hpp"
 #include "../../Modules/Geometry/geometry_3d.hpp"
-#include "../../Modules/Voxel/terrain_api.hpp"
+#include "../../Modules/Voxel/voxel_api.hpp"
 
 static int32_t initialize_unit_cube_frustum_or_fail(geometry_frustum &frustum)
 {
@@ -37,12 +37,54 @@ FT_TEST(test_chunk_mesh_generate_single_block_visible_faces)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
     FT_ASSERT_EQ(36, mesh.indices.size());
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_STONE_BLOCK, mesh.vertices[0].block_id);
+    FT_ASSERT_EQ(FT_TRUE, mesh.has_occupied_bounds);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK, mesh.vertices[0].block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_prepartitions_solid_and_water_indices)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    ft_size_t index;
+    uint32_t vertex_index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(4, 1, 1,
+        VOXEL_GENERATOR_WATER_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    FT_ASSERT_NEQ(0, mesh.solid_indices.size());
+    FT_ASSERT_NEQ(0, mesh.water_indices.size());
+    FT_ASSERT_EQ(mesh.indices.size(), mesh.solid_indices.size()
+        + mesh.water_indices.size());
+    index = 0U;
+    while (index < mesh.solid_indices.size())
+    {
+        vertex_index = mesh.solid_indices[index];
+        FT_ASSERT(vertex_index < mesh.vertices.size());
+        FT_ASSERT_NEQ(VOXEL_GENERATOR_WATER_BLOCK,
+            mesh.vertices[vertex_index].block_id);
+        index += 1U;
+    }
+    index = 0U;
+    while (index < mesh.water_indices.size())
+    {
+        vertex_index = mesh.water_indices[index];
+        FT_ASSERT(vertex_index < mesh.vertices.size());
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK,
+            mesh.vertices[vertex_index].block_id);
+        index += 1U;
+    }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
@@ -73,9 +115,9 @@ FT_TEST(test_chunk_mesh_generate_hides_shared_faces)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(2, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
@@ -95,6 +137,63 @@ FT_TEST(test_chunk_mesh_generate_empty_chunk_has_no_geometry)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(0, mesh.vertices.size());
     FT_ASSERT_EQ(0, mesh.indices.size());
+    FT_ASSERT_EQ(FT_FALSE, mesh.has_occupied_bounds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_height_matches_generated_chunk_height)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    voxel_generation_config config;
+    uint32_t block_id;
+    int32_t highest_solid_y;
+    int32_t local_x;
+    int32_t local_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+        "mesh-height-invariant", config));
+    highest_solid_y = -1;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            int32_t local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
+
+            while (local_y >= 0)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(local_x,
+                    local_y, local_z, &block_id));
+                if (block_id != GAME_VOXEL_AIR_BLOCK)
+                {
+                    if (local_y > highest_solid_y)
+                        highest_solid_y = local_y;
+                    break;
+                }
+                local_y -= 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_NEQ(-1, highest_solid_y);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    FT_ASSERT_EQ(FT_TRUE, mesh.has_occupied_bounds);
+    FT_ASSERT_EQ(highest_solid_y + 1, mesh.occupied_bounds.maximum_y);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
@@ -107,11 +206,12 @@ FT_TEST(test_chunk_mesh_generate_boundary_block_visible_faces)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
     FT_ASSERT_EQ(36, mesh.indices.size());
+    FT_ASSERT_EQ(FT_TRUE, mesh.has_occupied_bounds);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
@@ -126,7 +226,7 @@ FT_TEST(test_chunk_mesh_intersects_frustum_uses_occupied_bounds)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, initialize_unit_cube_frustum_or_fail(frustum));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(15, 0, 0,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(FT_TRUE, mesh.has_occupied_bounds);
@@ -151,9 +251,9 @@ FT_TEST(test_chunk_mesh_generate_hides_vertical_shared_faces)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 2, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
@@ -178,7 +278,7 @@ FT_TEST(test_chunk_mesh_generate_merges_same_block_floor_faces)
         while (local_x < 4)
         {
             FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(local_x, 0,
-                local_z, TERRAIN_GENERATOR_STONE_BLOCK));
+                local_z, VOXEL_GENERATOR_STONE_BLOCK));
             local_x += 1;
         }
         local_z += 1;
@@ -199,9 +299,9 @@ FT_TEST(test_chunk_mesh_generate_keeps_block_type_boundaries)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 0, 0,
-        TERRAIN_GENERATOR_DIRT_BLOCK));
+        VOXEL_GENERATOR_DIRT_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(40, mesh.vertices.size());
@@ -218,7 +318,7 @@ FT_TEST(test_chunk_mesh_clear_removes_generated_geometry)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
@@ -239,7 +339,7 @@ FT_TEST(test_chunk_mesh_generate_replaces_previous_mesh)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, empty_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
@@ -272,18 +372,292 @@ FT_TEST(test_chunk_mesh_generate_sets_chunk_bounds)
     return (1);
 }
 
-FT_TEST(test_chunk_mesh_generate_terrain_chunk_has_geometry)
+FT_TEST(test_chunk_mesh_generate_voxel_chunk_has_geometry)
 {
     game_voxel_chunk chunk;
     chunk_mesh mesh;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk,
         "terrain-test-seed"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_NEQ(0, mesh.vertices.size());
     FT_ASSERT_NEQ(0, mesh.indices.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_bounds_validate_and_set_full)
+{
+    chunk_mesh_bounds bounds;
+
+    chunk_mesh_bounds_set_full(bounds);
+    FT_ASSERT_EQ(FT_TRUE, chunk_mesh_bounds_is_valid(bounds));
+    FT_ASSERT_EQ(0, bounds.minimum_x);
+    FT_ASSERT_EQ(GAME_VOXEL_CHUNK_WIDTH, bounds.maximum_x);
+    FT_ASSERT_EQ(GAME_VOXEL_CHUNK_HEIGHT, bounds.maximum_y);
+    FT_ASSERT_EQ(GAME_VOXEL_CHUNK_DEPTH, bounds.maximum_z);
+    bounds.minimum_x = -1;
+    FT_ASSERT_EQ(FT_FALSE, chunk_mesh_bounds_is_valid(bounds));
+    chunk_mesh_bounds_set_full(bounds);
+    bounds.maximum_y = bounds.minimum_y;
+    FT_ASSERT_EQ(FT_FALSE, chunk_mesh_bounds_is_valid(bounds));
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_generate_in_bounds_excludes_other_sections)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh_bounds bounds;
+    ft_size_t vertex_index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(12, 40, 12,
+        VOXEL_GENERATOR_DIRT_BLOCK));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 4;
+    bounds.maximum_y = 16;
+    bounds.maximum_z = 4;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        mesh, chunk, bounds));
+    FT_ASSERT_EQ(24, mesh.vertices.size());
+    FT_ASSERT_EQ(36, mesh.indices.size());
+    vertex_index = 0U;
+    while (vertex_index < mesh.vertices.size())
+    {
+        FT_ASSERT(mesh.vertices[vertex_index].coordinate_x <= 4U);
+        FT_ASSERT(mesh.vertices[vertex_index].coordinate_y <= 16U);
+        FT_ASSERT(mesh.vertices[vertex_index].coordinate_z <= 4U);
+        FT_ASSERT(mesh.vertices[vertex_index].block_id
+            == VOXEL_GENERATOR_STONE_BLOCK);
+        vertex_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_generate_in_bounds_is_stable_when_other_region_changes)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh_before;
+    chunk_mesh mesh_after;
+    chunk_mesh_bounds bounds;
+    ft_size_t vertex_index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh_before));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh_after));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 4;
+    bounds.maximum_y = 16;
+    bounds.maximum_z = 4;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        mesh_before, chunk, bounds));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(12, 40, 12,
+        VOXEL_GENERATOR_DIRT_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        mesh_after, chunk, bounds));
+    FT_ASSERT_EQ(mesh_before.vertices.size(), mesh_after.vertices.size());
+    FT_ASSERT_EQ(mesh_before.indices.size(), mesh_after.indices.size());
+    vertex_index = 0U;
+    while (vertex_index < mesh_before.vertices.size())
+    {
+        FT_ASSERT_EQ(mesh_before.vertices[vertex_index].coordinate_x,
+            mesh_after.vertices[vertex_index].coordinate_x);
+        FT_ASSERT_EQ(mesh_before.vertices[vertex_index].coordinate_y,
+            mesh_after.vertices[vertex_index].coordinate_y);
+        FT_ASSERT_EQ(mesh_before.vertices[vertex_index].coordinate_z,
+            mesh_after.vertices[vertex_index].coordinate_z);
+        FT_ASSERT_EQ(mesh_before.vertices[vertex_index].block_id,
+            mesh_after.vertices[vertex_index].block_id);
+        vertex_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh_after));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh_before));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_replace_in_bounds_preserves_unaffected_geometry)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh replacement;
+    chunk_mesh_bounds bounds;
+    ft_size_t vertex_index;
+    ft_size_t stone_vertices;
+    ft_size_t dirt_vertices;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(12, 40, 12,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_DIRT_BLOCK));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 3;
+    bounds.maximum_y = 3;
+    bounds.maximum_z = 3;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        replacement, chunk, bounds));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_replace_in_bounds(mesh,
+        replacement, bounds));
+    FT_ASSERT_EQ(48, mesh.vertices.size());
+    FT_ASSERT_EQ(72, mesh.indices.size());
+    FT_ASSERT_EQ(mesh.indices.size(), mesh.solid_indices.size());
+    stone_vertices = 0U;
+    dirt_vertices = 0U;
+    vertex_index = 0U;
+    while (vertex_index < mesh.vertices.size())
+    {
+        if (mesh.vertices[vertex_index].block_id
+            == VOXEL_GENERATOR_STONE_BLOCK)
+            stone_vertices += 1U;
+        if (mesh.vertices[vertex_index].block_id == VOXEL_GENERATOR_DIRT_BLOCK)
+            dirt_vertices += 1U;
+        vertex_index += 1U;
+    }
+    FT_ASSERT_EQ(24, stone_vertices);
+    FT_ASSERT_EQ(24, dirt_vertices);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_replace_in_bounds_rejects_unexpanded_greedy_geometry)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh replacement;
+    chunk_mesh_bounds bounds;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 0, 0,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 1;
+    bounds.maximum_y = 1;
+    bounds.maximum_z = 1;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        replacement, chunk, bounds));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, chunk_mesh_replace_in_bounds(mesh,
+        replacement, bounds));
+    FT_ASSERT_EQ(24, mesh.vertices.size());
+    FT_ASSERT_EQ(36, mesh.indices.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_replace_in_bounds_rebuilds_water_partition)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh replacement;
+    chunk_mesh_bounds bounds;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(12, 40, 12,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_WATER_BLOCK));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 3;
+    bounds.maximum_y = 3;
+    bounds.maximum_z = 3;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk_in_bounds(
+        replacement, chunk, bounds));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_replace_in_bounds(mesh,
+        replacement, bounds));
+    FT_ASSERT_EQ(42, mesh.indices.size());
+    FT_ASSERT_EQ(36, mesh.solid_indices.size());
+    FT_ASSERT_EQ(6, mesh.water_indices.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_chunk_mesh_replace_in_bounds_rejects_outside_replacement_transactionally)
+{
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh replacement;
+    chunk_mesh_bounds bounds;
+    ft_size_t vertex_index;
+    ft_size_t stone_vertices;
+    ft_size_t dirt_vertices;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(12, 40, 12,
+        VOXEL_GENERATOR_DIRT_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(replacement));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(replacement,
+        chunk));
+    bounds.minimum_x = 0;
+    bounds.minimum_y = 0;
+    bounds.minimum_z = 0;
+    bounds.maximum_x = 3;
+    bounds.maximum_y = 3;
+    bounds.maximum_z = 3;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, chunk_mesh_replace_in_bounds(mesh,
+        replacement, bounds));
+    FT_ASSERT_EQ(48, mesh.vertices.size());
+    FT_ASSERT_EQ(72, mesh.indices.size());
+    stone_vertices = 0U;
+    dirt_vertices = 0U;
+    vertex_index = 0U;
+    while (vertex_index < mesh.vertices.size())
+    {
+        if (mesh.vertices[vertex_index].block_id
+            == VOXEL_GENERATOR_STONE_BLOCK)
+            stone_vertices += 1U;
+        if (mesh.vertices[vertex_index].block_id == VOXEL_GENERATOR_DIRT_BLOCK)
+            dirt_vertices += 1U;
+        vertex_index += 1U;
+    }
+    FT_ASSERT_EQ(24, stone_vertices);
+    FT_ASSERT_EQ(24, dirt_vertices);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(replacement));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);

@@ -52,6 +52,7 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
 # include <unistd.h>
 # include <fcntl.h>
 # include <cerrno>
+# include <atomic>
 
 void cmp_force_rng_open_failure(int32_t error_code);
 void cmp_force_rng_read_failure(int32_t error_code);
@@ -59,47 +60,47 @@ void cmp_force_rng_read_eof(void);
 void cmp_force_rng_close_failure(int32_t error_code);
 void cmp_clear_force_rng_failures(void);
 
-static int32_t g_force_rng_open_errno = 0;
-static int32_t g_force_rng_read_errno = 0;
-static int32_t g_force_rng_close_errno = 0;
-static int32_t g_force_rng_read_zero = 0;
+static std::atomic<int32_t> g_force_rng_open_errno(0);
+static std::atomic<int32_t> g_force_rng_read_errno(0);
+static std::atomic<int32_t> g_force_rng_close_errno(0);
+static std::atomic<int32_t> g_force_rng_read_zero(0);
 
 void cmp_force_rng_open_failure(int32_t error_code)
 {
-    g_force_rng_open_errno = error_code;
+    g_force_rng_open_errno.store(error_code);
     return ;
 }
 
 void cmp_force_rng_read_failure(int32_t error_code)
 {
-    g_force_rng_read_errno = error_code;
+    g_force_rng_read_errno.store(error_code);
     return ;
 }
 
 void cmp_force_rng_close_failure(int32_t error_code)
 {
-    g_force_rng_close_errno = error_code;
+    g_force_rng_close_errno.store(error_code);
     return ;
 }
 
 void cmp_force_rng_read_eof(void)
 {
-    g_force_rng_read_zero = 1;
+    g_force_rng_read_zero.store(1);
     return ;
 }
 
 void cmp_clear_force_rng_failures(void)
 {
-    g_force_rng_open_errno = 0;
-    g_force_rng_read_errno = 0;
-    g_force_rng_close_errno = 0;
-    g_force_rng_read_zero = 0;
+    g_force_rng_open_errno.store(0);
+    g_force_rng_read_errno.store(0);
+    g_force_rng_close_errno.store(0);
+    g_force_rng_read_zero.store(0);
     return ;
 }
 
 int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
 {
-    int32_t forced_open_errno = g_force_rng_open_errno;
+    int32_t forced_open_errno = g_force_rng_open_errno.exchange(0);
     int64_t bytes_read;
     int32_t file_descriptor;
     int32_t error_code;
@@ -107,7 +108,6 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
 
     if (buffer == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    g_force_rng_open_errno = 0;
     if (forced_open_errno != 0)
     {
         errno = forced_open_errno;
@@ -123,11 +123,10 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
     offset = 0;
     while (offset < length)
     {
-        int32_t forced_read_errno = g_force_rng_read_errno;
+        int32_t forced_read_errno = g_force_rng_read_errno.exchange(0);
 
         if (forced_read_errno != 0)
         {
-            g_force_rng_read_errno = 0;
             errno = forced_read_errno;
             error_code = cmp_map_system_error_to_ft(errno);
             int32_t stored_errno = errno;
@@ -136,9 +135,8 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
             errno = stored_errno;
             return (error_code);
         }
-        if (g_force_rng_read_zero != 0)
+        if (g_force_rng_read_zero.exchange(0) != 0)
         {
-            g_force_rng_read_zero = 0;
             bytes_read = 0;
         }
         else
@@ -172,9 +170,7 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
         error_code = cmp_map_system_error_to_ft(errno);
         return (error_code);
     }
-    int32_t forced_close_errno = g_force_rng_close_errno;
-
-    g_force_rng_close_errno = 0;
+    int32_t forced_close_errno = g_force_rng_close_errno.exchange(0);
     if (forced_close_errno != 0)
     {
         errno = forced_close_errno;

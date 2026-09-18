@@ -25,6 +25,9 @@ class pt_mutex
         static const uint8_t              _state_initialised = 2;
 
         int     ensure_native_mutex() const;
+        int     lock_uninstrumented() const;
+        int     unlock_uninstrumented() const;
+        int     try_lock_uninstrumented() const;
         int     lock_internal(bool *lock_acquired) const;
         int     unlock_internal(bool lock_acquired) const;
         void    teardown_thread_safety();

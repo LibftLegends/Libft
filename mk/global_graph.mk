@@ -19,14 +19,19 @@ LIBFT_GLOBAL_TEST_ROOT := $(LIBFT_GLOBAL_ROOT)/test
 LIBFT_GLOBAL_TEST_DEBUG_ROOT := $(LIBFT_GLOBAL_ROOT)/test_debug
 LIBFT_GLOBAL_CC ?= gcc
 LIBFT_GLOBAL_MV ?= mv
+# Keep archive staging names stable across the recipe's separate shell
+# invocations, while making them unique to this Make process.  This prevents
+# concurrent parent builds sharing one checkout from deleting or renaming one
+# another's temporary archive.
+LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX := .tmp.$(shell printf '%s' $$$$)
 
 
-LIBFT_GLOBAL_MODULE_NAMES := Basic Advanced Compatebility Debug Errno CMA SCMA \
+LIBFT_GLOBAL_MODULE_NAMES := Basic BMP Advanced Compatebility Debug Errno CMA SCMA \
     GetNextLine DUMB Math Geometry System_utils Printf ReadLine Regex PThread \
     Threading CPP_class Template Buffer CLI Command Config CrossProcess \
     Compression CSV Encryption Crypto Encoding RNG JSon YAML File HTML Time \
-    Filesystem XML Storage Networking URI API Application Observability Sink \
-    Logger Parser Lua Game Voxel GPGR
+    Filesystem XML Storage Networking URI API Application Observability Analytics CardGame Sink \
+    Logger Parser Scripting Game Voxel GPGR
 
 LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES := $(filter-out Template,$(LIBFT_GLOBAL_MODULE_NAMES))
 
@@ -40,27 +45,37 @@ LIBFT_GLOBAL_$(1)_DIRECTORY := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)
 LIBFT_GLOBAL_$(1)_TARGET := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$(patsubst %.a,%$(LIBFT_GLOBAL_ARCHIVE_SUFFIX).a,$$($(1)_TARGET))
 LIBFT_GLOBAL_$(1)_DEBUG_TARGET := $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$(patsubst %.a,%$(LIBFT_GLOBAL_ARCHIVE_SUFFIX).a,$$($(1)_DEBUG_TARGET))
 LIBFT_GLOBAL_$(1)_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_SOURCES))
+LIBFT_GLOBAL_$(1)_TEST_ONLY_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_TEST_ONLY_SOURCES))
 LIBFT_GLOBAL_$(1)_MM_SOURCES := $$(addprefix $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/,$$($(1)_MM_SOURCES))
 LIBFT_GLOBAL_$(1)_CPP_FLAGS := $$($(1)_CPP_FLAGS)
 LIBFT_GLOBAL_$(1)_MM_FLAGS := $$($(1)_MM_FLAGS)
-LIBFT_GLOBAL_$(1)_C_FLAGS := $$(subst -I$$($(1)_LUA_VENDOR_DIR),-I$(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/$$($(1)_LUA_VENDOR_DIR),$$($(1)_C_FLAGS))
+LIBFT_GLOBAL_$(1)_C_FLAGS := $$($(1)_C_FLAGS)
 LIBFT_GLOBAL_MANIFEST_LOAD :=
 endef
 
 $(foreach module_name,$(LIBFT_GLOBAL_MODULE_NAMES),$(eval $(call LIBFT_LOAD_GLOBAL_MANIFEST,$(module_name))))
 
-LIBFT_GLOBAL_RELEASE_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_TARGET))
-LIBFT_GLOBAL_DEBUG_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_DEBUG_TARGET))
-LIBFT_GLOBAL_TEST_ARCHIVES := $(patsubst %.a,%_test.a,$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
-LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES := $(patsubst %.a,%_test_debug.a,$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
+LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_TARGET))
+LIBFT_GLOBAL_RELEASE_ARCHIVES := $(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES)
+ifneq ($(filter 1,$(FT_VOX_ANALYTICS)),1)
+LIBFT_GLOBAL_RELEASE_ARCHIVES := $(filter-out $(LIBFT_GLOBAL_Analytics_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES))
+endif
+LIBFT_GLOBAL_ALL_DEBUG_ARCHIVES := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_DEBUG_TARGET))
+LIBFT_GLOBAL_DEBUG_ARCHIVES := $(LIBFT_GLOBAL_ALL_DEBUG_ARCHIVES)
+ifneq ($(filter 1,$(FT_VOX_ANALYTICS)),1)
+LIBFT_GLOBAL_DEBUG_ARCHIVES := $(filter-out $(LIBFT_GLOBAL_Analytics_DEBUG_TARGET),$(LIBFT_GLOBAL_DEBUG_ARCHIVES))
+endif
+LIBFT_GLOBAL_TEST_ARCHIVES := $(patsubst %.a,%_test.a,$(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES))
+LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES := $(patsubst %.a,%_test_debug.a,$(LIBFT_GLOBAL_ALL_RELEASE_ARCHIVES))
 
 define LIBFT_DEFINE_GLOBAL_MODULE
-LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
-LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
-LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
+LIBFT_GLOBAL_$(1)_RELEASE_SOURCES := $$(filter-out $$(LIBFT_GLOBAL_$(1)_TEST_ONLY_SOURCES),$$(LIBFT_GLOBAL_$(1)_SOURCES))
+LIBFT_GLOBAL_$(1)_RELEASE_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_RELEASE_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_RELEASE_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_RELEASE_ROOT)/Modules/$(1)/%.o,$$(filter %.mm,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
+LIBFT_GLOBAL_$(1)_DEBUG_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_DEBUG_ROOT)/Modules/$(1)/%.o,$$(filter %.mm,$$(LIBFT_GLOBAL_$(1)_RELEASE_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(filter %.cpp,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_C_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.c,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(filter %.c,$$(LIBFT_GLOBAL_$(1)_SOURCES)))
 LIBFT_GLOBAL_$(1)_TEST_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_TEST_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
@@ -93,9 +108,9 @@ $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP): $$(LIBFT_GLOBAL_$(1)_MANIFEST)
 $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -105,9 +120,9 @@ $$(LIBFT_GLOBAL_$(1)_TARGET): $$(LIBFT_GLOBAL_$(1)_RELEASE_OBJECTS) $$(LIBFT_GLO
 $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -117,9 +132,9 @@ $$(LIBFT_GLOBAL_$(1)_DEBUG_TARGET): $$(LIBFT_GLOBAL_$(1)_DEBUG_OBJECTS) $$(LIBFT
 $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_TEST_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -129,9 +144,9 @@ $$(patsubst %.a,%_test.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TES
 $$(patsubst %.a,%_test_debug.a,$$(LIBFT_GLOBAL_$(1)_TARGET)): $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) $$(LIBFT_GLOBAL_$(1)_MANIFEST_STAMP) $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|$(1)|$$@"; else printf '\033[1;35m[LIBFT][$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
-	@$$(RM) $$@.tmp
-	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
-	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@$$(RM) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
+	@$$(AR) $$(ARFLAGS) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$(LIBFT_GLOBAL_$(1)_TEST_DEBUG_OBJECTS) >/dev/null
+	@$$(LIBFT_GLOBAL_MV) $$@$$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft $(1) "$$@" || true; \
 	else \
@@ -169,10 +184,10 @@ ifeq ($(strip $(LIBFT_GLOBAL_GRAPH_PREFIX)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_RELEASE_DEPENDENCY_FILES) \
             $(LIBFT_GLOBAL_DEBUG_DEPENDENCY_FILES)
     endif
-    ifneq ($(filter tests global-tests test-executable run-tests asan-tests run-asan-tests ubsan-tests run-ubsan-tests asan-ubsan-tests run-asan-ubsan-tests re-tests,$(MAKECMDGOALS)),)
+    ifneq ($(filter tests global-tests test-executable run-tests asan-tests run-asan-tests ubsan-tests run-ubsan-tests asan-ubsan-tests run-asan-ubsan-tests re-tests Test/libft_tests%,$(MAKECMDGOALS)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_TEST_DEPENDENCY_FILES)
     endif
-    ifneq ($(filter debug-tests run-debug-tests,$(MAKECMDGOALS)),)
+    ifneq ($(filter debug-tests run-debug-tests Test/libft_tests_debug%,$(MAKECMDGOALS)),)
         LIBFT_GLOBAL_DEPENDENCY_FILES := $(LIBFT_GLOBAL_TEST_DEBUG_DEPENDENCY_FILES)
     endif
 endif

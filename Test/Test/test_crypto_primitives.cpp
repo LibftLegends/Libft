@@ -9,7 +9,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_cma_failure_injection.hpp"
-#include "crypto_test_hooks.hpp"
+#include "../../Modules/Crypto/crypto_test_hooks.hpp"
 #include "../../Modules/Networking/openssl_support.hpp"
 
 #if NETWORKING_HAS_OPENSSL
@@ -686,6 +686,26 @@ FT_TEST(test_crypto_random_test_provider_is_repeatable)
     return (1);
 }
 
+FT_TEST(test_crypto_random_test_provider_direct_api_is_validated)
+{
+    uint8_t first[16];
+    uint8_t second[16];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_seed(0x10203040U));
+    FT_ASSERT_EQ(FT_FALSE, crypto_test_random_bytes(ft_nullptr,
+        sizeof(first)));
+    FT_ASSERT_EQ(FT_TRUE, crypto_test_random_bytes(ft_nullptr, 0U));
+    FT_ASSERT_EQ(FT_TRUE, crypto_test_random_bytes(first, sizeof(first)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_seed(0x10203040U));
+    FT_ASSERT_EQ(FT_TRUE, crypto_test_random_bytes(second, sizeof(second)));
+    FT_ASSERT(crypto_bytes_equal(first, second, sizeof(first)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_fail_next());
+    FT_ASSERT_EQ(FT_TRUE, crypto_test_random_should_fail());
+    FT_ASSERT_EQ(FT_FALSE, crypto_test_random_should_fail());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_clear());
+    return (1);
+}
+
 FT_TEST(test_crypto_random_test_provider_failure_is_reported)
 {
     uint8_t output[16];
@@ -694,6 +714,23 @@ FT_TEST(test_crypto_random_test_provider_failure_is_reported)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_fail_next());
     FT_ASSERT_EQ(FT_ERR_IO, crypto_random_bytes(output, sizeof(output)));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_clear());
+    return (1);
+}
+
+FT_TEST(test_crypto_random_test_provider_failure_schedule_is_counted)
+{
+    uint8_t output[16];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_seed(0xabcdef01U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_fail_after(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(FT_ERR_IO, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(3U, crypto_test_random_attempt_count());
+    FT_ASSERT_EQ(1U, crypto_test_random_failure_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(4U, crypto_test_random_attempt_count());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_clear());
     return (1);
 }

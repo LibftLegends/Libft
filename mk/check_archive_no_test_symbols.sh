@@ -17,7 +17,7 @@ for archive_path do
         exit 1
     fi
     leaked_symbols="$($symbol_reader -g "$archive_path" 2>/dev/null | \
-        grep -E 'crypto_test_|networking_test_failure_|networking_test_hooks' || true)"
+        grep -E 'crypto_test_|networking_test_failure_|networking_test_hooks|test_failure_controller|ft_(compress|decompress)_stream_set_.*_hook' || true)"
     if [ -n "$leaked_symbols" ]; then
         printf 'tester symbols leaked into production archive: %s\n' \
             "$archive_path" >&2

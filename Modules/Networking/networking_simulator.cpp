@@ -1,6 +1,6 @@
 #include "networking_simulator.hpp"
 #ifdef LIBFT_TEST_BUILD
-# include "../../Test/Test/networking_test_hooks.hpp"
+# include "networking_test_hooks.hpp"
 #else
 # define NETWORKING_TEST_SHOULD_FAIL(point) FT_FALSE
 #endif

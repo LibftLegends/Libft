@@ -10,8 +10,11 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
-void cma_free(void* memory_pointer)
+static void cma_free_uninstrumented(void *memory_pointer)
 {
     ft_bool lock_acquired = FT_FALSE;
 
@@ -75,4 +78,29 @@ void cma_free(void* memory_pointer)
     lock_acquired = FT_FALSE;
     cma_record_allocation_log("cma_free %p", memory_pointer);
     return ;
+}
+
+void cma_free(void *memory_pointer)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_FREE, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+    {
+        cma_free_uninstrumented(memory_pointer);
+        return ;
+    }
+    cma_free_uninstrumented(memory_pointer);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr, "[LIBFT][Analytics] cma_free scope failed: %d\n",
+            analytics_error);
+    return ;
+#else
+    cma_free_uninstrumented(memory_pointer);
+    return ;
+#endif
 }

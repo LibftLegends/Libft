@@ -73,6 +73,10 @@ jobs:
         shell: bash
         run: make agents-policy-scan
 
+      - name: Validate tester coverage manifest
+        shell: bash
+        run: make test-coverage-manifest
+
       - name: Validate release archives
         shell: bash
         run: make -j4 archive-integrity
@@ -302,13 +306,15 @@ jobs:
             Test/performance_benchmarks_failed.json
           if-no-files-found: warn
 
-      # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
+      # CI_DIAGNOSTIC: Re-run every reported Ubuntu failure separately with full output and preserved assertion logs.
       - name: Diagnose Ubuntu test failures
         if: failure() && runner.os == 'Linux' # CI_DIAGNOSTIC: Run diagnostics only after the Ubuntu suite fails.
         shell: bash # CI_DIAGNOSTIC: Use the same shell as the Ubuntu test runner.
         run: |
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
-          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data test_thread_pool_cancellation_allows_execution; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
+          failed_test_names=$(grep 'FAIL' Test/ci_unix_full_output.log \
+            | grep -o 'test_[A-Za-z0-9_]*' | sort -u) # CI_DIAGNOSTIC: Derive the rerun set from the actual failed tests.
+          for test_name in $failed_test_names; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
             (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
             if [ -f Test/test_failures.log ]; then cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log"; fi # CI_DIAGNOSTIC: Preserve assertion file when the targeted test reaches the runner.
             if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
@@ -425,6 +431,7 @@ jobs:
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+              cp Test/test_failures.log Test/asan_original_failures.log
             fi
             if [ -f Test/test_current.log ]; then
               printf '%s\n' 'Last started test:'
@@ -452,6 +459,13 @@ jobs:
               printf '%s\n' "Sanitizer report: $report"
               cat "$report"
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -468,8 +482,12 @@ jobs:
             Test/asan_report.*
             Test/ubsan_report.*
             Test/test_failures.log
+            Test/asan_original_failures.log
             Test/test_current.log
             Test/asan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
             Test/ci_unix_full_output.log
           if-no-files-found: warn
 
@@ -584,6 +602,7 @@ jobs:
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+              cp Test/test_failures.log Test/tsan_original_failures.log
             fi
             if [ -f Test/test_current.log ]; then
               printf '%s\n' 'Last started test:'
@@ -619,6 +638,13 @@ jobs:
                 >"tsan_core_backtrace.log" 2>&1 || true
               cat tsan_core_backtrace.log
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -638,8 +664,12 @@ jobs:
             Test/core.*
             Test/tsan_report.*
             Test/test_failures.log
+            Test/tsan_original_failures.log
             Test/test_current.log
             Test/tsan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
           if-no-files-found: warn
 
   crypto-fuzz:

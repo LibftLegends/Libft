@@ -12,6 +12,82 @@ Move expensive chunk generation and mesh construction to a bounded worker pool. 
 
 This should remove the largest generation-related stalls without introducing data races. It is not safe to run the current `WorldChunkLoader::initialize_chunk()` unchanged on another thread because that function reads live neighbors and initializes the final `WorldChunk` slot directly.
 
+## Correctness follow-up: height, ponds, and vegetation
+
+### Chunk height and render/collision agreement
+
+Voxel generation, collision queries, player grounding, mesh vertices, and GPU
+submission currently use chunk-local Y with a vertical origin of zero. Worker
+results must retain target chunk identity and publish it with voxel and mesh
+data. GPU caches must key geometry by coordinate and generation identity as
+well as revision: a reused slot can receive a replacement whose revision
+restarts at the same value.
+
+Diagnostics and tests must report and compare:
+
+```text
+chunk_x, chunk_z, world_x, world_z
+voxel_revision, mesh_revision, gpu_uploaded_identity
+top_solid_local_y, mesh_min_y, mesh_max_y
+player_feet_y, collision_surface_y, camera_eye_y
+```
+
+The implementation must invalidate cached geometry on eviction/empty
+transitions and verify that a reused slot cannot draw stale geometry. A
+cross-layer test must compare the top generated solid cell, mesh surface, and
+collision surface at identical world X/Z coordinates.
+
+### Pond and vegetation ordering
+
+Independent per-column fluid predicates can create isolated water columns and
+partial basins. Vegetation must never be placed into water or onto a submerged
+support block. The staged worker contract is:
+
+1. generate terrain and beach/underwater layers;
+2. determine a deterministic pond mask with neighboring-column continuity;
+3. fill the selected basin from its floor to the configured water level,
+   including border continuation through snapshots/deferred edits;
+4. place aquatic features only when their support and depth rules pass;
+5. place ordinary shrubs, trees, and structures only after checking the final
+   water mask and actual support block. `requires_dry_land` must test the
+   resulting column, not only its numeric height.
+
+Tests must cover partial ponds, disconnected candidates, chunk-border ponds,
+water depth, aquatic plants, and vegetation at every water edge. A deterministic
+desert scenario must assert that ordinary vegetation never occupies water, a
+submerged support cell, or a cell made water later in the fluid stage.
+
+The current implementation now applies a deterministic first continuity
+filter: a water candidate must have at least one horizontal water candidate
+neighbor, including across the generated coordinate boundary, followed by a
+three-neighbor hole-closing pass for interior pond cells. It also computes
+the smoothed column height once and reuses it for terrain, fluid, and feature
+decisions. This removes isolated one-column candidates and prevents different
+stages from disagreeing about the same column height. Full basin flood-fill,
+depth shaping, and richer cross-chunk pond masks remain follow-up work.
+
+The Libft mesh tests now include a deterministic flat-terrain height invariant:
+the highest generated solid local Y plus one must equal the mesh occupied
+maximum Y. This verifies the generator-to-mesh local-Y convention without
+requiring a graphics context. The Minecraft renderer additionally validates
+chunk identity when a GPU slot is reused, so a matching mesh revision cannot
+reuse geometry from a previous X/Z location.
+
+The fluid tests also verify that a fully selected basin reaches its configured
+sea level in every water-bearing column and never writes water above that
+level. This is separate from the connectivity test: connectivity catches
+isolated candidates, while the level assertion catches partial vertical fills.
+The density regression enables both ordinary shrubs and trees at maximum
+chance over a fully flooded flat biome and verifies that neither is placed in
+the resulting water terrain.
+
+Minecraft's `--validate-visible-distance` path now performs the corresponding
+live-world check for every loaded chunk: its world origin, highest solid local
+Y, mesh occupied maximum Y, and representative collision surface must agree.
+The validator reports the chunk slot and measured values before failing, which
+makes a vertical rendering/collision regression diagnosable without a visual
+GPU session.
+
 ## Why the current path can spike
 
 The current streaming call chain is synchronous:

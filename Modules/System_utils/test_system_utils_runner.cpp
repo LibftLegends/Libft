@@ -810,6 +810,25 @@ void ft_test_fail_values(const char *expression, const char *file, int32_t line,
     return ;
 }
 
+ft_bool ft_test_assert_condition(ft_bool condition, const char *expression,
+    const char *file, int32_t line)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail(expression, file, line);
+    return (FT_FALSE);
+}
+
+ft_bool ft_test_assert_values_condition(ft_bool condition,
+    const char *expression, const char *file, int32_t line,
+    const char *expected_value, const char *actual_value)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail_values(expression, file, line, expected_value, actual_value);
+    return (FT_FALSE);
+}
+
 int32_t ft_run_registered_tests(void)
 {
     FILE *log_file;
