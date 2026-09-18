@@ -264,6 +264,7 @@ $(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,Full_Libft,$(LIBFT_GLOBAL_TARG
 
 archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS)
 	@sh mk/check_archive_no_test_symbols.sh $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
+	@sh mk/check_archive_no_analytics.sh "$(LIBFT_GLOBAL_TARGET)"
 	@sh mk/check_archive_rebuild.sh "$(LIBFT_GLOBAL_Basic_TARGET)" "$(LIBFT_GLOBAL_Basic_MANIFEST)" $(LIBFT_GLOBAL_Basic_RELEASE_OBJECTS)
 	+$(MAKE) --no-print-directory global-all
 	@sh mk/check_archive_noop.sh capture "$(LIBFT_ARCHIVE_NOOP_STATE)" $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
