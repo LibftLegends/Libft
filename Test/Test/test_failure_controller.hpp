@@ -19,6 +19,7 @@ int32_t test_failure_controller_fail_next(test_failure_point point) noexcept;
 int32_t test_failure_controller_fail_after(test_failure_point point,
     uint64_t successful_calls) noexcept;
 int32_t test_failure_controller_reset(test_failure_point point) noexcept;
+int32_t test_failure_controller_reset_all() noexcept;
 const char *test_failure_controller_point_name(
     test_failure_point point) noexcept;
 uint64_t test_failure_controller_attempts(test_failure_point point) noexcept;

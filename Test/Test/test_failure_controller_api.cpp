@@ -29,9 +29,20 @@ FT_TEST(test_failure_controller_metadata_and_reset)
         TEST_FAILURE_CARD_GAME_CALLBACK));
     FT_ASSERT_EQ(0U, test_failure_controller_failures(
         TEST_FAILURE_CARD_GAME_CALLBACK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_fail_after(
+        TEST_FAILURE_CARD_GAME_OPERATION, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_reset_all());
+    FT_ASSERT_EQ(0U, test_failure_controller_attempts(
+        TEST_FAILURE_CARD_GAME_OPERATION));
+    FT_ASSERT_EQ(0U, test_failure_controller_failures(
+        TEST_FAILURE_CARD_GAME_OPERATION));
+    FT_ASSERT(!test_failure_controller_should_fail(
+        TEST_FAILURE_CARD_GAME_OPERATION));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
         test_failure_controller_reset(TEST_FAILURE_POINT_COUNT));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_end());
+    FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED,
+        test_failure_controller_reset_all());
     FT_ASSERT(test_failure_controller_point_name(TEST_FAILURE_POINT_COUNT)
         == ft_nullptr);
     return (1);

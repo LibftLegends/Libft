@@ -113,6 +113,15 @@ int32_t test_failure_controller_reset(test_failure_point point) noexcept
     return (FT_ERR_SUCCESS);
 }
 
+int32_t test_failure_controller_reset_all() noexcept
+{
+    if (g_test_failure_controller.active.load(std::memory_order_acquire)
+        == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    test_failure_controller_reset_points();
+    return (FT_ERR_SUCCESS);
+}
+
 const char *test_failure_controller_point_name(
     test_failure_point point) noexcept
 {
