@@ -284,6 +284,7 @@ test-coverage-manifest:
 	@sh mk/check_test_coverage_manifest.sh
 	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/crypto_test_hooks.tsv
 	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/networking_test_hooks.tsv
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/compression_stream_test_hooks.tsv
 
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
