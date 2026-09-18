@@ -698,6 +698,23 @@ FT_TEST(test_crypto_random_test_provider_failure_is_reported)
     return (1);
 }
 
+FT_TEST(test_crypto_random_test_provider_failure_schedule_is_counted)
+{
+    uint8_t output[16];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_seed(0xabcdef01U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_fail_after(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(FT_ERR_IO, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(3U, crypto_test_random_attempt_count());
+    FT_ASSERT_EQ(1U, crypto_test_random_failure_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_random_bytes(output, sizeof(output)));
+    FT_ASSERT_EQ(4U, crypto_test_random_attempt_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_test_random_clear());
+    return (1);
+}
+
 FT_TEST(test_crypto_aead_allocation_failure_clears_output)
 {
     const uint8_t key[32] = {0U};

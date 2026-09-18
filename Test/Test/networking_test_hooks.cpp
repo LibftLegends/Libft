@@ -9,6 +9,44 @@ namespace
         NETWORKING_TEST_FAILURE_POINT_COUNT] = {};
     static std::atomic<uint64_t> g_failure_calls[
         NETWORKING_TEST_FAILURE_POINT_COUNT] = {};
+    static std::atomic<uint64_t> g_failures[
+        NETWORKING_TEST_FAILURE_POINT_COUNT] = {};
+    static const char *const g_failure_point_names[
+        NETWORKING_TEST_FAILURE_POINT_COUNT] = {
+        "connection_allocate",
+        "outgoing_frame_allocate",
+        "sent_packet_allocate",
+        "reassembly_allocate",
+        "received_message_allocate",
+        "event_enqueue",
+        "datagram_send",
+        "mutex_allocate",
+        "command_enqueue",
+        "ack_range_growth",
+        "handshake_state",
+        "simulator_queue",
+        "nat_candidate",
+        "nat_probe",
+        "relay_record",
+        "callback_copy",
+        "worker_create",
+        "worker_wakeup",
+        "http_server_send",
+        "secure_derive_send",
+        "secure_derive_receive",
+        "secure_init_send",
+        "secure_init_receive",
+        "secure_init_previous",
+        "secure_backend_swap",
+        "secure_swap_send",
+        "secure_swap_receive",
+        "secure_swap_previous",
+        "secure_move_init_send",
+        "secure_move_init_receive",
+        "secure_move_init_previous",
+        "secure_move_swap_send",
+        "secure_move_swap_receive",
+        "secure_move_swap_previous"};
 
     static ft_bool networking_test_failure_valid_point(
         networking_test_failure_point point) noexcept
@@ -30,6 +68,7 @@ int32_t networking_test_failure_initialize() noexcept
     {
         g_attempts[index].store(0U, std::memory_order_release);
         g_failure_calls[index].store(0U, std::memory_order_release);
+        g_failures[index].store(0U, std::memory_order_release);
         index += 1U;
     }
     return (FT_ERR_SUCCESS);
@@ -83,12 +122,45 @@ int32_t networking_test_failure_fail_after(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t networking_test_failure_reset(
+    networking_test_failure_point point) noexcept
+{
+    uint8_t point_index;
+
+    if (networking_test_failure_valid_point(point) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (g_active.load(std::memory_order_acquire) == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    point_index = static_cast<uint8_t>(point);
+    g_attempts[point_index].store(0U, std::memory_order_release);
+    g_failure_calls[point_index].store(0U, std::memory_order_release);
+    g_failures[point_index].store(0U, std::memory_order_release);
+    return (FT_ERR_SUCCESS);
+}
+
+const char *networking_test_failure_point_name(
+    networking_test_failure_point point) noexcept
+{
+    if (networking_test_failure_valid_point(point) == FT_FALSE)
+        return (ft_nullptr);
+    return (g_failure_point_names[static_cast<uint8_t>(point)]);
+}
+
 uint64_t networking_test_failure_attempt_count(
     networking_test_failure_point point) noexcept
 {
     if (networking_test_failure_valid_point(point) == FT_FALSE)
         return (0U);
     return (g_attempts[static_cast<uint8_t>(point)].load(
+        std::memory_order_acquire));
+}
+
+uint64_t networking_test_failure_count(
+    networking_test_failure_point point) noexcept
+{
+    if (networking_test_failure_valid_point(point) == FT_FALSE)
+        return (0U);
+    return (g_failures[static_cast<uint8_t>(point)].load(
         std::memory_order_acquire));
 }
 
@@ -108,6 +180,9 @@ ft_bool networking_test_failure_should_fail(
     failure_call = g_failure_calls[point_index].load(
         std::memory_order_acquire);
     if (failure_call != 0U && failure_call == call_number)
+    {
+        g_failures[point_index].fetch_add(1U, std::memory_order_acq_rel);
         return (FT_TRUE);
+    }
     return (FT_FALSE);
 }

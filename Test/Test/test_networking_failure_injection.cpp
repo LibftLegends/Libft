@@ -40,3 +40,36 @@ FT_TEST(test_networking_failure_injection_schedules_relative_failure)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     return (1);
 }
+
+FT_TEST(test_networking_failure_injection_metadata_and_reset)
+{
+    networking_test_failure_point point;
+    const char *point_name;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    point = NETWORKING_TEST_CONNECTION_ALLOCATE;
+    while (point < NETWORKING_TEST_FAILURE_POINT_COUNT)
+    {
+        point_name = networking_test_failure_point_name(point);
+        FT_ASSERT(point_name != ft_nullptr);
+        FT_ASSERT(point_name[0] != '\0');
+        point = static_cast<networking_test_failure_point>(
+            static_cast<uint8_t>(point) + 1U);
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT(networking_test_failure_should_fail(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(1U, networking_test_failure_count(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_reset(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(0U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(0U, networking_test_failure_count(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        networking_test_failure_reset(NETWORKING_TEST_FAILURE_POINT_COUNT));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    return (1);
+}
