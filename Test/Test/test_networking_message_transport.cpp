@@ -932,6 +932,61 @@ FT_TEST(test_networking_message_transport_named_failure_hook_is_semantic)
     return (1);
 }
 
+FT_TEST(test_networking_message_transport_send_and_event_failure_hooks)
+{
+    networking_memory_io io;
+    networking_memory_io peer;
+    networking_message_transport_config configuration;
+    networking_message_transport transport;
+    networking_message_endpoint endpoint;
+    networking_message_connection connection;
+    networking_message_send_options options;
+    networking_test_callback_state callback_state;
+    const char payload[] = "queued failure";
+
+    io.connect(peer);
+    peer.connect(io);
+    networking_message_prepare_endpoint(endpoint);
+    configuration.enable_encryption = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.initialize(configuration, io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_EVENT_ENQUEUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.open_connection(endpoint,
+        connection));
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_EVENT_ENQUEUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    callback_state.transport = &transport;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.set_event_callback(
+        &networking_test_event_callback, &callback_state));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_CALLBACK_COPY));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.open_connection(endpoint,
+        connection));
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_CALLBACK_COPY));
+    FT_ASSERT_EQ(0U, callback_state.calls);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    options.delivery = networking_message_delivery::RELIABLE_ORDERED;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.send_message(payload,
+        sizeof(payload) - 1U, options));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_SENT_PACKET_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, transport.poll());
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_SENT_PACKET_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.destroy());
+    return (1);
+}
+
 FT_TEST(test_networking_named_failure_hooks_cover_worker_command_simulator_nat)
 {
     networking_memory_io io;
