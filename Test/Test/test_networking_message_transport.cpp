@@ -1091,6 +1091,14 @@ FT_TEST(test_networking_named_failure_hooks_cover_worker_command_simulator_nat)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, transport.open_connection(endpoint,
+        connection));
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_CONNECTION_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
         NETWORKING_TEST_WORKER_CREATE));
     FT_ASSERT_EQ(FT_ERR_NO_MEMORY, transport.start_worker());
     FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
@@ -1104,6 +1112,15 @@ FT_TEST(test_networking_named_failure_hooks_cover_worker_command_simulator_nat)
     FT_ASSERT_EQ(FT_ERR_NO_MEMORY, transport.open_connection(endpoint,
         connection));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_WORKER_WAKEUP));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.open_connection(endpoint,
+        connection));
+    FT_ASSERT_EQ(2U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_WORKER_WAKEUP));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.stop_worker());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.destroy());
 
