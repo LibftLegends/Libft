@@ -75,6 +75,10 @@ int32_t test_failure_controller_end() noexcept
             std::memory_order_release);
         index += 1U;
     }
+    g_test_failure_controller.last_failure_point.store(
+        TEST_FAILURE_POINT_COUNT, std::memory_order_release);
+    g_test_failure_controller.last_failure_occurrence.store(0U,
+        std::memory_order_release);
     return (FT_ERR_SUCCESS);
 }
 
@@ -148,6 +152,9 @@ const char *test_failure_controller_last_failure_point_name() noexcept
 {
     uint16_t point;
 
+    if (g_test_failure_controller.active.load(std::memory_order_acquire)
+        == FT_FALSE)
+        return (ft_nullptr);
     point = g_test_failure_controller.last_failure_point.load(
         std::memory_order_acquire);
     if (point >= TEST_FAILURE_POINT_COUNT)
@@ -157,6 +164,9 @@ const char *test_failure_controller_last_failure_point_name() noexcept
 
 uint64_t test_failure_controller_last_failure_occurrence() noexcept
 {
+    if (g_test_failure_controller.active.load(std::memory_order_acquire)
+        == FT_FALSE)
+        return (0U);
     return (g_test_failure_controller.last_failure_occurrence.load(
         std::memory_order_acquire));
 }

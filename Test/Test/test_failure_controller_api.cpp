@@ -52,6 +52,9 @@ FT_TEST(test_failure_controller_metadata_and_reset)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, test_failure_controller_end());
     FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED,
         test_failure_controller_reset_all());
+    FT_ASSERT(test_failure_controller_last_failure_point_name()
+        == ft_nullptr);
+    FT_ASSERT_EQ(0U, test_failure_controller_last_failure_occurrence());
     FT_ASSERT(test_failure_controller_point_name(TEST_FAILURE_POINT_COUNT)
         == ft_nullptr);
     return (1);
