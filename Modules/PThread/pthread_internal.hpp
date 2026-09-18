@@ -32,6 +32,14 @@ static inline int    pt_recursive_mutex_lock_if_not_null(
     return (mutex_pointer->lock());
 }
 
+static inline int    pt_recursive_mutex_try_lock_if_not_null(
+    const pt_recursive_mutex *mutex_pointer)
+{
+    if (mutex_pointer == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    return (mutex_pointer->try_lock(pt_thread_self()));
+}
+
 static inline int    pt_recursive_mutex_unlock_if_not_null(
     const pt_recursive_mutex *mutex_pointer)
 {
