@@ -1,5 +1,5 @@
 #include "../test_internal.hpp"
-#include "networking_test_hooks.hpp"
+#include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "../../Modules/Networking/networking_secure_channel.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 

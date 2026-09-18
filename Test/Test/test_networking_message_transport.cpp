@@ -9,8 +9,8 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_cma_failure_injection.hpp"
-#include "crypto_test_hooks.hpp"
-#include "networking_test_hooks.hpp"
+#include "../../Modules/Crypto/crypto_test_hooks.hpp"
+#include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "networking_test_support.hpp"
 #include <chrono>
 #include <thread>

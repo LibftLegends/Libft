@@ -1,8 +1,10 @@
-#ifndef NETWORKING_TEST_HOOKS_HPP
-#define NETWORKING_TEST_HOOKS_HPP
+#ifndef NETWORKING_MODULE_TEST_HOOKS_HPP
+#define NETWORKING_MODULE_TEST_HOOKS_HPP
 
-#include "../../Modules/Errno/errno.hpp"
+#include "../Errno/errno.hpp"
 #include <cstdint>
+
+#ifdef LIBFT_TEST_BUILD
 
 enum networking_test_failure_point : uint8_t
 {
@@ -55,11 +57,13 @@ uint64_t networking_test_failure_attempt_count(
 ft_bool networking_test_failure_should_fail(
     networking_test_failure_point point) noexcept;
 
-#ifdef LIBFT_TEST_BUILD
 # define NETWORKING_TEST_SHOULD_FAIL(point) \
     networking_test_failure_should_fail(point)
+
 #else
+
 # define NETWORKING_TEST_SHOULD_FAIL(point) FT_FALSE
+
 #endif
 
 #endif

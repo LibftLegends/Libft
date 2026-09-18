@@ -2,7 +2,7 @@
 #include "../Errno/errno.hpp"
 #include "../RNG/rng.hpp"
 #ifdef LIBFT_TEST_BUILD
-# include "../../Test/Test/crypto_test_hooks.hpp"
+# include "crypto_test_hooks.hpp"
 #endif
 
 int32_t crypto_random_bytes(uint8_t *output, ft_size_t length) noexcept

@@ -69,6 +69,7 @@ Networking_HEADERS := socket_class.hpp \
            networking_replication_apply_budget.hpp \
            networking_replication_client.hpp \
            networking_replication_retention_window.hpp \
+           networking_test_hooks.hpp \
            http_client.hpp \
            http2_client.hpp \
            http_server.hpp \

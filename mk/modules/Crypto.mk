@@ -11,6 +11,7 @@ Crypto_SOURCES := crypto_primitives.cpp \
         crypto_network_backend.cpp
 
 Crypto_HEADERS := crypto_primitives.hpp \
+        crypto_test_hooks.hpp \
         crypto_chacha20.hpp \
         crypto_poly1305.hpp \
         crypto_aead.hpp \

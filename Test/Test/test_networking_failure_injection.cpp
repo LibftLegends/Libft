@@ -1,5 +1,5 @@
 #include "../test_internal.hpp"
-#include "networking_test_hooks.hpp"
+#include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 FT_TEST(test_networking_failure_injection_rejects_invalid_schedule)
