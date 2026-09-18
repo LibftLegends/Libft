@@ -1067,6 +1067,16 @@ FT_TEST(test_networking_message_transport_send_and_event_failure_hooks)
         NETWORKING_TEST_SENT_PACKET_ALLOCATE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.send_message(payload,
+        sizeof(payload) - 1U, options));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_DATAGRAM_SEND));
+    FT_ASSERT_EQ(FT_ERR_SOCKET_SEND_FAILED, transport.poll());
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_DATAGRAM_SEND));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.poll());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, connection.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.destroy());
     return (1);
