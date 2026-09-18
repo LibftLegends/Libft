@@ -33,12 +33,10 @@ FT_TEST(test_voxel_runtime_block_registration_loads_assets)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize());
-    if (file_read_all("Scripting/terrain_register_block.script", script)
-        != FT_ERR_SUCCESS)
-        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(
-            "Test/Scripting/terrain_register_block.script", script));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(
+        "Scripting/terrain_register_block.script", script));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_script_execute(bridge, script,
-        chunk, 0, 0, "test", config, "Test/Scripting"));
+        chunk, 0, 0, "test", config, "Scripting"));
     find_error = voxel_find_block_id_by_name("test:script_block",
         &block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, find_error);
@@ -124,7 +122,7 @@ FT_TEST(test_voxel_runtime_block_handle_survives_unregister)
     while (face_index < VOXEL_BLOCK_ASSET_FACE_COUNT)
     {
         registration.asset_paths[face_index] =
-            "Test/Scripting/export_values.asset";
+            "Scripting/export_values.asset";
         face_index += 1U;
     }
     block_id = 0U;

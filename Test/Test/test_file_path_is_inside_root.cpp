@@ -34,15 +34,15 @@ FT_TEST(test_file_path_is_inside_root_rejects_escape)
 FT_TEST(test_file_validate_regular_file_inside_root)
 {
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_validate_regular_file_inside_root(
-            "Test/Scripting", "Test/Scripting/export_values.asset"));
+            "Scripting", "Scripting/export_values.asset"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Scripting",
-                "Test/Scripting/../test_voxel_runtime_blocks.cpp"));
+            file_validate_regular_file_inside_root("Scripting",
+                "Scripting/../test_voxel_runtime_blocks.cpp"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Scripting",
-                "Test/Scripting"));
+            file_validate_regular_file_inside_root("Scripting",
+                "Scripting"));
     FT_ASSERT_EQ(FT_ERR_INVALID_PATH,
-            file_validate_regular_file_inside_root("Test/Scripting",
-                "Test/Scripting/missing_asset.bin"));
+            file_validate_regular_file_inside_root("Scripting",
+                "Scripting/missing_asset.bin"));
     return (1);
 }
