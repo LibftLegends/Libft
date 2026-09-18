@@ -73,6 +73,10 @@ jobs:
         shell: bash
         run: make agents-policy-scan
 
+      - name: Validate tester coverage manifest
+        shell: bash
+        run: make test-coverage-manifest
+
       - name: Validate release archives
         shell: bash
         run: make -j4 archive-integrity

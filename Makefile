@@ -280,6 +280,9 @@ incremental-build-tests:
 agents-policy-scan:
 	@sh mk/check_agents_policy.sh
 
+test-coverage-manifest:
+	@sh mk/check_test_coverage_manifest.sh
+
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 
@@ -371,7 +374,7 @@ fclean:
 		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
 		Full_Libft_analytics_debug.a
 
-.PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
+.PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests agents-policy-scan test-coverage-manifest print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
           run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
           run-tsan-tests asan asan-tests ubsan ubsan-tests tsan tsan-tests \
           asan-ubsan asan-ubsan-tests
