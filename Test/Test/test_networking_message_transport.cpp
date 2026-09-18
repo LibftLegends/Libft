@@ -303,6 +303,91 @@ FT_TEST(test_networking_message_reliable_fragmented_roundtrip)
     return (1);
 }
 
+FT_TEST(test_networking_message_reassembly_failure_does_not_publish_partial_data)
+{
+    networking_memory_io client_io;
+    networking_memory_io server_io;
+    networking_message_transport_config configuration;
+    networking_message_transport client;
+    networking_message_transport server;
+    networking_message_endpoint endpoint;
+    networking_message_connection client_connection;
+    networking_message_connection server_connection;
+    networking_message_send_options options;
+    networking_received_message received;
+    uint8_t payload[700U] = {0U};
+
+    client_io.connect(server_io);
+    server_io.connect(client_io);
+    networking_message_prepare_endpoint(endpoint);
+    configuration.enable_encryption = FT_FALSE;
+    configuration.maximum_datagram_size = 128U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.initialize(configuration, client_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration, server_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.listen(endpoint));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.open_connection(endpoint,
+        client_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.open_connection(endpoint,
+        server_connection));
+    options.delivery = networking_message_delivery::RELIABLE_ORDERED;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.send_message(payload,
+        sizeof(payload), options));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_REASSEMBLY_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, server.poll());
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_REASSEMBLY_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, server.receive_message(received));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_message_received_allocation_failure_drops_only_message)
+{
+    networking_memory_io client_io;
+    networking_memory_io server_io;
+    networking_message_transport_config configuration;
+    networking_message_transport client;
+    networking_message_transport server;
+    networking_message_endpoint endpoint;
+    networking_message_connection client_connection;
+    networking_message_connection server_connection;
+    networking_message_send_options options;
+    networking_received_message received;
+
+    client_io.connect(server_io);
+    server_io.connect(client_io);
+    networking_message_prepare_endpoint(endpoint);
+    configuration.enable_encryption = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.initialize(configuration, client_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration, server_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.open_connection(endpoint,
+        client_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.open_connection(endpoint,
+        server_connection));
+    options.delivery = networking_message_delivery::RELIABLE_ORDERED;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.send_message(
+        "received allocation", 19U, options));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.poll());
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, server.receive_message(received));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.destroy());
+    return (1);
+}
+
 FT_TEST(test_networking_message_unreliable_and_statistics)
 {
     networking_memory_io first_io;
@@ -2311,6 +2396,14 @@ FT_TEST(test_networking_nat_gathers_and_probes_candidate_pairs_incrementally)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.gather_candidates(provider));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.set_peer_ticket(ticket, 0U,
         verifier));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_fail_next(
+        NETWORKING_TEST_NAT_PROBE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, traversal.begin(1U, probe));
+    FT_ASSERT_EQ(1U, networking_test_failure_attempt_count(
+        NETWORKING_TEST_NAT_PROBE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.begin(1U, probe));
     FT_ASSERT_EQ(1U, probe.calls);
     FT_ASSERT_EQ(FT_ERR_TIMEOUT, traversal.probe_next(1U, 10U, probe));
