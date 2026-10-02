@@ -1,5 +1,257 @@
 #include "card_game_internal.hpp"
 
+int32_t card_game_engine::find_host_intent_definition(uint32_t type_id,
+    uint32_t version,
+    const card_game_host_intent_definition **definition) const noexcept
+{
+    uint32_t index;
+
+    if (definition == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < this->_host_intent_type_count)
+    {
+        if (this->_host_intent_types[index].type_id == type_id
+            && this->_host_intent_types[index].version == version)
+        {
+            *definition = &this->_host_intent_types[index];
+            return (FT_ERR_SUCCESS);
+        }
+        index += 1U;
+    }
+    return (FT_ERR_NOT_FOUND);
+}
+
+int32_t card_game_engine::validate_host_intent(
+    const card_game_host_intent &intent) const noexcept
+{
+    const card_game_host_intent_definition *definition;
+    uint32_t index;
+    int32_t error_code;
+
+    if (intent.type_id == 0U || intent.version == 0U
+        || intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = this->find_host_intent_definition(intent.type_id,
+        intent.version, &definition);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (intent.field_count != definition->field_count)
+        return (FT_ERR_INVALID_ARGUMENT);
+    index = 0U;
+    while (index < intent.field_count)
+    {
+        if (intent.fields[index].type != definition->field_types[index])
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (intent.fields[index].type == CARD_GAME_HOST_INTENT_U32
+            && intent.fields[index].value > UINT32_MAX)
+            return (FT_ERR_OUT_OF_RANGE);
+        if (intent.fields[index].type == CARD_GAME_HOST_INTENT_I32)
+        {
+            int32_t signed_value;
+            uint64_t canonical_value;
+
+            signed_value = static_cast<int32_t>(
+                static_cast<uint32_t>(intent.fields[index].value));
+            canonical_value = static_cast<uint64_t>(
+                static_cast<int64_t>(signed_value));
+            if (canonical_value != intent.fields[index].value)
+                return (FT_ERR_OUT_OF_RANGE);
+        }
+        if (intent.fields[index].type == CARD_GAME_HOST_INTENT_BOOL
+            && intent.fields[index].value > 1U)
+            return (FT_ERR_OUT_OF_RANGE);
+        if (intent.fields[index].type != CARD_GAME_HOST_INTENT_U32
+            && intent.fields[index].type != CARD_GAME_HOST_INTENT_I32
+            && intent.fields[index].type != CARD_GAME_HOST_INTENT_U64
+            && intent.fields[index].type != CARD_GAME_HOST_INTENT_I64
+            && intent.fields[index].type != CARD_GAME_HOST_INTENT_BOOL)
+            return (FT_ERR_INVALID_ARGUMENT);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::register_host_intent_type(
+    const card_game_host_intent_definition &definition) noexcept
+{
+    const card_game_host_intent_definition *existing_definition;
+    card_game_host_intent_definition normalized_definition;
+    uint32_t index;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_player_count != 0U || definition.type_id == 0U
+        || definition.version == 0U
+        || definition.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_host_intent_type_count >= FT_CARD_GAME_MAX_HOST_INTENT_TYPES)
+        return (FT_ERR_FULL);
+    index = 0U;
+    while (index < definition.field_count)
+    {
+        if (definition.field_types[index] != CARD_GAME_HOST_INTENT_U32
+            && definition.field_types[index] != CARD_GAME_HOST_INTENT_I32
+            && definition.field_types[index] != CARD_GAME_HOST_INTENT_U64
+            && definition.field_types[index] != CARD_GAME_HOST_INTENT_I64
+            && definition.field_types[index] != CARD_GAME_HOST_INTENT_BOOL)
+            return (FT_ERR_INVALID_ARGUMENT);
+        index += 1U;
+    }
+    if (this->find_host_intent_definition(definition.type_id,
+            definition.version, &existing_definition) == FT_ERR_SUCCESS)
+        return (FT_ERR_ALREADY_EXISTS);
+    ft_bzero(&normalized_definition, sizeof(normalized_definition));
+    normalized_definition.type_id = definition.type_id;
+    normalized_definition.version = definition.version;
+    normalized_definition.field_count = definition.field_count;
+    index = 0U;
+    while (index < definition.field_count)
+    {
+        normalized_definition.field_types[index]
+            = definition.field_types[index];
+        index += 1U;
+    }
+    this->_host_intent_types[this->_host_intent_type_count]
+        = normalized_definition;
+    this->_host_intent_type_count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::configure_draw_policy(
+    const card_game_draw_policy &policy) noexcept
+{
+    const card_game_host_intent_definition *definition;
+    card_game_zone_store_definition zone;
+    int32_t result;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_player_count != 0U || policy.burned_zone_id == 0U
+        || (policy.reshuffle_discard != FT_TRUE
+            && policy.reshuffle_discard != FT_FALSE)
+        || (policy.reshuffle_discard == FT_TRUE
+            && (policy.discard_zone_id == 0U
+                || policy.discard_zone_id == policy.burned_zone_id))
+        || (policy.reshuffle_discard == FT_FALSE
+            && policy.discard_zone_id != 0U)
+        || policy.empty_draw_event_type_id == 0U
+        || policy.empty_draw_event_version == 0U
+        || policy.overflow_event_type_id == 0U
+        || policy.overflow_event_version == 0U
+        || (policy.empty_draw_event_type_id == policy.overflow_event_type_id
+            && policy.empty_draw_event_version
+                == policy.overflow_event_version))
+        return (FT_ERR_INVALID_ARGUMENT);
+    result = this->_zone_store.get_zone(policy.burned_zone_id, &zone);
+    if (result != FT_ERR_SUCCESS || zone.owner_scoped != FT_TRUE
+        || zone.capacity == 0U || zone.allowed_card_type_mask == 0U)
+        return (FT_ERR_CONFIGURATION);
+    if (policy.reshuffle_discard == FT_TRUE)
+    {
+        result = this->_zone_store.get_zone(policy.discard_zone_id, &zone);
+        if (result != FT_ERR_SUCCESS || zone.owner_scoped != FT_TRUE
+            || zone.capacity == 0U || zone.allowed_card_type_mask == 0U)
+            return (FT_ERR_CONFIGURATION);
+    }
+    result = this->find_host_intent_definition(
+        policy.empty_draw_event_type_id,
+        policy.empty_draw_event_version, &definition);
+    if (result != FT_ERR_SUCCESS || definition->field_count != 2U
+        || definition->field_types[0] != CARD_GAME_HOST_INTENT_U32
+        || definition->field_types[1] != CARD_GAME_HOST_INTENT_U32)
+        return (FT_ERR_CONFIGURATION);
+    result = this->find_host_intent_definition(
+        policy.overflow_event_type_id,
+        policy.overflow_event_version, &definition);
+    if (result != FT_ERR_SUCCESS || definition->field_count != 2U
+        || definition->field_types[0] != CARD_GAME_HOST_INTENT_U32
+        || definition->field_types[1] != CARD_GAME_HOST_INTENT_U32)
+        return (FT_ERR_CONFIGURATION);
+    this->_draw_policy = policy;
+    this->_draw_policy_configured = FT_TRUE;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::get_pending_host_intent_count(
+    uint32_t *count) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *count = this->_host_intent_record_count;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::peek_pending_host_intent(
+    card_game_host_intent_record *record) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || record == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_host_intent_record_count == 0U)
+        return (FT_ERR_NOT_FOUND);
+    *record = this->_host_intent_records[0U];
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::acknowledge_host_intent(uint64_t sequence) noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_host_intent_record_count == 0U)
+        return (FT_ERR_NOT_FOUND);
+    if (this->_host_intent_records[0U].sequence != sequence)
+        return (FT_ERR_INVALID_STATE);
+    if (this->_state_sequence == UINT64_MAX)
+        return (FT_ERR_FULL);
+    this->_host_intent_record_count -= 1U;
+    if (this->_host_intent_record_count != 0U)
+        ft_memmove(this->_host_intent_records,
+            this->_host_intent_records + 1U,
+            static_cast<ft_size_t>(this->_host_intent_record_count)
+                * sizeof(card_game_host_intent_record));
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::reserve_host_intent_records(
+    uint32_t required_count) noexcept
+{
+    card_game_host_intent_record *records;
+    uint32_t capacity;
+
+    if (required_count > FT_CARD_GAME_MAX_OPERATIONS)
+        return (FT_ERR_FULL);
+    if (required_count <= this->_host_intent_record_capacity)
+        return (FT_ERR_SUCCESS);
+    capacity = this->_host_intent_record_capacity;
+    if (capacity == 0U)
+        capacity = FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY;
+    while (capacity < required_count)
+    {
+        if (capacity >= FT_CARD_GAME_MAX_OPERATIONS / 2U)
+        {
+            capacity = FT_CARD_GAME_MAX_OPERATIONS;
+            break ;
+        }
+        capacity *= 2U;
+    }
+    records = static_cast<card_game_host_intent_record *>(cma_malloc(
+        static_cast<ft_size_t>(capacity)
+            * sizeof(card_game_host_intent_record)));
+    if (records == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (this->_host_intent_record_count != 0U)
+        ft_memcpy(records, this->_host_intent_records,
+            static_cast<ft_size_t>(this->_host_intent_record_count)
+                * sizeof(card_game_host_intent_record));
+    if (this->_host_intent_records != ft_nullptr)
+        cma_free(this->_host_intent_records);
+    this->_host_intent_records = records;
+    this->_host_intent_record_capacity = capacity;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::emit_event(uint32_t event_type,
     uint32_t source_instance, uint32_t target_instance) noexcept
 {
@@ -124,6 +376,7 @@ int32_t card_game_engine::resolve_events() noexcept
 {
     uint32_t event_index;
     card_game_operation_buffer operations;
+    card_game_operation_buffer pending_host_intents;
     card_game_effect_context context;
     card_game_operation operation;
     int32_t error_code;
@@ -141,6 +394,9 @@ int32_t card_game_engine::resolve_events() noexcept
     ft_bool processed_effects[FT_CARD_GAME_MAX_EFFECTS];
 
     error_code = operations.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = pending_host_intents.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     snapshot_error = this->get_snapshot(&before_state);
@@ -271,7 +527,16 @@ int32_t card_game_engine::resolve_events() noexcept
                         }
                         return (FT_ERR_INVALID_STATE);
                     }
-                    error_code = this->apply_operation(operation);
+                    if (operation.type == CARD_GAME_OPERATION_HOST_INTENT)
+                    {
+                        error_code = this->validate_host_intent(
+                            operation.host_intent);
+                        if (error_code == FT_ERR_SUCCESS)
+                            error_code = pending_host_intents.append(
+                                operation);
+                    }
+                    else
+                        error_code = this->apply_operation(operation);
                     if (error_code != FT_ERR_SUCCESS)
                     {
                         restore_error = this->apply_snapshot_internal(before_state);
@@ -308,6 +573,50 @@ int32_t card_game_engine::resolve_events() noexcept
             }
         }
         event_index += 1U;
+    }
+    if (pending_host_intents.size() > 0U)
+    {
+        uint32_t required_count;
+
+        if (pending_host_intents.size() > UINT32_MAX
+                - this->_host_intent_record_count
+            || pending_host_intents.size() > UINT64_MAX
+                - this->_next_host_intent_sequence)
+        {
+            restore_error = this->apply_snapshot_internal(before_state);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (FT_ERR_FULL);
+        }
+        required_count = this->_host_intent_record_count
+            + pending_host_intents.size();
+        error_code = this->reserve_host_intent_records(required_count);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            restore_error = this->apply_snapshot_internal(before_state);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (error_code);
+        }
+        operation_index = 0U;
+        while (operation_index < pending_host_intents.size())
+        {
+            if (pending_host_intents.get(operation_index, &operation)
+                != FT_ERR_SUCCESS)
+            {
+                restore_error = this->apply_snapshot_internal(before_state);
+                if (restore_error != FT_ERR_SUCCESS)
+                    return (restore_error);
+                return (FT_ERR_INVALID_STATE);
+            }
+            this->_host_intent_records[this->_host_intent_record_count]
+                .sequence = this->_next_host_intent_sequence;
+            this->_host_intent_records[this->_host_intent_record_count]
+                .intent = operation.host_intent;
+            this->_host_intent_record_count += 1U;
+            this->_next_host_intent_sequence += 1U;
+            operation_index += 1U;
+        }
     }
     this->_event_count = 0U;
     return (FT_ERR_SUCCESS);

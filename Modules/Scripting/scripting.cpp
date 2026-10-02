@@ -1458,6 +1458,76 @@ int32_t scripting_engine::get_native_name(uint32_t native_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t scripting_engine::get_native_manifest_hash(uint64_t *hash) const noexcept
+{
+    static const uint8_t manifest_domain[] = {
+        'L', 'i', 'b', 'f', 't', '.', 'S', 'c', 'r', 'i', 'p', 't', 'i', 'n',
+        'g', '.', 'N', 'a', 't', 'i', 'v', 'e', 'M', 'a', 'n', 'i', 'f', 'e',
+        's', 't', 0U
+    };
+    uint64_t value;
+    uint32_t index;
+    uint32_t name_length;
+    uint32_t byte_index;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (hash == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    value = 14695981039346656037ULL;
+    auto append_byte = [&value](uint8_t byte) noexcept
+    {
+        value ^= byte;
+        value *= 1099511628211ULL;
+    };
+    auto append_u32_le = [&append_byte](uint32_t number) noexcept
+    {
+        uint32_t shift;
+
+        shift = 0U;
+        while (shift < 32U)
+        {
+            append_byte(static_cast<uint8_t>(number >> shift));
+            shift += 8U;
+        }
+    };
+    byte_index = 0U;
+    while (byte_index < sizeof(manifest_domain))
+    {
+        append_byte(manifest_domain[byte_index]);
+        byte_index += 1U;
+    }
+    // Manifest format version 1. The count and each stable ID are included
+    // so ordering and identity are unambiguous in the serialized byte stream.
+    append_u32_le(1U);
+    append_u32_le(this->_native_count);
+    index = 0U;
+    while (index < this->_native_count)
+    {
+        if (this->_natives[index].registered == FT_FALSE)
+            return (FT_ERR_INVALID_STATE);
+        name_length = 0U;
+        while (name_length < FT_SCRIPTING_MAX_NATIVE_NAME_BYTES
+            && this->_natives[index].name[name_length] != '\0')
+            name_length += 1U;
+        if (name_length == 0U
+            || name_length >= FT_SCRIPTING_MAX_NATIVE_NAME_BYTES)
+            return (FT_ERR_INVALID_STATE);
+        append_u32_le(index);
+        append_u32_le(name_length);
+        byte_index = 0U;
+        while (byte_index < name_length)
+        {
+            append_byte(static_cast<uint8_t>(
+                this->_natives[index].name[byte_index]));
+            byte_index += 1U;
+        }
+        index += 1U;
+    }
+    *hash = value;
+    return (FT_ERR_SUCCESS);
+}
+
 uint32_t scripting_engine::get_operation_limit() const noexcept
 {
     return (this->_operation_limit);

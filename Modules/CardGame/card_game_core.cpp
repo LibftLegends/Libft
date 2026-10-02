@@ -5,7 +5,8 @@ card_game_snapshot::card_game_snapshot() noexcept
       turn_number(0U), active_player(0U), current_phase_id(0U),
       event_count(0U), event_sequence(0U), random_state(0U),
       next_deck_instance_id(0U), next_modifier_id(0U), modifier_count(0U),
-      event_capacity(0U), events(ft_nullptr), zones(), resources(),
+      event_capacity(0U), events(ft_nullptr), pending_discard_player_id(0U),
+      pending_discard_count(0U), pending_discard_zone_id(0U), zones(), resources(),
       allowances(), choices(), usage_limits(), players()
 {
     return ;
@@ -34,7 +35,9 @@ card_game_delta::card_game_delta() noexcept
       event_sequence(0U), random_state(0U), next_deck_instance_id(0U),
       next_modifier_id(0U), modifier_count(0U),
       event_capacity(0U),
-      events(ft_nullptr), zones(), resources(), allowances(), choices(),
+      events(ft_nullptr), pending_discard_player_id(0U),
+      pending_discard_count(0U), pending_discard_zone_id(0U),
+      zones(), resources(), allowances(), choices(),
       usage_limits(), players()
 {
     return ;
@@ -128,6 +131,8 @@ int32_t card_game_operation_buffer::clear() noexcept
 int32_t card_game_operation_buffer::append(
     const card_game_operation &operation) noexcept
 {
+    card_game_operation normalized_operation;
+
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_count >= FT_CARD_GAME_MAX_OPERATIONS)
@@ -139,9 +144,82 @@ int32_t card_game_operation_buffer::append(
         if (grow_error != FT_ERR_SUCCESS)
             return (grow_error);
     }
-    this->_operations[this->_count] = operation;
+    ft_bzero(&normalized_operation, sizeof(normalized_operation));
+    normalized_operation.type = operation.type;
+    if (operation.type == CARD_GAME_OPERATION_HEALTH
+        || operation.type == CARD_GAME_OPERATION_MANA)
+    {
+        normalized_operation.player_id = operation.player_id;
+        normalized_operation.amount = operation.amount;
+    }
+    else if (operation.type == CARD_GAME_OPERATION_EMIT_EVENT)
+    {
+        normalized_operation.event_type = operation.event_type;
+        normalized_operation.source_instance = operation.source_instance;
+        normalized_operation.target_instance = operation.target_instance;
+    }
+    else if (operation.type == CARD_GAME_OPERATION_DAMAGE_INSTANCE
+        || operation.type == CARD_GAME_OPERATION_HEAL_INSTANCE)
+    {
+        normalized_operation.player_id = operation.player_id;
+        normalized_operation.amount = operation.amount;
+        normalized_operation.target_instance = operation.target_instance;
+    }
+    else if (operation.type == CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS)
+    {
+        normalized_operation.player_id = operation.player_id;
+        normalized_operation.target_instance = operation.target_instance;
+        normalized_operation.attack_delta = operation.attack_delta;
+        normalized_operation.health_delta = operation.health_delta;
+        normalized_operation.duration = operation.duration;
+        normalized_operation.source_effect_id = operation.source_effect_id;
+    }
+    else if (operation.type == CARD_GAME_OPERATION_HOST_INTENT)
+    {
+        uint32_t field_index;
+
+        if (operation.host_intent.field_count
+            > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+            return (FT_ERR_INVALID_ARGUMENT);
+        normalized_operation.host_intent.type_id
+            = operation.host_intent.type_id;
+        normalized_operation.host_intent.version
+            = operation.host_intent.version;
+        normalized_operation.host_intent.field_count
+            = operation.host_intent.field_count;
+        field_index = 0U;
+        while (field_index < operation.host_intent.field_count)
+        {
+            normalized_operation.host_intent.fields[field_index]
+                = operation.host_intent.fields[field_index];
+            field_index += 1U;
+        }
+    }
+    this->_operations[this->_count] = normalized_operation;
     this->_count += 1U;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_operation_buffer::append_host_intent(
+    const card_game_host_intent &intent) noexcept
+{
+    card_game_operation operation;
+    uint32_t index;
+
+    if (intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_bzero(&operation, sizeof(operation));
+    operation.type = CARD_GAME_OPERATION_HOST_INTENT;
+    operation.host_intent.type_id = intent.type_id;
+    operation.host_intent.version = intent.version;
+    operation.host_intent.field_count = intent.field_count;
+    index = 0U;
+    while (index < intent.field_count)
+    {
+        operation.host_intent.fields[index] = intent.fields[index];
+        index += 1U;
+    }
+    return (this->append(operation));
 }
 
 int32_t card_game_operation_buffer::grow() noexcept
@@ -207,7 +285,13 @@ card_game_engine::card_game_engine() noexcept
       _command_records(ft_nullptr), _command_record_capacity(0U),
       _command_record_count(0U), _resources(), _allowances(), _choices(),
       _zone_store(), _usage_limits(),
-      _start_overrides(), _start_override_count(0U)
+      _start_overrides(), _start_override_count(0U),
+      _host_intent_types(), _host_intent_type_count(0U),
+      _host_intent_records(ft_nullptr), _host_intent_record_count(0U),
+      _host_intent_record_capacity(0U), _next_host_intent_sequence(1U),
+      _draw_policy(), _draw_policy_configured(FT_FALSE),
+      _pending_discard_player_id(0U), _pending_discard_count(0U),
+      _pending_discard_zone_id(0U)
 {
     return ;
 }
@@ -272,6 +356,14 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_phase_count = 0U;
     this->_zone_count = 0U;
     this->_start_override_count = 0U;
+    this->_host_intent_type_count = 0U;
+    ft_bzero(&this->_draw_policy, sizeof(this->_draw_policy));
+    this->_draw_policy_configured = FT_FALSE;
+    this->_host_intent_record_count = 0U;
+    this->_next_host_intent_sequence = 1U;
+    this->_pending_discard_player_id = 0U;
+    this->_pending_discard_count = 0U;
+    this->_pending_discard_zone_id = 0U;
     this->_event_count = 0U;
     this->_event_sequence = 0U;
     this->_random_state = 0x9E3779B97F4A7C15ULL;
@@ -389,6 +481,17 @@ int32_t card_game_engine::destroy() noexcept
         cma_free(this->_command_records);
     this->_command_records = ft_nullptr;
     this->_command_record_capacity = 0U;
+    if (this->_host_intent_records != ft_nullptr)
+        cma_free(this->_host_intent_records);
+    this->_host_intent_records = ft_nullptr;
+    this->_host_intent_record_count = 0U;
+    this->_host_intent_record_capacity = 0U;
+    ft_bzero(&this->_draw_policy, sizeof(this->_draw_policy));
+    this->_draw_policy_configured = FT_FALSE;
+    this->_pending_discard_player_id = 0U;
+    this->_pending_discard_count = 0U;
+    this->_pending_discard_zone_id = 0U;
+    this->_host_intent_type_count = 0U;
     if (this->_events != ft_nullptr)
         cma_free(this->_events);
     this->_events = ft_nullptr;
@@ -471,6 +574,18 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_command_records = other._command_records;
     this->_command_record_capacity = other._command_record_capacity;
     this->_command_record_count = other._command_record_count;
+    ft_memcpy(this->_host_intent_types, other._host_intent_types,
+        sizeof(this->_host_intent_types));
+    this->_host_intent_type_count = other._host_intent_type_count;
+    this->_host_intent_records = other._host_intent_records;
+    this->_host_intent_record_count = other._host_intent_record_count;
+    this->_host_intent_record_capacity = other._host_intent_record_capacity;
+    this->_next_host_intent_sequence = other._next_host_intent_sequence;
+    this->_draw_policy = other._draw_policy;
+    this->_draw_policy_configured = other._draw_policy_configured;
+    this->_pending_discard_player_id = other._pending_discard_player_id;
+    this->_pending_discard_count = other._pending_discard_count;
+    this->_pending_discard_zone_id = other._pending_discard_zone_id;
     ft_memcpy(this->_start_overrides, other._start_overrides,
         sizeof(this->_start_overrides));
     this->_start_override_count = other._start_override_count;
@@ -485,6 +600,14 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     other._command_record_capacity = 0U;
     other._events = ft_nullptr;
     other._event_capacity = 0U;
+    other._host_intent_records = ft_nullptr;
+    other._host_intent_record_count = 0U;
+    other._host_intent_record_capacity = 0U;
+    ft_bzero(&other._draw_policy, sizeof(other._draw_policy));
+    other._draw_policy_configured = FT_FALSE;
+    other._pending_discard_player_id = 0U;
+    other._pending_discard_count = 0U;
+    other._pending_discard_zone_id = 0U;
     other._cards = ft_nullptr;
     other._card_type_ids = ft_nullptr;
     other._card_capacity = 0U;

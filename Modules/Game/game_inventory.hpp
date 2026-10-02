@@ -24,12 +24,14 @@ class game_inventory
     #else
         private:
     #endif
+        friend class game_crafting;
         ft_map<int32_t, ft_sharedptr<game_item> > _items;
         ft_size_t                              _capacity;
         ft_size_t                              _used_slots;
         int32_t                                 _weight_limit;
         int32_t                                 _current_weight;
         int32_t                                 _next_slot;
+        uint64_t                                _revision;
         pt_recursive_mutex                           *_mutex;
         uint8_t                             _initialised_state;
         static thread_local int32_t _last_error;
@@ -38,8 +40,12 @@ class game_inventory
 
 
         ft_bool check_item_valid(const ft_sharedptr<game_item> &item) const noexcept;
+        int32_t add_item_transactional(
+            const ft_sharedptr<game_item> &item) noexcept;
+        int32_t add_item_in_place(const ft_sharedptr<game_item> &item) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t bump_revision() noexcept;
 
     public:
         game_inventory() noexcept;
@@ -76,6 +82,18 @@ class game_inventory
 
         int32_t  add_item(const ft_sharedptr<game_item> &item) noexcept;
         void remove_item(int32_t slot) noexcept;
+
+        /* Transfer is in-process only (no durable request ID/persistence).
+         * When enabled, inventory mutexes are acquired in object-address order.
+         * quantity must be positive; a missing/empty source slot returns
+         * FT_ERR_NOT_FOUND, and self-transfer returns FT_ERR_INVALID_ARGUMENT.
+         * Direct mutation through get_items() or externally shared game_item
+         * objects bypasses revisions; callers must serialize those accesses
+         * and must not use them concurrently with revision-checked transfers. */
+        int32_t get_revision(uint64_t *revision) const noexcept;
+        int32_t transfer_to(game_inventory &destination, int32_t source_slot,
+            int32_t quantity, uint64_t expected_source_revision,
+            uint64_t expected_destination_revision) noexcept;
 
         int32_t  count_item(int32_t item_id) const noexcept;
         ft_bool has_item(int32_t item_id) const noexcept;

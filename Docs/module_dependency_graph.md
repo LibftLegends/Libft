@@ -48,7 +48,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Crypto`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Observability` | `Basic`, `CMA`, `Errno`, `PThread`, `Template`, `Threading`, `Time` |
 | `Analytics` | `Basic`, `Errno` |
-| `CardGame` | `Basic`, `Errno` |
+| `CardGame` | `Basic`, `Errno`, `Scripting` |
 | `PThread` | `Basic`, `Compatebility`, `Errno`, `System_utils`, `Time` |
 | `Parser` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Printf` | `Basic`, `CPP_class`, `Errno`, `PThread`, `System_utils` |
@@ -316,6 +316,7 @@ graph TD
     Analytics --> Errno
     CardGame --> Basic
     CardGame --> Errno
+    CardGame --> Scripting
     Scripting --> Basic
     Scripting --> Errno
     PThread --> Basic

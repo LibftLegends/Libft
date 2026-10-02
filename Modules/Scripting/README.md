@@ -20,6 +20,11 @@ temporary migration aid for existing assets.
   little-endian format with a magic value, version, exact lengths, a payload
   checksum, and no raw pointers. Loading is transactional and runs the
   bytecode verifier before replacing the caller's program.
+- `get_native_manifest_hash()` computes a versioned FNV-1a 64-bit fingerprint
+  of native IDs and names in registration order, using canonical little-endian
+  fields and excluding process-specific callback/user-data addresses. Consumers
+  can bind compiled content to the exact native ABI; this fingerprint is not a
+  cryptographic authentication mechanism.
 - `if (condition) value else value` and `while (condition) value` are
   supported as expressions. Loop execution is bounded by the engine's
   operation limit; an unbounded condition cannot run indefinitely.

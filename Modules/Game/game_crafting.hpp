@@ -61,6 +61,62 @@ struct game_crafting_ingredient
         const char *get_error_str() const noexcept;
 };
 
+struct game_crafting_output
+{
+    ft_sharedptr<game_item> item_definition;
+    int32_t                 quantity;
+};
+
+/* One unsatisfied ingredient group. A rarity of -1 means any rarity. */
+struct game_crafting_missing_ingredient
+{
+    int32_t item_id;
+    int32_t rarity;
+    int32_t required_units;
+    int32_t available_units;
+    int32_t missing_units;
+};
+
+/* Read-only recipe status. Missing groups are returned separately in recipe order. */
+struct game_crafting_query_result
+{
+    ft_bool found;
+    ft_bool known;
+    ft_bool craftable;
+    ft_size_t missing_group_count;
+    int32_t missing_units;
+};
+
+class game_crafting_prepared
+{
+    friend class game_crafting;
+    ft_map<int32_t, ft_sharedptr<game_item>> _expected_items;
+    ft_map<int32_t, ft_sharedptr<game_item>> _result_items;
+    ft_size_t _expected_capacity;
+    ft_size_t _expected_used_slots;
+    int32_t _expected_weight_limit;
+    int32_t _expected_current_weight;
+    int32_t _expected_next_slot;
+    ft_size_t _result_capacity;
+    ft_size_t _result_used_slots;
+    int32_t _result_weight_limit;
+    int32_t _result_current_weight;
+    int32_t _result_next_slot;
+    uint8_t _initialised_state;
+    ft_bool _ready;
+
+    int32_t clear() noexcept;
+
+public:
+    game_crafting_prepared() noexcept;
+    game_crafting_prepared(const game_crafting_prepared &) = delete;
+    game_crafting_prepared &operator=(const game_crafting_prepared &) = delete;
+    ~game_crafting_prepared() noexcept;
+    int32_t initialize() noexcept;
+    int32_t destroy() noexcept;
+    ft_bool is_ready() const noexcept;
+};
+
 class game_crafting
 {
     #ifdef LIBFT_TEST_BUILD
@@ -69,6 +125,8 @@ class game_crafting
         private:
     #endif
         ft_map<int32_t, ft_vector<game_crafting_ingredient>> _recipes;
+        ft_map<int32_t, ft_bool> _unlocked_recipes;
+        ft_map<int32_t, game_crafting_output> _recipe_outputs;
         uint8_t                                     _initialised_state;
         mutable pt_recursive_mutex *_mutex;
         static thread_local int32_t _last_error;
@@ -97,6 +155,24 @@ class game_crafting
         const char *get_error_str() const noexcept;
 
         int32_t register_recipe(int32_t recipe_id, ft_vector<game_crafting_ingredient> &&ingredients) noexcept;
+        int32_t register_recipe(int32_t recipe_id, ft_vector<game_crafting_ingredient> &&ingredients,
+            ft_bool initially_unlocked) noexcept;
+        int32_t register_recipe(int32_t recipe_id,
+            ft_vector<game_crafting_ingredient> &&ingredients,
+            const ft_sharedptr<game_item> &output_definition,
+            int32_t output_quantity, ft_bool initially_unlocked = FT_TRUE) noexcept;
+        int32_t unlock_recipe(int32_t recipe_id) noexcept;
+        int32_t is_recipe_unlocked(int32_t recipe_id, ft_bool *unlocked) const noexcept;
+        /* Station context is intentionally not considered by this query yet. */
+        int32_t query_recipe(int32_t recipe_id, const game_inventory &inventory,
+            game_crafting_query_result *result,
+            ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept;
+        int32_t prepare_craft(const game_inventory &inventory, int32_t recipe_id,
+            int32_t batch_count, game_crafting_prepared *prepared) noexcept;
+        int32_t commit_craft(game_inventory &inventory,
+            game_crafting_prepared *prepared) noexcept;
+        /* Compatibility-only path for recipes registered without a bound output.
+         * Recipes with authoritative outputs must use prepare_craft/commit_craft. */
         int32_t craft_item(game_inventory &inventory, int32_t recipe_id, const ft_sharedptr<game_item> &result) noexcept;
         int32_t initialize() noexcept;
         int32_t destroy() noexcept;

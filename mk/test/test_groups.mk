@@ -125,6 +125,10 @@ VOXEL_TEST_FILES := \
 	Test/test_terrain_script_execute.cpp \
 	Test/test_terrain_runtime_blocks.cpp
 
+SCRIPTING_TEST_FILES := \
+	Test/test_scripting_engine.cpp \
+	Test/test_scripting_native_manifest.cpp
+
 CLI_TEST_FILES := \
 	Test/test_cli.cpp \
 	Test/test_cli_completion.cpp \

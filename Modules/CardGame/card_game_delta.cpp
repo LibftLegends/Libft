@@ -1,5 +1,60 @@
 #include "card_game_internal.hpp"
 
+static ft_bool card_game_host_intents_equal(
+    const card_game_host_intent_record &left,
+    const card_game_host_intent_record &right) noexcept
+{
+    uint32_t field_index;
+
+    if (left.sequence != right.sequence
+        || left.intent.type_id != right.intent.type_id
+        || left.intent.version != right.intent.version
+        || left.intent.field_count != right.intent.field_count)
+        return (FT_FALSE);
+    field_index = 0U;
+    while (field_index < left.intent.field_count
+        && field_index < FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+    {
+        if (left.intent.fields[field_index].type
+                != right.intent.fields[field_index].type
+            || left.intent.fields[field_index].value
+                != right.intent.fields[field_index].value)
+            return (FT_FALSE);
+        field_index += 1U;
+    }
+    return (FT_TRUE);
+}
+
+static ft_bool card_game_host_intent_snapshots_equal(
+    const card_game_host_intent_snapshot &left,
+    uint64_t left_next_sequence,
+    const card_game_host_intent_snapshot &right,
+    uint64_t right_next_sequence) noexcept
+{
+    uint32_t left_count;
+    uint32_t right_count;
+    uint32_t index;
+    card_game_host_intent_record left_record;
+    card_game_host_intent_record right_record;
+
+    if (left_next_sequence != right_next_sequence
+        || left.get_count(&left_count) != FT_ERR_SUCCESS
+        || right.get_count(&right_count) != FT_ERR_SUCCESS
+        || left_count != right_count)
+        return (FT_FALSE);
+    index = 0U;
+    while (index < left_count)
+    {
+        if (left.get_record(index, &left_record) != FT_ERR_SUCCESS
+            || right.get_record(index, &right_record) != FT_ERR_SUCCESS
+            || card_game_host_intents_equal(left_record, right_record)
+                == FT_FALSE)
+            return (FT_FALSE);
+        index += 1U;
+    }
+    return (FT_TRUE);
+}
+
 int32_t card_game_engine::apply_snapshot_internal(
     const card_game_snapshot &snapshot) noexcept
 {
@@ -14,8 +69,13 @@ int32_t card_game_engine::apply_snapshot_internal(
     uint32_t next_modifier_id;
     uint32_t previous_player_id;
     uint32_t target_index;
+    uint32_t host_intent_count;
+    uint32_t host_intent_index;
     ft_bool target_found;
     ft_bool phase_found;
+    card_game_host_intent_record host_intent_record;
+    card_game_host_intent_record previous_host_intent_record;
+    int32_t host_intent_error;
 
     if (this->_initialised_state != 2U
         || snapshot.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
@@ -24,6 +84,51 @@ int32_t card_game_engine::apply_snapshot_internal(
     if (snapshot.event_count > FT_CARD_GAME_MAX_EVENTS
         || (snapshot.event_count != 0U && snapshot.events == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.next_host_intent_sequence == 0U
+        || snapshot.host_intents.get_count(&host_intent_count)
+            != FT_ERR_SUCCESS
+        || host_intent_count > FT_CARD_GAME_MAX_OPERATIONS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if ((snapshot.pending_discard_count == 0U
+            && (snapshot.pending_discard_player_id != 0U
+                || snapshot.pending_discard_zone_id != 0U))
+        || (snapshot.pending_discard_count != 0U
+            && (snapshot.pending_discard_count
+                    > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT
+                || snapshot.pending_discard_player_id
+                    >= snapshot.player_count
+                || snapshot.pending_discard_player_id
+                    != snapshot.active_player
+                || snapshot.pending_discard_zone_id == 0U
+                || snapshot.players[snapshot.pending_discard_player_id]
+                    .hand_count < snapshot.pending_discard_count
+                || this->_draw_policy_configured != FT_TRUE
+                || snapshot.pending_discard_zone_id
+                    != this->_draw_policy.discard_zone_id)))
+        return (FT_ERR_INVALID_ARGUMENT);
+    host_intent_index = 0U;
+    while (host_intent_index < host_intent_count)
+    {
+        if (snapshot.host_intents.get_record(host_intent_index,
+                &host_intent_record) != FT_ERR_SUCCESS
+            || host_intent_record.sequence == 0U
+            || host_intent_record.sequence
+                >= snapshot.next_host_intent_sequence)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (host_intent_index != 0U)
+        {
+            if (snapshot.host_intents.get_record(host_intent_index - 1U,
+                    &previous_host_intent_record) != FT_ERR_SUCCESS
+                || host_intent_record.sequence
+                    <= previous_host_intent_record.sequence)
+                return (FT_ERR_INVALID_ARGUMENT);
+        }
+        host_intent_error = this->validate_host_intent(
+            host_intent_record.intent);
+        if (host_intent_error != FT_ERR_SUCCESS)
+            return (host_intent_error);
+        host_intent_index += 1U;
+    }
     if (snapshot.random_state == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (snapshot.next_deck_instance_id == 0U
@@ -206,6 +311,14 @@ int32_t card_game_engine::apply_snapshot_internal(
                 return (FT_ERR_NO_MEMORY);
         }
     }
+    if (host_intent_count > this->_host_intent_record_capacity)
+    {
+        int32_t reserve_error;
+
+        reserve_error = this->reserve_host_intent_records(host_intent_count);
+        if (reserve_error != FT_ERR_SUCCESS)
+            return (reserve_error);
+    }
     if (this->_usage_limits.apply_snapshot(snapshot.usage_limits)
         != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -279,6 +392,21 @@ int32_t card_game_engine::apply_snapshot_internal(
     this->_current_phase_id = snapshot.current_phase_id;
     this->_event_count = snapshot.event_count;
     this->_event_sequence = snapshot.event_sequence;
+    this->_host_intent_record_count = host_intent_count;
+    host_intent_index = 0U;
+    while (host_intent_index < host_intent_count)
+    {
+        if (snapshot.host_intents.get_record(host_intent_index,
+                &this->_host_intent_records[host_intent_index])
+            != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        host_intent_index += 1U;
+    }
+    this->_next_host_intent_sequence = snapshot.next_host_intent_sequence;
+    this->_pending_discard_player_id =
+        snapshot.pending_discard_player_id;
+    this->_pending_discard_count = snapshot.pending_discard_count;
+    this->_pending_discard_zone_id = snapshot.pending_discard_zone_id;
     this->_random_state = snapshot.random_state;
     this->_modifier_count = snapshot.modifier_count;
     ft_memcpy(this->_modifiers, snapshot.modifiers,
@@ -316,15 +444,24 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     card_game_delta candidate;
     uint32_t player_id;
     uint32_t event_bytes;
+    uint32_t host_intent_count;
+    uint32_t baseline_host_intent_count;
     int32_t result;
 
     if (this->_initialised_state != 2U || delta == ft_nullptr
         || baseline.format_version != FT_CARD_GAME_STATE_FORMAT_VERSION
-        || baseline.player_count != this->_player_count)
+        || baseline.player_count != this->_player_count
+        || baseline.next_host_intent_sequence == 0U
+        || baseline.host_intents.get_count(&baseline_host_intent_count)
+            != FT_ERR_SUCCESS
+        || baseline_host_intent_count > FT_CARD_GAME_MAX_OPERATIONS)
         return (FT_ERR_INVALID_ARGUMENT);
     result = this->get_snapshot(&current_snapshot);
     if (result != FT_ERR_SUCCESS)
         return (result);
+    if (current_snapshot.host_intents.get_count(&host_intent_count)
+        != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     event_bytes = current_snapshot.event_count * sizeof(card_game_event);
     if (event_bytes != 0U)
     {
@@ -352,6 +489,16 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     candidate.next_modifier_id = current_snapshot.next_modifier_id;
     candidate.modifier_count = current_snapshot.modifier_count;
     candidate.event_capacity = current_snapshot.event_count;
+    candidate.next_host_intent_sequence =
+        current_snapshot.next_host_intent_sequence;
+    candidate.pending_discard_player_id =
+        current_snapshot.pending_discard_player_id;
+    candidate.pending_discard_count = current_snapshot.pending_discard_count;
+    candidate.pending_discard_zone_id =
+        current_snapshot.pending_discard_zone_id;
+    result = candidate.host_intents.initialize(current_snapshot.host_intents);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (card_game_zone_store::clone_snapshot(current_snapshot.zones,
             &candidate.zones) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
@@ -381,9 +528,21 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
         candidate.global_state_changed = FT_TRUE;
     if (baseline.random_state != current_snapshot.random_state)
         candidate.global_state_changed = FT_TRUE;
+    if (card_game_host_intent_snapshots_equal(baseline.host_intents,
+            baseline.next_host_intent_sequence,
+            current_snapshot.host_intents,
+            current_snapshot.next_host_intent_sequence) == FT_FALSE)
+        candidate.global_state_changed = FT_TRUE;
     if (baseline.next_deck_instance_id
             != current_snapshot.next_deck_instance_id
         || baseline.next_modifier_id != current_snapshot.next_modifier_id)
+        candidate.global_state_changed = FT_TRUE;
+    if (baseline.pending_discard_player_id
+            != current_snapshot.pending_discard_player_id
+        || baseline.pending_discard_count
+            != current_snapshot.pending_discard_count
+        || baseline.pending_discard_zone_id
+            != current_snapshot.pending_discard_zone_id)
         candidate.global_state_changed = FT_TRUE;
     if (baseline.modifier_count != current_snapshot.modifier_count
         || ft_memcmp(baseline.modifiers, current_snapshot.modifiers,
@@ -418,6 +577,7 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     }
     if (delta->events != ft_nullptr)
         cma_free(delta->events);
+    (void)delta->host_intents.destroy();
     (void)card_game_zone_store::release_snapshot(&delta->zones);
     (void)card_game_resource_ledger::release_snapshot(&delta->resources);
     (void)card_game_allowance_ledger::release_snapshot(&delta->allowances);
@@ -441,6 +601,14 @@ int32_t card_game_engine::create_delta(const card_game_snapshot &baseline,
     delta->modifier_count = candidate.modifier_count;
     delta->event_capacity = candidate.event_capacity;
     delta->events = candidate.events;
+    delta->next_host_intent_sequence = candidate.next_host_intent_sequence;
+    delta->pending_discard_player_id =
+        candidate.pending_discard_player_id;
+    delta->pending_discard_count = candidate.pending_discard_count;
+    delta->pending_discard_zone_id = candidate.pending_discard_zone_id;
+    result = delta->host_intents.move(candidate.host_intents);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     ft_memcpy(delta->modifiers, candidate.modifiers,
         sizeof(delta->modifiers));
     ft_memcpy(delta->players, candidate.players, sizeof(delta->players));
@@ -467,6 +635,8 @@ int32_t card_game_engine::apply_delta_internal(
     uint32_t next_deck_instance_id;
     uint32_t next_modifier_id;
     uint32_t target_index;
+    uint32_t host_intent_count;
+    uint32_t host_intent_index;
     card_game_zone_store_snapshot current_zones;
     card_game_resource_snapshot current_resources;
     card_game_allowance_snapshot current_allowances;
@@ -477,8 +647,12 @@ int32_t card_game_engine::apply_delta_internal(
     ft_bool allowances_match;
     ft_bool choices_match;
     ft_bool usage_limits_match;
+    ft_bool host_intents_match;
     ft_bool target_found;
+    card_game_host_intent_record host_intent_record;
+    card_game_host_intent_record previous_host_intent_record;
     int32_t release_error;
+    int32_t host_intent_error;
 
     ft_bzero(&current_zones, sizeof(current_zones));
     ft_bzero(&current_resources, sizeof(current_resources));
@@ -497,10 +671,91 @@ int32_t card_game_engine::apply_delta_internal(
         || (delta.global_state_changed != FT_FALSE
             && delta.global_state_changed != FT_TRUE))
         return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.next_host_intent_sequence == 0U
+        || delta.host_intents.get_count(&host_intent_count)
+            != FT_ERR_SUCCESS
+        || host_intent_count > FT_CARD_GAME_MAX_OPERATIONS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if ((delta.pending_discard_count == 0U
+            && (delta.pending_discard_player_id != 0U
+                || delta.pending_discard_zone_id != 0U))
+        || (delta.pending_discard_count != 0U
+            && (delta.pending_discard_count
+                    > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT
+                || delta.pending_discard_player_id >= delta.player_count
+                || delta.pending_discard_player_id != delta.active_player
+                || delta.pending_discard_zone_id == 0U
+                || this->_draw_policy_configured != FT_TRUE
+                || delta.pending_discard_zone_id
+                    != this->_draw_policy.discard_zone_id)))
+        return (FT_ERR_INVALID_ARGUMENT);
+    host_intent_index = 0U;
+    while (host_intent_index < host_intent_count)
+    {
+        if (delta.host_intents.get_record(host_intent_index,
+                &host_intent_record) != FT_ERR_SUCCESS
+            || host_intent_record.sequence == 0U
+            || host_intent_record.sequence
+                >= delta.next_host_intent_sequence)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (host_intent_index != 0U)
+        {
+            if (delta.host_intents.get_record(host_intent_index - 1U,
+                    &previous_host_intent_record) != FT_ERR_SUCCESS
+                || host_intent_record.sequence
+                    <= previous_host_intent_record.sequence)
+                return (FT_ERR_INVALID_ARGUMENT);
+        }
+        host_intent_error = this->validate_host_intent(
+            host_intent_record.intent);
+        if (host_intent_error != FT_ERR_SUCCESS)
+            return (host_intent_error);
+        host_intent_index += 1U;
+    }
+    host_intents_match = FT_FALSE;
+    if (host_intent_count == this->_host_intent_record_count
+        && delta.next_host_intent_sequence
+            == this->_next_host_intent_sequence)
+    {
+        host_intents_match = FT_TRUE;
+        host_intent_index = 0U;
+        while (host_intent_index < host_intent_count)
+        {
+            if (delta.host_intents.get_record(host_intent_index,
+                    &host_intent_record) != FT_ERR_SUCCESS
+                || card_game_host_intents_equal(host_intent_record,
+                    this->_host_intent_records[host_intent_index])
+                    == FT_FALSE)
+                host_intents_match = FT_FALSE;
+            host_intent_index += 1U;
+        }
+    }
+    if (delta.global_state_changed == FT_FALSE
+        && host_intents_match == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.global_state_changed == FT_FALSE
+        && (delta.pending_discard_player_id
+                != this->_pending_discard_player_id
+            || delta.pending_discard_count != this->_pending_discard_count
+            || delta.pending_discard_zone_id != this->_pending_discard_zone_id))
+        return (FT_ERR_INVALID_ARGUMENT);
     if (delta.player_count != 0U
         && (delta.active_player >= delta.player_count
             || delta.turn_number == 0U))
         return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.pending_discard_count != 0U)
+    {
+        player_id = delta.pending_discard_player_id;
+        if (((delta.changed_player_mask
+                    & (static_cast<uint64_t>(1U) << player_id)) != 0U
+                && delta.players[player_id].hand_count
+                    < delta.pending_discard_count)
+            || ((delta.changed_player_mask
+                    & (static_cast<uint64_t>(1U) << player_id)) == 0U
+                && this->_hand_count[player_id]
+                    < delta.pending_discard_count))
+            return (FT_ERR_INVALID_ARGUMENT);
+    }
     if (delta.modifier_count > FT_CARD_GAME_MAX_MODIFIERS)
         return (FT_ERR_INVALID_ARGUMENT);
     if (delta.next_deck_instance_id == 0U
@@ -668,6 +923,15 @@ int32_t card_game_engine::apply_delta_internal(
     if (delta.global_state_changed != FT_FALSE
         && delta.random_state == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (delta.global_state_changed != FT_FALSE
+        && host_intent_count > this->_host_intent_record_capacity)
+    {
+        int32_t reserve_error;
+
+        reserve_error = this->reserve_host_intent_records(host_intent_count);
+        if (reserve_error != FT_ERR_SUCCESS)
+            return (reserve_error);
+    }
     if (delta.global_state_changed != FT_FALSE)
     {
         if (this->_event_capacity < delta.event_count)
@@ -703,6 +967,22 @@ int32_t card_game_engine::apply_delta_internal(
         this->_active_player = delta.active_player;
         this->_current_phase_id = delta.current_phase_id;
         this->_event_count = delta.event_count;
+        this->_host_intent_record_count = host_intent_count;
+        host_intent_index = 0U;
+        while (host_intent_index < host_intent_count)
+        {
+            if (delta.host_intents.get_record(host_intent_index,
+                    &this->_host_intent_records[host_intent_index])
+                != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            host_intent_index += 1U;
+        }
+        this->_next_host_intent_sequence =
+            delta.next_host_intent_sequence;
+        this->_pending_discard_player_id =
+            delta.pending_discard_player_id;
+        this->_pending_discard_count = delta.pending_discard_count;
+        this->_pending_discard_zone_id = delta.pending_discard_zone_id;
         this->_event_sequence = delta.event_sequence;
         this->_random_state = delta.random_state;
         this->_modifier_count = delta.modifier_count;

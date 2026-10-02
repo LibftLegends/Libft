@@ -31,7 +31,7 @@ namespace
                 return (FT_ERR_INVALID_ARGUMENT);
             }
         }
-        offset = static_cast<ft_size_t>(difference);
+        offset = ft_platform_cast<ft_size_t>(difference);
         return (FT_ERR_SUCCESS);
     }
 }

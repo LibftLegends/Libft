@@ -43,7 +43,7 @@ static int32_t compute_offset(uint64_t pointer_value, uint64_t base_value,
             return (FT_ERR_INVALID_ARGUMENT);
         }
     }
-    offset = static_cast<ft_size_t>(difference);
+    offset = ft_platform_cast<ft_size_t>(difference);
     return (FT_ERR_SUCCESS);
 }
 

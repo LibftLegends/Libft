@@ -1,4 +1,128 @@
 #include "card_game_internal.hpp"
+#include "../Errno/errno_internal.hpp"
+
+card_game_host_intent_snapshot::card_game_host_intent_snapshot() noexcept
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _records(ft_nullptr),
+      _count(0U), _capacity(0U)
+{
+    return ;
+}
+
+card_game_host_intent_snapshot::~card_game_host_intent_snapshot() noexcept
+{
+    (void)this->destroy();
+    return ;
+}
+
+int32_t card_game_host_intent_snapshot::initialize(
+    const card_game_host_intent_record *records, uint32_t count) noexcept
+{
+    card_game_host_intent_record *owned_records;
+
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        errno_abort_lifecycle(this->_initialised_state,
+            "card_game_host_intent_snapshot::initialize",
+            "called while object is already initialised");
+    if (count > FT_CARD_GAME_MAX_OPERATIONS
+        || (count != 0U && records == ft_nullptr))
+        return (FT_ERR_INVALID_ARGUMENT);
+    owned_records = ft_nullptr;
+    if (count != 0U)
+    {
+        owned_records = static_cast<card_game_host_intent_record *>(
+            cma_malloc(static_cast<ft_size_t>(count)
+                * sizeof(card_game_host_intent_record)));
+        if (owned_records == ft_nullptr)
+        {
+            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            return (FT_ERR_NO_MEMORY);
+        }
+        ft_memcpy(owned_records, records,
+            static_cast<ft_size_t>(count)
+                * sizeof(card_game_host_intent_record));
+    }
+    this->_records = owned_records;
+    this->_count = count;
+    this->_capacity = count;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_host_intent_snapshot::initialize(
+    const card_game_host_intent_snapshot &other) noexcept
+{
+    if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    return (this->initialize(other._records, other._count));
+}
+
+int32_t card_game_host_intent_snapshot::destroy() noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
+        || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (FT_ERR_SUCCESS);
+    if (this->_records != ft_nullptr)
+        cma_free(this->_records);
+    this->_records = ft_nullptr;
+    this->_count = 0U;
+    this->_capacity = 0U;
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_host_intent_snapshot::move(
+    card_game_host_intent_snapshot &other) noexcept
+{
+    if (&other == this)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        errno_abort_lifecycle(other._initialised_state,
+            "card_game_host_intent_snapshot::move",
+            "source object is uninitialised");
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        (void)this->destroy();
+    else if (this->_initialised_state != FT_CLASS_STATE_UNINITIALISED
+        && this->_initialised_state != FT_CLASS_STATE_DESTROYED)
+        return (FT_ERR_INVALID_STATE);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->_records = ft_nullptr;
+        this->_count = 0U;
+        this->_capacity = 0U;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (FT_ERR_SUCCESS);
+    }
+    this->_records = other._records;
+    this->_count = other._count;
+    this->_capacity = other._capacity;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    other._records = ft_nullptr;
+    other._count = 0U;
+    other._capacity = 0U;
+    other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_host_intent_snapshot::get_count(uint32_t *count) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || count == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    *count = this->_count;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_host_intent_snapshot::get_record(uint32_t index,
+    card_game_host_intent_record *record) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || record == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    if (index >= this->_count)
+        return (FT_ERR_OUT_OF_RANGE);
+    *record = this->_records[index];
+    return (FT_ERR_SUCCESS);
+}
 
 int32_t card_game_engine::get_snapshot(
     card_game_snapshot *snapshot) const noexcept
@@ -26,6 +150,13 @@ int32_t card_game_engine::get_snapshot(
             static_cast<ft_size_t>(this->_event_count)
                 * sizeof(card_game_event));
     }
+    result = candidate->host_intents.initialize(
+        this->_host_intent_records, this->_host_intent_record_count);
+    if (result != FT_ERR_SUCCESS)
+    {
+        card_game_destroy_snapshot(candidate);
+        return (result);
+    }
     candidate->format_version = FT_CARD_GAME_STATE_FORMAT_VERSION;
     candidate->state_sequence = this->_state_sequence;
     candidate->player_count = this->_player_count;
@@ -39,6 +170,12 @@ int32_t card_game_engine::get_snapshot(
     candidate->next_modifier_id = this->_next_modifier_id;
     candidate->modifier_count = this->_modifier_count;
     candidate->event_capacity = this->_event_count;
+    candidate->next_host_intent_sequence =
+        this->_next_host_intent_sequence;
+    candidate->pending_discard_player_id =
+        this->_pending_discard_player_id;
+    candidate->pending_discard_count = this->_pending_discard_count;
+    candidate->pending_discard_zone_id = this->_pending_discard_zone_id;
     ft_memcpy(candidate->modifiers, this->_modifiers,
         sizeof(candidate->modifiers));
     player_id = 0U;
@@ -88,6 +225,7 @@ int32_t card_game_engine::get_snapshot(
     }
     if (snapshot->events != ft_nullptr)
         cma_free(snapshot->events);
+    (void)snapshot->host_intents.destroy();
     (void)card_game_zone_store::release_snapshot(&snapshot->zones);
     (void)card_game_resource_ledger::release_snapshot(&snapshot->resources);
     (void)card_game_allowance_ledger::release_snapshot(&snapshot->allowances);
@@ -108,6 +246,18 @@ int32_t card_game_engine::get_snapshot(
     snapshot->modifier_count = candidate->modifier_count;
     snapshot->event_capacity = candidate->event_capacity;
     snapshot->events = candidate->events;
+    snapshot->next_host_intent_sequence =
+        candidate->next_host_intent_sequence;
+    snapshot->pending_discard_player_id =
+        candidate->pending_discard_player_id;
+    snapshot->pending_discard_count = candidate->pending_discard_count;
+    snapshot->pending_discard_zone_id = candidate->pending_discard_zone_id;
+    result = snapshot->host_intents.move(candidate->host_intents);
+    if (result != FT_ERR_SUCCESS)
+    {
+        card_game_destroy_snapshot(candidate);
+        return (result);
+    }
     ft_memcpy(snapshot->modifiers, candidate->modifiers,
         sizeof(snapshot->modifiers));
     ft_memcpy(snapshot->players, candidate->players,
@@ -141,6 +291,25 @@ int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
     card_game_hash_u32(&calculated_hash, this->_rules.starting_mana);
     card_game_hash_u32(&calculated_hash, this->_rules.max_mana);
     card_game_hash_u32(&calculated_hash, this->_rules.max_turns);
+    card_game_hash_u32(&calculated_hash,
+        static_cast<uint32_t>(this->_draw_policy_configured));
+    if (this->_draw_policy_configured == FT_TRUE)
+    {
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.discard_zone_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.burned_zone_id);
+        card_game_hash_u32(&calculated_hash,
+            static_cast<uint32_t>(this->_draw_policy.reshuffle_discard));
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.empty_draw_event_type_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.empty_draw_event_version);
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.overflow_event_type_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_draw_policy.overflow_event_version);
+    }
     card_game_hash_u32(&calculated_hash, this->_start_override_count);
     index = 0U;
     while (index < this->_start_override_count)
@@ -228,6 +397,28 @@ int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
             static_cast<uint32_t>(this->_zones[index].owner_scoped));
         index += 1U;
     }
+    card_game_hash_u32(&calculated_hash, this->_host_intent_type_count);
+    index = 0U;
+    while (index < this->_host_intent_type_count)
+    {
+        uint32_t field_index;
+
+        card_game_hash_u32(&calculated_hash,
+            this->_host_intent_types[index].type_id);
+        card_game_hash_u32(&calculated_hash,
+            this->_host_intent_types[index].version);
+        card_game_hash_u32(&calculated_hash,
+            this->_host_intent_types[index].field_count);
+        field_index = 0U;
+        while (field_index < this->_host_intent_types[index].field_count)
+        {
+            card_game_hash_u32(&calculated_hash,
+                static_cast<uint32_t>(this->_host_intent_types[index]
+                    .field_types[field_index]));
+            field_index += 1U;
+        }
+        index += 1U;
+    }
     *hash = calculated_hash;
     return (FT_ERR_SUCCESS);
 }
@@ -242,6 +433,10 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
     uint32_t deck_index;
     uint32_t hand_index;
     uint32_t index;
+    uint32_t host_intent_count;
+    uint32_t host_intent_index;
+    uint32_t field_index;
+    card_game_host_intent_record host_intent_record;
 
     if (this->_initialised_state != 2U || hash == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -263,6 +458,48 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
     card_game_hash_u32(&calculated_hash, snapshot->event_count);
     card_game_hash_u64(&calculated_hash, snapshot->event_sequence);
     card_game_hash_u64(&calculated_hash, snapshot->random_state);
+    card_game_hash_u64(&calculated_hash,
+        snapshot->next_host_intent_sequence);
+    card_game_hash_u32(&calculated_hash,
+        snapshot->pending_discard_player_id);
+    card_game_hash_u32(&calculated_hash, snapshot->pending_discard_count);
+    card_game_hash_u32(&calculated_hash, snapshot->pending_discard_zone_id);
+    if (snapshot->host_intents.get_count(&host_intent_count)
+        != FT_ERR_SUCCESS)
+    {
+        card_game_destroy_snapshot(snapshot);
+        return (FT_ERR_INVALID_STATE);
+    }
+    card_game_hash_u32(&calculated_hash, host_intent_count);
+    host_intent_index = 0U;
+    while (host_intent_index < host_intent_count)
+    {
+        if (snapshot->host_intents.get_record(host_intent_index,
+                &host_intent_record) != FT_ERR_SUCCESS)
+        {
+            card_game_destroy_snapshot(snapshot);
+            return (FT_ERR_INVALID_STATE);
+        }
+        card_game_hash_u64(&calculated_hash, host_intent_record.sequence);
+        card_game_hash_u32(&calculated_hash,
+            host_intent_record.intent.type_id);
+        card_game_hash_u32(&calculated_hash,
+            host_intent_record.intent.version);
+        card_game_hash_u32(&calculated_hash,
+            host_intent_record.intent.field_count);
+        field_index = 0U;
+        while (field_index < host_intent_record.intent.field_count
+            && field_index < FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+        {
+            card_game_hash_u32(&calculated_hash,
+                static_cast<uint32_t>(host_intent_record.intent.fields[
+                    field_index].type));
+            card_game_hash_u64(&calculated_hash,
+                host_intent_record.intent.fields[field_index].value);
+            field_index += 1U;
+        }
+        host_intent_index += 1U;
+    }
     card_game_hash_u32(&calculated_hash, snapshot->next_deck_instance_id);
     card_game_hash_u32(&calculated_hash, snapshot->next_modifier_id);
     card_game_hash_u32(&calculated_hash, snapshot->modifier_count);

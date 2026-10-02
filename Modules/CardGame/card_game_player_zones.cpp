@@ -144,6 +144,44 @@ int32_t card_game_engine::hand_remove_instance(uint32_t player_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::discard_hand_instance(uint32_t player_id,
+    uint32_t instance_id, uint32_t discard_zone_id) noexcept
+{
+    card_game_zone_entry entry;
+    uint32_t hand_index;
+    uint32_t type_id;
+    int32_t result;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || player_id >= this->_player_count || instance_id == 0U
+        || discard_zone_id == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    hand_index = 0U;
+    while (hand_index < this->_hand_count[player_id]
+        && this->_hand[player_id][hand_index].instance_id != instance_id)
+        hand_index += 1U;
+    if (hand_index >= this->_hand_count[player_id])
+        return (FT_ERR_NOT_FOUND);
+    result = this->find_card_type_id(
+        this->_hand[player_id][hand_index].card_id, &type_id);
+    if (result != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
+    entry.instance_id = this->_hand[player_id][hand_index].instance_id;
+    entry.card_id = this->_hand[player_id][hand_index].card_id;
+    result = this->_zone_store.insert_top(player_id, discard_zone_id,
+        entry, type_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->hand_remove_instance(player_id, instance_id, ft_nullptr);
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->_zone_store.remove(player_id, discard_zone_id,
+            instance_id, ft_nullptr);
+        return (result);
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::mulligan_hand(uint32_t player_id,
     const uint32_t *instance_ids, uint32_t count,
     uint64_t *random_state) noexcept

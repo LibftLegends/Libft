@@ -722,6 +722,66 @@ FT_TEST(test_card_game_engine_manipulates_configured_zone_instances)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_discards_hand_card_transactionally)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition definition;
+    card_game_zone_definition discard_zone;
+    card_game_deck_card drawn_card;
+    card_game_deck_card discarded_card;
+    card_game_deck_card rejected_card;
+    uint32_t hand_count;
+    uint32_t discard_count;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 4U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 5U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    definition.card_id = 401U;
+    definition.type = CARD_GAME_CREATURE;
+    definition.cost = 0U;
+    definition.attack = 0;
+    definition.health = 0;
+    definition.effect_id = CARD_GAME_NO_EFFECT;
+    discard_zone.zone_id = 9U;
+    discard_zone.capacity = 1U;
+    discard_zone.allowed_card_type_mask = 1U << CARD_GAME_CREATURE;
+    discard_zone.owner_scoped = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_zone(discard_zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, 401U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.draw_to_hand(0U, &drawn_card));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.discard_hand_instance(0U,
+        drawn_card.instance_id, 9U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_hand_count(0U, &hand_count));
+    FT_ASSERT_EQ(0U, hand_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_zone_count(0U, 9U,
+        &discard_count));
+    FT_ASSERT_EQ(1U, discard_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.zone_inspect(0U, 9U, 0U,
+        &discarded_card));
+    FT_ASSERT_EQ(drawn_card.instance_id, discarded_card.instance_id);
+    FT_ASSERT_EQ(drawn_card.card_id, discarded_card.card_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.discard_hand_instance(0U,
+        drawn_card.instance_id, 9U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, 401U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.draw_to_hand(0U, &rejected_card));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.discard_hand_instance(0U,
+        rejected_card.instance_id, 9U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_hand_count(0U, &hand_count));
+    FT_ASSERT_EQ(1U, hand_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.zone_inspect(0U, 9U, 0U,
+        &discarded_card));
+    FT_ASSERT_EQ(drawn_card.instance_id, discarded_card.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_engine_zone_snapshot_delta_round_trip)
 {
     card_game_engine source_engine;
@@ -1035,7 +1095,7 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(serialized,
         sizeof(serialized), &serialized_size));
     FT_ASSERT_EQ(FT_CARD_GAME_REPLAY_HEADER_BYTES
-        + FT_CARD_GAME_REPLAY_RECORD_BYTES, serialized_size);
+        + FT_CARD_GAME_REPLAY_V6_RECORD_BYTES, serialized_size);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.deserialize_command_records(
         serialized, serialized_size));
@@ -1044,6 +1104,7 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
     FT_ASSERT_EQ(1U, record_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record(0U, &record));
     FT_ASSERT_EQ(command.command_sequence, record.command.command_sequence);
+    FT_ASSERT_EQ(6U, serialized[4]);
     truncated_size = 0U;
     while (truncated_size < serialized_size)
     {
@@ -1054,6 +1115,24 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
         FT_ASSERT_EQ(1U, record_count);
         truncated_size += 1U;
     }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
+        &record_count));
+    FT_ASSERT_EQ(1U, record_count);
+    ft_memmove(serialized + 56U, serialized + 60U,
+        serialized_size - 60U);
+    serialized_size -= 4U;
+    ft_memmove(serialized + 52U, serialized + 56U,
+        serialized_size - 56U);
+    serialized_size -= 4U;
+    ft_memmove(serialized + 20U, serialized + 28U,
+        serialized_size - 28U);
+    serialized_size -= 8U;
+    serialized[4] = 1U;
+    serialized[5] = 0U;
+    serialized[6] = 0U;
+    serialized[7] = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.deserialize_command_records(
+        serialized, serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
         &record_count));
     FT_ASSERT_EQ(1U, record_count);

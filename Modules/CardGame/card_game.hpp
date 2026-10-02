@@ -15,14 +15,22 @@ static const uint32_t FT_CARD_GAME_MAX_EVENTS = FT_CARD_GAME_MAX_EVENT_RECORDS;
 static const uint32_t FT_CARD_GAME_EVENT_INITIAL_CAPACITY = 256U;
 static const uint32_t FT_CARD_GAME_MAX_OPERATIONS = FT_CARD_GAME_MAX_EVENT_RECORDS;
 static const uint32_t FT_CARD_GAME_OPERATION_INITIAL_CAPACITY = 256U;
+static const uint32_t FT_CARD_GAME_MAX_HOST_INTENT_TYPES = 256U;
+static const uint32_t FT_CARD_GAME_MAX_HOST_INTENT_FIELDS = 8U;
+static const uint32_t FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY = 64U;
 static const uint32_t FT_CARD_GAME_MAX_COMMAND_RECORDS =
     FT_CARD_GAME_MAX_EVENT_RECORDS;
 static const uint32_t FT_CARD_GAME_COMMAND_RECORD_INITIAL_CAPACITY = 256U;
 static const uint32_t FT_CARD_GAME_MAX_MODIFIERS = 256U;
 static const uint32_t FT_CARD_GAME_REPLAY_MAGIC = 0x43475231U;
-static const uint32_t FT_CARD_GAME_REPLAY_VERSION = 1U;
+static const uint32_t FT_CARD_GAME_REPLAY_VERSION = 6U;
 static const uint32_t FT_CARD_GAME_REPLAY_HEADER_BYTES = 12U;
-static const uint32_t FT_CARD_GAME_REPLAY_RECORD_BYTES = 56U;
+static const uint32_t FT_CARD_GAME_REPLAY_RECORD_BYTES = 64U;
+static const uint32_t FT_CARD_GAME_REPLAY_LEGACY_RECORD_BYTES = 56U;
+static const uint32_t FT_CARD_GAME_REPLAY_V5_RECORD_BYTES = 68U;
+static const uint32_t FT_CARD_GAME_REPLAY_V6_RECORD_BYTES = 72U;
+static const uint32_t FT_CARD_GAME_MAX_DRAW_COUNT = 100U;
+static const uint32_t FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT = 100U;
 /* Convenience buffer size for small replay exports; APIs accept larger buffers. */
 static const uint32_t FT_CARD_GAME_MAX_REPLAY_BYTES = 65536U;
 
@@ -32,17 +40,21 @@ static const uint32_t FT_CARD_GAME_MAX_REPLAY_BYTES = 65536U;
 # include "card_game_zone_store.hpp"
 # include "card_game_usage_limits.hpp"
 # include "card_game_format.hpp"
-static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 1U;
+static const uint32_t FT_CARD_GAME_STATE_FORMAT_VERSION = 2U;
 static const uint32_t CARD_GAME_COMMAND_PLAY_CARD = 1U << 0U;
 static const uint32_t CARD_GAME_COMMAND_END_TURN = 1U << 1U;
 static const uint32_t CARD_GAME_COMMAND_ADVANCE_PHASE = 1U << 2U;
+static const uint32_t CARD_GAME_COMMAND_DISCARD_HAND = 1U << 3U;
+static const uint32_t CARD_GAME_COMMAND_DRAW_CARD = 1U << 4U;
 static const uint32_t CARD_GAME_NO_EFFECT = UINT32_MAX;
 
 enum card_game_command_type : uint8_t
 {
     CARD_GAME_INTENT_PLAY_CARD = 1U,
     CARD_GAME_INTENT_END_TURN = 2U,
-    CARD_GAME_INTENT_ADVANCE_PHASE = 3U
+    CARD_GAME_INTENT_ADVANCE_PHASE = 3U,
+    CARD_GAME_INTENT_DISCARD_HAND = 4U,
+    CARD_GAME_INTENT_DRAW_CARD = 5U
 };
 
 struct card_game_command
@@ -51,16 +63,38 @@ struct card_game_command
     uint64_t expected_state_sequence;
     uint32_t player_id;
     card_game_command_type type;
+    /* For DISCARD_HAND, card_id is the destination zone ID; draw requires 0. */
     uint32_t card_id;
+    /* For DISCARD_HAND, this is the physical hand-card instance ID. */
     uint32_t target_instance;
+    /* DRAW_CARD attempts this many times (1..100); empty-deck attempts are
+     * successful gameplay outcomes with one typed intent each. If a later
+     * attempt fails internally, the entire command is rolled back. */
+    uint32_t draw_count;
+    /* DRAW_CARD creates this bounded post-draw discard obligation. */
+    uint32_t required_discard_count;
 };
 
 struct card_game_command_record
 {
     card_game_command command;
+    uint64_t request_id;
     uint64_t rules_hash;
     uint64_t state_hash_before;
     uint64_t state_hash_after;
+};
+
+struct card_game_action
+{
+    uint32_t schema_version;
+    uint64_t request_id;
+    card_game_command command;
+};
+
+struct card_game_action_result
+{
+    uint64_t state_hash;
+    ft_bool replayed;
 };
 
 enum card_game_card_type : uint8_t
@@ -106,6 +140,21 @@ struct card_game_rules
     uint32_t starting_mana;
     uint32_t max_mana;
     uint32_t max_turns;
+};
+
+/* Optional authoritative policy for one-card draw commands. Event schemas
+ * must be registered as two U32 fields: (player_id, card_instance_id), with
+ * instance_id zero for an empty-deck attempt. The consumer assigns meaning
+ * such as instability; CardGame only records the typed event. */
+struct card_game_draw_policy
+{
+    uint32_t discard_zone_id;
+    uint32_t burned_zone_id;
+    ft_bool reshuffle_discard;
+    uint32_t empty_draw_event_type_id;
+    uint32_t empty_draw_event_version;
+    uint32_t overflow_event_type_id;
+    uint32_t overflow_event_version;
 };
 
 struct card_game_match_start_config
@@ -192,7 +241,47 @@ enum card_game_operation_type : uint8_t
     CARD_GAME_OPERATION_EMIT_EVENT = 2U,
     CARD_GAME_OPERATION_DAMAGE_INSTANCE = 3U,
     CARD_GAME_OPERATION_HEAL_INSTANCE = 4U,
-    CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS = 5U
+    CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS = 5U,
+    CARD_GAME_OPERATION_HOST_INTENT = 6U
+};
+
+enum card_game_host_intent_scalar_type : uint8_t
+{
+    CARD_GAME_HOST_INTENT_U32 = 1U,
+    CARD_GAME_HOST_INTENT_I32 = 2U,
+    CARD_GAME_HOST_INTENT_U64 = 3U,
+    CARD_GAME_HOST_INTENT_I64 = 4U,
+    CARD_GAME_HOST_INTENT_BOOL = 5U
+};
+
+struct card_game_host_intent_value
+{
+    card_game_host_intent_scalar_type type;
+    uint64_t value;
+};
+
+struct card_game_host_intent_definition
+{
+    uint32_t type_id;
+    uint32_t version;
+    uint32_t field_count;
+    card_game_host_intent_scalar_type field_types[
+        FT_CARD_GAME_MAX_HOST_INTENT_FIELDS];
+};
+
+struct card_game_host_intent
+{
+    uint32_t type_id;
+    uint32_t version;
+    uint32_t field_count;
+    card_game_host_intent_value fields[
+        FT_CARD_GAME_MAX_HOST_INTENT_FIELDS];
+};
+
+struct card_game_host_intent_record
+{
+    uint64_t sequence;
+    card_game_host_intent intent;
 };
 
 struct card_game_operation
@@ -207,6 +296,7 @@ struct card_game_operation
     int32_t health_delta;
     card_game_modifier_duration duration;
     uint32_t source_effect_id;
+    card_game_host_intent host_intent;
 };
 
 struct card_game_event
@@ -250,6 +340,37 @@ struct card_game_player_snapshot
     card_game_card_instance instances[FT_CARD_GAME_MAX_CARDS];
 };
 
+class card_game_host_intent_snapshot
+{
+    private:
+        uint8_t _initialised_state;
+        card_game_host_intent_record *_records;
+        uint32_t _count;
+        uint32_t _capacity;
+
+    public:
+        card_game_host_intent_snapshot() noexcept;
+        ~card_game_host_intent_snapshot() noexcept;
+        card_game_host_intent_snapshot(
+            const card_game_host_intent_snapshot &other) = delete;
+        card_game_host_intent_snapshot(
+            card_game_host_intent_snapshot &&other) = delete;
+        card_game_host_intent_snapshot &operator=(
+            const card_game_host_intent_snapshot &other) = delete;
+        card_game_host_intent_snapshot &operator=(
+            card_game_host_intent_snapshot &&other) = delete;
+
+        int32_t initialize(const card_game_host_intent_record *records,
+            uint32_t count) noexcept;
+        int32_t initialize(
+            const card_game_host_intent_snapshot &other) noexcept;
+        int32_t destroy() noexcept;
+        int32_t move(card_game_host_intent_snapshot &other) noexcept;
+        int32_t get_count(uint32_t *count) const noexcept;
+        int32_t get_record(uint32_t index,
+            card_game_host_intent_record *record) const noexcept;
+};
+
 struct card_game_snapshot
 {
     uint32_t format_version;
@@ -267,6 +388,11 @@ struct card_game_snapshot
     card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     uint32_t event_capacity;
     card_game_event *events;
+    uint64_t next_host_intent_sequence = 1U;
+    uint32_t pending_discard_player_id;
+    uint32_t pending_discard_count;
+    uint32_t pending_discard_zone_id;
+    card_game_host_intent_snapshot host_intents;
     card_game_zone_store_snapshot zones;
     card_game_resource_snapshot resources;
     card_game_allowance_snapshot allowances;
@@ -302,6 +428,11 @@ struct card_game_delta
     card_game_card_modifier modifiers[FT_CARD_GAME_MAX_MODIFIERS];
     uint32_t event_capacity;
     card_game_event *events;
+    uint64_t next_host_intent_sequence = 1U;
+    uint32_t pending_discard_player_id;
+    uint32_t pending_discard_count;
+    uint32_t pending_discard_zone_id;
+    card_game_host_intent_snapshot host_intents;
     card_game_zone_store_snapshot zones;
     card_game_resource_snapshot resources;
     card_game_allowance_snapshot allowances;
@@ -339,6 +470,8 @@ class card_game_operation_buffer
         int32_t move(card_game_operation_buffer &other) noexcept;
         int32_t clear() noexcept;
         int32_t append(const card_game_operation &operation) noexcept;
+        int32_t append_host_intent(
+            const card_game_host_intent &intent) noexcept;
         uint32_t size() const noexcept;
         int32_t get(uint32_t index, card_game_operation *operation) const noexcept;
 };
@@ -406,6 +539,18 @@ class card_game_engine
         card_game_start_override _start_overrides[
             FT_CARD_GAME_MAX_START_OVERRIDES];
         uint32_t _start_override_count;
+        card_game_host_intent_definition _host_intent_types[
+            FT_CARD_GAME_MAX_HOST_INTENT_TYPES];
+        uint32_t _host_intent_type_count;
+        card_game_host_intent_record *_host_intent_records;
+        uint32_t _host_intent_record_count;
+        uint32_t _host_intent_record_capacity;
+        uint64_t _next_host_intent_sequence;
+        card_game_draw_policy _draw_policy;
+        ft_bool _draw_policy_configured;
+        uint32_t _pending_discard_player_id;
+        uint32_t _pending_discard_count;
+        uint32_t _pending_discard_zone_id;
 
         card_game_engine(const card_game_engine &other) = delete;
         card_game_engine(card_game_engine &&other) = delete;
@@ -440,6 +585,17 @@ class card_game_engine
         int32_t apply_delta_internal(const card_game_delta &delta) noexcept;
         int32_t remove_board_instance(uint32_t player_id,
             uint32_t instance_index) noexcept;
+        int32_t find_host_intent_definition(uint32_t type_id,
+            uint32_t version,
+            const card_game_host_intent_definition **definition) const noexcept;
+        int32_t validate_host_intent(
+            const card_game_host_intent &intent) const noexcept;
+        int32_t reserve_host_intent_records(uint32_t required_count) noexcept;
+        int32_t resolve_draw_command(uint32_t player_id,
+            uint32_t draw_count, uint32_t required_discard_count) noexcept;
+        int32_t resolve_draw_attempt(uint32_t player_id) noexcept;
+        int32_t append_draw_host_intent(
+            const card_game_host_intent &intent) noexcept;
 
     public:
         card_game_engine() noexcept;
@@ -467,8 +623,16 @@ class card_game_engine
             card_game_effect_callback callback, void *user_data,
             uint32_t event_type, uint32_t priority,
             uint32_t usage_limit_id, uint32_t *effect_id) noexcept;
+        int32_t register_host_intent_type(
+            const card_game_host_intent_definition &definition) noexcept;
+        int32_t get_pending_host_intent_count(uint32_t *count) const noexcept;
+        int32_t peek_pending_host_intent(
+            card_game_host_intent_record *record) const noexcept;
+        int32_t acknowledge_host_intent(uint64_t sequence) noexcept;
         int32_t register_phase(const card_game_phase_definition &phase) noexcept;
         int32_t register_zone(const card_game_zone_definition &zone) noexcept;
+        int32_t configure_draw_policy(
+            const card_game_draw_policy &policy) noexcept;
         int32_t get_zone(uint32_t zone_id,
             card_game_zone_definition *zone) const noexcept;
         int32_t start_match(uint32_t player_count) noexcept;
@@ -547,6 +711,8 @@ class card_game_engine
             card_game_deck_card *card) noexcept;
         int32_t hand_remove_instance(uint32_t player_id, uint32_t instance_id,
             card_game_deck_card *card) noexcept;
+        int32_t discard_hand_instance(uint32_t player_id,
+            uint32_t instance_id, uint32_t discard_zone_id) noexcept;
         int32_t mulligan_hand(uint32_t player_id, const uint32_t *instance_ids,
             uint32_t count, uint64_t *random_state) noexcept;
         int32_t play_card_from_hand(uint32_t player_id, uint32_t instance_id,
@@ -627,6 +793,8 @@ class card_game_engine
         int32_t apply_delta(const card_game_delta &delta) noexcept;
         int32_t submit_command(const card_game_command &command,
             void *context) noexcept;
+        int32_t submit_action(const card_game_action &action,
+            card_game_action_result *result, void *context) noexcept;
         int32_t get_command_record_count(uint32_t *count) const noexcept;
         int32_t get_command_record(uint32_t index,
             card_game_command_record *record) const noexcept;

@@ -726,7 +726,7 @@ FT_TEST(test_inventory_is_full_checks_capacity)
     return (1);
 }
 
-FT_TEST(test_inventory_partial_stack_before_capacity_error)
+FT_TEST(test_inventory_failed_partial_stack_merge_preserves_state)
 {
     game_inventory inventory;
     ft_sharedptr<game_item> base(new game_item());
@@ -749,8 +749,8 @@ FT_TEST(test_inventory_partial_stack_before_capacity_error)
     extra->set_stack_size(4);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(base));
     FT_ASSERT_EQ(FT_ERR_FULL, inventory.add_item(extra));
-    FT_ASSERT_EQ(5, inventory.count_item(5));
-    FT_ASSERT_EQ(5, inventory.get_current_weight());
+    FT_ASSERT_EQ(3, inventory.count_item(5));
+    FT_ASSERT_EQ(3, inventory.get_current_weight());
     FT_ASSERT_EQ(1u, inventory.get_used());
     return (1);
 }

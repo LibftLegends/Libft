@@ -58,8 +58,8 @@ static int make_test_socket_pair(int descriptors[2])
         nw_close(client);
         return (-1);
     }
-    descriptors[0] = static_cast<int>(server);
-    descriptors[1] = static_cast<int>(client);
+    descriptors[0] = server;
+    descriptors[1] = client;
     return (0);
 }
 

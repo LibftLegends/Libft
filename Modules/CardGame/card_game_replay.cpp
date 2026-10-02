@@ -3,9 +3,11 @@
 #include "../File/file_utils.hpp"
 
 static const uint32_t CARD_GAME_REPLAY_MAGIC = 0x43524732U;
-static const uint32_t CARD_GAME_REPLAY_VERSION = 1U;
+static const uint32_t CARD_GAME_REPLAY_VERSION = 5U;
 static const uint32_t CARD_GAME_REPLAY_HEADER_BYTES = 84U;
-static const uint32_t CARD_GAME_REPLAY_EVENT_BYTES = 120U;
+static const uint32_t CARD_GAME_REPLAY_EVENT_BYTES = 128U;
+static const uint32_t CARD_GAME_REPLAY_V4_EVENT_BYTES = 124U;
+static const uint32_t CARD_GAME_REPLAY_LEGACY_EVENT_BYTES = 120U;
 
 static void replay_write_u32(uint8_t *output, uint32_t *offset,
     uint32_t value) noexcept
@@ -130,8 +132,17 @@ int32_t card_game_replay::validate_event(
 {
     if (event.sequence == 0U
         || event.command_type < CARD_GAME_INTENT_PLAY_CARD
-        || event.command_type > CARD_GAME_INTENT_ADVANCE_PHASE
+        || event.command_type > CARD_GAME_INTENT_DRAW_CARD
         || event.private_size > FT_CARD_GAME_REPLAY_PRIVATE_BYTES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if ((event.command_type == CARD_GAME_INTENT_DRAW_CARD
+            && (event.draw_count == 0U
+                || event.draw_count > FT_CARD_GAME_MAX_DRAW_COUNT
+                || event.required_discard_count
+                    > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT))
+        || (event.command_type != CARD_GAME_INTENT_DRAW_CARD
+            && (event.draw_count != 0U
+                || event.required_discard_count != 0U)))
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_event_count != 0U
         && event.sequence <= this->_events[this->_event_count - 1U].sequence)
@@ -183,6 +194,9 @@ int32_t card_game_replay::append_command_record(
     event.command_type = record.command.type;
     event.card_id = record.command.card_id;
     event.target_instance = record.command.target_instance;
+    event.draw_count = record.command.draw_count;
+    event.required_discard_count =
+        record.command.required_discard_count;
     event.state_hash_before = record.state_hash_before;
     event.state_hash_after = record.state_hash_after;
     return (this->append(event));
@@ -360,6 +374,8 @@ int32_t card_game_replay::serialize(uint8_t *output,
             static_cast<uint32_t>(event->command_type));
         replay_write_u32(output, &offset, event->card_id);
         replay_write_u32(output, &offset, event->target_instance);
+        replay_write_u32(output, &offset, event->draw_count);
+        replay_write_u32(output, &offset, event->required_discard_count);
         replay_write_u64(output, &offset, event->state_hash_before);
         replay_write_u64(output, &offset, event->state_hash_after);
         replay_write_u32(output, &offset, event->private_owner_id);
@@ -460,6 +476,7 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
     uint32_t index;
     uint32_t event_count;
     uint32_t has_result;
+    uint32_t version;
     int32_t result;
     card_game_replay_result replay_result;
 
@@ -479,8 +496,10 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
     if (result != FT_ERR_SUCCESS || value != CARD_GAME_REPLAY_MAGIC)
         return (FT_ERR_INVALID_ARGUMENT);
     result = replay_read_u32(input, input_size - 4U, &offset, &value);
-    if (result != FT_ERR_SUCCESS || value != CARD_GAME_REPLAY_VERSION)
+    if (result != FT_ERR_SUCCESS || value < 1U
+        || value > CARD_GAME_REPLAY_VERSION)
         return (FT_ERR_INVALID_ARGUMENT);
+    version = value;
     result = replay_read_u32(input, input_size - 4U, &offset, &header.profile_id);
     if (result != FT_ERR_SUCCESS)
         return (result);
@@ -536,7 +555,9 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
     if (has_result != FT_FALSE && replay_result.outcome == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (input_size != CARD_GAME_REPLAY_HEADER_BYTES
-        + event_count * CARD_GAME_REPLAY_EVENT_BYTES + 4U)
+        + event_count * (version >= 5U ? CARD_GAME_REPLAY_EVENT_BYTES
+            : (version >= 4U ? CARD_GAME_REPLAY_V4_EVENT_BYTES
+                : CARD_GAME_REPLAY_LEGACY_EVENT_BYTES)) + 4U)
         return (FT_ERR_INVALID_ARGUMENT);
     result = candidate.initialize(header);
     if (result != FT_ERR_SUCCESS)
@@ -562,6 +583,12 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
         result = replay_read_u32(input, input_size - 4U, &offset, &value);
         if (result != FT_ERR_SUCCESS)
             return (result);
+        if (value < CARD_GAME_INTENT_PLAY_CARD
+            || (version == 1U
+                && value > CARD_GAME_INTENT_ADVANCE_PHASE)
+            || (version == 2U && value > CARD_GAME_INTENT_DISCARD_HAND)
+            || (version >= 3U && value > CARD_GAME_INTENT_DRAW_CARD))
+            return (FT_ERR_INVALID_ARGUMENT);
         event.command_type = static_cast<card_game_command_type>(value);
         result = replay_read_u32(input, input_size - 4U, &offset,
             &event.card_id);
@@ -571,6 +598,24 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
             &event.target_instance);
         if (result != FT_ERR_SUCCESS)
             return (result);
+        event.draw_count = 0U;
+        if (version >= 4U)
+        {
+            result = replay_read_u32(input, input_size - 4U, &offset,
+                &event.draw_count);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+        }
+        else if (event.command_type == CARD_GAME_INTENT_DRAW_CARD)
+            event.draw_count = 1U;
+        event.required_discard_count = 0U;
+        if (version >= 5U)
+        {
+            result = replay_read_u32(input, input_size - 4U, &offset,
+                &event.required_discard_count);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+        }
         result = replay_read_u64(input, input_size - 4U, &offset,
             &event.state_hash_before);
         if (result != FT_ERR_SUCCESS)
@@ -647,6 +692,9 @@ int32_t card_game_replay::replay_into(card_game_engine &engine) const noexcept
         records[index].command.type = event.command_type;
         records[index].command.card_id = event.card_id;
         records[index].command.target_instance = event.target_instance;
+        records[index].command.draw_count = event.draw_count;
+        records[index].command.required_discard_count =
+            event.required_discard_count;
         records[index].rules_hash = this->_header.rules_hash;
         records[index].state_hash_before = event.state_hash_before;
         records[index].state_hash_after = event.state_hash_after;

@@ -164,6 +164,10 @@ class scripting_engine
             uint32_t *native_id) const noexcept;
         int32_t get_native_name(uint32_t native_id,
             const char **name) const noexcept;
+        // FNV-1a 64-bit over the versioned canonical manifest: registered
+        // natives in ID order, with IDs and name lengths encoded little-endian.
+        // Callback and user_data addresses are intentionally excluded.
+        int32_t get_native_manifest_hash(uint64_t *hash) const noexcept;
         uint32_t get_operation_limit() const noexcept;
         int32_t invoke_native_id(uint32_t native_id,
             const scripting_value *arguments, uint32_t argument_count,

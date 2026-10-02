@@ -46,7 +46,8 @@ General rules for these orchestration classes:
 ## Crafting, Dialogue, Quests, and Events
 
 - `game_crafting_ingredient` - Recipe ingredient struct.
-- `game_crafting` - Crafting system that validates ingredients and produces recipe outputs.
+- `game_crafting` - Recipe unlocks, non-mutating `query_recipe(...)` status/ingredient-deficit queries, recipe-owned output definitions, and two-phase `prepare_craft`/`commit_craft` transactions. Queries account for cumulative rarity-aware requirements. A prepared craft checks batch ingredients, output capacity, and an inventory snapshot; commit rejects stale inventory without applying the plan. Existing caller-supplied-output `craft_item(...)` is compatibility-only and cannot execute recipes with authoritative bound outputs. Station validation, alternatives/tags/byproducts, and timed processing remain future extensions.
+- `game_recipe_book` - Stable-ID recipe catalogue and unlock state, with caller-configured initial grants, idempotent source-event grants, and transactional sparse persistence. It tracks which recipes are known; `game_crafting` remains responsible for recipe definitions and executing crafts.
 - `game_dialogue_line` - One dialogue line with id, speaker/text, conditions, and lifecycle/error handling.
 - `game_dialogue_script` - Ordered dialogue script.
 - `game_dialogue_table` - Dialogue repository/table with register/fetch behavior.

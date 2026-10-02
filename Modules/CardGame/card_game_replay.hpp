@@ -38,6 +38,8 @@ struct card_game_replay_event
     card_game_command_type command_type;
     uint32_t card_id;
     uint32_t target_instance;
+    uint32_t draw_count;
+    uint32_t required_discard_count;
     uint64_t state_hash_before;
     uint64_t state_hash_after;
     uint32_t private_owner_id;

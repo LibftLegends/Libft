@@ -24,6 +24,55 @@ stat modifiers. Callback operations are prepared first and applied under the
 same snapshot rollback path, so a rejected operation cannot leave a partial
 effect behind.
 
+Callbacks may also append an opaque `card_game_host_intent` with
+`card_game_operation_buffer::append_host_intent()`. Before match start, the
+caller registers each supported `(type_id, version)` and its ordered scalar
+field schema with `card_game_engine::register_host_intent_type()`. Payloads are
+limited to eight explicitly tagged `u32`, `i32`, `u64`, `i64`, or boolean
+values. Libft validates the type, version, field count, field kinds, and scalar
+ranges, but does not interpret or execute the intent. Host intents never apply
+to combat state. They are published only after the whole event-resolution
+transaction succeeds; a failed callback or operation publishes none of that
+resolution's intents.
+
+Consumers call `get_pending_host_intent_count()` and
+`peek_pending_host_intent()` to read the ordered queue, then call
+`acknowledge_host_intent(sequence)` only after accepting the queue head. A wrong
+sequence is rejected, so callers cannot accidentally acknowledge a later
+intent. Pending host intents, their sequence, and acknowledgement state are part
+of the in-memory `card_game_snapshot` and `card_game_delta` contracts and the
+authoritative state hash. Applying a snapshot or delta restores the exact pending
+queue. The state format version is 2; callers must not treat version-1 snapshots
+as compatible. This does not yet add a byte-level persistence codec or include
+host intents in serialized command/replay records. Replaying commands re-runs
+deterministic callbacks and can emit intents again, so a host still needs a
+durable idempotency journal around consumer acceptance and replay recovery.
+
+`card_game_script_bridge` is an optional adapter for consumers that want effect
+callbacks written with Libft's bounded Scripting module. Initialize the bridge
+with an initialized `card_game_engine`, register the host-intent schemas on the
+engine, and then register scripts against event types. Scripts may call
+`emit_host_intent(type_id, version, field_type, value, ...)`; field types use the
+`card_game_host_intent_scalar_type` numeric values, and values are type-checked
+before they enter the same transactional operation buffer as native callbacks.
+Script integers are signed 64-bit values, so script-authored `u64` fields are
+limited to `0..INT64_MAX`; native callbacks can supply the full `u64` range.
+The bridge enforces an operation limit and a fixed maximum script-effect count.
+`scripting_engine::get_native_manifest_hash()` fingerprints the ordered native
+ABI, and `card_game_script_bridge::get_manifest_hash()` additionally includes
+registered event bindings and canonical serialized script programs. Consumers
+must persist and compare this value when loading session content; automatic
+session-import enforcement and broader host-schema manifests are not yet wired.
+
+Effect callbacks retain pointers into the bridge, and CardGame currently has no
+callback-unregistration API. Therefore the bridge must remain alive and at a
+stable address for as long as its engine can dispatch those callbacks; destroy
+the engine before destroying the bridge, and do not move either object. Script
+bindings are runtime registrations, not serialized state. Script source hashes,
+versioned manifests, context/query natives, and persistence/replay integration
+remain required before this adapter is suitable as a cross-session content
+format.
+
 `get_snapshot()` captures the authoritative mutable match state using fixed-
 width fields. `create_delta()` compares a previously captured snapshot with
 the current state and emits a player-scoped change mask plus base and target
@@ -68,14 +117,38 @@ the zone's allowed type mask, and the type's per-player copy limit before
 charging mana or invoking an effect. Rejected placements leave match state
 unchanged.
 
-Network-facing callers should use `submit_command()` with a monotonically
+Legacy network callers may use `submit_command()` with a monotonically
 increasing command sequence. The optional expected state sequence rejects
-stale client intents before dispatch; accepted commands then enter the same
-transactional play, turn, and phase paths used internally.
+stale intents before dispatch. New retry-sensitive callers should use
+`submit_action()` with schema version 1 and a nonzero stable request ID; an
+exact retry returns the committed state hash without executing again, while
+reusing that ID with a different command is rejected. This initial envelope
+uses the existing command kinds and does not yet model session IDs, choices,
+full result payloads, or durable session snapshots.
+
+`CARD_GAME_INTENT_DRAW_CARD` is accepted through `submit_command()` and
+recorded in command/replay format v5; v1 through v4 command logs remain
+readable. Version 4 added request IDs; version 5 adds a bounded draw count
+(1–100). A requested multi-draw resolves attempts in order: empty-deck and
+full-hand outcomes are recorded per attempt, while internal failure rolls the
+whole action back. The separate
+`card_game_replay` event codec remains version 3. Draw rejects
+nonzero unused payload fields. Without a configured draw policy it retains the
+legacy one-card draw behavior. `configure_draw_policy()` binds it to
+owner-scoped discard and burned zones plus two registered typed host-event
+schemas. Under that policy, an empty pile reshuffles eligible discard once
+using engine RNG; an empty result emits an empty-draw host intent; a full hand
+burns each drawn physical card and emits an overflow host intent. Host events are
+retained in the pending intent queue and included in snapshots, deltas and state
+hashes. Event payloads are `(player_id, instance_id)`, with instance zero for
+empty draw. The host maps those typed outcomes to its configured instability;
+CardGame does not own the amount. Mandatory discard obligations, multi-action
+session operations and the durable byte-level session codec remain open.
 
 Each accepted command is retained in a dynamically growing authoritative
-command log. Records include the command, rules hash, and state hashes before
-and after execution for auditing or deterministic replay. The log returns
+command log. Records include the command, optional idempotent request ID, rules
+hash, and state hashes before and after execution for auditing or deterministic
+replay. The log returns
 `FT_ERR_FULL` only at its explicit 16,777,216-record safety ceiling, so
 accepted history is never silently discarded.
 
@@ -83,6 +156,9 @@ accepted history is never silently discarded.
 started match. It checks the configured rules hash and state hash before every
 command, routes execution through `submit_command()`, and checks the recorded
 post-command hash. A mismatch stops replay with `FT_ERR_INVALID_STATE`.
+Registered host-intent schemas contribute to the rules hash, ensuring replay
+uses the same typed host contract even though emitted queue contents are not
+part of replay records or match snapshots.
 
 `card_game_ordered_zone` provides bounded ordered storage for decks and other
 piles. It supports top/bottom/index insertion, peeking, removal, duplicate
@@ -102,6 +178,15 @@ without mutation when an operation is rejected.
 state hashes, so a replicated match preserves the exact order rather than only
 the set of cards.
 
+`submit_command()` also accepts `CARD_GAME_INTENT_DISCARD_HAND`. The command
+selects a physical hand-card instance in `target_instance` and names the
+configured discard destination zone in `card_id`; the selected instance is
+moved transactionally and recorded with the same command sequence/state hashes
+as other authoritative commands. The command record and full replay codecs
+preserve both fields, so replay discards the same physical card. This is a
+primitive action, not yet a persisted mandatory-discard obligation or the
+policy-driven draw/overflow flow described by the integration design.
+
 `card_game_format` provides an immutable, configuration-driven legality layer.
 It validates stable profile and corpus identity, legal card rules, banlists,
 copy limits, and typed card exceptions before commit. It computes a SHA-256
@@ -120,6 +205,10 @@ returns `FT_ERR_FULL` when the configured hand limit is reached.
 `play_card_from_hand()` removes the selected instance only after the card play
 has succeeded. Hand state is included in snapshots, deltas, state hashes, and
 the configurable opening-hand start path.
+`discard_hand_instance()` moves a selected hand instance into a configured
+discard zone while retaining its physical instance ID. The destination is
+validated before the hand is changed, so a full or incompatible discard zone
+leaves the card in hand.
 `mulligan_hand()` provides deterministic physical-instance selection, reinserts
 selected cards into the deck, shuffles with caller-provided RNG state, and
 draws replacements. Invalid selections and failed operations restore the hand,
