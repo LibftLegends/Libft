@@ -1,4 +1,4 @@
-# CardGame
+﻿# CardGame
 
 `card_game_engine` is a data-driven card-game foundation. The library stores
 card definitions, configurable board and turn limits, and effect function
@@ -52,7 +52,8 @@ durable idempotency journal around consumer acceptance and replay recovery.
 callbacks written with Libft's bounded Scripting module. Initialize the bridge
 with an initialized `card_game_engine`, register the host-intent schemas on the
 engine, and then register scripts against event types. Scripts may call
-`emit_host_intent(type_id, version, field_type, value, ...)`; field types use the
+`emit_host_intent(type_id, version, field_type, value, ...)` and
+`random_bounded(bound)`; field types use the
 `card_game_host_intent_scalar_type` numeric values, and values are type-checked
 before they enter the same transactional operation buffer as native callbacks.
 Script integers are signed 64-bit values, so script-authored `u64` fields are
@@ -60,18 +61,39 @@ limited to `0..INT64_MAX`; native callbacks can supply the full `u64` range.
 The bridge enforces an operation limit and a fixed maximum script-effect count.
 `scripting_engine::get_native_manifest_hash()` fingerprints the ordered native
 ABI, and `card_game_script_bridge::get_manifest_hash()` additionally includes
-registered event bindings and canonical serialized script programs. Consumers
-must persist and compare this value when loading session content; automatic
-session-import enforcement and broader host-schema manifests are not yet wired.
+registered event bindings and canonical serialized script programs, the
+canonical host-intent/draw-policy schema hash, and an optional host-supplied
+policy manifest hash and configured script operation limit.
+`serialize_script_catalog()` emits bounded checksummed
+`CGSC` version-1 bundles. `load_script_catalog()` verifies every program and
+compares the computed manifest with the caller's trusted hash before accepting
+the catalogue; a mismatch unregisters the staged callbacks. The caller must
+obtain the trusted hash from its authenticated content manifest. Automatic
+session-import enforcement remains a host integration responsibility.
+During an effect invocation, scripts may read `card_actor_id()`,
+`card_instance_id()`, and `session_phase()`. These return the actor, physical
+source instance, and current engine phase for that invocation; they cannot be
+queried outside the callback. `choice_selected_id(choice_id)` returns a selected
+option only after resolution and only when the choice belongs to the active
+player. These natives are registered in a fixed order and contribute to the
+native manifest hash. `random_bounded(bound)` is also
+available only during an effect invocation. It advances the match-owned
+xorshift stream with rejection sampling, returns a uniform integer in
+`[0, bound)`, and is restored with the surrounding event snapshot if script
+execution or later event processing fails. Its RNG state participates in the
+existing snapshot, delta, and state hash. Hosts can register up to 64 strictly increasing nonzero policy-context key IDs before registering scripts, then set or clear signed 64-bit values between engine actions. `context_value(key_id)` reads only a registered, set value during an effect; unknown keys and unset values fail. The sorted key schema contributes to the bridge manifest, while live values remain host-owned inputs and stay excluded from content identity. `serialize_context_values` and `restore_context_values` persist those inputs in a bounded checksummed payload tied to the registered key order; `get_registered_context_keys` returns the ordered schema so a restoring host can reject configuration drift. The session owner still decides when and where values are saved. Scripts can also append bounded `draw_cards(count)` and `require_discard(count)` operations during an effect. Both target the active player and are applied within the event transaction. Draws use the configured draw policy; discard requests create the same physical-card, configured-zone obligation enforced by normal draw commands. Counts must be positive and no greater than the engine limits. Native names are part of the ordered bridge manifest.
 
-Effect callbacks retain pointers into the bridge, and CardGame currently has no
-callback-unregistration API. Therefore the bridge must remain alive and at a
-stable address for as long as its engine can dispatch those callbacks; destroy
-the engine before destroying the bridge, and do not move either object. Script
-bindings are runtime registrations, not serialized state. Script source hashes,
-versioned manifests, context/query natives, and persistence/replay integration
-remain required before this adapter is suitable as a cross-session content
-format.
+Effect callbacks retain pointers into the bridge. `bridge.destroy()` now
+unregisters each callback before releasing its script program; call it while
+the engine object is still alive and do not move either object. Destroying the
+engine first also clears its callback registry, after which the still-live
+engine object can safely be followed by `bridge.destroy()`. Do not reinitialize
+the engine while a bridge still owns registrations. Pending events for an
+unregistered effect no longer invoke that effect. Script bindings remain
+runtime registrations and are not part of CardGame snapshots. The optional
+bridge serializes its programs as a separate checksummed catalogue and can
+enforce a caller-supplied trusted manifest when loading it. The host still
+owns manifest authentication and session-import enforcement.
 
 `get_snapshot()` captures the authoritative mutable match state using fixed-
 width fields. `create_delta()` compares a previously captured snapshot with
@@ -82,9 +104,13 @@ is changed. Snapshots and deltas contain state only and never serialize effect
 function pointers or callback-owned data.
 
 `get_rules_hash()` identifies the configured rules, cards, and phases.
-`get_state_hash()` identifies the current authoritative match state. Both use
-fixed-width field hashing rather than object-memory hashing, so padding and
-platform byte order do not affect the result.
+`get_script_environment_hash()` identifies the draw policy and typed
+host-intent schemas in canonical type-ID order, independent of registration
+order and effect callback pointers.
+`get_state_hash()` identifies the current authoritative match state.
+`get_rules_hash()` and `get_state_hash()` use fixed-width field hashing rather
+than object-memory hashing, so padding and platform byte order do not affect
+the result.
 
 Zones are registered as data with a stable ID, capacity, owner-scope flag, and
 allowed card-type mask. The engine does not assign game-specific meanings to
@@ -117,33 +143,62 @@ the zone's allowed type mask, and the type's per-player copy limit before
 charging mana or invoking an effect. Rejected placements leave match state
 unchanged.
 
-Legacy network callers may use `submit_command()` with a monotonically
-increasing command sequence. The optional expected state sequence rejects
-stale intents before dispatch. New retry-sensitive callers should use
-`submit_action()` with schema version 1 and a nonzero stable request ID; an
-exact retry returns the committed state hash without executing again, while
-reusing that ID with a different command is rejected. This initial envelope
-uses the existing command kinds and does not yet model session IDs, choices,
-full result payloads, or durable session snapshots.
+Host callers may use `submit_command()` with a monotonically increasing
+command sequence. The optional expected state sequence rejects stale intents
+before dispatch. Retry-sensitive callers use `submit_action()` with a nonzero
+stable request ID; schema version 2 requires the physical source instance ID
+for a play action. An exact retry returns the committed state hash without
+executing again, while reusing that ID with a different command or physical
+card is rejected. Schema version 1 remains readable for older callers.
+Choice selection is a sequenced `CHOOSE_OPTION` command
+carrying a stable choice ID and option ID. Client actions cannot supply its
+clock value: `submit_action()` rejects choice commands, and the trusted host
+uses `submit_host_action()` to inject the authoritative epoch. An exact retry
+reuses the first committed result even if the host's current epoch has since
+advanced. The broader action API still lacks session IDs, complete result
+payloads, and durable session coordination.
+
+`query_pending_choices(player_id, output)` is a read-only per-player view of
+unresolved choices. It includes stable choice and option IDs, option values,
+kind, and deadline, while omitting the timeout default and internal resolution
+state. The query builds a staged result and preserves the caller's previous
+output if allocation fails.
+
+`query_legal_actions(player_id, output)` reports command kinds currently
+available under the active phase and mandatory-discard/choice obligations,
+plus player-specific and global pending-choice counts. While any unresolved
+choice is open, action submission permits only its owner's choice or the
+trusted expiry action; a mandatory discard takes priority until fulfilled. The
+query does not execute effects, inspect targets, or advance RNG. Card-specific
+target legality and unavailable/no-effect explanations remain part of the
+host-facing effect-status query contract.
 
 `CARD_GAME_INTENT_DRAW_CARD` is accepted through `submit_command()` and
-recorded in command/replay format v5; v1 through v4 command logs remain
-readable. Version 4 added request IDs; version 5 adds a bounded draw count
-(1–100). A requested multi-draw resolves attempts in order: empty-deck and
+recorded in command-log format v9; v1 through v8 command logs remain readable.
+Version 4 added request IDs; version 5 adds a bounded draw count
+(1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“100). A requested multi-draw resolves attempts in order: empty-deck and
 full-hand outcomes are recorded per attempt, while internal failure rolls the
 whole action back. The separate
-`card_game_replay` event codec remains version 3. Draw rejects
+`card_game_replay` event codec is version 8 and retains readers for versions
+1 through 7. Version 6 carries the authoritative choice epoch; version 7
+carries the action result value used by host deadline resolution; version 8
+records the exact physical card instance consumed by a play. Draw rejects
 nonzero unused payload fields. Without a configured draw policy it retains the
 legacy one-card draw behavior. `configure_draw_policy()` binds it to
 owner-scoped discard and burned zones plus two registered typed host-event
-schemas. Under that policy, an empty pile reshuffles eligible discard once
+schemas. The discard destination is required independently of whether discard
+reshuffling is enabled. Under that policy, an empty pile reshuffles eligible discard once
 using engine RNG; an empty result emits an empty-draw host intent; a full hand
 burns each drawn physical card and emits an overflow host intent. Host events are
 retained in the pending intent queue and included in snapshots, deltas and state
 hashes. Event payloads are `(player_id, instance_id)`, with instance zero for
 empty draw. The host maps those typed outcomes to its configured instability;
-CardGame does not own the amount. Mandatory discard obligations, multi-action
-session operations and the durable byte-level session codec remain open.
+CardGame does not own the amount. Mandatory discard obligations are stored in
+snapshots, deltas, state hashes, command records and replay. While one is
+pending, only the obligated player may discard an owned hand instance to the
+configured destination; an empty resulting hand creates no impossible
+obligation. Multi-action session operations and the durable byte-level session
+codec remain open.
 
 Each accepted command is retained in a dynamically growing authoritative
 command log. Records include the command, optional idempotent request ID, rules
@@ -166,8 +221,11 @@ policy, capacity enforcement, and deterministic seeded Fisher-Yates shuffles.
 The engine also provides a match-owned RNG state through `set_random_seed`,
 `get_random_state`, and the no-argument `shuffle_deck` overload. That state is
 included in snapshots, deltas, and state hashes, so an authoritative shuffle
-can be restored exactly. The pointer-taking overload remains available for
-callers that intentionally manage an external deterministic stream.
+can be restored exactly. `random_bounded(bound, value_out)` uses rejection
+sampling over that same stream for unbiased bounded values; scripts access it
+through `random_bounded(bound)` during an effect callback. The pointer-taking
+overload remains available for callers that intentionally manage an external
+deterministic stream.
 The container stores stable card-instance IDs rather than pointers and returns
 without mutation when an operation is rejected.
 
@@ -183,9 +241,10 @@ selects a physical hand-card instance in `target_instance` and names the
 configured discard destination zone in `card_id`; the selected instance is
 moved transactionally and recorded with the same command sequence/state hashes
 as other authoritative commands. The command record and full replay codecs
-preserve both fields, so replay discards the same physical card. This is a
-primitive action, not yet a persisted mandatory-discard obligation or the
-policy-driven draw/overflow flow described by the integration design.
+preserve both fields, so replay discards the same physical card. Policy-driven
+draws record mandatory-discard obligations in snapshots, deltas, hashes,
+command records and replay; while an obligation is pending, other actions are
+rejected until its owner discards the required physical hand instance.
 
 `card_game_format` provides an immutable, configuration-driven legality layer.
 It validates stable profile and corpus identity, legal card rules, banlists,
@@ -270,3 +329,38 @@ part of snapshots, deltas, and state hashes; the callback registry itself is
 process-local and must be registered by the receiving process before a
 snapshot is applied. Function pointers and user-data pointers are never part
 of serialized match state.
+
+Deck-wide copy-limit enforcement (2026-10-13): card_game_format::validate_deck now totals each card definition across every submitted deck zone before applying its configured copy limit. The main and side zones can no longer each independently consume the full allowance. Added test_card_game_format_enforces_copy_limit_across_deck_zones for 4 allowed / 5 rejected, and a direct MinGW runtime harness linked the edited source and current Libft archive; it passed (cross-zone-copy-cap=ok). Both implementation and test pass strict warning-as-error syntax compilation. The full Libft test runner is still unverified because the workspace Make runner fails during Git Bash startup.
+
+Minecraft recipe-policy runtime coverage (2026-10-13): A focused direct MinGW executable compiled the current MinecraftItemCatalog.cpp and MinecraftRecipeCatalog.cpp plus current Libft game_crafting.cpp, game_inventory.cpp, and game_recipe_book.cpp, linked against the existing support archive, initialized both catalogs, and ran validate_recipe_coverage successfully (recipe-coverage=0 outputs=93 missing=0). This verifies that every current content item whose acquisition policy is recipe-backed has a catalogued recipe output, and every tracked card output satisfies its unique recipe/discovery policy checks. It does not prove all proposed recipes/features in Sections 10-12 exist or that the application-wide validators pass. The regression test enforcing deck-wide copy limits also passes a direct runtime harness (cross-zone-copy-cap=ok).
+
+The host-intent API now exposes `get_next_host_intent_sequence()` so adapters
+can distinguish an already acknowledged sequence from one that was never
+issued. GameSession uses this persisted sequence high-water mark to make a
+durably saved host-output acknowledgement idempotent across retries and
+snapshot restore. This change has not been compiled or runtime-validated.
+
+Host expiry actions use `CARD_GAME_INTENT_RESOLVE_EXPIRED_CHOICES` through `submit_host_action()`. The command records the host epoch and server actor; `card_game_action_result::result_value` returns the number of defaults applied and remains stable on retry and replay.
+
+Host-managed card adapters can use `CARD_GAME_INTENT_PLAY_EFFECT` to log an
+exact physical hand instance, effect event, and discard destination as one
+transaction. Its fixed 64-byte `play_payload` is copied into the effect context
+and preserved by command-log and replay serialization, so typed choices and
+other deterministic effect inputs are available during replay. Command-log
+version 13 and replay version 11 add this payload and a dedicated discard-zone
+field while older versions remain readable.
+For session-bound actions and replay, the Minecraft regeneration callback also
+checks that the payload request ID matches the engine's active action request
+ID before producing a host intent.
+
+Command-log v8 adds the action result value; v9 adds the exact source instance ID for played cards. Replay v7 adds the action result value and v8 carries the source instance ID; older command-log and replay versions remain readable.
+
+Registered `max_copies_per_player` limits apply to the player's complete owned
+deck: draw pile, hand, and every owner-scoped zone (including discard and
+burned piles). Moving an instance between those locations does not consume a
+second copy. Adding a new instance to an owned location checks the combined
+count, and snapshot/delta application rejects a state that exceeds the limit.
+Deck setup is permitted before `start_match()`, so copy checks accept any
+configured player slot during setup. Legacy untyped card IDs retain their
+existing behavior. This implementation slice has not yet been compiled or
+tested.

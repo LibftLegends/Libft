@@ -1307,6 +1307,16 @@ const game_reputation &game_character::get_reputation() const noexcept
     return (this->_reputation);
 }
 
+game_inventory &game_character::get_inventory() noexcept
+{
+    return (this->_inventory);
+}
+
+const game_inventory &game_character::get_inventory() const noexcept
+{
+    return (this->_inventory);
+}
+
 game_experience_table &game_character::get_experience_table() noexcept
 {
     ft_bool lock_acquired;

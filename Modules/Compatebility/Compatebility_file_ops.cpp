@@ -215,7 +215,8 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
         while (move_attempt < 16U)
         {
             if (MoveFileExA(native_source_path, native_destination_path,
-                    MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING))
+                    MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING
+                        | MOVEFILE_WRITE_THROUGH))
             {
                 cma_free(native_source_path);
                 cma_free(native_destination_path);

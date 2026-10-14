@@ -283,6 +283,30 @@ int32_t card_game_engine::register_effect_callback_with_usage_limit(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::unregister_effect_callback(uint32_t effect_id,
+    card_game_effect_callback expected_callback,
+    void *expected_user_data) noexcept
+{
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_SUCCESS);
+    if (expected_callback == ft_nullptr || effect_id >= this->_effect_count)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_effect_callbacks[effect_id] == ft_nullptr
+        && this->_effects[effect_id] != ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
+    if (this->_effect_callbacks[effect_id] == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    if (this->_effect_callbacks[effect_id] != expected_callback
+        || this->_effect_user_data[effect_id] != expected_user_data)
+        return (FT_ERR_PERMISSION_DENIED);
+    this->_effect_callbacks[effect_id] = ft_nullptr;
+    this->_effect_user_data[effect_id] = ft_nullptr;
+    this->_effect_event_types[effect_id] = 0U;
+    this->_effect_priorities[effect_id] = 0U;
+    this->_effect_usage_limit_ids[effect_id] = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::register_phase(
     const card_game_phase_definition &phase) noexcept
 {

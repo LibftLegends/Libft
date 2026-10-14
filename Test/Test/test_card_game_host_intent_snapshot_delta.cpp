@@ -172,3 +172,61 @@ FT_TEST(test_card_game_host_intents_survive_snapshot_delta_ack_and_revert)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replica_engine.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_host_intents_survive_byte_snapshot_restore)
+{
+    card_game_engine source_engine;
+    card_game_engine restored_engine;
+    card_game_host_intent_record record;
+    card_game_host_intent_record second_record;
+    std::vector<uint8_t> serialized;
+    uint64_t source_hash;
+    uint64_t restored_hash;
+    uint32_t pending_count;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(
+        &source_engine, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(
+        &restored_engine, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_host_intent_snapshot_test_emit(&source_engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_host_intent_snapshot_test_emit(&source_engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.serialize_snapshot(serialized));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_engine.restore_snapshot(
+        serialized.data(), serialized.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_engine.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.get_pending_host_intent_count(&pending_count));
+    FT_ASSERT_EQ(2U, pending_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.inspect_pending_host_intent(0U, &record));
+    FT_ASSERT_EQ(1U, record.sequence);
+    FT_ASSERT_EQ(CARD_GAME_HOST_INTENT_SNAPSHOT_TEST_TYPE,
+        record.intent.type_id);
+    FT_ASSERT_EQ(77U, record.intent.fields[0U].value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.inspect_pending_host_intent(1U, &second_record));
+    FT_ASSERT_EQ(2U, second_record.sequence);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        restored_engine.inspect_pending_host_intent(2U, &second_record));
+
+    serialized[serialized.size() - 1U] ^= 0x01U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, restored_engine.restore_snapshot(
+        serialized.data(), serialized.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_engine.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.acknowledge_host_intent(record.sequence));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.get_pending_host_intent_count(&pending_count));
+    FT_ASSERT_EQ(1U, pending_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored_engine.inspect_pending_host_intent(0U, &record));
+    FT_ASSERT_EQ(2U, record.sequence);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_engine.destroy());
+    return (1);
+}

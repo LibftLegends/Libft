@@ -450,6 +450,9 @@ int32_t card_game_format::validate_deck(const card_game_deck &deck,
     uint32_t maximum_cards;
     uint32_t total_cards;
     uint32_t previous_index;
+    uint32_t count_zone_index;
+    uint32_t count_entry_index;
+    uint64_t deck_copy_count;
     int32_t result;
 
     if (diagnostic == ft_nullptr)
@@ -546,15 +549,34 @@ int32_t card_game_format::validate_deck(const card_game_deck &deck,
                 diagnostic->permitted_count = 0U;
                 return (result);
             }
-            if (deck.zones[zone_index].entries[entry_index].quantity
-                > copy_limit)
+            deck_copy_count = 0U;
+            count_zone_index = 0U;
+            while (count_zone_index < deck.zone_count)
+            {
+                count_entry_index = 0U;
+                while (count_entry_index
+                    < deck.zones[count_zone_index].entry_count)
+                {
+                    if (deck.zones[count_zone_index]
+                            .entries[count_entry_index].definition_id
+                        == deck.zones[zone_index]
+                            .entries[entry_index].definition_id)
+                    {
+                        deck_copy_count += deck.zones[count_zone_index]
+                            .entries[count_entry_index].quantity;
+                    }
+                    ++count_entry_index;
+                }
+                ++count_zone_index;
+            }
+            if (deck_copy_count > copy_limit)
             {
                 diagnostic->error_code = FT_ERR_OUT_OF_RANGE;
                 diagnostic->card_id = deck.zones[zone_index]
                     .entries[entry_index].definition_id;
                 diagnostic->zone_id = deck.zones[zone_index].zone_id;
-                diagnostic->observed_count = deck.zones[zone_index]
-                    .entries[entry_index].quantity;
+                diagnostic->observed_count = deck_copy_count > UINT32_MAX
+                    ? UINT32_MAX : static_cast<uint32_t>(deck_copy_count);
                 diagnostic->permitted_count = copy_limit;
                 return (FT_ERR_OUT_OF_RANGE);
             }

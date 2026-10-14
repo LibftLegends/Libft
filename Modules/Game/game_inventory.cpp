@@ -16,8 +16,11 @@
 
 thread_local int32_t game_inventory::_last_error = FT_ERR_SUCCESS;
 
+static ft_bool game_inventory_transfer_metadata_matches(
+	const game_item &left, const game_item &right) noexcept;
+
 game_inventory::game_inventory() noexcept
-    : _items(), _capacity(0), _used_slots(0), _weight_limit(0),
+    : _items(), _transfer_cache(), _quantity_remove_cache(), _capacity(0), _used_slots(0), _weight_limit(0),
       _current_weight(0), _next_slot(0), _revision(0U),
       _mutex(ft_nullptr), _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
@@ -43,6 +46,8 @@ int32_t game_inventory::initialize() noexcept
     }
     if (this->_revision == std::numeric_limits<uint64_t>::max())
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    this->_transfer_cache.clear();
+    this->_quantity_remove_cache.clear();
     const int32_t destroy_error = this->_items.destroy();
     if (destroy_error != FT_ERR_SUCCESS && destroy_error != FT_ERR_INVALID_STATE)
     {
@@ -181,6 +186,8 @@ int32_t game_inventory::destroy() noexcept
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
     (void)this->bump_revision();
     this->_items.clear();
+    this->_transfer_cache.clear();
+    this->_quantity_remove_cache.clear();
     disable_error = this->disable_thread_safety();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     this->set_error(disable_error);
@@ -281,6 +288,7 @@ void game_inventory::unlock(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+#ifdef LIBFT_TEST_BUILD
 ft_map<int32_t, ft_sharedptr<game_item> > &game_inventory::get_items() noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_inventory::get_items");
@@ -293,6 +301,335 @@ const ft_map<int32_t, ft_sharedptr<game_item> > &game_inventory::get_items() con
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_inventory::get_items const");
     this->set_error(FT_ERR_SUCCESS);
     return (this->_items);
+}
+
+#endif
+
+int32_t game_inventory::get_snapshot(
+    std::vector<game_inventory_item_snapshot> &items_out,
+    uint64_t *revision_out) const noexcept
+{
+    game_inventory_snapshot snapshot;
+    int32_t result;
+
+    if (revision_out == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    result = this->get_snapshot(snapshot);
+    if (result == FT_ERR_SUCCESS)
+    {
+        items_out.swap(snapshot.items);
+        *revision_out = snapshot.revision;
+    }
+    return (this->set_error(result));
+}
+
+int32_t game_inventory::get_snapshot(
+    game_inventory_snapshot &snapshot_out) const noexcept
+{
+    game_inventory_snapshot staged_snapshot;
+    const Pair<int32_t, ft_sharedptr<game_item> > *entry;
+    const Pair<int32_t, ft_sharedptr<game_item> > *end_entry;
+    ft_bool inventory_lock_acquired;
+    ft_bool map_lock_acquired;
+    ft_size_t entry_count;
+    int32_t result;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_inventory::get_snapshot");
+    inventory_lock_acquired = FT_FALSE;
+    map_lock_acquired = FT_FALSE;
+    result = this->lock_internal(&inventory_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_items.lock(&map_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        staged_snapshot.capacity = this->_capacity;
+        staged_snapshot.used_slots = this->_used_slots;
+        staged_snapshot.weight_limit = this->_weight_limit;
+        staged_snapshot.current_weight = this->_current_weight;
+        staged_snapshot.next_slot = this->_next_slot;
+        staged_snapshot.revision = this->_revision;
+        entry_count = this->_items.size();
+        try
+        {
+            staged_snapshot.items.reserve(entry_count);
+        }
+        catch (const std::bad_alloc &)
+        {
+            result = FT_ERR_NO_MEMORY;
+        }
+        if (result == FT_ERR_SUCCESS)
+        {
+            end_entry = this->_items.end();
+            entry = end_entry - entry_count;
+            while (entry != end_entry)
+            {
+                if (!entry->value)
+                {
+                    result = FT_ERR_INVALID_STATE;
+                    break ;
+                }
+                game_inventory_item_snapshot snapshot = {};
+                snapshot.slot = entry->key;
+                snapshot.item_id = entry->value->get_item_id();
+                snapshot.instance_id = entry->value->get_instance_id();
+                snapshot.stack_size = entry->value->get_stack_size();
+                snapshot.max_stack = entry->value->get_max_stack();
+                snapshot.rarity = entry->value->get_rarity();
+                snapshot.width = entry->value->get_width();
+                snapshot.height = entry->value->get_height();
+                snapshot.modifier1_id = entry->value->get_modifier1_id();
+                snapshot.modifier1_value = entry->value->get_modifier1_value();
+                snapshot.modifier2_id = entry->value->get_modifier2_id();
+                snapshot.modifier2_value = entry->value->get_modifier2_value();
+                snapshot.modifier3_id = entry->value->get_modifier3_id();
+                snapshot.modifier3_value = entry->value->get_modifier3_value();
+                snapshot.modifier4_id = entry->value->get_modifier4_id();
+                snapshot.modifier4_value = entry->value->get_modifier4_value();
+                if (snapshot.item_id <= 0 || snapshot.stack_size <= 0
+                    || snapshot.max_stack <= 0
+                    || snapshot.stack_size > snapshot.max_stack
+                    || snapshot.width <= 0 || snapshot.height <= 0)
+                {
+                    result = FT_ERR_INVALID_STATE;
+                    break ;
+                }
+                try
+                {
+                    staged_snapshot.items.push_back(snapshot);
+                }
+                catch (const std::bad_alloc &)
+                {
+                    result = FT_ERR_NO_MEMORY;
+                    break ;
+                }
+                ++entry;
+            }
+        }
+    }
+    if (map_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->_items.unlock(map_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    if (inventory_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->unlock_internal(
+            inventory_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        snapshot_out.capacity = staged_snapshot.capacity;
+        snapshot_out.used_slots = staged_snapshot.used_slots;
+        snapshot_out.weight_limit = staged_snapshot.weight_limit;
+        snapshot_out.current_weight = staged_snapshot.current_weight;
+        snapshot_out.next_slot = staged_snapshot.next_slot;
+        snapshot_out.revision = staged_snapshot.revision;
+        snapshot_out.items.swap(staged_snapshot.items);
+    }
+    return (this->set_error(result));
+}
+
+int32_t game_inventory::copy_item_at_revision(int32_t slot,
+    uint64_t expected_revision,
+    ft_sharedptr<game_item> **item_out) const noexcept
+{
+    const Pair<int32_t, ft_sharedptr<game_item> > *entry;
+    ft_bool inventory_lock_acquired = FT_FALSE;
+    ft_bool map_lock_acquired = FT_FALSE;
+    int32_t result = FT_ERR_SUCCESS;
+    ft_sharedptr<game_item> *staged_item = ft_nullptr;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_inventory::copy_item_at_revision");
+    if (item_out == ft_nullptr || slot < 0 || expected_revision == 0U)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    *item_out = ft_nullptr;
+    result = this->lock_internal(&inventory_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_items.lock(&map_lock_acquired);
+    if (result == FT_ERR_SUCCESS && this->_revision != expected_revision)
+        result = FT_ERR_INVALID_STATE;
+    if (result == FT_ERR_SUCCESS)
+    {
+        entry = this->_items.find(slot);
+        if (entry == this->_items.end() || !entry->value)
+            result = FT_ERR_NOT_FOUND;
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        staged_item = new (std::nothrow) ft_sharedptr<game_item>();
+        if (staged_item == ft_nullptr)
+            result = FT_ERR_NO_MEMORY;
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = staged_item->initialize(entry->value);
+    if (map_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->_items.unlock(map_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    if (inventory_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->unlock_internal(
+            inventory_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        if (staged_item != ft_nullptr)
+        {
+            (void)staged_item->destroy();
+            delete staged_item;
+        }
+        return (this->set_error(result));
+    }
+    *item_out = staged_item;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_inventory::restore_snapshot(
+    const game_inventory_snapshot &snapshot) noexcept
+{
+    game_inventory staged_inventory;
+    game_inventory backup_inventory;
+    int64_t calculated_weight = 0;
+    uint64_t calculated_slots = 0U;
+    int32_t maximum_slot = -1;
+    int32_t result;
+    ft_bool backup_ready = FT_FALSE;
+    ft_bool inventory_lock_acquired = FT_FALSE;
+    ft_bool map_lock_acquired = FT_FALSE;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || snapshot.next_slot < 0 || snapshot.weight_limit < 0
+        || snapshot.current_weight < 0)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    result = staged_inventory.initialize(snapshot.capacity,
+        snapshot.weight_limit);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    for (const game_inventory_item_snapshot &entry : snapshot.items)
+    {
+        if (entry.slot < 0 || entry.slot >= snapshot.next_slot
+            || entry.item_id <= 0 || entry.stack_size <= 0
+            || entry.max_stack <= 0 || entry.stack_size > entry.max_stack
+            || entry.width <= 0 || entry.height <= 0
+            || (entry.instance_id != 0U
+                && (entry.stack_size != 1 || entry.max_stack != 1)))
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        for (const game_inventory_item_snapshot &prior : snapshot.items)
+        {
+            if (&prior == &entry)
+                break ;
+            if (prior.slot == entry.slot
+                || (entry.instance_id != 0U
+                    && prior.instance_id == entry.instance_id))
+                return (this->set_error(FT_ERR_ALREADY_EXISTS));
+        }
+        ft_sharedptr<game_item> item(new (std::nothrow) game_item());
+        if (!item)
+            return (this->set_error(FT_ERR_NO_MEMORY));
+        result = item->initialize();
+        if (result != FT_ERR_SUCCESS)
+            return (this->set_error(result));
+        item->set_item_id(entry.item_id);
+        item->set_instance_id(entry.instance_id);
+        item->set_stack_size(entry.stack_size);
+        item->set_max_stack(entry.max_stack);
+        item->set_rarity(entry.rarity);
+        item->set_width(entry.width);
+        item->set_height(entry.height);
+        item->set_modifier1_id(entry.modifier1_id);
+        item->set_modifier1_value(entry.modifier1_value);
+        item->set_modifier2_id(entry.modifier2_id);
+        item->set_modifier2_value(entry.modifier2_value);
+        item->set_modifier3_id(entry.modifier3_id);
+        item->set_modifier3_value(entry.modifier3_value);
+        item->set_modifier4_id(entry.modifier4_id);
+        item->set_modifier4_value(entry.modifier4_value);
+        if (this->check_item_valid(item) != FT_TRUE)
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        if (staged_inventory._items.find(entry.slot)
+            != staged_inventory._items.end())
+            return (this->set_error(FT_ERR_ALREADY_EXISTS));
+        staged_inventory._items.insert(entry.slot, item);
+        result = staged_inventory._items.get_error();
+        if (result != FT_ERR_SUCCESS)
+            return (this->set_error(result));
+        calculated_weight += static_cast<int64_t>(entry.stack_size);
+        calculated_slots += static_cast<uint64_t>(entry.width)
+            * static_cast<uint64_t>(entry.height);
+        if (entry.slot > maximum_slot)
+            maximum_slot = entry.slot;
+    }
+    if (calculated_weight != snapshot.current_weight
+        || snapshot.next_slot <= maximum_slot
+        || calculated_weight > std::numeric_limits<int32_t>::max()
+        || calculated_slots > std::numeric_limits<ft_size_t>::max()
+#if USE_INVENTORY_SLOTS
+        || calculated_slots != static_cast<uint64_t>(snapshot.used_slots)
+        || (snapshot.capacity != 0U
+            && calculated_slots > static_cast<uint64_t>(snapshot.capacity))
+#endif
+        || (snapshot.weight_limit != 0
+            && calculated_weight > snapshot.weight_limit))
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    staged_inventory._used_slots = snapshot.used_slots;
+    staged_inventory._current_weight = snapshot.current_weight;
+    staged_inventory._next_slot = snapshot.next_slot;
+    staged_inventory._revision = snapshot.revision;
+    result = backup_inventory.initialize(this->_capacity,
+        this->_weight_limit);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    result = this->lock_internal(&inventory_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_items.lock(&map_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = backup_inventory._items.move_from(this->_items);
+        if (result == FT_ERR_SUCCESS)
+            backup_ready = FT_TRUE;
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = this->_items.move_from(staged_inventory._items);
+    if (result != FT_ERR_SUCCESS && backup_ready == FT_TRUE)
+    {
+        const int32_t rollback_result = this->_items.move_from(
+            backup_inventory._items);
+        if (rollback_result != FT_ERR_SUCCESS)
+            result = FT_ERR_INTERNAL;
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->_capacity = snapshot.capacity;
+        this->_used_slots = snapshot.used_slots;
+        this->_weight_limit = snapshot.weight_limit;
+        this->_current_weight = snapshot.current_weight;
+        this->_next_slot = snapshot.next_slot;
+        this->_revision = snapshot.revision;
+    }
+    if (map_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->_items.unlock(
+            map_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    if (inventory_lock_acquired == FT_TRUE)
+    {
+        const int32_t unlock_result = this->unlock_internal(
+            inventory_lock_acquired);
+        if (result == FT_ERR_SUCCESS && unlock_result != FT_ERR_SUCCESS)
+            result = unlock_result;
+    }
+    return (this->set_error(result));
 }
 
 ft_size_t game_inventory::get_capacity() const noexcept
@@ -416,6 +753,9 @@ ft_bool game_inventory::check_item_valid(const ft_sharedptr<game_item> &item) co
 {
     if (!item)
         return (FT_FALSE);
+    if (item->get_instance_id() != 0U
+        && (item->get_max_stack() != 1 || item->get_stack_size() != 1))
+        return (FT_FALSE);
     return (FT_TRUE);
 }
 
@@ -423,8 +763,44 @@ int32_t game_inventory::add_item(const ft_sharedptr<game_item> &item) noexcept
 {
     int32_t result;
 
-    result = this->add_item_transactional(item);
+    result = this->add_item_transactional(item, 0U, FT_FALSE, ft_nullptr);
     return (this->set_error(result));
+}
+
+int32_t game_inventory::add_item_revisioned(
+    const ft_sharedptr<game_item> &item, uint64_t expected_revision,
+    int32_t *inserted_slot_out) noexcept
+{
+    int32_t result;
+
+    if (inserted_slot_out == ft_nullptr)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    result = this->add_item_transactional(item, expected_revision, FT_TRUE,
+        inserted_slot_out);
+    return (this->set_error(result));
+}
+
+int32_t game_inventory::clear_items() noexcept
+{
+	ft_bool lock_acquired;
+	int32_t result;
+
+	errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+		"game_inventory::clear_items");
+	lock_acquired = FT_FALSE;
+	result = this->lock_internal(&lock_acquired);
+	if (result != FT_ERR_SUCCESS)
+		return (this->set_error(result));
+	result = this->bump_revision();
+	if (result == FT_ERR_SUCCESS)
+	{
+		this->_items.clear();
+		this->_used_slots = 0U;
+		this->_current_weight = 0;
+		this->_next_slot = 0;
+	}
+	(void)this->unlock_internal(lock_acquired);
+	return (this->set_error(result));
 }
 
 int32_t game_inventory::bump_revision() noexcept
@@ -436,7 +812,8 @@ int32_t game_inventory::bump_revision() noexcept
 }
 
 int32_t game_inventory::add_item_transactional(
-    const ft_sharedptr<game_item> &item) noexcept
+    const ft_sharedptr<game_item> &item, uint64_t expected_revision,
+    ft_bool check_revision, int32_t *inserted_slot_out) noexcept
 {
     game_inventory staged_inventory;
     ft_size_t source_count;
@@ -448,6 +825,10 @@ int32_t game_inventory::add_item_transactional(
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_inventory::add_item");
     if (this->check_item_valid(item) == FT_FALSE)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    if (inserted_slot_out != ft_nullptr
+        && (item->get_instance_id() == 0U
+            || item->get_stack_size() != 1))
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     lock_acquired = FT_FALSE;
     result = this->lock_internal(&lock_acquired);
@@ -464,6 +845,12 @@ int32_t game_inventory::add_item_transactional(
     {
         this->unlock_internal(lock_acquired);
         return (this->set_error(result));
+    }
+    if (check_revision != FT_FALSE
+        && this->_revision != expected_revision)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     staged_inventory._used_slots = this->_used_slots;
     staged_inventory._current_weight = this->_current_weight;
@@ -497,6 +884,24 @@ int32_t game_inventory::add_item_transactional(
         source_index += 1U;
     }
     result = staged_inventory.add_item_in_place(item);
+    int32_t inserted_slot = -1;
+    if (result == FT_ERR_SUCCESS && inserted_slot_out != ft_nullptr)
+    {
+        Pair<int32_t, ft_sharedptr<game_item> > *inserted_item;
+
+        if (staged_inventory._next_slot <= 0)
+            result = FT_ERR_INVALID_STATE;
+        else
+        {
+            inserted_slot = staged_inventory._next_slot - 1;
+            inserted_item = staged_inventory._items.find(inserted_slot);
+            if (inserted_item == staged_inventory._items.end()
+                || !inserted_item->value
+                || inserted_item->value->get_instance_id()
+                    != item->get_instance_id())
+                result = FT_ERR_INVALID_STATE;
+        }
+    }
     if (result == FT_ERR_SUCCESS)
         result = this->_items.move_from(staged_inventory._items);
     if (result == FT_ERR_SUCCESS)
@@ -504,7 +909,9 @@ int32_t game_inventory::add_item_transactional(
         this->_used_slots = staged_inventory._used_slots;
         this->_current_weight = staged_inventory._current_weight;
         this->_next_slot = staged_inventory._next_slot;
-        (void)this->bump_revision();
+        result = this->bump_revision();
+        if (result == FT_ERR_SUCCESS && inserted_slot_out != ft_nullptr)
+            *inserted_slot_out = inserted_slot;
     }
     this->unlock_internal(lock_acquired);
     return (result);
@@ -529,6 +936,25 @@ int32_t game_inventory::get_revision(uint64_t *revision) const noexcept
     return (this->set_error(result));
 }
 
+int32_t game_inventory::restore_revision(uint64_t revision) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t error_code;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    this->_revision = revision;
+    this->_transfer_cache.clear();
+    this->_quantity_remove_cache.clear();
+    error_code = this->unlock_internal(lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
 static ft_bool game_inventory_transfer_metadata_matches(
     const game_item &left, const game_item &right) noexcept
 {
@@ -545,12 +971,34 @@ static ft_bool game_inventory_transfer_metadata_matches(
         && left.get_modifier3_value() == right.get_modifier3_value()
         && left.get_modifier4_id() == right.get_modifier4_id()
         && left.get_modifier4_value() == right.get_modifier4_value()
+        && left.get_instance_id() == right.get_instance_id()
         ? FT_TRUE : FT_FALSE);
 }
 
 int32_t game_inventory::transfer_to(game_inventory &destination,
     int32_t source_slot, int32_t quantity, uint64_t expected_source_revision,
     uint64_t expected_destination_revision) noexcept
+{
+    return (this->transfer_to(destination, source_slot, quantity,
+        expected_source_revision, expected_destination_revision, 0U, 0U,
+        ft_nullptr));
+}
+
+int32_t game_inventory::transfer_to(game_inventory &destination,
+    int32_t source_slot, int32_t quantity, uint64_t expected_source_revision,
+    uint64_t expected_destination_revision, uint64_t transaction_id,
+    game_inventory_transfer_result *result_out) noexcept
+{
+    return (this->transfer_to(destination, source_slot, quantity,
+        expected_source_revision, expected_destination_revision, 0U,
+        transaction_id, result_out));
+}
+
+int32_t game_inventory::transfer_to(game_inventory &destination,
+    int32_t source_slot, int32_t quantity, uint64_t expected_source_revision,
+    uint64_t expected_destination_revision, uint64_t transaction_scope_id,
+    uint64_t transaction_id,
+    game_inventory_transfer_result *result_out) noexcept
 {
     game_inventory staged_source;
     game_inventory staged_destination;
@@ -574,15 +1022,33 @@ int32_t game_inventory::transfer_to(game_inventory &destination,
     int32_t remaining;
     int32_t requested_quantity;
     int32_t area;
+    TransferCacheEntry *cache_entry;
+    std::map<std::pair<uint64_t, uint64_t>, TransferCacheEntry>::iterator cached_entry;
+    std::pair<uint64_t, uint64_t> cache_key;
+    ft_bool cache_replay;
 #if USE_INVENTORY_WEIGHT
     int32_t transfer_weight;
 #endif
 
+    if (result_out != ft_nullptr)
+    {
+        result_out->transaction_scope_id = transaction_scope_id;
+        result_out->transaction_id = transaction_id;
+        result_out->source_revision = 0U;
+        result_out->destination_revision = 0U;
+        result_out->transferred_quantity = 0;
+        result_out->result_code = FT_ERR_INVALID_ARGUMENT;
+    }
+    if ((transaction_id == 0U) != (result_out == ft_nullptr)
+        || (transaction_id == 0U && transaction_scope_id != 0U))
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (&destination == this)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (quantity <= 0)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     requested_quantity = quantity;
+    cache_entry = ft_nullptr;
+    cache_replay = FT_FALSE;
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_inventory::transfer_to source");
     errno_abort_if_uninitialised_or_destroyed(destination._initialised_state,
@@ -606,6 +1072,69 @@ int32_t game_inventory::transfer_to(game_inventory &destination,
         result = second_inventory->lock_internal(&second_inventory_locked);
     if (result != FT_ERR_SUCCESS)
         goto transfer_cleanup;
+    if (transaction_id != 0U)
+    {
+        cache_key = std::make_pair(transaction_scope_id, transaction_id);
+        if (this->_quantity_remove_cache.find(cache_key)
+            != this->_quantity_remove_cache.end())
+        {
+            result = FT_ERR_INVALID_ARGUMENT;
+            goto transfer_cleanup;
+        }
+        cached_entry = this->_transfer_cache.find(cache_key);
+        if (cached_entry != this->_transfer_cache.end())
+        {
+            if (cached_entry->second.destination != &destination
+                || cached_entry->second.source_slot != source_slot
+                || cached_entry->second.quantity != quantity
+                || cached_entry->second.expected_source_revision
+                    != expected_source_revision
+                || cached_entry->second.expected_destination_revision
+                    != expected_destination_revision)
+            {
+                result = FT_ERR_INVALID_ARGUMENT;
+                goto transfer_cleanup;
+            }
+            if (cached_entry->second.completed != FT_TRUE)
+            {
+                result = FT_ERR_INVALID_STATE;
+                goto transfer_cleanup;
+            }
+            *result_out = cached_entry->second.result;
+            result = cached_entry->second.result.result_code;
+            cache_replay = FT_TRUE;
+            goto transfer_cleanup;
+        }
+        if (this->_transfer_cache.size() >= TRANSFER_CACHE_LIMIT)
+        {
+            result = FT_ERR_FULL;
+            goto transfer_cleanup;
+        }
+        try
+        {
+            TransferCacheEntry record;
+            record.destination = &destination;
+            record.source_slot = source_slot;
+            record.quantity = quantity;
+            record.expected_source_revision = expected_source_revision;
+            record.expected_destination_revision = expected_destination_revision;
+            record.transaction_scope_id = transaction_scope_id;
+            record.result.transaction_scope_id = transaction_scope_id;
+            record.result.transaction_id = transaction_id;
+            record.result.source_revision = this->_revision;
+            record.result.destination_revision = destination._revision;
+            record.result.transferred_quantity = 0;
+            record.result.result_code = FT_ERR_INVALID_STATE;
+            record.completed = FT_FALSE;
+            cache_entry = &this->_transfer_cache.insert(
+                std::make_pair(cache_key, record)).first->second;
+        }
+        catch (...)
+        {
+            result = FT_ERR_NO_MEMORY;
+            goto transfer_cleanup;
+        }
+    }
     if (this->_revision != expected_source_revision
         || destination._revision != expected_destination_revision)
     {
@@ -627,6 +1156,9 @@ int32_t game_inventory::transfer_to(game_inventory &destination,
     source_stack = source_entry->value->get_stack_size();
     if (source_stack <= 0 || quantity > source_stack
         || source_entry->value->get_max_stack() <= 0
+        || (source_entry->value->get_instance_id() != 0U
+            && (source_entry->value->get_max_stack() != 1
+                || source_stack != 1 || quantity != 1))
         || source_entry->value->get_width() < 0
         || source_entry->value->get_height() < 0
         || (source_entry->value->get_width() != 0
@@ -635,6 +1167,27 @@ int32_t game_inventory::transfer_to(game_inventory &destination,
     {
         result = FT_ERR_INVALID_ARGUMENT;
         goto transfer_cleanup;
+    }
+    if (source_entry->value->get_instance_id() != 0U)
+    {
+        const ft_size_t destination_count = destination._items.size();
+        Pair<int32_t, ft_sharedptr<game_item>> *destination_entry =
+            destination_count == 0U ? ft_nullptr
+                : destination._items.end() - destination_count;
+        Pair<int32_t, ft_sharedptr<game_item>> *destination_end =
+            destination_count == 0U ? ft_nullptr : destination._items.end();
+
+        while (destination_entry != destination_end)
+        {
+            if (destination_entry->value
+                && destination_entry->value->get_instance_id()
+                    == source_entry->value->get_instance_id())
+            {
+                result = FT_ERR_ALREADY_EXISTS;
+                goto transfer_cleanup;
+            }
+            ++destination_entry;
+        }
     }
     area = source_entry->value->get_width()
         * source_entry->value->get_height();
@@ -897,6 +1450,30 @@ int32_t game_inventory::transfer_to(game_inventory &destination,
     }
 
 transfer_cleanup:
+    if (cache_entry != ft_nullptr && cache_replay != FT_TRUE)
+    {
+        cache_entry->result.transaction_scope_id = transaction_scope_id;
+        cache_entry->result.transaction_id = transaction_id;
+        cache_entry->result.source_revision = this->_revision;
+        cache_entry->result.destination_revision = destination._revision;
+        cache_entry->result.transferred_quantity = result == FT_ERR_SUCCESS
+            ? requested_quantity : 0;
+        cache_entry->result.result_code = result;
+        cache_entry->completed = FT_TRUE;
+        *result_out = cache_entry->result;
+    }
+    else if (result_out != ft_nullptr && cache_replay != FT_TRUE)
+    {
+        result_out->transaction_scope_id = transaction_scope_id;
+        result_out->transaction_id = transaction_id;
+        result_out->source_revision = first_inventory_locked == FT_TRUE
+            && second_inventory_locked == FT_TRUE ? this->_revision : 0U;
+        result_out->destination_revision = first_inventory_locked == FT_TRUE
+            && second_inventory_locked == FT_TRUE
+                ? destination._revision : 0U;
+        result_out->transferred_quantity = 0;
+        result_out->result_code = result;
+    }
     if (second_map_locked == FT_TRUE)
         (void)second_inventory->_items.unlock(second_map_lock_acquired);
     if (first_map_locked == FT_TRUE)
@@ -913,6 +1490,7 @@ int32_t game_inventory::add_item_in_place(
 {
     int32_t remaining;
     int32_t item_id;
+    uint64_t instance_id;
     Pair<int32_t, ft_sharedptr<game_item> > *item_pointer;
     Pair<int32_t, ft_sharedptr<game_item> > *item_end;
 
@@ -947,13 +1525,29 @@ int32_t game_inventory::add_item_in_place(
     }
 #endif
     item_id = item->get_item_id();
+    instance_id = item->get_instance_id();
     item_pointer = this->_items.end() - this->_items.size();
     item_end = this->_items.end();
+    if (instance_id != 0U)
+    {
+        Pair<int32_t, ft_sharedptr<game_item>> *existing = item_pointer;
+
+        while (existing != item_end)
+        {
+            if (existing->value
+                && existing->value->get_instance_id() == instance_id)
+                return (this->set_error(FT_ERR_ALREADY_EXISTS));
+            ++existing;
+        }
+        item_pointer = this->_items.end() - this->_items.size();
+    }
     while (item_pointer != item_end && remaining > 0)
     {
         if (item_pointer->value)
         {
-            if (item_pointer->value->get_item_id() == item_id)
+            if (item_pointer->value->get_item_id() == item_id
+                && game_inventory_transfer_metadata_matches(
+                    *item_pointer->value, *item) == FT_TRUE)
             {
                 int32_t free_space;
                 int32_t amount_to_add;
@@ -1055,6 +1649,217 @@ void game_inventory::remove_item(int32_t slot) noexcept
     (void)this->unlock_internal(lock_acquired);
     this->set_error(FT_ERR_SUCCESS);
     return ;
+}
+
+int32_t game_inventory::remove_item_instance(int32_t slot,
+    uint64_t expected_revision, uint64_t instance_id) noexcept
+{
+    Pair<int32_t, ft_sharedptr<game_item> > *entry;
+    ft_bool lock_acquired;
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_inventory::remove_item_instance");
+    if (slot < 0 || instance_id == 0U)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    lock_acquired = FT_FALSE;
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    if (this->_revision != expected_revision)
+        error_code = FT_ERR_INVALID_STATE;
+    else
+    {
+        entry = this->_items.find(slot);
+        if (entry == this->_items.end() || !entry->value)
+            error_code = FT_ERR_NOT_FOUND;
+        else if (entry->value->get_instance_id() != instance_id
+            || entry->value->get_stack_size() != 1)
+            error_code = FT_ERR_INVALID_STATE;
+        else if (this->_revision == std::numeric_limits<uint64_t>::max())
+            error_code = FT_ERR_OUT_OF_RANGE;
+        else
+        {
+            this->_current_weight -= entry->value->get_stack_size();
+#if USE_INVENTORY_SLOTS
+            const int32_t area = entry->value->get_width()
+                * entry->value->get_height();
+            if (area >= 0 && this->_used_slots >= static_cast<ft_size_t>(area))
+                this->_used_slots -= static_cast<ft_size_t>(area);
+#endif
+            this->_items.remove(slot);
+            error_code = this->bump_revision();
+        }
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
+}
+
+int32_t game_inventory::remove_item_quantity(int32_t item_id,
+    int32_t quantity, uint64_t expected_revision,
+    uint64_t transaction_scope_id, uint64_t transaction_id,
+    game_inventory_quantity_result *result_out) noexcept
+{
+    typedef std::pair<uint64_t, uint64_t> transaction_key;
+    std::map<transaction_key, QuantityRemoveCacheEntry>::iterator cached;
+    QuantityRemoveCacheEntry staged = {};
+    game_inventory_quantity_result result = {};
+    int64_t available = 0;
+    uint64_t slots_to_release = 0U;
+    int32_t preflight_remaining = quantity;
+    int32_t error_code = FT_ERR_SUCCESS;
+    ft_bool lock_acquired = FT_FALSE;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_inventory::remove_item_quantity");
+    if (result_out == nullptr || item_id <= 0 || quantity <= 0
+        || transaction_scope_id == 0U || transaction_id == 0U)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    cached = this->_quantity_remove_cache.find(
+        transaction_key(transaction_scope_id, transaction_id));
+    if (cached == this->_quantity_remove_cache.end()
+        && this->_transfer_cache.find(transaction_key(transaction_scope_id,
+            transaction_id)) != this->_transfer_cache.end())
+    {
+        (void)this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    }
+    if (cached != this->_quantity_remove_cache.end())
+    {
+        if (cached->second.item_id != item_id
+            || cached->second.quantity != quantity
+            || cached->second.expected_revision != expected_revision)
+            error_code = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            *result_out = cached->second.result;
+            error_code = cached->second.result.result_code;
+        }
+        (void)this->unlock_internal(lock_acquired);
+        return (this->set_error(error_code));
+    }
+    if (this->_quantity_remove_cache.size() >= TRANSFER_CACHE_LIMIT)
+    {
+        (void)this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_FULL));
+    }
+    staged.item_id = item_id;
+    staged.quantity = quantity;
+    staged.expected_revision = expected_revision;
+    result.transaction_scope_id = transaction_scope_id;
+    result.transaction_id = transaction_id;
+    result.inventory_revision = this->_revision;
+    result.item_id = item_id;
+    result.requested_quantity = quantity;
+    result.removed_quantity = 0;
+    result.result_code = FT_ERR_INVALID_STATE;
+    staged.result = result;
+    try
+    {
+        cached = this->_quantity_remove_cache.emplace(
+            transaction_key(transaction_scope_id, transaction_id),
+            staged).first;
+    }
+    catch (const std::bad_alloc &)
+    {
+        (void)this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    }
+    if (this->_revision != expected_revision)
+        error_code = FT_ERR_INVALID_STATE;
+    else
+    {
+        int32_t slot = 0;
+
+        while (slot < this->_next_slot)
+        {
+            Pair<int32_t, ft_sharedptr<game_item> > *entry =
+                this->_items.find(slot);
+            if (entry != this->_items.end() && entry->value
+                && entry->value->get_item_id() == item_id
+                && entry->value->get_instance_id() == 0U)
+            {
+                available += entry->value->get_stack_size();
+                if (preflight_remaining > 0)
+                {
+                    const int32_t stack_size =
+                        entry->value->get_stack_size();
+                    if (stack_size <= preflight_remaining)
+                    {
+#if USE_INVENTORY_SLOTS
+                        const int64_t area =
+                            static_cast<int64_t>(entry->value->get_width())
+                            * entry->value->get_height();
+                        if (area > 0)
+                            slots_to_release +=
+                                static_cast<uint64_t>(area);
+#endif
+                        preflight_remaining -= stack_size;
+                    }
+                    else
+                        preflight_remaining = 0;
+                }
+            }
+            ++slot;
+        }
+        if (available < quantity)
+            error_code = FT_ERR_NOT_FOUND;
+        else if (this->_current_weight < quantity
+#if USE_INVENTORY_SLOTS
+            || slots_to_release > this->_used_slots
+#endif
+            )
+            error_code = FT_ERR_INVALID_STATE;
+        else if (this->_revision == std::numeric_limits<uint64_t>::max())
+            error_code = FT_ERR_OUT_OF_RANGE;
+        else
+        {
+            int32_t remaining = quantity;
+            slot = 0;
+            while (slot < this->_next_slot && remaining > 0)
+            {
+                Pair<int32_t, ft_sharedptr<game_item> > *entry =
+                    this->_items.find(slot);
+                if (entry != this->_items.end() && entry->value
+                    && entry->value->get_item_id() == item_id
+                    && entry->value->get_instance_id() == 0U)
+                {
+                    const int32_t stack = entry->value->get_stack_size();
+                    const int32_t taken = stack < remaining ? stack : remaining;
+
+                    if (taken == stack)
+                    {
+#if USE_INVENTORY_SLOTS
+                        const int64_t area =
+                            static_cast<int64_t>(entry->value->get_width())
+                            * entry->value->get_height();
+                        if (area >= 0
+                            && static_cast<uint64_t>(area) <= this->_used_slots)
+                            this->_used_slots -=
+                                static_cast<ft_size_t>(area);
+#endif
+                        this->_items.remove(slot);
+                    }
+                    else
+                        entry->value->set_stack_size(stack - taken);
+                    remaining -= taken;
+                }
+                ++slot;
+            }
+            this->_current_weight -= quantity;
+            error_code = this->bump_revision();
+            result.removed_quantity = quantity;
+        }
+    }
+    result.inventory_revision = this->_revision;
+    result.result_code = error_code;
+    cached->second.result = result;
+    *result_out = result;
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
 }
 
 int32_t game_inventory::count_item(int32_t item_id) const noexcept

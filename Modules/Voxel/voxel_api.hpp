@@ -64,6 +64,8 @@ ft_bool voxel_block_is_known(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_solid(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_transparent(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_liquid(uint32_t block_id) noexcept;
+ft_bool voxel_block_is_fluid_source(uint32_t block_id) noexcept;
+ft_bool voxel_block_is_flowing_fluid(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_replaceable(uint32_t block_id) noexcept;
 ft_bool voxel_block_can_host_ore(uint32_t block_id) noexcept;
 ft_bool voxel_block_is_ore(uint32_t block_id) noexcept;

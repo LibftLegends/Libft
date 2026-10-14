@@ -1052,7 +1052,11 @@ int32_t game_world::restore_from_groups(json_group *groups, game_character &char
     this->_event_scheduler->clear();
     if (this->propagate_scheduler_state_error() == FT_TRUE)
         return (this->get_error());
-    inventory.get_items().clear();
+    if (inventory.clear_items() != FT_ERR_SUCCESS)
+    {
+        this->set_error(inventory.get_error());
+        return (this->get_error());
+    }
     if (deserialize_event_scheduler(this->_event_scheduler, event_group) != FT_ERR_SUCCESS ||
         deserialize_character(character, character_group) != FT_ERR_SUCCESS ||
         deserialize_inventory(inventory, inventory_group) != FT_ERR_SUCCESS ||

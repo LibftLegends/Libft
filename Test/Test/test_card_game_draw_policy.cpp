@@ -433,20 +433,20 @@ FT_TEST(test_card_game_required_discard_is_independent_of_reshuffle_policy)
 
 FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
 {
-    card_game_engine source;
-    card_game_engine destination;
-    card_game_engine log_reader;
-    card_game_engine replay_target;
+    card_game_engine *source = new card_game_engine();
+    card_game_engine *destination = new card_game_engine();
+    card_game_engine *log_reader = new card_game_engine();
+    card_game_engine *replay_target = new card_game_engine();
     card_game_rules rules;
     card_game_card_definition card;
     card_game_zone_definition discard;
     card_game_zone_definition burned;
     card_game_host_intent_definition empty_event;
     card_game_host_intent_definition overflow_event;
-    card_game_snapshot baseline;
-    card_game_snapshot pending_snapshot;
-    card_game_snapshot reverted_snapshot;
-    card_game_delta delta;
+    card_game_snapshot *baseline = new card_game_snapshot();
+    card_game_snapshot *pending_snapshot = new card_game_snapshot();
+    card_game_snapshot *reverted_snapshot = new card_game_snapshot();
+    card_game_delta *delta = new card_game_delta();
     card_game_replay_header replay_header;
     card_game_replay replay;
     card_game_replay replay_copy;
@@ -463,58 +463,58 @@ FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
     card_game_draw_policy_test_setup(rules, card, discard, burned,
         empty_event, overflow_event);
     rules.max_hand_size = 4U;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(source,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(*source,
         rules, card, discard, burned, empty_event, overflow_event, FT_TRUE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(
-        destination, rules, card, discard, burned, empty_event, overflow_event,
+        *destination, rules, card, discard, burned, empty_event, overflow_event,
         FT_TRUE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(
-        log_reader, rules, card, discard, burned, empty_event, overflow_event,
+        *log_reader, rules, card, discard, burned, empty_event, overflow_event,
         FT_TRUE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(
-        replay_target, rules, card, discard, burned, empty_event,
+        *replay_target, rules, card, discard, burned, empty_event,
         overflow_event, FT_TRUE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_snapshot(&baseline));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_snapshot(baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_snapshot(baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_snapshot(*baseline));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_submit_required(
-        source, 1U, 2U, 1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_snapshot(&pending_snapshot));
-    FT_ASSERT_EQ(1U, pending_snapshot.pending_discard_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.create_delta(baseline, &delta));
-    FT_ASSERT_EQ(FT_TRUE, delta.global_state_changed);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_delta(delta));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_state_hash(&destination_hash));
+        *source, 1U, 2U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_snapshot(pending_snapshot));
+    FT_ASSERT_EQ(1U, pending_snapshot->pending_discard_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->create_delta(*baseline, delta));
+    FT_ASSERT_EQ(FT_TRUE, delta->global_state_changed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_delta(*delta));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->get_state_hash(&destination_hash));
     FT_ASSERT_EQ(source_hash, destination_hash);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_snapshot(baseline));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_snapshot(pending_snapshot));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_snapshot(&reverted_snapshot));
-    FT_ASSERT_EQ(1U, reverted_snapshot.pending_discard_count);
-    reverted_snapshot.pending_discard_count = 0U;
-    reverted_snapshot.pending_discard_player_id = 0U;
-    reverted_snapshot.pending_discard_zone_id = 0U;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_snapshot(reverted_snapshot));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_state_hash(&destination_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_snapshot(*baseline));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_snapshot(*pending_snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->get_snapshot(reverted_snapshot));
+    FT_ASSERT_EQ(1U, reverted_snapshot->pending_discard_count);
+    reverted_snapshot->pending_discard_count = 0U;
+    reverted_snapshot->pending_discard_player_id = 0U;
+    reverted_snapshot->pending_discard_zone_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_snapshot(*reverted_snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->get_state_hash(&destination_hash));
     FT_ASSERT_NEQ(source_hash, destination_hash);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.apply_snapshot(pending_snapshot));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_state_hash(&destination_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->apply_snapshot(*pending_snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->get_state_hash(&destination_hash));
     FT_ASSERT_EQ(source_hash, destination_hash);
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.hand_inspect(0U, 0U, &hand_card));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->hand_inspect(0U, 0U, &hand_card));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_submit_discard(
-        source, 2U, hand_card.instance_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(encoded,
+        *source, 2U, hand_card.instance_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->serialize_command_records(encoded,
         sizeof(encoded), &encoded_size));
     FT_ASSERT_EQ(6U, encoded[4]);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader.deserialize_command_records(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->deserialize_command_records(
         encoded, encoded_size));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader.get_command_record(0U,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->get_command_record(0U,
         &records[0]));
     FT_ASSERT_EQ(1U, records[0].command.required_discard_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader.get_command_record(1U,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->get_command_record(1U,
         &records[1]));
     ft_bzero(&replay_header, sizeof(replay_header));
     replay_header.rules_hash = records[0].rules_hash;
@@ -529,20 +529,28 @@ FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
         replay_encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.get_event(0U, &replay_event));
     FT_ASSERT_EQ(1U, replay_event.required_discard_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.start_match(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.replay_command_records(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->replay_command_records(
         records, 2U, ft_nullptr));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.get_state_hash(&destination_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->get_state_hash(&destination_hash));
     FT_ASSERT_EQ(source_hash, destination_hash);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.destroy());
+    delete source;
+    delete destination;
+    delete log_reader;
+    delete replay_target;
+    delete baseline;
+    delete pending_snapshot;
+    delete reverted_snapshot;
+    delete delta;
     return (1);
 }
 
@@ -581,10 +589,10 @@ FT_TEST(test_card_game_draw_policy_multi_draw_bounds_are_strict)
 
 FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
 {
-    card_game_engine source;
-    card_game_engine reader;
-    card_game_engine target;
-    card_game_engine replay_target;
+    card_game_engine *source = new card_game_engine();
+    card_game_engine *reader = new card_game_engine();
+    card_game_engine *target = new card_game_engine();
+    card_game_engine *replay_target = new card_game_engine();
     card_game_rules rules;
     card_game_card_definition card;
     card_game_zone_definition discard;
@@ -602,17 +610,22 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     uint32_t replay_size;
     uint32_t hand_count;
     uint32_t pending;
+    uint32_t source_pending;
+    uint32_t intent_index;
+    uint32_t field_index;
     uint64_t source_hash;
     uint64_t target_hash;
+    card_game_host_intent_record source_intent;
+    card_game_host_intent_record replay_intent;
 
     card_game_draw_policy_test_setup(rules, card, discard, burned,
         empty_event, overflow_event);
     rules.max_hand_size = 2U;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(source,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(*source,
         rules, card, discard, burned, empty_event, overflow_event, FT_TRUE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->deck_push_top(0U, card.card_id));
     ft_bzero(&action, sizeof(action));
     action.schema_version = 1U;
     action.request_id = 7001U;
@@ -620,37 +633,37 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     action.command.player_id = 0U;
     action.command.type = CARD_GAME_INTENT_DRAW_CARD;
     action.command.draw_count = 4U;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_action(action,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->submit_action(action,
         &action_result, ft_nullptr));
     FT_ASSERT_EQ(FT_FALSE, action_result.replayed);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_action(action,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->submit_action(action,
         &action_result, ft_nullptr));
     FT_ASSERT_EQ(FT_TRUE, action_result.replayed);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_command_record(0U, &record));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_command_record(0U, &record));
     FT_ASSERT_EQ(4U, record.command.draw_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(encoded,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->serialize_command_records(encoded,
         sizeof(encoded), &encoded_size));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.initialize(rules));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.deserialize_command_records(encoded,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader->initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader->deserialize_command_records(encoded,
         encoded_size));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.get_command_record(0U, &record));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader->get_command_record(0U, &record));
     FT_ASSERT_EQ(4U, record.command.draw_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(target,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(*target,
         rules, card, discard, burned, empty_event, overflow_event, FT_TRUE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.start_match(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.replay_command_records(&record, 1U,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->replay_command_records(&record, 1U,
         ft_nullptr));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_hand_count(0U, &hand_count));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_hand_count(0U, &hand_count));
     FT_ASSERT_EQ(2U, hand_count);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_pending_host_intent_count(&pending));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->get_pending_host_intent_count(&pending));
     FT_ASSERT_EQ(2U, pending);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_state_hash(&target_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->get_state_hash(&target_hash));
     FT_ASSERT_EQ(source_hash, target_hash);
     ft_bzero(&replay_header, sizeof(replay_header));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_rules_hash(&replay_header.rules_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_rules_hash(&replay_header.rules_hash));
     replay_header.visibility_mode = CARD_GAME_REPLAY_FULL_INFORMATION;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.initialize(replay_header));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.append_command_record(record));
@@ -661,20 +674,54 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.deserialize(encoded,
         replay_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(
-        replay_target, rules, card, discard, burned, empty_event,
+        *replay_target, rules, card, discard, burned, empty_event,
         overflow_event, FT_TRUE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.start_match(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.deck_push_top(0U, card.card_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.replay_into(replay_target));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.get_state_hash(&target_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.replay_into(*replay_target));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->get_pending_host_intent_count(
+        &source_pending));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->get_pending_host_intent_count(
+        &pending));
+    FT_ASSERT_EQ(source_pending, pending);
+    intent_index = 0U;
+    while (intent_index < source_pending)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source->inspect_pending_host_intent(
+            intent_index, &source_intent));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->inspect_pending_host_intent(
+            intent_index, &replay_intent));
+        FT_ASSERT_EQ(source_intent.sequence, replay_intent.sequence);
+        FT_ASSERT_EQ(source_intent.intent.type_id,
+            replay_intent.intent.type_id);
+        FT_ASSERT_EQ(source_intent.intent.version,
+            replay_intent.intent.version);
+        FT_ASSERT_EQ(source_intent.intent.field_count,
+            replay_intent.intent.field_count);
+        field_index = 0U;
+        while (field_index < source_intent.intent.field_count)
+        {
+            FT_ASSERT_EQ(source_intent.intent.fields[field_index].type,
+                replay_intent.intent.fields[field_index].type);
+            FT_ASSERT_EQ(source_intent.intent.fields[field_index].value,
+                replay_intent.intent.fields[field_index].value);
+            field_index += 1U;
+        }
+        intent_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->get_state_hash(&target_hash));
     FT_ASSERT_EQ(source_hash, target_hash);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.destroy());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target->destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_target->destroy());
+    delete source;
+    delete reader;
+    delete target;
+    delete replay_target;
     return (1);
 }
 

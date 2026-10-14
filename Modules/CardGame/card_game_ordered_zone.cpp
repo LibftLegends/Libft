@@ -1,19 +1,8 @@
 #include "card_game_ordered_zone.hpp"
+#include "card_game_rng.hpp"
 
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno_internal.hpp"
-
-static uint64_t card_game_zone_random_next(uint64_t *state) noexcept
-{
-    uint64_t value;
-
-    value = *state;
-    value ^= value >> 12U;
-    value ^= value << 25U;
-    value ^= value >> 27U;
-    *state = value;
-    return (value * 2685821657736338717ULL);
-}
 
 card_game_ordered_zone::card_game_ordered_zone() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _capacity(0U),
@@ -333,7 +322,7 @@ int32_t card_game_ordered_zone::shuffle(uint64_t *random_state) noexcept
         limit = (UINT64_MAX / range) * range;
         do
         {
-            random_value = card_game_zone_random_next(random_state);
+            random_value = card_game_random_next(random_state);
         }
         while (random_value >= limit);
         swap_index = static_cast<uint32_t>(random_value % range);

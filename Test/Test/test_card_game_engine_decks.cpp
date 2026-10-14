@@ -65,6 +65,48 @@ FT_TEST(test_card_game_engine_deck_operations_preserve_order)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_custom_instance_snapshot_round_trip)
+{
+    card_game_engine source;
+    card_game_engine restored;
+    card_game_rules rules;
+    std::vector<uint8_t> source_bytes;
+    std::vector<uint8_t> restored_bytes;
+    uint64_t source_hash;
+    uint64_t restored_hash;
+
+    card_game_deck_test_rules(rules);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_register_deck_test_cards(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_bottom_instance(0U,
+        0x80000000U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(source_bytes));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_register_deck_test_cards(restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored.restore_snapshot(source_bytes.data(), source_bytes.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.serialize_snapshot(restored_bytes));
+    FT_ASSERT(source_bytes == restored_bytes);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_bottom(0U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deck_push_bottom(0U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(source_bytes));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.serialize_snapshot(restored_bytes));
+    FT_ASSERT(source_bytes == restored_bytes);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_engine_deck_shuffle_is_deterministic)
 {
     card_game_engine first_engine;

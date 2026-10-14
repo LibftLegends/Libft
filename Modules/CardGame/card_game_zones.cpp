@@ -13,6 +13,10 @@ int32_t card_game_engine::zone_push_top(uint32_t player_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->find_card_type_id(card_id, &type_id) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_FOUND);
+    result = this->validate_zone_card_copy_limit(player_id, zone_id,
+        card_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     previous_instance_id = this->_next_deck_instance_id;
     result = this->allocate_deck_instance_id(instance_id);
     if (result != FT_ERR_SUCCESS)
@@ -42,6 +46,10 @@ int32_t card_game_engine::zone_push_bottom(uint32_t player_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->find_card_type_id(card_id, &type_id) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_FOUND);
+    result = this->validate_zone_card_copy_limit(player_id, zone_id,
+        card_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     previous_instance_id = this->_next_deck_instance_id;
     result = this->allocate_deck_instance_id(instance_id);
     if (result != FT_ERR_SUCCESS)
@@ -73,6 +81,10 @@ int32_t card_game_engine::zone_insert_at(uint32_t player_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->find_card_type_id(card_id, &type_id) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_FOUND);
+    result = this->validate_zone_card_copy_limit(player_id, zone_id,
+        card_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     previous_instance_id = this->_next_deck_instance_id;
     result = this->allocate_deck_instance_id(instance_id);
     if (result != FT_ERR_SUCCESS)
@@ -173,6 +185,9 @@ int32_t card_game_engine::zone_move_instance(uint32_t player_id,
     uint32_t source_index;
     uint32_t source_count;
     uint32_t type_id;
+    ft_bool source_owned = FT_FALSE;
+    ft_bool destination_owned = FT_FALSE;
+    uint32_t zone_index;
     int32_t result;
 
     if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS
@@ -194,6 +209,22 @@ int32_t card_game_engine::zone_move_instance(uint32_t player_id,
         return (FT_ERR_NOT_FOUND);
     if (this->find_card_type_id(card.card_id, &type_id) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
+    zone_index = 0U;
+    while (zone_index < this->_zone_count)
+    {
+        if (this->_zones[zone_index].zone_id == source_zone_id)
+            source_owned = this->_zones[zone_index].owner_scoped;
+        if (this->_zones[zone_index].zone_id == destination_zone_id)
+            destination_owned = this->_zones[zone_index].owner_scoped;
+        ++zone_index;
+    }
+    if (destination_owned == FT_TRUE && source_owned != FT_TRUE)
+    {
+        result = this->validate_owned_card_copy_limit(player_id,
+            card.card_id);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+    }
     result = this->_zone_store.move_instance(player_id, source_zone_id,
         destination_zone_id, instance_id, type_id);
     if (result != FT_ERR_SUCCESS)
@@ -216,6 +247,27 @@ int32_t card_game_engine::zone_shuffle(uint32_t player_id, uint32_t zone_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::zone_shuffle(uint32_t player_id,
+    uint32_t zone_id) noexcept
+{
+    uint64_t original_random_state;
+    int32_t result;
+
+    if (this->_initialised_state != 2U
+        || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    original_random_state = this->_random_state;
+    result = this->_zone_store.shuffle(player_id, zone_id,
+        &this->_random_state);
+    if (result != FT_ERR_SUCCESS)
+    {
+        this->_random_state = original_random_state;
+        return (result);
+    }
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::get_zone_count(uint32_t player_id,
     uint32_t zone_id, uint32_t *count) const noexcept
 {
@@ -225,4 +277,3 @@ int32_t card_game_engine::get_zone_count(uint32_t player_id,
     *count = this->_zone_store.size(player_id, zone_id);
     return (FT_ERR_SUCCESS);
 }
-

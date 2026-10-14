@@ -60,7 +60,14 @@ static const char *const VOXEL_BUILTIN_BLOCK_NAMES[] =
     "voxel:salt", "voxel:volcanic_rock", "voxel:quartz",
     "voxel:amethyst", "voxel:packed_snow", "voxel:wet_sand",
     "voxel:amber", "voxel:frost_crystal",
-    "voxel:shimmer_stone"
+    "voxel:shimmer_stone", "voxel:lava", "voxel:flowing_water",
+    "voxel:flowing_lava", "voxel:furnace", "voxel:workbench",
+    "voxel:paper_mill", "voxel:card_press",
+    "voxel:wheat_crop_immature", "voxel:wheat_crop_mature",
+    "voxel:farmland", "voxel:paper_reed",
+	"voxel:paper_reed_immature", "voxel:sandstone", "voxel:ladder",
+	"voxel:trapdoor_closed", "voxel:trapdoor_open",
+	"voxel:spider_corpse"
 };
 
 static_assert(sizeof(VOXEL_BUILTIN_BLOCK_NAMES)

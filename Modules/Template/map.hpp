@@ -538,29 +538,32 @@ void ft_map<Key, MappedType>::insert(const Key& key, const MappedType& value)
         this->set_error(FT_ERR_SUCCESS);
         return ;
     }
-    ft_size_t next_capacity;
+    if (this->_size >= this->_capacity)
+    {
+        ft_size_t next_capacity;
 
-    if (this->_capacity == 0)
-        next_capacity = 1;
-    else
-    {
-        next_capacity = this->_capacity * 2;
-        if (next_capacity <= this->_capacity)
+        if (this->_capacity == 0)
+            next_capacity = 1;
+        else
         {
-            ft_size_t incremented_capacity = this->_capacity + 1;
-            if (incremented_capacity == 0)
+            next_capacity = this->_capacity * 2;
+            if (next_capacity <= this->_capacity)
             {
-                (void)this->unlock_internal(lock_acquired);
-                return ;
+                ft_size_t incremented_capacity = this->_capacity + 1;
+                if (incremented_capacity == 0)
+                {
+                    (void)this->unlock_internal(lock_acquired);
+                    return ;
+                }
+                next_capacity = incremented_capacity;
             }
-            next_capacity = incremented_capacity;
         }
-    }
-    if (!this->ensure_capacity(next_capacity))
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NO_MEMORY);
-        return ;
+        if (!this->ensure_capacity(next_capacity))
+        {
+            (void)this->unlock_internal(lock_acquired);
+            this->set_error(FT_ERR_NO_MEMORY);
+            return ;
+        }
     }
     if constexpr (ft_map<Key, MappedType>::template has_initialize_copy<MappedType>::value)
     {
@@ -655,29 +658,32 @@ void ft_map<Key, MappedType>::insert(const Key& key, MappedType&& value)
         this->set_error(FT_ERR_SUCCESS);
         return ;
     }
-    ft_size_t next_capacity;
+    if (this->_size >= this->_capacity)
+    {
+        ft_size_t next_capacity;
 
-    if (this->_capacity == 0)
-        next_capacity = 1;
-    else
-    {
-        next_capacity = this->_capacity * 2;
-        if (next_capacity <= this->_capacity)
+        if (this->_capacity == 0)
+            next_capacity = 1;
+        else
         {
-            ft_size_t incremented_capacity = this->_capacity + 1;
-            if (incremented_capacity == 0)
+            next_capacity = this->_capacity * 2;
+            if (next_capacity <= this->_capacity)
             {
-                (void)this->unlock_internal(lock_acquired);
-                return ;
+                ft_size_t incremented_capacity = this->_capacity + 1;
+                if (incremented_capacity == 0)
+                {
+                    (void)this->unlock_internal(lock_acquired);
+                    return ;
+                }
+                next_capacity = incremented_capacity;
             }
-            next_capacity = incremented_capacity;
         }
-    }
-    if (!this->ensure_capacity(next_capacity))
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NO_MEMORY);
-        return ;
+        if (!this->ensure_capacity(next_capacity))
+        {
+            (void)this->unlock_internal(lock_acquired);
+            this->set_error(FT_ERR_NO_MEMORY);
+            return ;
+        }
     }
     if constexpr (ft_map<Key, MappedType>::template has_initialize_move<MappedType>::value)
     {

@@ -201,6 +201,17 @@ int test_game_save_load(void)
     event->set_duration(5);
     world.schedule_event(event);
     game_inventory inventory;
+    ft_sharedptr<game_item> saved_item(new game_item());
+    uint64_t inventory_revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, saved_item->initialize());
+    saved_item->set_item_id(91);
+    saved_item->set_stack_size(2);
+    saved_item->set_max_stack(8);
+    saved_item->set_width(1);
+    saved_item->set_height(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(saved_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&inventory_revision));
     if (world.save_to_file("test_save.json", hero, inventory) != FT_ERR_SUCCESS)
         return (0);
     game_character loaded_hero;
@@ -209,6 +220,9 @@ int test_game_save_load(void)
     game_inventory loaded_inventory;
     if (loaded_world.load_from_file("test_save.json", loaded_hero, loaded_inventory) != FT_ERR_SUCCESS)
         return (0);
+    uint64_t loaded_inventory_revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        loaded_inventory.get_revision(&loaded_inventory_revision));
     ft_vector<ft_sharedptr<game_event> > loaded_events;
     loaded_world.get_event_scheduler()->dump_events(loaded_events);
     remove("test_save.json");
@@ -218,6 +232,8 @@ int test_game_save_load(void)
         return (0);
     if (loaded_hero.get_hit_points() != 42)
         return (0);
+    FT_ASSERT_EQ(inventory_revision, loaded_inventory_revision);
+    FT_ASSERT_EQ(2, loaded_inventory.count_item(91));
     return (1);
 }
 

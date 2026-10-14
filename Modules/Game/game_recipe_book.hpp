@@ -15,9 +15,8 @@ struct game_recipe_unlock_record
 };
 
 /*
- * Recipe IDs are stable catalogue IDs supplied at initialization. Import
- * rejects unknown IDs transactionally; callers can retain the original save
- * bytes externally and retry after installing a catalogue that knows them.
+ * Recipe IDs are stable catalogue IDs supplied at initialization. Unknown
+ * imported IDs remain quarantined and round-trip for future catalogues.
  * This class is single-owner/single-threaded; callers must synchronize access.
  */
 class game_recipe_book
@@ -48,6 +47,7 @@ class game_recipe_book
         int32_t unlock_recipe(uint32_t recipe_id, uint64_t source_event_id,
             ft_bool *newly_unlocked) noexcept;
         int32_t is_recipe_known(uint32_t recipe_id, ft_bool *known) const noexcept;
+        int32_t quarantined_unlock_count(uint32_t *count) const noexcept;
         int32_t export_book(ft_byte_buffer &output) const noexcept;
         int32_t import_book(ft_byte_buffer &input) noexcept;
 };

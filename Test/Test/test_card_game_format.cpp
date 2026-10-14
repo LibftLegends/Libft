@@ -92,6 +92,40 @@ FT_TEST(test_card_game_format_validates_deck_transactionally)
     return (1);
 }
 
+FT_TEST(test_card_game_format_enforces_copy_limit_across_deck_zones)
+{
+    card_game_format format;
+    static card_game_format_config config;
+    card_game_format_diagnostic diagnostic;
+    card_game_deck deck;
+
+    card_game_format_fill(&config);
+    config.maximum_side_cards = 4U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, format.initialize(config));
+    ft_bzero(&deck, sizeof(deck));
+    deck.profile_id = 3U;
+    deck.format_id = 7U;
+    deck.corpus_version = 11U;
+    deck.zone_count = 2U;
+    deck.zones[0].zone_id = CARD_GAME_DECK_ZONE_MAIN;
+    deck.zones[0].entry_count = 1U;
+    deck.zones[0].entries[0].definition_id = 10U;
+    deck.zones[0].entries[0].quantity = 2U;
+    deck.zones[1].zone_id = CARD_GAME_DECK_ZONE_SIDE;
+    deck.zones[1].entry_count = 1U;
+    deck.zones[1].entries[0].definition_id = 10U;
+    deck.zones[1].entries[0].quantity = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, format.validate_deck(deck, &diagnostic));
+    deck.zones[1].entries[0].quantity = 3U;
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        format.validate_deck(deck, &diagnostic));
+    FT_ASSERT_EQ(10U, diagnostic.card_id);
+    FT_ASSERT_EQ(5U, diagnostic.observed_count);
+    FT_ASSERT_EQ(4U, diagnostic.permitted_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, format.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_format_rejects_malformed_deck_entries)
 {
     card_game_format format;

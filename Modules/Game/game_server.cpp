@@ -445,6 +445,27 @@ void game_server::set_message_callback(game_server_message_callback callback,
     this->set_error(FT_ERR_SUCCESS);
 }
 
+int32_t game_server::send_to_client(int32_t client_handle,
+    const ft_string &message) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+    int32_t send_error;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_server::send_to_client");
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    if (this->_server == ft_nullptr)
+        send_error = FT_ERR_INVALID_STATE;
+    else
+        send_error = this->_server->send_text(client_handle, message);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(send_error));
+}
+
 int32_t game_server::handle_message_locked(int32_t client_handle,
     const ft_string &message) noexcept
 {

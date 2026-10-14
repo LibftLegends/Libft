@@ -71,6 +71,145 @@ int32_t card_game_engine::get_deck_count(uint32_t player_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::count_player_owned_card_type(uint32_t player_id,
+    uint32_t type_id, uint32_t *count_out) const noexcept
+{
+    uint32_t count = 0U;
+    uint32_t index = 0U;
+    int32_t result;
+
+    if (this->_initialised_state != 2U
+        || player_id >= FT_CARD_GAME_MAX_PLAYERS
+        || count_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    while (index < this->_decks[player_id].size())
+    {
+        card_game_zone_entry entry = {};
+        uint32_t entry_type_id = 0U;
+
+        result = this->_decks[player_id].get_entry(index, &entry);
+        if (result == FT_ERR_SUCCESS)
+            result = this->find_card_type_id(entry.card_id, &entry_type_id);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        if (entry_type_id == type_id)
+            ++count;
+        ++index;
+    }
+    index = 0U;
+    while (index < this->_hand_count[player_id])
+    {
+        uint32_t entry_type_id = 0U;
+
+        result = this->find_card_type_id(
+            this->_hand[player_id][index].card_id, &entry_type_id);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        if (entry_type_id == type_id)
+            ++count;
+        ++index;
+    }
+    index = 0U;
+    while (index < this->_zone_count)
+    {
+        if (this->_zones[index].owner_scoped == FT_TRUE)
+        {
+            const uint32_t zone_id = this->_zones[index].zone_id;
+            const uint32_t zone_count = this->_zone_store.size(player_id,
+                zone_id);
+            uint32_t zone_index = 0U;
+
+            while (zone_index < zone_count)
+            {
+                card_game_zone_entry entry = {};
+                uint32_t entry_type_id = 0U;
+
+                result = this->_zone_store.inspect(player_id, zone_id,
+                    zone_index, &entry);
+                if (result == FT_ERR_SUCCESS)
+                    result = this->find_card_type_id(entry.card_id,
+                        &entry_type_id);
+                if (result != FT_ERR_SUCCESS)
+                    return (result);
+                if (entry_type_id == type_id)
+                    ++count;
+                ++zone_index;
+            }
+        }
+        ++index;
+    }
+    *count_out = count;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::validate_owned_card_copy_limit(
+    uint32_t player_id, uint32_t card_id) const noexcept
+{
+    card_game_card_type_definition type = {};
+    uint32_t type_id = 0U;
+    uint32_t copy_count = 0U;
+    int32_t result = this->find_card_type_id(card_id, &type_id);
+
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->get_card_type(type_id, &type);
+    if (result == FT_ERR_NOT_FOUND && type_id < 4U)
+        return (FT_ERR_SUCCESS);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->count_player_owned_card_type(player_id, type_id,
+        &copy_count);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (copy_count >= type.max_copies_per_player
+        ? FT_ERR_FULL : FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::validate_live_card_copy_limits() const noexcept
+{
+    uint32_t player_id = 0U;
+
+    while (player_id < this->_player_count)
+    {
+        uint32_t type_index = 0U;
+
+        while (type_index < this->_card_type_count)
+        {
+            uint32_t copy_count = 0U;
+            const card_game_card_type_definition &type =
+                this->_card_types[type_index];
+            int32_t result = this->count_player_owned_card_type(player_id,
+                type.type_id, &copy_count);
+
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+            if (copy_count > type.max_copies_per_player)
+                return (FT_ERR_INVALID_STATE);
+            ++type_index;
+        }
+        ++player_id;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::validate_zone_card_copy_limit(
+    uint32_t player_id, uint32_t zone_id, uint32_t card_id) const noexcept
+{
+    uint32_t index = 0U;
+
+    while (index < this->_zone_count)
+    {
+        if (this->_zones[index].zone_id == zone_id)
+        {
+            if (this->_zones[index].owner_scoped != FT_TRUE)
+                return (FT_ERR_SUCCESS);
+            return (this->validate_owned_card_copy_limit(player_id, card_id));
+        }
+        ++index;
+    }
+    return (FT_ERR_NOT_FOUND);
+}
+
 int32_t card_game_engine::get_hand_count(uint32_t player_id,
     uint32_t *count) const noexcept
 {

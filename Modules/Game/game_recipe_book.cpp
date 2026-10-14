@@ -205,6 +205,27 @@ int32_t game_recipe_book::is_recipe_known(uint32_t recipe_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t game_recipe_book::quarantined_unlock_count(uint32_t *count) const noexcept
+{
+    ft_size_t index;
+    uint32_t quarantined_count;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    quarantined_count = 0U;
+    index = 0U;
+    while (index < this->_unlock_events.size())
+    {
+        if (this->_catalogue.find(this->_unlock_events[index].recipe_id)
+            == this->_catalogue.end())
+            quarantined_count += 1U;
+        index += 1U;
+    }
+    *count = quarantined_count;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t game_recipe_book::export_book(ft_byte_buffer &output) const noexcept
 {
     ft_size_t index;
@@ -349,11 +370,6 @@ int32_t game_recipe_book::import_book(ft_byte_buffer &input) noexcept
         if (source_event_id == 0U || recipe_id == 0U)
         {
             error_code = FT_ERR_INVALID_ARGUMENT;
-            break ;
-        }
-        if (this->_catalogue.find(recipe_id) == this->_catalogue.end())
-        {
-            error_code = FT_ERR_NOT_FOUND;
             break ;
         }
         prior_index = 0U;

@@ -96,10 +96,11 @@ FT_TEST(test_game_world_persistence_round_trip)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, potion->initialize());
     FT_ASSERT_EQ(potion->get_error(), FT_ERR_SUCCESS);
     potion->set_item_id(200);
-    potion->set_max_stack(5);
-    potion->set_stack_size(2);
+    potion->set_max_stack(1);
+    potion->set_stack_size(1);
     potion->set_modifier1_id(3);
     potion->set_modifier1_value(25);
+    potion->set_instance_id(UINT64_C(9223372036854775809));
     FT_ASSERT_EQ(potion->get_error(), FT_ERR_SUCCESS);
     FT_ASSERT_EQ(backpack.add_item(potion), FT_ERR_SUCCESS);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, backpack.get_error());
@@ -119,6 +120,11 @@ FT_TEST(test_game_world_persistence_round_trip)
     FT_ASSERT_EQ(restored_hero.get_hit_points(), hero.get_hit_points());
     FT_ASSERT_EQ(restored_inventory.get_used(), backpack.get_used());
     FT_ASSERT_EQ(restored_inventory.count_item(200), backpack.count_item(200));
+    const Pair<int32_t, ft_sharedptr<game_item> > *restored_items_end = restored_inventory.get_items().end();
+    FT_ASSERT(restored_items_end != ft_nullptr);
+    FT_ASSERT_EQ((restored_items_end - 1)->value->get_instance_id(), UINT64_C(9223372036854775809));
+    FT_ASSERT_EQ((restored_items_end - 1)->value->get_rarity(), potion->get_rarity());
+    FT_ASSERT_EQ((restored_items_end - 1)->value->get_modifier1_value(), potion->get_modifier1_value());
 
     ft_vector<ft_sharedptr<game_event> > restored_events;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_events.initialize());

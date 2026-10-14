@@ -37,14 +37,20 @@ struct card_game_replay_event
     uint32_t player_id;
     card_game_command_type command_type;
     uint32_t card_id;
+    uint32_t source_instance_id;
     uint32_t target_instance;
     uint32_t draw_count;
     uint32_t required_discard_count;
+    uint64_t authoritative_epoch;
+    uint32_t result_value;
     uint64_t state_hash_before;
     uint64_t state_hash_after;
     uint32_t private_owner_id;
     uint32_t private_size;
     uint8_t private_data[FT_CARD_GAME_REPLAY_PRIVATE_BYTES];
+    uint64_t session_id;
+    uint8_t play_payload[FT_CARD_GAME_COMMAND_PAYLOAD_BYTES];
+    uint32_t destination_zone_id;
 };
 
 struct card_game_replay_result

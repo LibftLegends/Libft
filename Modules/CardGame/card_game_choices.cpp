@@ -1,5 +1,6 @@
 #include "card_game_choices.hpp"
 #include "../CMA/CMA.hpp"
+#include <new>
 
 static void card_game_choices_write_u32(uint8_t *output, uint32_t *offset,
     uint32_t value) noexcept
@@ -371,12 +372,17 @@ int32_t card_game_choice_ledger::choose(uint32_t choice_id, uint32_t player_id,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_choice_ledger::resolve_expired(uint64_t epoch) noexcept
+int32_t card_game_choice_ledger::resolve_expired(uint64_t epoch,
+    uint32_t *resolved_count) noexcept
 {
     uint32_t index;
+    uint32_t resolved;
 
+    if (resolved_count != ft_nullptr)
+        *resolved_count = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    resolved = 0U;
     index = 0U;
     while (index < this->_count)
     {
@@ -401,9 +407,51 @@ int32_t card_game_choice_ledger::resolve_expired(uint64_t epoch) noexcept
             this->_choices[index].selected_option_id =
                 this->_choices[index].default_option_id;
             this->_choices[index].resolved = FT_TRUE;
+            resolved += 1U;
         }
         index += 1U;
     }
+    if (resolved_count != ft_nullptr)
+        *resolved_count = resolved;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_choice_ledger::resolve_all_pending_to_default(
+    uint32_t *resolved_count) noexcept
+{
+    uint32_t index;
+    uint32_t resolved;
+
+    if (resolved_count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *resolved_count = 0U;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    index = 0U;
+    while (index < this->_count)
+    {
+        const card_game_choice &choice = this->_choices[index];
+        if (choice.resolved == FT_FALSE
+            && (choice.default_option_id == 0U
+                || this->find_option(choice, choice.default_option_id)
+                    != FT_ERR_SUCCESS))
+            return (FT_ERR_TIMEOUT);
+        index += 1U;
+    }
+    resolved = 0U;
+    index = 0U;
+    while (index < this->_count)
+    {
+        card_game_choice &choice = this->_choices[index];
+        if (choice.resolved == FT_FALSE)
+        {
+            choice.selected_option_id = choice.default_option_id;
+            choice.resolved = FT_TRUE;
+            ++resolved;
+        }
+        ++index;
+    }
+    *resolved_count = resolved;
     return (FT_ERR_SUCCESS);
 }
 
@@ -420,6 +468,92 @@ int32_t card_game_choice_ledger::get(uint32_t choice_id,
     if (result != FT_ERR_SUCCESS)
         return (result);
     *choice = this->_choices[index];
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_choice_ledger::query_pending_for_player(
+    uint32_t player_id,
+    std::vector<card_game_pending_choice_view> &choices_out) const noexcept
+{
+    std::vector<card_game_pending_choice_view> staged;
+    uint32_t choice_index = 0U;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    try
+    {
+        staged.reserve(this->_count);
+        while (choice_index < this->_count)
+        {
+            const card_game_choice &choice = this->_choices[choice_index];
+            if (choice.player_id == player_id
+                && choice.resolved == FT_FALSE)
+            {
+                card_game_pending_choice_view view = {};
+                uint32_t option_index = 0U;
+
+                view.choice_id = choice.choice_id;
+                view.kind = choice.kind;
+                view.option_count = choice.option_count;
+                view.deadline_epoch = choice.deadline_epoch;
+                while (option_index < choice.option_count)
+                {
+                    view.options[option_index] = choice.options[option_index];
+                    ++option_index;
+                }
+                staged.push_back(view);
+            }
+            ++choice_index;
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        return (FT_ERR_NO_MEMORY);
+    }
+    choices_out.swap(staged);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_choice_ledger::pending_count_for_player(
+    uint32_t player_id, uint32_t *count_out) const noexcept
+{
+    uint32_t choice_index = 0U;
+    uint32_t pending_count = 0U;
+
+    if (count_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *count_out = 0U;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    while (choice_index < this->_count)
+    {
+        const card_game_choice &choice = this->_choices[choice_index];
+        if (choice.player_id == player_id && choice.resolved == FT_FALSE)
+            ++pending_count;
+        ++choice_index;
+    }
+    *count_out = pending_count;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_choice_ledger::pending_count(
+    uint32_t *count_out) const noexcept
+{
+    uint32_t choice_index = 0U;
+    uint32_t unresolved_count = 0U;
+
+    if (count_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *count_out = 0U;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    while (choice_index < this->_count)
+    {
+        if (this->_choices[choice_index].resolved == FT_FALSE)
+            ++unresolved_count;
+        ++choice_index;
+    }
+    *count_out = unresolved_count;
     return (FT_ERR_SUCCESS);
 }
 

@@ -7,6 +7,54 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_cma_failure_injection.hpp"
 
+FT_TEST(test_card_game_engine_byte_snapshot_round_trip_and_rejects_corruption)
+{
+    card_game_engine source;
+    card_game_engine restored;
+    card_game_engine wrong_rules;
+    card_game_rules rules;
+    card_game_rules other_rules;
+    std::vector<uint8_t> bytes;
+    uint64_t source_hash;
+    uint64_t restored_hash;
+    int32_t error_code;
+
+    rules.max_board_spaces = 3U;
+    rules.max_hand_size = 3U;
+    rules.starting_health = 20U;
+    rules.starting_mana = 4U;
+    rules.max_mana = 10U;
+    rules.max_turns = 20U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.modify_player_health(0U, -5));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(bytes));
+    FT_ASSERT(bytes.size() > 16U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(rules));
+    other_rules = rules;
+    other_rules.max_turns += 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wrong_rules.initialize(other_rules));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        wrong_rules.restore_snapshot(bytes.data(), bytes.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wrong_rules.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        restored.restore_snapshot(bytes.data(), bytes.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+
+    bytes[bytes.size() / 2U] ^= 1U;
+    error_code = restored.restore_snapshot(bytes.data(), bytes.size());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, error_code);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_state_hash(&restored_hash));
+    FT_ASSERT_EQ(source_hash, restored_hash);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        restored.restore_snapshot(bytes.data(), bytes.size() - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.destroy());
+    return (1);
+}
+
 static ft_bool card_game_snapshot_test_predicate(uint32_t action_id,
     uint32_t action_tags, uint32_t predicate_context_id,
     void *user_data) noexcept

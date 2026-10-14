@@ -183,16 +183,20 @@ FT_TEST(test_game_recipe_book_export_failure_preserves_existing_output)
     return (1);
 }
 
-FT_TEST(test_game_recipe_book_unknown_recipe_import_is_rejected)
+FT_TEST(test_game_recipe_book_unknown_recipe_is_quarantined_and_preserved)
 {
     ft_vector<uint32_t> source_ids;
     ft_vector<uint32_t> target_ids;
     game_recipe_book source;
     game_recipe_book target;
+    game_recipe_book upgraded;
     ft_byte_buffer output;
     ft_byte_buffer input;
+    ft_byte_buffer preserved_output;
+    ft_byte_buffer preserved_input;
     ft_bool newly_unlocked;
     ft_bool known;
+    uint32_t quarantined_count;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&source_ids,
         7U, 900U));
@@ -208,9 +212,26 @@ FT_TEST(test_game_recipe_book_unknown_recipe_import_is_rejected)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.export_book(output));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, input.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, input.append(output.data(), output.size()));
-    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, target.import_book(input));
-    FT_ASSERT_EQ(0U, input.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.import_book(input));
+    FT_ASSERT_EQ(input.size(), input.read_position());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.is_recipe_known(7U, &known));
+    FT_ASSERT_EQ(FT_FALSE, known);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, target.is_recipe_known(900U, &known));
+    FT_ASSERT_EQ(FT_FALSE, known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        target.quarantined_unlock_count(&quarantined_count));
+    FT_ASSERT_EQ(1U, quarantined_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, preserved_output.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.export_book(preserved_output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgraded.initialize(source_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, preserved_input.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, preserved_input.append(
+        preserved_output.data(), preserved_output.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgraded.import_book(preserved_input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgraded.is_recipe_known(900U, &known));
     FT_ASSERT_EQ(FT_TRUE, known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        upgraded.quarantined_unlock_count(&quarantined_count));
+    FT_ASSERT_EQ(0U, quarantined_count);
     return (1);
 }

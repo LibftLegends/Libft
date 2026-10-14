@@ -165,6 +165,12 @@ int32_t card_game_operation_buffer::append(
         normalized_operation.amount = operation.amount;
         normalized_operation.target_instance = operation.target_instance;
     }
+    else if (operation.type == CARD_GAME_OPERATION_DRAW_CARDS
+        || operation.type == CARD_GAME_OPERATION_REQUIRE_DISCARD)
+    {
+        normalized_operation.player_id = operation.player_id;
+        normalized_operation.amount = operation.amount;
+    }
     else if (operation.type == CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS)
     {
         normalized_operation.player_id = operation.player_id;
@@ -282,6 +288,7 @@ card_game_engine::card_game_engine() noexcept
       _next_deck_instance_id(1U),
       _modifiers(), _modifier_count(0U), _next_modifier_id(1U),
       _state_sequence(0U), _last_command_sequence(0U),
+      _active_action_request_id(0U), _active_play_payload(),
       _command_records(ft_nullptr), _command_record_capacity(0U),
       _command_record_count(0U), _resources(), _allowances(), _choices(),
       _zone_store(), _usage_limits(),

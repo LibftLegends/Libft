@@ -1189,7 +1189,26 @@ static const voxel_block_metadata VOXEL_BLOCK_REGISTRY[] =
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 1U, FT_TRUE},
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 4U, FT_TRUE},
     {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE},
-    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE}
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, FT_TRUE, 4U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, 0U, FT_TRUE,
+        FT_FALSE, FT_FALSE, 15U, 1U},
+    {FT_FALSE, FT_TRUE, FT_TRUE, FT_TRUE, FT_FALSE, FT_FALSE, 0U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_TRUE, FT_TRUE, FT_TRUE, FT_FALSE, 0U, FT_TRUE,
+        FT_FALSE, FT_FALSE, 15U, 1U},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 3U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 3U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 3U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 3U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_FALSE, 0U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_FALSE, 0U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 1U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, 1U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, 1U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 3U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_FALSE, 1U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 2U, FT_TRUE},
+    {FT_FALSE, FT_TRUE, FT_FALSE, FT_TRUE, FT_FALSE, FT_FALSE, 1U, FT_TRUE},
+    {FT_TRUE, FT_FALSE, FT_FALSE, FT_FALSE, FT_FALSE, FT_TRUE, 1U, FT_TRUE}
 };
 
 static_assert(sizeof(VOXEL_BLOCK_REGISTRY)
@@ -1863,6 +1882,22 @@ ft_bool voxel_block_is_transparent(uint32_t block_id) noexcept
 ft_bool voxel_block_is_liquid(uint32_t block_id) noexcept
 {
     return (voxel_get_block_metadata(block_id).liquid);
+}
+
+ft_bool voxel_block_is_fluid_source(uint32_t block_id) noexcept
+{
+    if (block_id == VOXEL_GENERATOR_WATER_BLOCK_ID
+        || block_id == VOXEL_GENERATOR_LAVA_BLOCK_ID)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+ft_bool voxel_block_is_flowing_fluid(uint32_t block_id) noexcept
+{
+    if (block_id == VOXEL_GENERATOR_FLOWING_WATER_BLOCK_ID
+        || block_id == VOXEL_GENERATOR_FLOWING_LAVA_BLOCK_ID)
+        return (FT_TRUE);
+    return (FT_FALSE);
 }
 
 ft_bool voxel_block_is_replaceable(uint32_t block_id) noexcept

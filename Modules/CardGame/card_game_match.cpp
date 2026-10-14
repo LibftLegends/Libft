@@ -404,12 +404,127 @@ int32_t card_game_engine::choose_option(uint32_t choice_id,
     return (result);
 }
 
+int32_t card_game_engine::resolve_expired_choices(
+    uint64_t authoritative_epoch, uint32_t *resolved_count) noexcept
+{
+    uint32_t resolved;
+    int32_t result;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || resolved_count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *resolved_count = 0U;
+    if (this->_state_sequence == UINT64_MAX)
+        return (FT_ERR_FULL);
+    resolved = 0U;
+    result = this->_choices.resolve_expired(authoritative_epoch, &resolved);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (resolved != 0U)
+        this->_state_sequence += 1U;
+    *resolved_count = resolved;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::resolve_all_pending_choices_to_default(
+    uint32_t *resolved_count) noexcept
+{
+    uint32_t resolved;
+    int32_t result;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || resolved_count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *resolved_count = 0U;
+    if (this->_state_sequence == UINT64_MAX)
+        return (FT_ERR_FULL);
+    resolved = 0U;
+    result = this->_choices.resolve_all_pending_to_default(&resolved);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (resolved != 0U)
+        this->_state_sequence += 1U;
+    *resolved_count = resolved;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::get_choice(uint32_t choice_id,
     card_game_choice *choice) const noexcept
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     return (this->_choices.get(choice_id, choice));
+}
+
+int32_t card_game_engine::query_pending_choices(uint32_t player_id,
+    std::vector<card_game_pending_choice_view> &choices_out) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (this->_choices.query_pending_for_player(player_id, choices_out));
+}
+
+int32_t card_game_engine::query_legal_actions(uint32_t player_id,
+    card_game_legal_actions *actions_out) const noexcept
+{
+    card_game_legal_actions result = {};
+    uint32_t pending_choice_count = 0U;
+    uint32_t pending_global_choice_count = 0U;
+    int32_t error_code;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (actions_out == ft_nullptr || player_id >= this->_player_count)
+        return (FT_ERR_INVALID_ARGUMENT);
+    result.player_id = player_id;
+    result.active_player_id = this->_active_player;
+    result.phase_id = this->_current_phase_id;
+    error_code = this->_choices.pending_count_for_player(player_id,
+        &pending_choice_count);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = this->_choices.pending_count(&pending_global_choice_count);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    result.pending_choice_count = pending_choice_count;
+    result.pending_global_choice_count = pending_global_choice_count;
+    if (this->_pending_discard_count != 0U)
+    {
+        if (player_id == this->_pending_discard_player_id)
+        {
+            result.allowed_command_mask = CARD_GAME_COMMAND_DISCARD_HAND;
+            result.pending_discard_count = this->_pending_discard_count;
+            result.pending_discard_zone_id = this->_pending_discard_zone_id;
+        }
+        *actions_out = result;
+        return (FT_ERR_SUCCESS);
+    }
+    if (pending_global_choice_count != 0U)
+    {
+        if (pending_choice_count != 0U)
+            result.allowed_command_mask = CARD_GAME_COMMAND_CHOOSE_OPTION;
+        *actions_out = result;
+        return (FT_ERR_SUCCESS);
+    }
+    if (player_id == this->_active_player)
+    {
+        if (this->is_command_allowed(CARD_GAME_COMMAND_PLAY_CARD) == FT_TRUE)
+            result.allowed_command_mask |= CARD_GAME_COMMAND_PLAY_CARD;
+        if (this->is_command_allowed(CARD_GAME_COMMAND_END_TURN) == FT_TRUE)
+            result.allowed_command_mask |= CARD_GAME_COMMAND_END_TURN;
+        if (this->is_command_allowed(CARD_GAME_COMMAND_ADVANCE_PHASE)
+            == FT_TRUE)
+            result.allowed_command_mask |= CARD_GAME_COMMAND_ADVANCE_PHASE;
+        if (this->is_command_allowed(CARD_GAME_COMMAND_DISCARD_HAND)
+            == FT_TRUE)
+            result.allowed_command_mask |= CARD_GAME_COMMAND_DISCARD_HAND;
+        if (this->is_command_allowed(CARD_GAME_COMMAND_DRAW_CARD) == FT_TRUE)
+            result.allowed_command_mask |= CARD_GAME_COMMAND_DRAW_CARD;
+    }
+    *actions_out = result;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_engine::set_player_mana(uint32_t player_id,
@@ -534,6 +649,9 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         effect_context.target_instance = target_instance;
         effect_context.active_player = this->_active_player;
         effect_context.turn_number = this->_turn_number;
+        effect_context.action_request_id = this->_active_action_request_id;
+        ft_memcpy(effect_context.play_payload, this->_active_play_payload,
+            FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
         effect_error = operations.initialize();
         if (effect_error != FT_ERR_SUCCESS)
         {

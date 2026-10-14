@@ -690,7 +690,10 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
                 return (error_code);
             mask[(row_value * column_count) + column_value].block_id = 0U;
             mask[(row_value * column_count) + column_value].packed_light = 0U;
-            if (block_id != GAME_VOXEL_AIR_BLOCK)
+            if (block_id != GAME_VOXEL_AIR_BLOCK
+                && block_id != VOXEL_GENERATOR_LADDER_BLOCK
+                && block_id != VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK
+                && block_id != VOXEL_GENERATOR_TRAPDOOR_OPEN_BLOCK)
             {
                 if (voxel_block_is_liquid(block_id) == FT_FALSE
                     || face == CHUNK_MESH_FACE_UP)
@@ -724,6 +727,75 @@ static int32_t chunk_mesh_fill_visible_face_mask(const game_voxel_chunk &chunk,
             column_value += 1;
         }
         row_value += 1;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t chunk_mesh_emit_special_block_geometry(chunk_mesh &mesh,
+    const game_voxel_chunk &chunk, const voxel_light_chunk *light,
+    voxel_light_packed_lookup_fn light_lookup, void *light_user_data,
+    int32_t chunk_x, int32_t chunk_z,
+    const chunk_mesh_bounds *bounds) noexcept
+{
+    int32_t x = bounds == nullptr ? 0 : bounds->minimum_x;
+    const int32_t end_x = bounds == nullptr
+        ? GAME_VOXEL_CHUNK_WIDTH : bounds->maximum_x;
+    const int32_t start_y = bounds == nullptr ? 0 : bounds->minimum_y;
+    const int32_t end_y = bounds == nullptr
+        ? GAME_VOXEL_CHUNK_HEIGHT : bounds->maximum_y;
+    const int32_t start_z = bounds == nullptr ? 0 : bounds->minimum_z;
+    const int32_t end_z = bounds == nullptr
+        ? GAME_VOXEL_CHUNK_DEPTH : bounds->maximum_z;
+    for (; x < end_x; ++x)
+    {
+        for (int32_t y = start_y; y < end_y; ++y)
+        {
+            for (int32_t z = start_z; z < end_z; ++z)
+            {
+                uint32_t block_id = GAME_VOXEL_AIR_BLOCK;
+                int32_t error = chunk_mesh_read_or_air(chunk, x, y, z,
+                    &block_id);
+                if (error != FT_ERR_SUCCESS)
+                    return (error);
+                if (block_id != VOXEL_GENERATOR_LADDER_BLOCK
+                    && block_id != VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK
+                    && block_id != VOXEL_GENERATOR_TRAPDOOR_OPEN_BLOCK)
+                    continue ;
+                const chunk_mesh_face first_face =
+                    block_id == VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK
+                    ? CHUNK_MESH_FACE_UP : CHUNK_MESH_FACE_SOUTH;
+                const chunk_mesh_face second_face =
+                    block_id == VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK
+                    ? CHUNK_MESH_FACE_DOWN : CHUNK_MESH_FACE_NORTH;
+                uint8_t packed_light = 0U;
+                error = chunk_mesh_face_light(chunk, light, light_lookup,
+                    light_user_data, chunk_x, chunk_z, x, y, z, first_face,
+                    &packed_light);
+                if (error != FT_ERR_SUCCESS)
+                    return (error);
+                if (block_id == VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK)
+                {
+                    error = chunk_mesh_emit_rectangle(mesh, y, x, z,
+                        x + 1, z + 1, block_id, first_face, packed_light);
+                    if (error == FT_ERR_SUCCESS)
+                        error = chunk_mesh_emit_rectangle(mesh, y + 1, x, z,
+                            x + 1, z + 1, block_id, second_face,
+                            packed_light);
+                }
+                else
+                {
+					const int32_t plane = z + 1;
+                    error = chunk_mesh_emit_rectangle(mesh, plane, x, y,
+                        x + 1, y + 1, block_id, first_face, packed_light);
+                    if (error == FT_ERR_SUCCESS)
+                        error = chunk_mesh_emit_rectangle(mesh, plane, x, y,
+                            x + 1, y + 1, block_id, second_face,
+                            packed_light);
+                }
+                if (error != FT_ERR_SUCCESS)
+                    return (error);
+            }
+        }
     }
     return (FT_ERR_SUCCESS);
 }
@@ -948,7 +1020,8 @@ static int32_t chunk_mesh_emit_visible_faces(chunk_mesh &mesh,
             return (error_code);
         face = static_cast<chunk_mesh_face>(static_cast<int32_t>(face) + 1);
     }
-    return (FT_ERR_SUCCESS);
+    return (chunk_mesh_emit_special_block_geometry(mesh, chunk, light,
+        light_lookup, light_user_data, chunk_x, chunk_z, bounds));
 }
 
 static int32_t chunk_mesh_partition_indices(chunk_mesh &mesh) noexcept
@@ -1608,7 +1681,10 @@ static int32_t chunk_mesh_fill_visible_face_mask_nb(
                 return (error_code);
             mask[(row_value * column_count) + column_value].block_id = 0U;
             mask[(row_value * column_count) + column_value].packed_light = 0U;
-            if (block_id != GAME_VOXEL_AIR_BLOCK)
+            if (block_id != GAME_VOXEL_AIR_BLOCK
+                && block_id != VOXEL_GENERATOR_LADDER_BLOCK
+                && block_id != VOXEL_GENERATOR_TRAPDOOR_CLOSED_BLOCK
+                && block_id != VOXEL_GENERATOR_TRAPDOOR_OPEN_BLOCK)
             {
                 if (voxel_block_is_liquid(block_id) == FT_FALSE
                     || face == CHUNK_MESH_FACE_UP)
@@ -1697,7 +1773,9 @@ static int32_t chunk_mesh_emit_visible_faces_nb(chunk_mesh &mesh,
             return (error_code);
         face = static_cast<chunk_mesh_face>(static_cast<int32_t>(face) + 1);
     }
-    return (FT_ERR_SUCCESS);
+    return (chunk_mesh_emit_special_block_geometry(mesh, *ctx.chunk,
+        ctx.light, ctx.light_lookup, ctx.light_user_data, ctx.chunk_x,
+        ctx.chunk_z, ctx.bounds));
 }
 
 static int32_t chunk_mesh_generate_from_chunk_with_neighbors_and_light_lookup_internal(

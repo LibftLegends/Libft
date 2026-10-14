@@ -32,6 +32,163 @@ static int32_t make_transfer_item(int32_t id, int32_t count,
     return (FT_ERR_SUCCESS);
 }
 
+FT_TEST(test_game_inventory_remove_item_instance_requires_identity_and_revision)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    uint64_t revision;
+    uint64_t after_revision;
+    uint64_t instance_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(40, 1, 1, 0, 0, &item));
+    item->set_instance_id(7001U);
+    instance_id = item->get_instance_id();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
+        inventory.remove_item_instance(0, revision, instance_id + 1U));
+    FT_ASSERT_EQ(1, inventory.count_item(40));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&after_revision));
+    FT_ASSERT_EQ(revision, after_revision);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
+        inventory.remove_item_instance(0, revision - 1U, instance_id));
+    FT_ASSERT_EQ(1, inventory.count_item(40));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        inventory.remove_item_instance(0, revision, instance_id));
+    FT_ASSERT_EQ(0, inventory.count_item(40));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&after_revision));
+    FT_ASSERT_EQ(revision + 1U, after_revision);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        inventory.remove_item_instance(0, after_revision, instance_id));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_revisioned_add_returns_unique_instance_slot)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    ft_sharedptr<game_item> duplicate;
+    uint64_t revision;
+    uint64_t after_revision;
+    int32_t inserted_slot = -1;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(41, 1, 1, 0, 0, &item));
+    item->set_instance_id(8001U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        make_transfer_item(41, 1, 1, 0, 0, &duplicate));
+    duplicate->set_instance_id(8001U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, inventory.add_item_revisioned(item,
+        revision + 1U, &inserted_slot));
+    FT_ASSERT_EQ(-1, inserted_slot);
+    FT_ASSERT_EQ(0, inventory.count_item(41));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item_revisioned(item,
+        revision, &inserted_slot));
+    FT_ASSERT_EQ(0, inserted_slot);
+    FT_ASSERT_EQ(1, inventory.count_item(41));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&after_revision));
+    FT_ASSERT_EQ(revision + 1U, after_revision);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS,
+        inventory.add_item_revisioned(duplicate, after_revision,
+            &inserted_slot));
+    FT_ASSERT_EQ(1, inventory.count_item(41));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_quantity_remove_is_atomic_and_idempotent)
+{
+    game_inventory inventory;
+    game_inventory destination;
+    ft_sharedptr<game_item> item;
+    ft_sharedptr<game_item> later_item;
+    game_inventory_quantity_result result = {};
+    game_inventory_quantity_result retry = {};
+    uint64_t revision;
+    uint64_t current_revision;
+    uint64_t destination_revision;
+    game_inventory_transfer_result transfer_result = {};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(45, 5, 3, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(5, inventory.count_item(45));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.remove_item_quantity(45, 4,
+        revision, 12U, 1U, &result));
+    FT_ASSERT_EQ(4, result.removed_quantity);
+    FT_ASSERT_EQ(revision + 1U, result.inventory_revision);
+    FT_ASSERT_EQ(1, inventory.count_item(45));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(45, 2, 3, 0, 0,
+        &later_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(later_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.remove_item_quantity(45, 4,
+        revision, 12U, 1U, &retry));
+    FT_ASSERT_EQ(4, retry.removed_quantity);
+    FT_ASSERT_EQ(3, inventory.count_item(45));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, inventory.remove_item_quantity(45,
+        3, revision, 12U, 1U, &retry));
+    FT_ASSERT_EQ(3, inventory.count_item(45));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&current_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, inventory.transfer_to(destination,
+        1, 1, current_revision, destination_revision, 12U, 1U,
+        &transfer_result));
+    FT_ASSERT_EQ(3, inventory.count_item(45));
+    FT_ASSERT_EQ(0, destination.count_item(45));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_quantity_remove_failure_does_not_partially_debit)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    ft_sharedptr<game_item> later_item;
+    game_inventory_quantity_result result = {};
+    uint64_t revision;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        make_transfer_item(46, 2, 3, 0, 0, &later_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(later_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, inventory.remove_item_quantity(46, 3,
+        revision, 12U, 2U, &result));
+    FT_ASSERT_EQ(0, result.removed_quantity);
+    FT_ASSERT_EQ(revision, result.inventory_revision);
+    FT_ASSERT_EQ(2, inventory.count_item(46));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        make_transfer_item(46, 2, 3, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, inventory.remove_item_quantity(46, 3,
+        revision, 12U, 2U, &result));
+    FT_ASSERT_EQ(4, inventory.count_item(46));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_quantity_remove_rejects_inconsistent_accounting)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    game_inventory_quantity_result result = {};
+    uint64_t revision;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(47, 2, 3, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    inventory.set_current_weight(1);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, inventory.remove_item_quantity(47,
+        2, revision, 12U, 3U, &result));
+    FT_ASSERT_EQ(0, result.removed_quantity);
+    FT_ASSERT_EQ(2, inventory.count_item(47));
+    FT_ASSERT_EQ(1, inventory.get_current_weight());
+    return (1);
+}
+
 FT_TEST(test_game_inventory_transfer_splits_and_merges_preserving_metadata)
 {
     game_inventory source;
@@ -285,5 +442,146 @@ FT_TEST(test_game_inventory_transfer_thread_safe_reverse_direction)
     FT_ASSERT_EQ(0, failures.load(std::memory_order_relaxed));
     FT_ASSERT_EQ(1000, first.count_item(71) + second.count_item(71));
     FT_ASSERT_EQ(1000, first.count_item(72) + second.count_item(72));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_transfer_transaction_id_replays_exact_result)
+{
+    game_inventory source;
+    game_inventory destination;
+    ft_sharedptr<game_item> item;
+    uint64_t source_revision;
+    uint64_t destination_revision;
+    uint64_t source_after;
+    uint64_t destination_after;
+    game_inventory_transfer_result first_result;
+    game_inventory_transfer_result replay_result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(81, 5, 8, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(destination, 0, 2,
+        source_revision, destination_revision, 9001U, &first_result));
+    FT_ASSERT_EQ(9001, first_result.transaction_id);
+    FT_ASSERT_EQ(2, first_result.transferred_quantity);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_result.result_code);
+    FT_ASSERT_EQ(3, source.count_item(81));
+    FT_ASSERT_EQ(2, destination.count_item(81));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_after));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_after));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(destination, 0, 2,
+        source_revision, destination_revision, 9001U, &replay_result));
+    FT_ASSERT_EQ(first_result.transaction_id, replay_result.transaction_id);
+    FT_ASSERT_EQ(first_result.source_revision, replay_result.source_revision);
+    FT_ASSERT_EQ(first_result.destination_revision, replay_result.destination_revision);
+    FT_ASSERT_EQ(first_result.transferred_quantity, replay_result.transferred_quantity);
+    FT_ASSERT_EQ(first_result.result_code, replay_result.result_code);
+    FT_ASSERT_EQ(3, source.count_item(81));
+    FT_ASSERT_EQ(2, destination.count_item(81));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(source_after, source_revision);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(destination_after, destination_revision);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, source.transfer_to(destination, 0, 1,
+        source_after, destination_after, 9001U, &replay_result));
+    FT_ASSERT_EQ(3, source.count_item(81));
+    FT_ASSERT_EQ(2, destination.count_item(81));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_transfer_transaction_id_replays_failure)
+{
+    game_inventory source;
+    game_inventory destination;
+    uint64_t source_revision;
+    uint64_t destination_revision;
+    game_inventory_transfer_result first_result;
+    game_inventory_transfer_result replay_result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision, 9002U, &first_result));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, first_result.result_code);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision, 9002U, &replay_result));
+    FT_ASSERT_EQ(first_result.result_code, replay_result.result_code);
+    FT_ASSERT_EQ(first_result.source_revision, replay_result.source_revision);
+    FT_ASSERT_EQ(first_result.destination_revision, replay_result.destination_revision);
+    return (1);
+}
+
+FT_TEST(test_game_inventory_transfer_transaction_cache_fails_closed_at_capacity)
+{
+    game_inventory source;
+    game_inventory destination;
+    uint64_t source_revision;
+    uint64_t destination_revision;
+    game_inventory_transfer_result transfer_result;
+    uint64_t transaction_id = 1U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    while (transaction_id <= 4096U)
+    {
+        FT_ASSERT_EQ(FT_ERR_NOT_FOUND, source.transfer_to(destination, 0, 1,
+            source_revision, destination_revision, transaction_id,
+            &transfer_result));
+        FT_ASSERT_EQ(FT_ERR_NOT_FOUND, transfer_result.result_code);
+        transaction_id += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_FULL, source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision, transaction_id,
+        &transfer_result));
+    FT_ASSERT_EQ(FT_ERR_FULL, transfer_result.result_code);
+    FT_ASSERT_EQ(0, source.count_item(81));
+    FT_ASSERT_EQ(0, destination.count_item(81));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_transfer_transaction_ids_are_scope_local)
+{
+    game_inventory source;
+    game_inventory first_destination;
+    game_inventory second_destination;
+    ft_sharedptr<game_item> item;
+    uint64_t source_revision;
+    uint64_t first_revision;
+    uint64_t second_revision;
+    game_inventory_transfer_result first_result;
+    game_inventory_transfer_result second_result;
+    game_inventory_transfer_result replay_result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_destination.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_destination.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(82, 4, 8, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_destination.get_revision(&first_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(first_destination, 0, 1,
+        source_revision, first_revision, 55U, 7001U, &first_result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_destination.get_revision(&second_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(second_destination, 0, 1,
+        source_revision, second_revision, 66U, 7001U, &second_result));
+    FT_ASSERT_EQ(55, first_result.transaction_scope_id);
+    FT_ASSERT_EQ(66, second_result.transaction_scope_id);
+    FT_ASSERT_EQ(7001, first_result.transaction_id);
+    FT_ASSERT_EQ(7001, second_result.transaction_id);
+    FT_ASSERT_EQ(1, first_destination.count_item(82));
+    FT_ASSERT_EQ(1, second_destination.count_item(82));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(first_destination, 0, 1,
+        first_result.source_revision - 1U, first_revision, 55U, 7001U,
+        &replay_result));
+    FT_ASSERT_EQ(first_result.source_revision, replay_result.source_revision);
+    FT_ASSERT_EQ(2, source.count_item(82));
     return (1);
 }

@@ -2,6 +2,7 @@
 # define CARD_GAME_CHOICES_HPP
 
 # include <cstdint>
+# include <vector>
 # include "card_game_limits.hpp"
 # include "../Basic/basic.hpp"
 # include "../Errno/errno.hpp"
@@ -55,6 +56,17 @@ struct card_game_choice_snapshot
     card_game_choice *choices;
 };
 
+/* Caller-visible view of one unresolved choice owned by the requesting
+ * player. The timeout default and internal resolution state are omitted. */
+struct card_game_pending_choice_view
+{
+    uint32_t choice_id;
+    card_game_choice_kind kind;
+    uint32_t option_count;
+    card_game_choice_option options[FT_CARD_GAME_MAX_CHOICE_OPTIONS];
+    uint64_t deadline_epoch;
+};
+
 class card_game_choice_ledger
 {
     private:
@@ -100,8 +112,16 @@ class card_game_choice_ledger
             const card_game_choice_option &option) noexcept;
         int32_t choose(uint32_t choice_id, uint32_t player_id,
             uint32_t option_id, uint64_t epoch) noexcept;
-        int32_t resolve_expired(uint64_t epoch) noexcept;
+        int32_t resolve_expired(uint64_t epoch,
+            uint32_t *resolved_count = ft_nullptr) noexcept;
+        int32_t resolve_all_pending_to_default(
+            uint32_t *resolved_count) noexcept;
         int32_t get(uint32_t choice_id, card_game_choice *choice) const noexcept;
+        int32_t query_pending_for_player(uint32_t player_id,
+            std::vector<card_game_pending_choice_view> &choices_out) const noexcept;
+        int32_t pending_count_for_player(uint32_t player_id,
+            uint32_t *count_out) const noexcept;
+        int32_t pending_count(uint32_t *count_out) const noexcept;
         int32_t serialize(uint8_t *output, uint32_t output_capacity,
             uint32_t *output_size) const noexcept;
         int32_t deserialize(const uint8_t *input,

@@ -54,6 +54,7 @@ FT_TEST(test_game_crafting_locked_recipe_requires_unlock)
     game_crafting crafting;
     game_inventory inventory;
     ft_sharedptr<game_item> input;
+    ft_sharedptr<game_item> replacement_input;
     ft_sharedptr<game_item> output;
     ft_bool unlocked;
 
@@ -74,6 +75,16 @@ FT_TEST(test_game_crafting_locked_recipe_requires_unlock)
     FT_ASSERT_EQ(FT_TRUE, unlocked);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.craft_item(inventory, 41, output));
     FT_ASSERT_EQ(0, inventory.count_item(7));
+    FT_ASSERT_EQ(1, inventory.count_item(8));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_crafting_test_item(7, 1,
+        &replacement_input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(replacement_input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.lock_recipe(41));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.is_recipe_unlocked(41, &unlocked));
+    FT_ASSERT_EQ(FT_FALSE, unlocked);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, crafting.craft_item(inventory, 41,
+        output));
+    FT_ASSERT_EQ(1, inventory.count_item(7));
     FT_ASSERT_EQ(1, inventory.count_item(8));
     return (1);
 }

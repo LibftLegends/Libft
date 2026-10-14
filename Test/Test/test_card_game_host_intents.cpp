@@ -112,6 +112,11 @@ FT_TEST(test_card_game_host_intents_are_registered_and_acknowledged_in_order)
     FT_ASSERT_EQ(1U, pending_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.peek_pending_host_intent(&record));
     FT_ASSERT_EQ(1U, record.sequence);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        engine.inspect_pending_host_intent(0U, &record));
+    FT_ASSERT_EQ(1U, record.sequence);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        engine.inspect_pending_host_intent(1U, &record));
     FT_ASSERT_EQ(0x47544553U, record.intent.type_id);
     FT_ASSERT_EQ(2U, record.intent.version);
     FT_ASSERT_EQ(3U, record.intent.field_count);

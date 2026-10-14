@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <algorithm>
 #include "voxel_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
@@ -21,6 +22,8 @@ static const uint64_t VOXEL_FEATURE_TREE_SALT = UINT64_C(0x4F1E2D3C5B6A7980);
 static const uint64_t VOXEL_FEATURE_WATER_SALT = UINT64_C(0x9182736455463728);
 static const uint64_t VOXEL_FEATURE_AQUATIC_PLANT_SALT =
     UINT64_C(0x2F4E6D8C0A1B3547);
+static const uint64_t VOXEL_FEATURE_PAPER_REED_SALT =
+    UINT64_C(0xC4A57B193E2608DF);
 static const uint64_t VOXEL_BIOME_SURFACE_TRANSITION_SALT = UINT64_C(0xBB67AE8584CAA73B);
 static const uint64_t VOXEL_BIOME_SUBSURFACE_TRANSITION_SALT = UINT64_C(0x3C6EF372FE94F82B);
 static const uint64_t VOXEL_CAVE_PRIMARY_SALT = UINT64_C(0x7C3A91E2D4B8560F);
@@ -1971,9 +1974,6 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             return (FT_ERR_SUCCESS);
         }
     }
-    if (voxel_stage_dependencies_are_met(requested_stage_mask,
-            previous_stage_mask) == FT_FALSE)
-        return (FT_ERR_INVALID_OPERATION);
     if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U)
     {
         error_code = voxel_stage_clear_chunk(chunk);
@@ -1981,6 +1981,9 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             return (error_code);
         previous_stage_mask = 0U;
     }
+    if (voxel_stage_dependencies_are_met(requested_stage_mask,
+            previous_stage_mask) == FT_FALSE)
+        return (FT_ERR_INVALID_OPERATION);
     voxel_stage_prepare_columns(seed_value, world_block_origin_x,
         world_block_origin_z, config, column_cache);
     /* Stage: base voxel, caves, voxel-aware layers, and fluids. */
@@ -2408,7 +2411,63 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     }
                 }
             }
+            bool paper_reed_placed = false;
             if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
+                && column_cache[column_index].has_surface_water == FT_FALSE
+                && column_height + 1 < GAME_VOXEL_CHUNK_HEIGHT
+                && voxel_should_place_feature(seed_value, world_block_x,
+                    world_block_z, VOXEL_FEATURE_PAPER_REED_SALT, 12U)
+                    == FT_TRUE)
+            {
+                bool near_surface_water = false;
+                for (int32_t water_z = std::max(0, local_z - 4);
+                    water_z <= std::min(GAME_VOXEL_CHUNK_DEPTH - 1,
+                        local_z + 4) && !near_surface_water; ++water_z)
+                {
+                    for (int32_t water_x = std::max(0, local_x - 4);
+                        water_x <= std::min(GAME_VOXEL_CHUNK_WIDTH - 1,
+                            local_x + 4); ++water_x)
+                    {
+                        const std::size_t neighbor_index =
+                            static_cast<std::size_t>(water_z)
+                                * GAME_VOXEL_CHUNK_WIDTH
+                            + static_cast<std::size_t>(water_x);
+                        const int32_t water_level = column_cache[
+                            neighbor_index].surface_water_level;
+                        if (column_cache[neighbor_index].has_surface_water
+                                == FT_TRUE
+                            && water_level >= column_height - 1
+                            && water_level <= column_height + 1)
+                        {
+                            near_surface_water = true;
+                            break;
+                        }
+                    }
+                }
+                uint32_t ground_block = VOXEL_GENERATOR_AIR_BLOCK;
+                uint32_t above_ground_block = VOXEL_GENERATOR_AIR_BLOCK;
+                if (near_surface_water
+                    && chunk.read_block(local_x, column_height, local_z,
+                        &ground_block) == FT_ERR_SUCCESS
+                    && chunk.read_block(local_x, column_height + 1, local_z,
+                        &above_ground_block) == FT_ERR_SUCCESS
+                    && (ground_block == VOXEL_GENERATOR_GRASS_BLOCK
+                        || ground_block == VOXEL_GENERATOR_DIRT_BLOCK
+                        || ground_block == VOXEL_GENERATOR_MUD_BLOCK
+                        || ground_block == VOXEL_GENERATOR_SAND_BLOCK)
+                    && voxel_block_is_replaceable(above_ground_block)
+                        == FT_TRUE)
+                {
+                    error_code = chunk.write_generated_block(local_x,
+                        column_height + 1, local_z,
+                        VOXEL_GENERATOR_PAPER_REED_IMMATURE_BLOCK);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
+                    paper_reed_placed = true;
+                }
+            }
+            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
+                && paper_reed_placed == false
                 && place_shrub == FT_TRUE
                 && column_cache[column_index].has_surface_water == FT_FALSE
                 && column_height + VOXEL_FEATURE_SHRUB_HEIGHT_OFFSET
@@ -2432,6 +2491,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 }
             }
             if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
+                && paper_reed_placed == false
                 && column_cache[column_index].can_place_trees == FT_TRUE)
             {
                 if (column_cache[column_index].has_surface_water == FT_TRUE)

@@ -1,4 +1,5 @@
 #include "card_game_internal.hpp"
+#include "card_game_rng.hpp"
 
 int32_t card_game_engine::deck_push_top_instance(uint32_t player_id,
     uint32_t instance_id, uint32_t card_id) noexcept
@@ -13,6 +14,9 @@ int32_t card_game_engine::deck_push_top_instance(uint32_t player_id,
         return (FT_ERR_NOT_FOUND);
     if (this->deck_instance_exists(instance_id) != FT_FALSE)
         return (FT_ERR_ALREADY_EXISTS);
+    push_error = this->validate_owned_card_copy_limit(player_id, card_id);
+    if (push_error != FT_ERR_SUCCESS)
+        return (push_error);
     entry.instance_id = instance_id;
     entry.card_id = card_id;
     push_error = this->_decks[player_id].push_top_entry(entry);
@@ -35,6 +39,9 @@ int32_t card_game_engine::deck_push_bottom_instance(uint32_t player_id,
         return (FT_ERR_NOT_FOUND);
     if (this->deck_instance_exists(instance_id) != FT_FALSE)
         return (FT_ERR_ALREADY_EXISTS);
+    push_error = this->validate_owned_card_copy_limit(player_id, card_id);
+    if (push_error != FT_ERR_SUCCESS)
+        return (push_error);
     entry.instance_id = instance_id;
     entry.card_id = card_id;
     push_error = this->_decks[player_id].push_bottom_entry(entry);
@@ -57,6 +64,9 @@ int32_t card_game_engine::deck_insert_instance_at(uint32_t player_id,
         return (FT_ERR_NOT_FOUND);
     if (this->deck_instance_exists(instance_id) != FT_FALSE)
         return (FT_ERR_ALREADY_EXISTS);
+    insert_error = this->validate_owned_card_copy_limit(player_id, card_id);
+    if (insert_error != FT_ERR_SUCCESS)
+        return (insert_error);
     entry.instance_id = instance_id;
     entry.card_id = card_id;
     insert_error = this->_decks[player_id].insert_entry_at(index, entry);
@@ -70,37 +80,56 @@ int32_t card_game_engine::deck_push_top(uint32_t player_id,
     uint32_t card_id) noexcept
 {
     uint32_t instance_id;
+    uint32_t previous_instance_id;
+    int32_t result;
 
     if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (this->allocate_deck_instance_id(&instance_id) != FT_ERR_SUCCESS)
-        return (FT_ERR_OUT_OF_RANGE);
-    return (this->deck_push_top_instance(player_id, instance_id, card_id));
+    previous_instance_id = this->_next_deck_instance_id;
+    result = this->allocate_deck_instance_id(&instance_id);
+    if (result == FT_ERR_SUCCESS)
+        result = this->deck_push_top_instance(player_id, instance_id, card_id);
+    if (result != FT_ERR_SUCCESS)
+        this->_next_deck_instance_id = previous_instance_id;
+    return (result);
 }
 
 int32_t card_game_engine::deck_push_bottom(uint32_t player_id,
     uint32_t card_id) noexcept
 {
     uint32_t instance_id;
+    uint32_t previous_instance_id;
+    int32_t result;
 
     if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (this->allocate_deck_instance_id(&instance_id) != FT_ERR_SUCCESS)
-        return (FT_ERR_OUT_OF_RANGE);
-    return (this->deck_push_bottom_instance(player_id, instance_id, card_id));
+    previous_instance_id = this->_next_deck_instance_id;
+    result = this->allocate_deck_instance_id(&instance_id);
+    if (result == FT_ERR_SUCCESS)
+        result = this->deck_push_bottom_instance(player_id, instance_id,
+            card_id);
+    if (result != FT_ERR_SUCCESS)
+        this->_next_deck_instance_id = previous_instance_id;
+    return (result);
 }
 
 int32_t card_game_engine::deck_insert_at(uint32_t player_id, uint32_t index,
     uint32_t card_id) noexcept
 {
     uint32_t instance_id;
+    uint32_t previous_instance_id;
+    int32_t result;
 
     if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (this->allocate_deck_instance_id(&instance_id) != FT_ERR_SUCCESS)
-        return (FT_ERR_OUT_OF_RANGE);
-    return (this->deck_insert_instance_at(player_id, index, instance_id,
-        card_id));
+    previous_instance_id = this->_next_deck_instance_id;
+    result = this->allocate_deck_instance_id(&instance_id);
+    if (result == FT_ERR_SUCCESS)
+        result = this->deck_insert_instance_at(player_id, index, instance_id,
+            card_id);
+    if (result != FT_ERR_SUCCESS)
+        this->_next_deck_instance_id = previous_instance_id;
+    return (result);
 }
 
 int32_t card_game_engine::deck_peek_top(uint32_t player_id,
@@ -334,3 +363,31 @@ int32_t card_game_engine::get_random_state(uint64_t *state) const noexcept
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_engine::random_bounded(uint32_t bound,
+    uint32_t *value_out) noexcept
+{
+    uint64_t candidate_state;
+    uint64_t random_value;
+    uint64_t limit;
+
+    if (this->_initialised_state != 2U)
+        return (FT_ERR_NOT_INITIALISED);
+    if (bound == 0U || value_out == ft_nullptr
+        || this->_random_state == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_state_sequence == UINT64_MAX)
+        return (FT_ERR_FULL);
+    candidate_state = this->_random_state;
+    /* xorshift* emits every nonzero uint64_t once per period. Reject the
+     * incomplete tail of that 1..UINT64_MAX domain before reducing. */
+    limit = (UINT64_MAX / bound) * bound;
+    do
+    {
+        random_value = card_game_random_next(&candidate_state);
+    }
+    while (random_value == 0U || random_value > limit);
+    this->_random_state = candidate_state;
+    *value_out = static_cast<uint32_t>((random_value - 1U) % bound);
+    this->_state_sequence += 1U;
+    return (FT_ERR_SUCCESS);
+}

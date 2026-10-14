@@ -362,9 +362,6 @@ int32_t card_game_engine::apply_snapshot_internal(
             if (this->_decks[player_id].push_bottom_entry(entry)
                 != FT_ERR_SUCCESS)
                 return (FT_ERR_INVALID_STATE);
-            if (entry.instance_id >= next_deck_instance_id
-                && entry.instance_id != UINT32_MAX)
-                next_deck_instance_id = entry.instance_id + 1U;
             deck_index += 1U;
         }
         this->_hand_count[player_id] = snapshot.players[player_id].hand_count;
@@ -375,11 +372,6 @@ int32_t card_game_engine::apply_snapshot_internal(
                 snapshot.players[player_id].hand[hand_index];
             this->_hand[player_id][hand_index].instance_id =
                 snapshot.players[player_id].hand_instance_ids[hand_index];
-            if (this->_hand[player_id][hand_index].instance_id
-                >= next_deck_instance_id
-                && this->_hand[player_id][hand_index].instance_id != UINT32_MAX)
-                next_deck_instance_id =
-                    this->_hand[player_id][hand_index].instance_id + 1U;
             hand_index += 1U;
         }
         this->_health[player_id] = snapshot.players[player_id].health;
@@ -414,7 +406,7 @@ int32_t card_game_engine::apply_snapshot_internal(
     this->_next_deck_instance_id = next_deck_instance_id;
     this->_next_modifier_id = next_modifier_id;
     this->_state_sequence = snapshot.state_sequence;
-    return (FT_ERR_SUCCESS);
+    return (this->validate_live_card_copy_limits());
 }
 
 int32_t card_game_engine::apply_snapshot(
@@ -1047,7 +1039,7 @@ int32_t card_game_engine::apply_delta_internal(
         player_id += 1U;
     }
     this->_state_sequence = delta.target_state_sequence;
-    return (FT_ERR_SUCCESS);
+    return (this->validate_live_card_copy_limits());
 }
 
 int32_t card_game_engine::apply_delta(const card_game_delta &delta) noexcept
