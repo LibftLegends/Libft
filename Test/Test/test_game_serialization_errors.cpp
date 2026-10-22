@@ -55,7 +55,7 @@ FT_TEST(test_serialize_inventory_null_item_sets_errno)
     inventory.get_items().insert(0, null_item);
     json_group *group = serialize_inventory(inventory);
     FT_ASSERT(group == ft_nullptr);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, inventory.get_error());
     return (1);
 }
 

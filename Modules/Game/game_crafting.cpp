@@ -3,6 +3,7 @@
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "game_crafting.hpp"
+#include <algorithm>
 #include <new>
 #include <limits>
 #include <vector>
@@ -1513,6 +1514,267 @@ int32_t game_crafting::query_recipe_at_station(int32_t recipe_id,
     query_result->craftable = (query_result->known == FT_TRUE
         && query_result->missing_group_count == 0U) ? FT_TRUE : FT_FALSE;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
+    const game_inventory_snapshot &inventory_snapshot, int32_t station_id,
+    game_crafting_query_result *query_result,
+    ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept
+{
+    const Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
+    const Pair<int32_t, ft_bool> *unlock_entry;
+    const Pair<int32_t, int32_t> *required_station;
+    ft_vector<game_crafting_missing_ingredient> all_groups;
+    std::vector<std::size_t> item_order;
+    std::vector<int32_t> remaining_stack_sizes;
+    std::vector<uint64_t> instance_ids;
+    uint64_t calculated_slots = 0U;
+    int64_t calculated_weight = 0;
+    int32_t maximum_slot = -1;
+    ft_size_t index;
+    ft_size_t item_index;
+    uint32_t alternative_index;
+    int32_t remaining;
+    int32_t result;
+    ft_bool crafting_locked = FT_FALSE;
+
+    if (query_result == ft_nullptr || missing_groups == ft_nullptr
+        || station_id < 0)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    query_result->found = FT_FALSE;
+    query_result->known = FT_FALSE;
+    query_result->craftable = FT_FALSE;
+    query_result->station_available = FT_FALSE;
+    query_result->missing_group_count = 0U;
+    query_result->missing_units = 0;
+    if (missing_groups->is_initialised() == FT_CLASS_STATE_INITIALISED)
+        missing_groups->clear();
+    else
+    {
+        result = missing_groups->initialize();
+        if (result != FT_ERR_SUCCESS)
+            return (this->set_error(result));
+    }
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_crafting::query_recipe_at_station_snapshot");
+    if (inventory_snapshot.weight_limit < 0
+        || inventory_snapshot.current_weight < 0
+        || inventory_snapshot.next_slot < 0)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    try
+    {
+        item_order.resize(inventory_snapshot.items.size());
+        remaining_stack_sizes.resize(inventory_snapshot.items.size());
+        instance_ids.reserve(inventory_snapshot.items.size());
+    }
+    catch (const std::bad_alloc &)
+    {
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    }
+    index = 0U;
+    while (index < inventory_snapshot.items.size())
+    {
+        item_order[index] = index;
+        ++index;
+    }
+    std::sort(item_order.begin(), item_order.end(),
+        [&inventory_snapshot](std::size_t left_index,
+            std::size_t right_index)
+        {
+            return (inventory_snapshot.items[left_index].slot
+                < inventory_snapshot.items[right_index].slot);
+        });
+    item_index = 0U;
+    while (item_index < item_order.size())
+    {
+        const game_inventory_item_snapshot &item =
+            inventory_snapshot.items[item_order[item_index]];
+        uint64_t item_slots;
+
+        if (item.slot < 0 || item.slot >= inventory_snapshot.next_slot
+            || item.item_id <= 0 || item.stack_size <= 0
+            || item.max_stack <= 0 || item.stack_size > item.max_stack
+            || item.width <= 0 || item.height <= 0
+            || (item.instance_id != 0U
+                && (item.stack_size != 1 || item.max_stack != 1))
+            || (item_index > 0U
+                && inventory_snapshot.items[item_order[item_index - 1U]].slot
+                    == item.slot))
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        if (calculated_weight > FT_INT32_MAX - item.stack_size)
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        calculated_weight += item.stack_size;
+        item_slots = static_cast<uint64_t>(item.width)
+            * static_cast<uint64_t>(item.height);
+        if (calculated_slots > UINT64_MAX - item_slots)
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        calculated_slots += item_slots;
+        if (item.slot > maximum_slot)
+            maximum_slot = item.slot;
+        remaining_stack_sizes[item_index] = item.stack_size;
+        if (item.instance_id != 0U)
+        {
+            try
+            {
+                instance_ids.push_back(item.instance_id);
+            }
+            catch (const std::bad_alloc &)
+            {
+                return (this->set_error(FT_ERR_NO_MEMORY));
+            }
+        }
+        ++item_index;
+    }
+    if (calculated_weight != inventory_snapshot.current_weight
+#if USE_INVENTORY_SLOTS
+        || calculated_slots != static_cast<uint64_t>(inventory_snapshot.used_slots)
+        || (inventory_snapshot.capacity != 0U
+            && calculated_slots > static_cast<uint64_t>(inventory_snapshot.capacity))
+#endif
+        || inventory_snapshot.next_slot <= maximum_slot
+        || (inventory_snapshot.weight_limit != 0
+            && calculated_weight > inventory_snapshot.weight_limit))
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    std::sort(instance_ids.begin(), instance_ids.end());
+    index = 1U;
+    while (index < instance_ids.size())
+    {
+        if (instance_ids[index] == instance_ids[index - 1U])
+            return (this->set_error(FT_ERR_ALREADY_EXISTS));
+        ++index;
+    }
+    result = this->lock_internal(&crafting_locked);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    recipe_entry = this->_recipes.find(recipe_id);
+    if (recipe_entry == this->_recipes.end())
+    {
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(FT_ERR_NOT_FOUND));
+    }
+    query_result->found = FT_TRUE;
+    unlock_entry = this->_unlocked_recipes.find(recipe_id);
+    query_result->known = (unlock_entry != this->_unlocked_recipes.end()
+        && unlock_entry->value == FT_TRUE) ? FT_TRUE : FT_FALSE;
+    required_station = this->_recipe_stations.find(recipe_id);
+    if (required_station == this->_recipe_stations.end()
+        || required_station->value == station_id)
+        query_result->station_available = FT_TRUE;
+    else
+    {
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(FT_ERR_SUCCESS));
+    }
+    result = all_groups.initialize();
+    index = 0U;
+    while (result == FT_ERR_SUCCESS
+        && index < recipe_entry->value.size())
+    {
+        game_crafting_missing_ingredient group = {};
+        const game_crafting_ingredient &ingredient = recipe_entry->value[index];
+        const uint32_t alternative_count = ingredient.get_alternative_count();
+
+        group.item_id = ingredient.get_item_id();
+        group.rarity = ingredient.get_rarity();
+        group.alternative_count = alternative_count;
+        group.required_units = ingredient.get_count();
+        if (group.item_id <= 0 || group.required_units <= 0
+            || group.rarity < -1 || alternative_count == 0U
+            || alternative_count > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
+            result = FT_ERR_CONFIGURATION;
+        alternative_index = 0U;
+        while (result == FT_ERR_SUCCESS
+            && alternative_index < alternative_count)
+        {
+            group.alternative_item_ids[alternative_index] =
+                ingredient.get_alternative_item_id(alternative_index);
+            if (group.alternative_item_ids[alternative_index] <= 0)
+                result = FT_ERR_CONFIGURATION;
+            ++alternative_index;
+        }
+        if (result == FT_ERR_SUCCESS)
+            result = all_groups.push_back(group);
+        ++index;
+    }
+    int32_t pass = 0;
+    while (result == FT_ERR_SUCCESS && pass < 2)
+    {
+        index = 0U;
+        while (result == FT_ERR_SUCCESS && index < all_groups.size())
+        {
+            game_crafting_missing_ingredient &group = all_groups[index];
+            const game_crafting_ingredient &ingredient =
+                recipe_entry->value[index];
+            const ft_bool wildcard = group.rarity == -1
+                ? FT_TRUE : FT_FALSE;
+
+            if ((pass == 0 && wildcard == FT_TRUE)
+                || (pass == 1 && wildcard == FT_FALSE))
+            {
+                ++index;
+                continue ;
+            }
+            remaining = group.required_units;
+            item_index = 0U;
+            while (item_index < item_order.size() && remaining > 0)
+            {
+                const game_inventory_item_snapshot &item =
+                    inventory_snapshot.items[item_order[item_index]];
+
+                if ((wildcard == FT_TRUE || item.rarity == group.rarity)
+                    && ingredient.matches_item_id(item.item_id) == FT_TRUE)
+                {
+                    const int32_t available_units =
+                        remaining_stack_sizes[item_index];
+                    const int32_t consumed = available_units < remaining
+                        ? available_units : remaining;
+
+                    remaining_stack_sizes[item_index] -= consumed;
+                    group.available_units += consumed;
+                    remaining -= consumed;
+                }
+                ++item_index;
+            }
+            group.missing_units = remaining;
+            ++index;
+        }
+        ++pass;
+    }
+    index = 0U;
+    while (result == FT_ERR_SUCCESS && index < all_groups.size())
+    {
+        const game_crafting_missing_ingredient &group = all_groups[index];
+
+        if (group.missing_units > 0)
+        {
+            result = missing_groups->push_back(group);
+            if (result == FT_ERR_SUCCESS)
+            {
+                ++query_result->missing_group_count;
+                if (query_result->missing_units
+                    > FT_INT32_MAX - group.missing_units)
+                    query_result->missing_units = FT_INT32_MAX;
+                else
+                    query_result->missing_units += group.missing_units;
+            }
+        }
+        ++index;
+    }
+    this->unlock_internal(crafting_locked);
+    if (result != FT_ERR_SUCCESS)
+    {
+        query_result->found = FT_FALSE;
+        query_result->known = FT_FALSE;
+        query_result->craftable = FT_FALSE;
+        query_result->station_available = FT_FALSE;
+        query_result->missing_group_count = 0U;
+        query_result->missing_units = 0;
+        missing_groups->clear();
+        return (this->set_error(result));
+    }
+    query_result->craftable = (query_result->known == FT_TRUE
+        && query_result->missing_group_count == 0U) ? FT_TRUE : FT_FALSE;
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 static int32_t game_crafting_clone_item(

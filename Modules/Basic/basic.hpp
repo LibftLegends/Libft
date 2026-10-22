@@ -1,6 +1,7 @@
 #ifndef LIBFT_HPP
 # define LIBFT_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -59,6 +60,13 @@ constexpr TargetType ft_platform_cast(SourceType value)
     static_cast<ft_size_t>(value)
 #else
 # define FT_NATIVE_SIZE_TO_FT_SIZE_CAST(value) (value)
+#endif
+
+#if SIZE_MAX < UINT64_MAX
+# define FT_UINT64_TO_NATIVE_SIZE_CAST(value) \
+    static_cast<std::size_t>(value)
+#else
+# define FT_UINT64_TO_NATIVE_SIZE_CAST(value) (value)
 #endif
 
 class ft_string;

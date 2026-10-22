@@ -177,8 +177,8 @@ FT_TEST(test_card_game_draw_policy_multi_draw_continues_after_empty_attempts)
     FT_ASSERT_EQ(4U, command_record.command.draw_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_command_records(encoded,
         sizeof(encoded), &encoded_size));
-    FT_ASSERT_EQ(6U, encoded[4]);
-    FT_ASSERT_EQ(4U, encoded[52]);
+    FT_ASSERT_EQ(13U, encoded[4]);
+    FT_ASSERT_EQ(4U, encoded[64]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }
@@ -508,7 +508,7 @@ FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
         *source, 2U, hand_card.instance_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source->serialize_command_records(encoded,
         sizeof(encoded), &encoded_size));
-    FT_ASSERT_EQ(6U, encoded[4]);
+    FT_ASSERT_EQ(13U, encoded[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->deserialize_command_records(
         encoded, encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, log_reader->get_command_record(0U,
@@ -524,7 +524,7 @@ FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&replay_encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(replay_encoded,
         sizeof(replay_encoded), &replay_encoded_size));
-    FT_ASSERT_EQ(5U, replay_encoded[4]);
+    FT_ASSERT_EQ(11U, replay_encoded[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.deserialize(replay_encoded,
         replay_encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.get_event(0U, &replay_event));
@@ -670,7 +670,7 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&replay_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(encoded, sizeof(encoded),
         &replay_size));
-    FT_ASSERT_EQ(5U, encoded[4]);
+    FT_ASSERT_EQ(11U, encoded[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.deserialize(encoded,
         replay_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(

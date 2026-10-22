@@ -3,31 +3,97 @@
 Status: implementation in progress. The design remains the contract; the
 implementation ledger below records only verified slices and must be kept
 current until every required Libft and Minecraft item is implemented.
-Date: 2026-10-02.
+Original design date: 2026-10-02. Status checkpoint: 2026-10-22.
 
 Reviewed branches and fetched revisions:
 
-- Libft: `agent/compression-analytics-cardgame-scripting`, `4922eb88a4ebe571d4bb0b65af5f4f84e5b24dcb`.
-- Minecraft: `agent/analytics-performance`, `f3ccaf988d97d12e76e8877be31f6a6eeb26d614`.
+- Libft: `agent/compression-analytics-cardgame-scripting`, `280328f153193e7a544a7d6f00176ed9721b1ec6`.
+- Minecraft: `agent/analytics-performance`, `c422dcc43bd758394637555d300e67cd17380f9b` (pins the Libft commit above).
 
-### Implementation ledger (2026-10-06)
+This checkpoint was refreshed after pulling both branches. The older design
+sections below remain the target contract; implementation-status claims must
+be read together with the ledger and dated updates, not inferred from proposed
+API names or from source presence alone. In particular, source-only changes
+are not considered validated, and the remaining-work list is not a claim that
+the full backend is complete.
 
-These entries describe the current uncommitted Libft worktree, not the pinned
-branch commits above. They do not imply that the full design or Minecraft
-integration is complete.
+### Backend status at the fetched commits (source inspection, 2026-10-22)
+
+| Area | Present in current source | Still required before calling it complete |
+|---|---|---|
+| Libft CardGame and scripting | Typed host intents; session-scoped, request-idempotent commands; draw/reshuffle/burn and mandatory-discard mechanics; snapshot/replay support; script bridge and manifest/context primitives. | Finish and validate the action/host transaction boundary, trusted manifest provisioning, bounded durable result history, and cross-platform persistence/replay. A committed Libft action must not be described as an atomic Minecraft world mutation until the shared journal/recovery contract proves it. |
+| Minecraft card adapter | `RegenerationCardSession` is wired into `GameSession`; source contains the starter-deck multiset, typed choices, draw/discard paths, several starter and craft-only effect mappings, and regeneration rule/feature planning. | Prove exhaustive enabled-card coverage, target/no-effect behavior, effect composition and session reset through validators; complete any missing content rules and failure recovery. Source presence is not end-to-end card validation. |
+| World Loom backend API | Revisioned selection and quote APIs plus `GameSession::commit_regeneration_start`/finalization source for actor/Loom/request-scoped quote validation, debit, opening deal, chunk reservation/barriers, and the decision deadline. | Production identity/access and occupancy providers, occupied-neighbor exclusion refresh, multiplayer reservation/deadline lifecycle, durable idempotency and host-intent recovery, and crash-safe chunk publication. No UI is part of this design. |
+| Inventory, recipe book, crafting | Libft has revisioned snapshots, transactional add/transfer and prepared craft APIs, recipe knowledge persistence/query; Minecraft source has item/catalogue, discovery, hand/station craft, and session persistence/recovery paths. | Complete registry-wide item/drop/recipe coverage, physical-instance authority across all stores, real station ownership/reach and multiplayer checks, full save/recovery failure tests, and gameplay/content validators. |
+| Validation state | The current Libft worktree test executable passes 6,507/6,507 tests when run from `Libft/Test` outside the sandbox. | Minecraft normal and analytics builds and `--validate-item-catalog` pass. The latest `make validate-all` attempt failed at block-edit emissive-delete convergence (dirty target chunk with remesh in flight) and did not complete; do not treat this as a full Minecraft validation pass. |
+
+Treat the “Present” column as source evidence only. The acceptance criteria in
+Sections 13–15 remain authoritative; update this matrix and the Minecraft
+roadmap after each feature is tested on the actual branch revisions.
+
+### Post-fetch worktree update (2026-10-22)
+
+The following changes are uncommitted worktree changes on the branches named
+above; they are not included in the recorded commit hashes. Libft now exposes
+`game_recipe_unlock_result`, separating `event_newly_recorded` from
+`recipe_newly_known`. Minecraft's recipe catalogue carries that result through
+discovery, and `RecipeDiscoveryTransaction` checkpoints whenever a new source
+event receipt is recorded—even if the recipe was already known. An exact
+receipt retry does not write another checkpoint. If persistence fails, the
+recipe-book snapshot is restored and both result flags are cleared. The legacy
+boolean APIs continue to report only whether the recipe became newly known.
+
+Regression coverage checks a second, distinct event for an already-known
+recipe, exact retry without another save, and save-failure rollback followed by
+a successful retry. The Libft unit test covers distinct events, duplicate
+retry, conflicting reuse, and persistence round-trip. Minecraft's
+`ItemCatalogValidator` source covers checkpoint count and rollback behavior,
+but that validator has not executed on this worktree. The current Libft test
+executable passes 6,507/6,507 tests on Linux when run from `Libft/Test` outside
+the sandbox. The earlier Minecraft root `make test` failure remains historical;
+the current normal and analytics executables both pass
+`--validate-item-catalog`, while full `make validate-all` and the complete
+Minecraft integration remain unverified.
+
+### Implementation ledger (started 2026-10-06; refreshed 2026-10-22)
+
+These entries describe work on the checked-out branches and the evidence
+available for each slice. They do not imply that the full design or Minecraft
+integration is complete. Later dated updates below refine earlier ledger
+entries; where evidence is only source inspection, compilation/runtime status
+must remain explicitly open.
 
 | Slice | Current status | Evidence / remaining contract |
 |---|---|---|
 | Typed host-intent schemas and transactional callback output | Implemented in Libft | Focused host-intent tests cover schema validation, ordered acknowledgement, and rollback when a callback fails. |
-| Pending host-intent queue in snapshots/deltas, byte serialization and state hash | Implemented in Libft; in-memory state format v2 and `GCGS` snapshot v1 | `card_game_engine::serialize_snapshot` writes each sequenced pending intent and `restore_snapshot` validates and restores them. `test_card_game_host_intents_survive_snapshot_delta_ack_and_revert` covers snapshot/delta transfer; `test_card_game_host_intents_survive_byte_snapshot_restore` now checks byte round-trip, pending record identity, state-hash equality, checksum rejection and no mutation on failed restore. The byte snapshot test passes a focused direct MinGW runtime harness. The serialized replay test now compares every pending intent sequence, schema field type, and field value after replay deserialization, and passes a focused direct MinGW runtime harness. Full Libft test-suite execution remains unverified. |
+| Pending host-intent queue in snapshots/deltas, byte serialization and state hash | Implemented in Libft; in-memory state format v2 and `GCGS` snapshot v1 | `card_game_engine::serialize_snapshot` writes each sequenced pending intent and `restore_snapshot` validates and restores them. `test_card_game_host_intents_survive_snapshot_delta_ack_and_revert` covers snapshot/delta transfer; `test_card_game_host_intents_survive_byte_snapshot_restore` now checks byte round-trip, pending record identity, state-hash equality, checksum rejection and no mutation on failed restore. The byte snapshot test passes a focused direct MinGW runtime harness. The serialized replay test now compares every pending intent sequence, schema field type, and field value after replay deserialization, and passes a focused direct MinGW runtime harness. The current full Libft suite passes 6,505/6,505 on Linux; this does not validate the separate Minecraft integration. |
 | Script effect adapter | Context reads, typed intent output, match-owned bounded RNG and RCS1 v5 persistence implemented; script catalogue loading and trusted manifest comparison implemented; host provisioning and policy wiring remain open | `emit_host_intent` is type/range checked and uses the event transaction. `card_actor_id()`, `card_instance_id()`, and `session_phase()` expose invocation-scoped actor, physical source card and current phase; calls outside execution fail. `random_bounded(bound)` is effect-scoped and advances the snapshot/hash-backed match RNG with unbiased rejection sampling; event rollback restores its state on later failure. `choice_selected_id(choice_id)` reads a resolved selected option only when the choice belongs to the active player. `scripting_engine::get_native_manifest_hash` hashes canonical ordered native IDs/names; the bridge `get_manifest_hash` also hashes event bindings and serialized script programs, excluding pointers. Focused bridge tests pass 9/9. The bridge now provides a bounded registered-key/value policy-context primitive whose schema is included in its manifest; bridge-level context serialization is implemented, and the RCS1 v5 adapter snapshot persists its registered key/value state, starting-deal request and card response metadata; catalogue checksum/verifier and trusted hash comparison are implemented, while authenticated expected-hash provisioning, generation-policy wiring and persistence compatibility remain open. The bridge unregisters callbacks when destroyed; callers must destroy it before its engine. |
-| Hand-instance discard and policy-aware draw | Libft primitives and versioned session persistence implemented; remaining action contract open | `CARD_GAME_INTENT_DISCARD_HAND` records physical instance and destination. `configure_draw_policy` validates owner-scoped discard/burn zones and registered two-U32 host-event schemas. Draw actions accept a bounded count up to 100, process each attempt independently, reshuffle discard through persisted engine RNG, burn each physical instance drawn while the hand is full, and queue typed empty/overflow host intents. Command-log v5 preserves draw count and accepts v1Ã¢â‚¬â€œv4. Mandatory discard obligations are represented in snapshots, deltas, hashes, command records and replay; while pending, only the obligated actor can discard a real hand instance to the configured discard zone. Empty-hand resolution creates no impossible obligation. Command-log v6 reads v1Ã¢â‚¬â€œv5. Required discard configuration is independent of whether the deck may reshuffle. The runtime RegenerationCard validator now confirms persisted Double Draft play/draw/discard retries and physical-card transfer identity. The engine now resolves expired choices to validated deterministic defaults transactionally; authoritative clock/session recovery and atomic inventory/host journal coordination remain open. |
+| Hand-instance discard and policy-aware draw | Libft primitives and versioned session persistence implemented; remaining action contract open | `CARD_GAME_INTENT_DISCARD_HAND` records physical instance and destination. `configure_draw_policy` validates owner-scoped discard/burn zones and registered two-U32 host-event schemas. Draw actions accept a bounded count up to 100, process each attempt independently, reshuffle discard through persisted engine RNG, burn each physical instance drawn while the hand is full, and queue typed empty/overflow host intents. Command-log v5 preserves draw count and accepts v1–v4. Mandatory discard obligations are represented in snapshots, deltas, hashes, command records and replay; while pending, only the obligated actor can discard a real hand instance to the configured discard zone. Empty-hand resolution creates no impossible obligation. Command-log v6 reads v1–v5. Required discard configuration is independent of whether the deck may reshuffle. The runtime RegenerationCard validator now confirms persisted Double Draft play/draw/discard retries and physical-card transfer identity. The engine now resolves expired choices to validated deterministic defaults transactionally; authoritative clock/session recovery and atomic inventory/host journal coordination remain open. |
 | Request-idempotent action submission | First Libft slice implemented; complete action contract remains open | `card_game_action` and `submit_action` retain accepted request IDs in version-4 command records, return the committed state hash for exact retries, reject a reused ID with a different command, and preserve IDs through command-log serialize/deserialize and deterministic command replay. Focused test `test_card_game_submit_action_is_idempotent_and_serialized` passes. Engine and adapter state plus their bounded replay caches now persist in GameSession v7. Choice selection and expiry are sequenced host commands with stable request IDs and authoritative epochs; command-log/replay versions preserve them, and retries reuse the original command epoch. World Loom finalization and the scheduler-facing GameSession API now route expiry through this command path and checkpoint the result. Session IDs, bounded action-result history, authenticated epoch provisioning, and host transaction coordination remain open. |
 | Inventory add, transfer, and snapshot APIs | Libft transaction APIs implemented; value-only snapshots and physical item IDs added | Single-item `add_item` stages deep-copied stacks and publishes only on success. `transfer_to` verifies both expected inventory revisions, stages source/destination contents, enforces slot/weight limits and preserves item metadata before publishing; successful removals and transfers advance revisions. `game_item` now separates its 64-bit physical instance ID from its definition ID, preserves identity in copies/transfers and inventory saves, and requires identified instances to be single-item stacks. Inventory add/transfer reject a duplicate ID already in the destination inventory. The complete inventory snapshot includes container metadata, all serialized item fields, instance IDs and the revision captured under inventory/map locks; world save uses this value snapshot rather than iterating raw item pointers. The world persistence roundtrip passes with a physical ID above `INT64_MAX`. Older saves without the optional instance-ID field load with ID 0. GameSession now raises the persisted output-ID allocator above physical IDs found in character inventory, ground items, item entities, and physical card items before startup transaction recovery, preventing craft recovery from reusing an ID that only exists in an entity or card store. This is an implementation-only source change; compile/runtime verification remains deferred. Complete cross-session/global uniqueness and item-definition policy for stackable versus unique items remain host/catalog responsibilities. Production builds no longer expose mutable `get_items()`; it remains available only to test fixtures. `clear_items()` clears slot contents and accounting under the inventory lock while advancing the revision, and persistence/reset callers use it. Add and transfer paths stage item values, so caller-owned handles do not mutate the inventory after insertion. Inventory revision now round-trips in character snapshots, with legacy snapshots defaulting to a load-generated revision. The shared journal recovers single-player world-item pickup, hand crafting, timed-processing start, and physical CardGame item transfers; other inventory operations, CardGame host-intent delivery, and World Loom start still lack coordinated transactions. |
-| Recipe book persistence/default grants | Foundational Libft API implemented; unknown IDs quarantined | `game_recipe_book` registers stable numeric IDs, seeds caller-configured default unlocks, records idempotent grants by nonzero source-event ID, and imports/exports sparse version-1 state transactionally. Unknown imported recipe IDs remain unavailable in the current catalogue, are counted as quarantined unlock events, and round-trip so a later catalogue can recognize them. |
+| Recipe book persistence/default grants | Foundational Libft API implemented; unknown IDs quarantined | `game_recipe_book` registers stable numeric IDs, seeds caller-configured default unlocks, records idempotent grants by nonzero source-event ID, and imports/exports sparse version-1 state transactionally. `unlock_recipe_with_result` distinguishes a newly recorded source event from a recipe newly becoming known; legacy boolean APIs retain their previous “newly known” meaning. Unknown imported recipe IDs remain unavailable in the current catalogue, are counted as quarantined unlock events, and round-trip so a later catalogue can recognize them. |
 | Recipe unlock, read-only query and inventory crafting transaction | Libft foundation implemented; richer recipe contract remains | `game_crafting` supports explicit locked registration, recipe-owned output definitions, batch `prepare_craft`/`commit_craft`, stale-inventory rejection, and non-mutating `query_recipe` with cumulative rarity-aware ingredient deficits. Prepared crafts capture and compare the exact inventory revision, reject revision overflow before publication, and advance inventory revision once on successful commit. Recipe output definitions must have instance ID 0; the host can pass a minted primary output ID at commit for a unique one-item result, and duplicate IDs in the source/result inventory are rejected. Recipes accept up to 16 value-copied byproduct definitions; preparation places all byproducts in the staged inventory, and capacity failure leaves ingredients and outputs untouched. The prepared-craft suite passes 11/11; broader `test_game_crafting_`, `test_prepared_craft_`, and `test_game_inventory_` filters pass 135/135. Existing focused tests cover locked/missing recipes, duplicate inputs, output-full rollback, batch overflow, recipe-owned outputs, stale prepared state, query deficits and query non-mutation. Recipe station constraints are enforced by station-aware query and prepare APIs; explicit alternative item IDs are supported in ingredient groups. A catalog-wide read-only query combines recipe-book knowledge, station availability and per-recipe ingredient deficits. Hand and timed-processing actions recheck authoritative recipe-book knowledge before accepting a craft. Timed processing is integrated: each advance is journal-prepared and checkpointed before mutation, saves committed processing/inventory/journal state together, and restores all three in memory if commit/save fails. The GameSession tick path first recovers pending advances and invokes the journalled advance transaction. Named Minecraft item tags drive the wood, crystal, ore-sample and flower-pigment ingredient groups; completing the full item/recipe catalog remains open. These transaction-path findings are source inspection only; no build or runtime verification was performed during this pass. |
-| Minecraft revision selection, opening-deal quote and generation queue admission | Selection, quotes, queue admission, in-process commit path, and v10 atomic session persistence of revision metadata implemented; durable multiplayer lifecycle remains open | `update_revision_chunk_selection` provides compare-and-set selection, a configured cap up to the hard 256-chunk limit, loaded/unprotected eligibility and a 64-bit selection revision. The 256 limit accommodates the paid 9-by-9 Volcano Mark footprint. Quotes bind selection and policy revisions. `GameSession::commit_regeneration_start` prepares a WLS1 journal record, checkpoints, removes quoted currency, deals the quoted 4â€“7 opening cards, marks the record committed and gates card actions to the pending decision window; finalization applies card intents and starts generation. The server binds drafts to authenticated actor/Loom IDs, requires both client and station-access authorizers before initialization, rechecks access on quotes/actions/retries, validates the exact configured station block ID, and cancels an owned uncommitted draft on shutdown or station removal. Metadata v4 persists the exact signed station coordinates and expected block ID while retaining v1â€“v3 readers; session snapshot v10 embeds that metadata in the same atomically replaced `.wisp` file, with `.wrv` load fallback for older snapshots. The direct-linked `--validate-world-items` now exercises v10 and v11 session metadata/fluid round trips and corruption handling. Recovery aborts a prepared start against the pre-mutation snapshot; committed selection, barriers, and deadline restore from the session v10 lifecycle metadata. Startup recovery now aborts a prepared start against the pre-debit/pre-deal checkpoint, cancels orphaned uncommitted drafts, and clears their saved lifecycle restore markers; restoring the owning actor and request cache across restart, and crash-durable in-flight generation publication, remain open. Multiplayer occupancy feeds, persistent chunk reservations/barriers, production authentication/reach/claim provider and Loom block placement, crash-durable generation publication, and a production World Loom map UI remain open. |
-| Minecraft item catalogue, ground items, action/session integration, regeneration, instability and recipe contents | Item catalogue, built-in mining drops, session-persisted ground-item store and character inventory, exact starter CardGame multiset, typed choices, and Double Draft draw/discard flow integrated; broader design remains open | Minecraft registers built-in block acquisition rules, block item definitions, magical dust and bucket item definitions, and configures a 30-slot character inventory. The current direct-linked `--validate-item-catalog` reports 76 built-in policies and 109 content policies; the latest --validate-world-items run passes the session, crafting, recovery and MCSP v16 persistence checks. A synthetic runtime block test checks missing-rule rejection and successful self-item coverage, then unregisters the block. This found a Libft `ft_map` growth bug that doubled capacity for every inserted key and prevented later item definitions from being stored; copy and move insertion now grow only when full. Content items have registered acquisition policies; runtime-added block rules remain caller-registered, so global Voxel-registry exhaustiveness still requires validation. `WorldItemStore` indexes dropped stacks by chunk, provides bounded nearby queries, enforces owner pickup locks and an 8-block reach ceiling, and transfers quantities through Libft's revision-checked inventory transaction with request-ID deduplication. The single-player tick picks up nearby items within 1.5 blocks. The break interaction reserves a hidden pending drop before editing, publishes it after success or after a failed edit is confirmed to have removed the block, and removes it when the block remains. Successful mining then tries the bounded nearby merge selector. Pending items are invisible to pickup/query and block snapshot save. This closes the live pickup race; durable atomic block/drop recovery remains open. `RegenerationCardSession` seeds 4 Biome Exclusion, 4 Deep Seam, 2 Village Charter, 2 Surface Magma, 2 Double Draft, 4 Biome Compass, and 2 Surveyor's Reach instances in Libft's native deck/hand. Version-2 play intents carry typed biome-ID, ore-ID, or target-chunk choices as required. Double Draft resolves only from its acknowledged card intent, records two draws plus a one-card discard obligation through Libft's sequenced command log, blocks other card plays until the obligation is met, and routes overflow/empty draws through typed host intents; play/draw/discard request retries are cached within the session. The validator covers wrong-choice rejection, exact retries, pending-intent acknowledgement, physical card movement and the Double Draft draw/discard flow. Biome and ore choices are validated against the active generation config, and the current consumer applies all seven starter effects plus Ore Overgrowth, Ultimate Greed, Biome Rupture, Fortune's Draw, and Volcano Mark. All six craft-only rare cards now have adapter mappings and generation feature plans. The chunk worker has deterministic placement routines for ruined villages, shipwrecks, desert pyramids, ancient canopies, and spider nests; the revision regenerator assigns bounded spawners and loot drops for those plans. This is implementation evidence only: full structural acceptance requirements and end-to-end runtime behavior remain unverified. Volatile Stabilizer has a persisted use count, private deterministic roll, retry behavior, and instability adjustment; an overload modifier now forces at least one deterministic spawner/reward opportunity in an eligible unreserved chunk during regeneration; terrain-site preflight now requires more suitable chunks than the upper bound reserved by pending structure plans before card consumption; exact assignment and runtime validation remain open. Authoritative entities, scheduled hostile spawners, deterministic loot tables, and checkpointed death-to-drop processing now exist, but mob AI remains open. CardGame engine/adapter state and play/draw/discard/import/export replay caches now persist through GameSession v8; RCS1 v6 also persists logged-choice-expiry results so exact retries survive restore. Runtime coverage confirms host expiry retries before/after restore leave the saved session state unchanged. Host-intent transaction coordination and durable World Loom recovery remain open. The adapter source is included in the Minecraft build. Ground stack merging now has a revision-checked selector and post-commit mining integration; item movement, rendering/replication, additional recipe/content balance, and durable World Loom recovery remain open. Continue with the ownership and test split in Sections 5Ã¢â‚¬â€œ10; update the Minecraft roadmap as each slice is integrated and validated. |
+| Minecraft revision selection, opening-deal quote and generation queue admission | Selection, quotes, queue admission, in-process commit path, and v10 atomic session persistence of revision metadata implemented; durable multiplayer lifecycle remains open | `update_revision_chunk_selection` provides compare-and-set selection, a configured cap up to the hard 256-chunk limit, loaded/unprotected eligibility and a 64-bit selection revision. The 256 limit accommodates the paid 9-by-9 Volcano Mark footprint. Quotes bind selection and policy revisions. `GameSession::commit_regeneration_start` prepares a WLS1 journal record, checkpoints, removes quoted currency, deals the quoted 4–7 opening cards, marks the record committed and gates card actions to the pending decision window; finalization applies card intents and starts generation. The server binds drafts to authenticated actor/Loom IDs, requires both client and station-access authorizers before initialization, rechecks access on quotes/actions/retries, validates the exact configured station block ID, and cancels an owned uncommitted draft on shutdown or station removal. Metadata v4 persists the exact signed station coordinates and expected block ID while retaining v1–v3 readers; session snapshot v10 embeds that metadata in the same atomically replaced `.wisp` file, with `.wrv` load fallback for older snapshots. The direct-linked `--validate-world-items` now exercises v10 and v11 session metadata/fluid round trips and corruption handling. Recovery aborts a prepared start against the pre-mutation snapshot; committed selection, barriers, and deadline restore from the session v10 lifecycle metadata. Startup recovery now aborts a prepared start against the pre-debit/pre-deal checkpoint, cancels orphaned uncommitted drafts, and clears their saved lifecycle restore markers; restoring the owning actor and request cache across restart, and crash-durable in-flight generation publication, remain open. Multiplayer occupancy feeds, persistent chunk reservations/barriers, production authentication/reach/claim provider and Loom block placement, crash-durable generation publication, and a production World Loom map UI remain open. |
+| Minecraft item catalogue, ground items, action/session integration, regeneration, instability and recipe contents | Item catalogue, built-in mining drops, session-persisted ground-item store and character inventory, exact starter CardGame multiset, typed choices, and Double Draft draw/discard flow integrated; broader design remains open | Minecraft registers built-in block acquisition rules, block item definitions, magical dust and bucket item definitions, and configures a 30-slot character inventory. The current direct-linked `--validate-item-catalog` reports 76 built-in policies and 109 content policies; the latest --validate-world-items run passes the session, crafting, recovery and MCSP v16 persistence checks. A synthetic runtime block test checks missing-rule rejection and successful self-item coverage, then unregisters the block. This found a Libft `ft_map` growth bug that doubled capacity for every inserted key and prevented later item definitions from being stored; copy and move insertion now grow only when full. Content items have registered acquisition policies; runtime-added block rules remain caller-registered, so global Voxel-registry exhaustiveness still requires validation. `WorldItemStore` indexes dropped stacks by chunk, provides bounded nearby queries, enforces owner pickup locks and an 8-block reach ceiling, and transfers quantities through Libft's revision-checked inventory transaction with request-ID deduplication. The single-player tick picks up nearby items within 1.5 blocks. The break interaction reserves a hidden pending drop before editing, publishes it after success or after a failed edit is confirmed to have removed the block, and removes it when the block remains. Successful mining then tries the bounded nearby merge selector. Pending items are invisible to pickup/query and block snapshot save. This closes the live pickup race; durable atomic block/drop recovery remains open. `RegenerationCardSession` seeds 4 Biome Exclusion, 4 Deep Seam, 2 Village Charter, 2 Surface Magma, 2 Double Draft, 4 Biome Compass, and 2 Surveyor's Reach instances in Libft's native deck/hand. Version-2 play intents carry typed biome-ID, ore-ID, or target-chunk choices as required. Double Draft resolves only from its acknowledged card intent, records two draws plus a one-card discard obligation through Libft's sequenced command log, blocks other card plays until the obligation is met, and routes overflow/empty draws through typed host intents; play/draw/discard request retries are cached within the session. The validator covers wrong-choice rejection, exact retries, pending-intent acknowledgement, physical card movement and the Double Draft draw/discard flow. Biome and ore choices are validated against the active generation config, and the current consumer applies all seven starter effects plus Ore Overgrowth, Ultimate Greed, Biome Rupture, Fortune's Draw, and Volcano Mark. All six craft-only rare cards now have adapter mappings and generation feature plans. The chunk worker has deterministic placement routines for ruined villages, shipwrecks, desert pyramids, ancient canopies, and spider nests; the revision regenerator assigns bounded spawners and loot drops for those plans. This is implementation evidence only: full structural acceptance requirements and end-to-end runtime behavior remain unverified. Volatile Stabilizer has a persisted use count, private deterministic roll, retry behavior, and instability adjustment; an overload modifier now forces at least one deterministic spawner/reward opportunity in an eligible unreserved chunk during regeneration; terrain-site preflight now requires more suitable chunks than the upper bound reserved by pending structure plans before card consumption; exact assignment and runtime validation remain open. Authoritative entities, scheduled hostile spawners, deterministic loot tables, and checkpointed death-to-drop processing now exist, but mob AI remains open. CardGame engine/adapter state and play/draw/discard/import/export replay caches now persist through GameSession v8; RCS1 v6 also persists logged-choice-expiry results so exact retries survive restore. Runtime coverage confirms host expiry retries before/after restore leave the saved session state unchanged. Host-intent transaction coordination and durable World Loom recovery remain open. The adapter source is included in the Minecraft build. Ground stack merging now has a revision-checked selector and post-commit mining integration; item movement, rendering/replication, additional recipe/content balance, and durable World Loom recovery remain open. Continue with the ownership and test split in Sections 5–10; update the Minecraft roadmap as each slice is integrated and validated. |
+
+Action-session scoping refresh (2026-10-22): the latest Libft branch adds
+session IDs to version-3 `card_game_action` records and scopes request
+idempotency to `(session_id, request_id)`. `RegenerationCardSession` accepts a
+nonzero action-session ID, and GameSession supplies its persisted regeneration
+output session ID before initializing the adapter. This supersedes the older
+ledger wording that session IDs were wholly unimplemented. It does not provide
+actor authentication: trusted server identity/authorization, durable bounded
+result-history policy across every host action, and atomic host-intent delivery
+remain separate requirements. This checkpoint did not compile or execute the
+latest pulled branches, so the source wiring is not marked runtime-validated.
+
+Card-catalogue count clarification (2026-10-22): the ledger's statement that
+six craft-only rare cards had adapter mappings describes the earlier slice in
+which those six definitions existed. The current source has seven starter
+definitions plus twelve non-starter, discovery-locked card definitions:
+definition IDs 11–22, including Fortune's Draw (ID 14). The earlier counts of
+six or eleven rare definitions are historical; they are not the current
+catalogue limit or proof that every current card passed end-to-end validation.
 
 Choice-validation update (2026-10-06): the older item-catalogue row above
 predates active-world validation. `RegenerationCardSession::play_card` now
@@ -127,57 +193,36 @@ adapter now retains accepted play request records without eviction up to its
 4,096-action session cap and rejects additional new plays before card
 consumption, preserving retry identity for the session lifetime.
 
-Validation update (2026-10-10): `choice_selected_id(choice_id)` is now a registered, manifest-covered scripting native. It returns a resolved option only for a choice owned by the active effect actor. The focused bridge suite passes 9/9, including success for an owned resolved choice and permission-denied rollback for another playerÃ¢â‚¬â„¢s choice. The focused runner linked the current bridge test object against the Libft archive; the repository-wide test link still selects stale Linux platform archives under Git Bash and is not counted as passed.
+Validation update (2026-10-10): `choice_selected_id(choice_id)` is now a registered, manifest-covered scripting native. It returns a resolved option only for a choice owned by the active effect actor. The focused bridge suite passes 9/9, including success for an owned resolved choice and permission-denied rollback for another player’s choice. The focused runner linked the current bridge test object against the Libft archive; the repository-wide test link still selects stale Linux platform archives under Git Bash and is not counted as passed.
 
 Validation update (2026-10-10): selected-chunk regeneration now stages its complete worker request set and submits it atomically to the generation queue. `make -j1 normal` succeeded with Windows platform selectors, linking both normal and analytics executables. `--validate-world-revision` passed with `world-revision: ok regenerated=1 skipped=0`; it covers successful batch submission and rejects a batch larger than the configured queue capacity without enqueueing a partial set. This establishes queue admission atomicity only; it does not yet debit resources, reserve world chunks, install barriers, start/deal the CardGame session, or persist a cross-system commit record.
 
-### Current push batch (2026-10-02)
+### Current branch checkpoint (2026-10-22)
 
-Implemented in this batch, still without any UI:
+This report applies to the fetched tips named above and is source-inspection
+status, not a claim that the tips have been rebuilt or end-to-end validated.
+It supersedes the original October 2 push-batch summary; dated validation
+entries remain historical evidence for the exact source/toolchain they name.
 
-- Libft CardGame: typed host intents, transactional effect callbacks, intent
-  snapshots/deltas and state hashing; stable scripting-native/content manifest
-  hashes; request-idempotent action submission; bounded multi-draw; discard
-  reshuffling, overflow burn and empty-draw intents; and physical-instance
-  mandatory-discard obligations. The inventory agent reports 68/68 focused
-  transfer tests; the discard agent reports 47/47 focused obligation tests.
-  Mandatory discard destinations are validated independently from the
-  reshuffle setting. Recipe book, recipe query, and transactional crafting foundations
-  are present; the detailed limits remain in the ledger above.
-- Minecraft API: loaded-chunk selection with compare-and-set revision and a
-  selection limit, explicit unselection, stale-quote detection, and a
-  read-only, overflow-checked quote for one selected-chunk cost plus a 4Ã¢â‚¬â€œ7
-  card opening deal priced at `B4, 2*B4, 4*B4, 8*B4`. Protection changes
-  invalidate the selection revision. This is not yet a committed start
-  transaction and does not start/deal a CardGame session.
-- Cross-platform diagnostic format fixes use Libft's integer-format macros.
-  `make -j4 analytics` succeeds after those fixes and the current API changes.
-- The current `./ft_vox_analytics --validate-world-revision` run passes and
-  reports `world-revision: ok regenerated=1 skipped=0`. The validator was
-  corrected to exercise duplicate selection, expect unloaded chunks to be
-  rejected, and avoid assuming an unrelated chunk must be skipped.
-
-Known validation failures and unfinished work:
-
-- The earlier report that `ar -M` failed to find a temporary archive was not
-  reproducible in this worktree: two consecutive `make -j4 test-executable`
-  builds completed their final archive and link steps. No archive recipe change
-  was needed.
-- The quote/selection API still has no per-session actor/World Loom identity,
-  request-ID deduplication, occupancy/exclusion-ring checks, authoritative
-  crash-durable pricing-policy commits, dust balance/debit, CardGame startup/deal,
-  persistent resource/chunk reservation, glowing barriers, multiplayer
-  deadline, or atomic non-cancellable start commit.
-- Libft still lacks durable session and host-intent delivery journals,
-  complete CardGame action/choice/expiry policy, the full Minecraft card
-  catalogue/effect adapter, and the remaining inventory/crafting contracts.
-  Minecraft still needs its item/recipe catalogues, card content and effect
-  integration, chunk-local instability persistence/generation, multiplayer
-  regeneration lifecycle, and end-to-end failure/recovery validators.
-- Keep the design and roadmap active. Move this design document to
-  `Libft/Docs/old` only after the complete design contract has been implemented
-  and verified. API/UI boundary: this work defines backend APIs only; all UI
-  layout and implementation remain explicitly out of scope.
+- Libft now contains the generic CardGame action/session machinery, typed host
+  intents, snapshot/delta/replay state, scripting bridge and manifest/context
+  support, policy-aware draw/burn/reshuffle and mandatory discard, plus
+  revisioned inventory, recipe-book, and prepared-crafting foundations.
+- Minecraft source now contains `RegenerationCardSession` integrated with
+  `GameSession`, typed choices/effects and regeneration rule planning, a
+  revisioned World Loom selection/quote path, a session start/finalization path
+  for actor/Loom/request-scoped quote validation, resource debit, opening deal,
+  chunk reservation/barriers and a persisted decision deadline, and item,
+  recipe discovery, hand-craft and station-craft APIs.
+- Remaining backend work includes production identity/access and occupancy
+  providers, multiplayer reservation/deadline enforcement, durable host-intent
+  and request recovery across all action paths, atomic chunk publication,
+  exhaustive enabled-card/item/recipe coverage, and failure-injection plus
+  cross-platform end-to-end validation. The detailed acceptance criteria and
+  owner split remain in Sections 13–15 and the status matrix above.
+- No UI is in scope. Keep this design and the Minecraft roadmap active; move
+  this file to `Libft/Docs/old` only after the full contract is implemented and
+  verified.
 
 Validation update (2026-10-06): the current full Libft test suite passes
 6,447/6,447, including all 144 CardGame tests. The suite exposed Windows stack
@@ -232,7 +277,12 @@ Existing sources: `Modules/CardGame/card_game.hpp`, `card_game_choices.hpp`, `ca
 | `game_inventory`, `game_item`, `game_data_catalog` | Existing ownership/catalogue foundations | Revisioned, all-or-nothing multi-container operations and safe snapshots |
 | `game_recipe_blueprint`, `game_crafting::register_recipe`, `craft_item` | Reuse recipe infrastructure | Book unlocks, tag/alternative ingredients, timed processing, and host station validation; Libft station IDs now gate query/prepare |
 
-The current crafting path consumes ingredients before `inventory.add_item(result)` succeeds. It must be replaced/extended transactionally, not called directly as the authoritative crafting action. Audit repeated ingredients, rarity-only matching versus consumption, mutable map iteration during removal, and caller-supplied output objects. A recipe must determine its own outputs; the client never supplies a result item. Preserve old API compatibility with a documented wrapper where possible.
+Historical-gap note: this table records the pre-implementation inspection that
+motivated the design. Its “Gap to implement” cells are not a current task list;
+use the implementation ledger and dated status updates below for current
+completion evidence and remaining work.
+
+The legacy `craft_item` path consumed ingredients before `inventory.add_item(result)` succeeded. The newer `prepare_craft`/`commit_craft` path stages recipe-owned outputs and inventory changes transactionally; callers should use that path for authoritative crafting. Remaining work is to finish and validate the full Minecraft content catalogue and cross-system transactions, not to treat the legacy helper as the production transaction API. Keep compatibility wrappers explicit and ensure client requests never supply authoritative output definitions.
 
 Follow `AGENTS.md`: fixed-width integers, `ft_bool`, explicit fallible lifecycle, checked errors, output parameters for lifecycle objects, and documented external synchronization. Preserve existing public contracts and version new serialization/commands; do not silently reinterpret old wire values.
 
@@ -254,7 +304,33 @@ Proposed entry points, all fallible operations returning `int32_t`:
 | `acknowledge_outputs(batch_id)` | Idempotent acknowledgement after durable consumer acceptance |
 | `export_session_snapshot(output)` / `import_session_snapshot(input, manifests)` | Extend existing snapshots; transactional validation, no pointers or callbacks serialized |
 
-`card_game_action` includes schema version, session ID, actor ID, request ID, command sequence, expected state sequence, action kind, card **instance** ID, choice ID and stable selected option IDs. Definition ID alone cannot identify the physical card to consume. Validate sizes before allocating. Request retry returns the stored result; mismatching payload under the same request ID is rejected.
+The target action contract carries schema version, session ID, actor ID, request ID, command sequence, expected state sequence, action kind, card **instance** ID, choice ID and stable selected option IDs. The current `card_game_action` is narrower: it stores schema version, session ID, request ID and an embedded `card_game_command`; the actor is `command.player_id`, ordering is in the command, and a single option choice currently maps `command.card_id` to the choice ID and `command.target_instance` to the option ID. A vector of selected option IDs and first-class actor/choice fields are not present. Extend/version that payload only if a real multi-select effect requires it; do not claim the proposed fields already exist. Definition ID alone cannot identify the physical card to consume. Validate sizes before allocating. Request retry returns the stored result; mismatching payload under the same request ID is rejected.
+
+### Concrete Libft call map (checked against the current public header)
+
+The names in the previous table describe the desired stable gameplay contract;
+they are not all literal methods in the current API. The current engine already
+provides the lower-level calls below. The eventual Minecraft/UI-facing service
+should compose these calls and enforce the complete contract rather than expose
+unrestricted zone mutation directly.
+
+| Gameplay operation | Existing Libft entry points | Boundary / remaining design work |
+|---|---|---|
+| Construct a ruleset and register content | `initialize`, `register_zone`, `register_card`, `register_card_with_type`, `register_card_type`, `register_host_intent_type`, `register_effect_callback`, `configure_draw_policy`, `start_match` | A single validated content/session builder is not present. It must validate the complete manifest, zone ownership, copy caps and draw policy before publishing a playable session. |
+| Submit a player card action | `submit_action(const card_game_action &, card_game_action_result *, void *)` | This is the request-idempotent, session-scoped command path. Build the action with schema version 3, nonzero session/request IDs, expected sequence, `CARD_GAME_INTENT_PLAY_EFFECT`, the exact `source_instance_id`, and the configured destination zone. Do not call `play_card_from_hand` or `zone_move_instance` as a substitute for the authoritative host-effect path. |
+| Submit trusted choice/expiry actions | `submit_host_action(..., authoritative_epoch)`; `resolve_expired_choices` is also available | Only the trusted server supplies time. The application must route timeout decisions through the sequenced action path and persist its result; do not trust a client epoch or call direct choice mutation from UI code. |
+| Read legal commands and pending choices | `query_legal_actions`, `query_pending_choices`, `get_choice` | Pending-choice views are owner-redacted. A typed card-specific preview/status query (including legal targets and a clear no-effect reason) is not currently provided and remains a facade/API addition. |
+| Inspect cards in gameplay zones | `get_zone_count`, `zone_inspect`, `hand_inspect`, `get_deck_count`, `get_hand_count` | These are read-only primitives. The host must filter by actor/session and must not expose hidden deck order, secret modifiers, timeout defaults, or private script state. |
+| Apply draws and mandatory discards | `submit_action` with `CARD_GAME_INTENT_DRAW_CARD` / `CARD_GAME_INTENT_DISCARD_HAND`; `configure_draw_policy` | Use the action commands so request replay, draw events, burn handling and discard obligations are sequenced. `draw_to_hand`, `discard_hand_instance`, raw zone pushes/pops, and `mulligan_hand` are lower-level compatibility/mechanics calls, not the consumer's network action API. |
+| Deliver domain effects to Minecraft | `get_pending_host_intent_count`, `peek_pending_host_intent` or `inspect_pending_host_intent`, `acknowledge_host_intent` | Sequence IDs make reads repeatable, but the current acknowledge call alone does not create an atomic durable transaction with Minecraft world state. The consumer needs a journal/recovery protocol before acknowledging an intent whose effects must survive crashes. |
+| Save, restore and replay | `serialize_snapshot`, `restore_snapshot`, `get_state_hash`, `serialize_command_records`, `deserialize_command_records`, `replay_command_records` | Snapshot and command-log formats are versioned mechanics primitives. The host still owns atomic save replacement, trusted manifest provisioning, bounded durable request-result retention, and cross-system recovery. |
+
+There is no current `configure_session`, `query_card_effect_status`,
+`drain_committed_outputs`, or single-call `import_session_snapshot` API with
+the complete semantics in the contract table. Implement these as explicit
+facade/engine additions only where composition cannot safely live in the
+consumer. Preserve the current low-level APIs for existing card-game users;
+the new adapter must not silently change their semantics.
 
 Action kinds: draw; play hand instance; play authorized external consumable; mandatory discard selection; choose target/mode; confirm phase; deck-to-inventory/inventory-to-deck transfer through a prepared host transaction. Do not allow arbitrary client draws, arbitrary zone moves, or advancing past mandatory decisions. Permission/phase rules determine which actions are available.
 
@@ -271,13 +347,109 @@ An effect callback receives immutable session/card/actor context, current workin
 
 Host callbacks use prepare/commit/abort with explicit recovery records. Commit must be non-failing after preparation or recoverable through the journal. An in-memory CardGame rollback cannot undo already written Minecraft saves: do not describe that as atomic. On script/validation/allocation failure roll back card zones, obligations, outputs, RNG and host reservations together.
 
+### Durable action-to-host-intent protocol
+
+Delivery is at-least-once; the world effect must be effectively-once through a
+stable transaction key and durable deduplication. Do not claim exactly-once
+message delivery. The producer identity for each emitted intent is:
+
+```text
+(world_id, session_epoch, actor_id, request_id,
+ action_sequence, intent_sequence)
+```
+
+Libft's generic action/outbox identity contributes the session, request,
+action-sequence, and intent-sequence fields; the Minecraft adapter adds the
+world epoch and authenticated actor namespace. Persist the resulting identity
+with the intent schema/version, canonical payload bytes or payload hash, source
+action result, and any deterministic outputs/RNG state. `source_event_id` or
+recipe ID alone is not a sufficient key for host delivery. The consumer must
+reject the same key with a different payload hash and must not silently
+reinterpret an older schema. Keep ordering by action/intent sequence; a
+dependent action cannot pass an earlier unresolved host intent.
+
+Use this state progression:
+
+| State | Durable meaning | Externally visible behavior |
+|---|---|---|
+| `UNSEEN` | No accepted action record exists. | Retry may be validated and accepted normally. |
+| `PRODUCER_PENDING` | The accepted CardGame transition, deterministic result, and complete outbox are saved; host effect is not yet committed. | Report pending, not successful completion. Block later dependent actions and preserve the card/choice resolution. |
+| `HOST_PREPARED` | Minecraft has written a journal record binding the intent key/hash to all participants, expected revisions, and staged after-state. Canonical world/inventory/rules state is not yet published. | Still pending; retries may resume only this identical prepared intent. |
+| `HOST_COMMITTED` | Participant state and the committed journal/result are durably checkpointed together. The effect may now be observed. | Return committed outcome; exact replay returns the retained result. |
+| `ACKNOWLEDGED` | Libft's pending intent is acknowledged and that acknowledgement is durably saved. | Action is complete; result remains available for the defined retry horizon. |
+
+The host prepares from immutable inputs and expected revisions. Preparation
+must reserve capacity and validate authorization, caps, feature compatibility,
+and every participant before changing canonical state. The commit boundary
+must include the participant after-state and `HOST_COMMITTED` record in one
+atomic session/world checkpoint. If participants live in separate files, use a
+shared write-ahead journal that makes recovery deterministic; independent
+atomic file replacements are not an atomic multi-store transaction. Only
+after that durable commit may the consumer acknowledge the Libft intent.
+Persist the producer's acknowledged state after the consumer commit. If that
+last save fails, leave the intent pending so retry can read the committed
+consumer record, return its exact result without reapplying effects, and retry
+the acknowledgement.
+
+On restart, reconcile by the stable intent key before accepting new dependent
+actions:
+
+| Durable observation | Required recovery |
+|---|---|
+| No producer record | Treat the request as unseen; no host effect may exist. |
+| Producer pending, no host journal | Revalidate the stored payload and prepare the same intent; never regenerate its random result. |
+| `HOST_PREPARED`, no committed participant checkpoint | Resume from its stored after-state or abort to the stored before-state. Do not expose partial mutations. |
+| `HOST_COMMITTED`, producer intent still pending | Verify the payload hash and committed revision, return the stored result, then persist the producer acknowledgement without reapplying the effect. |
+| Producer says acknowledged but host commit/result is absent within the declared retention horizon | Treat as corruption/invariant violation and fail closed; do not guess or replay an untracked mutation. Expired requests outside that horizon must be rejected by the persisted high-water mark, not treated as new actions. |
+
+For an action with several intents, commit them in sequence and retain the
+completed prefix. If a later intent fails permanently, the action cannot be
+reported fully committed; either the enclosing domain transaction must roll
+back the entire unexposed batch, or the action contract must explicitly define
+partial completion and a resumable remaining suffix. World Loom card effects
+that jointly change rules, instability, reservations, and feature plans use
+one enclosing transaction, not independent per-intent commits. Chunk generation
+after those plans are accepted is a separate asynchronous transaction: its
+generation epoch, rules hash, reserved chunk identity, and publication result
+must be revision-checked and recoverable without charging or consuming cards
+again.
+
+Keep committed result records at least as long as the producer can redeliver
+their intent or the caller can retry the action. Any bounded compaction policy
+must persist a high-water mark and reject expired IDs; eviction must never make
+an old request look unseen. A `COMMITTED` result includes stable output IDs,
+new inventory/resource revisions, rules/instability revision, and accepted
+feature-plan IDs as relevant. The client-facing action result is not final
+until the transaction's declared participants have crossed this commit
+boundary.
+
+Acceptance coverage must inject failure before producer persistence, after
+producer persistence, after host prepare, between each participant mutation,
+before the committed checkpoint, after commit but before acknowledgement,
+after acknowledgement persistence but before response delivery, and during
+restart reconciliation. Assert one committed effect, unchanged state on
+pre-commit abort, exact payload-conflict rejection, stable result replay,
+ordered intent handling, and no duplicate card/resource/instability/feature
+changes. Libft tests cover transactional outbox state, ordering, snapshots and
+acknowledgement. Minecraft validators cover the shared journal and actual
+inventory/world/session participants. Neither layer's unit test alone proves
+the combined crash-recovery contract.
+
 Mandatory choices can span actions: persist a resolving-card record, queued follow-up effects, and obligation. Do not retain callback stack frames across frames. While a discard is pending, only permitted choice/timeout actions are accepted. Confirm waits until the engine resolves obligations.
 
 ## 4. Deck, hand and discard rules
 
-Minecraft policy: initial owned deck 20 cards; configurable accepted deck size 20Ã¢â‚¬â€œ100; maximum four copies per definition; hand cap 10. Audit existing engine deck/zone limits against the 100-card maximum before choosing storage. Higher library hard limits do not change gameplay limits.
+Minecraft policy: initial owned deck 20 cards; configurable accepted deck size 20–100; maximum four copies per definition; hand cap 10. Audit existing engine deck/zone limits against the 100-card maximum before choosing storage. Higher library hard limits do not change gameplay limits.
 
-Zones: draw pile, hand, resolution, discard, burned-for-session, and optionally consumed external cards. A physical deck card keeps one ID through every zone. Session burns prevent repeated draw/burn cycling, but do not silently delete a player's permanent collection. Permanent consumption of crafted items is an explicit separate economic rule. Deck-copy validation includes cards across all deck zones and any persisted deck membership.
+The 20 cards are the player's complete initial deck, not the opening hand. At
+the default World Loom deal the session starts with 4 cards in hand and 16 in
+the draw pile; selecting 5, 6 or 7 cards moves only that many into the opening
+hand, leaving 15, 14 or 13 in the draw pile. The additional-card price changes
+the opening deal only; it does not create extra cards or enlarge the owned
+deck. Imported/crafted cards may increase the deck up to the configured 100
+card maximum, while the four-copy rule is checked across all owned deck zones.
+
+Zones: draw pile, hand, resolution, discard, burned-for-session, and optionally consumed external cards. The CardGame instance ID follows a card through every session zone. A crafted card also has a distinct 64-bit inventory-item instance ID; the Minecraft adapter persists a one-to-one mapping between that physical ID and the session's CardGame instance ID. Never assume the two numeric IDs are interchangeable. Session burns prevent repeated draw/burn cycling, but do not silently delete a player's permanent collection. Permanent consumption of crafted items is an explicit separate economic rule. Deck-copy validation includes cards across all deck zones and any persisted deck membership.
 
 Draw procedure resolves one requested draw at a time:
 
@@ -291,7 +463,14 @@ This is the proposed explicit resolution of roadmap reshuffle wording: update th
 
 For Double Draft, move the played instance to resolution first, resolve two draws, then require one discard from the resulting hand. If the hand is empty because no draws succeeded, resolve the impossible obligation with the documented no-card outcome; otherwise require exactly one valid owned instance. Discard is not burn and does not grant another draw. Expiry selects a deterministic valid default, never a random UI choice.
 
-Craft-only cards are not inserted into the starter draw pool. Designate an authorized inventory/reserve source with one-use session consumption. If later allowed into decks, it must be an explicit world policy and still respect copy/size constraints. Ownership transfer removes the item from its source exactly once, not copies its payload.
+Crafted cards are not inserted into the starter draw pool automatically. An
+authorized import moves one physical card item from inventory into the
+session's draw pile; it does not duplicate the payload. Export may return a
+physical card only when the session deck remains at or above its 20-card
+minimum. If additional reserve zones or import of cards into a newly composed
+deck are later allowed, that is an explicit world policy and still respects
+copy/size constraints. Ownership transfer removes the item from its source
+exactly once.
 
 ## 5. Minecraft regeneration adapter
 
@@ -305,9 +484,11 @@ economy). Proposed calls are:
 |---|---|
 | `begin_regeneration_selection(actor, loom_id, request_id, session_out)` | Authorize use of this loom and open a bounded, revisioned selection draft. It reserves neither chunks nor resources and does not yet start the CardGame session. Exact retry returns the same draft. |
 | `select_regeneration_chunk(session_id, actor, coordinate, expected_revision, request_id, result)` | Add one chunk if it is in bounds, known/eligible, unprotected, unoccupied, outside every occupied-player exclusion ring, not already reserved, and below the selection cap. Increment selection revision only on change. |
-| `unselect_regeneration_chunk(...)` | Remove exactly the requested selected coordinate; duplicate retry is idempotent and cannot remove a different selection. |
-| `query_regeneration_start_cost(session_id, actor, starting_card_count, result)` | Read-only calculation from the server-owned selected set and versioned pricing config. Return paid/bonus chunk counts, chunk cost, starting-card cost, total, currency ID, selection revision, pricing-policy revision and rejection reason; no dust/deck mutation. |
-| `commit_regeneration_start(session_id, actor, expected_revision, starting_card_count, request_id, result)` | Revalidate everything, reserve chunks, debit/reserve exact dust, initialize the CardGame with the requested opening hand, persist the idempotency result and install barriers in one recoverable transaction. Exact retry returns the same outcome. This is the non-cancellable start boundary. |
+| `unselect_regeneration_chunk(session_id, actor, coordinate, expected_revision, request_id, result)` | Remove exactly the requested selected coordinate; reject a stale selection revision, and make an exact retry idempotent so it cannot remove a different selection. |
+| `query_regeneration_start_cost(session_id, actor, expected_selection_revision, expected_policy_revision, starting_card_count, request_id, result)` | Read-only calculation from the server-owned selected set and versioned pricing config. Reject stale revisions. Return paid/bonus chunk counts, chunk cost, starting-card cost, total, currency ID, the revisions used and a structured rejection reason; no dust/deck mutation. |
+| `cancel_regeneration_draft(session_id, actor, expected_selection_revision, request_id, result)` | Cancel only `DRAFT_OPEN`; idempotent owner-authorized cancellation clears selection without spending. Reject stale selection and all attempts after start commit. |
+| `commit_regeneration_start(session_id, actor, expected_selection_revision, expected_policy_revision, starting_card_count, request_id, result)` | Revalidate both quote revisions and all eligibility, reserve chunks, debit/reserve exact dust, initialize the CardGame with the requested opening hand, persist the idempotency result and install barriers in one recoverable transaction. Exact retry returns the same outcome. This is the non-cancellable start boundary. |
+| `query_regeneration_status(session_id, actor, result)` | Return lifecycle state, selection/policy revisions, deadline, committed request, progress/failure code, and whether player cancellation is allowed; redact other actors' data. |
 
 The current `World` quote groundwork stores one server-owned
 `WorldRevisionCostPolicy`. Policy changes use compare-and-set revisions, and a
@@ -317,6 +498,35 @@ chunks separately; `select_revision_bonus_chunk` applies the same eligibility,
 protection, cap, and revision checks as ordinary selection. Quotes price only
 paid chunks and return both counts. The session coordinator still needs to own
 actor, loom, request and reservation state around this lower-level API.
+
+Current source call anchors are `World::update_revision_chunk_selection`,
+`World::select_revision_bonus_chunk`, `WorldRevisionServer::query_start_cost`,
+and `GameSession::commit_regeneration_start` / `finalize_regeneration_start`.
+The owner-bound server also exposes authorizer, occupancy-provider,
+start-committer and checkpoint-committer hooks. There is not yet a single
+public C++ World Loom service exposing the complete proposed begin/select/
+unselect/quote/commit API to a future UI caller; selection currently spans the
+World facade and server request path. Keep the table above as the target
+backend contract and reconcile these call boundaries before UI work begins.
+
+The implementation map for that future service is:
+
+| Future operation | Current implementation path | Missing facade/guarantee |
+|---|---|---|
+| Open a selection draft | The authenticated `begin` request claims the single draft by actor/Loom after station authorization; `WorldRevisionServer::initialize` only initializes the server after required authorizers/providers are configured. | A direct `begin_regeneration_selection` method with an explicit session/draft handle is absent. Draft ownership and lifecycle must remain in the server/session, never in a UI-owned object. |
+| Select or unselect | World Revision `select`/`unselect` request handling calls `World::update_revision_chunk_selection(expected_revision, cap, x, z, selected, revision_out)` after authorization, occupancy refresh and request-ID checks. | Expose typed request/result values rather than requiring UI code to construct protocol JSON. Preserve compare-and-set revisions and exact retry behavior. |
+| Cancel a draft | `WorldRevisionServer` accepts owner-authorized `cancel` only while its draft is owned and not committed; `WorldRevisionManager::cancel` rejects if barriers are active or generation is running. | Add the typed draft-only cancel method; ensure its result is durable/idempotent with the session coordinator. A committed decision window must never be routed to this operation. |
+| Add a host-authorized bonus chunk | `World::select_revision_bonus_chunk(...)` applies eligibility and selection-revision checks while marking the chunk as bonus. | Keep bonus authorization server-only; clients may request a quote but cannot label a paid chunk as bonus. |
+| Quote the start | `WorldRevisionServer::query_start_cost(actor, loom, request, selection_revision, policy_revision, opening_count, quote_out)` delegates to the world quote and binds retries to the owner/request. | Return the complete quote/rejection object through the same typed service as selection; the quote must be read-only. |
+| Commit the non-cancellable start | `WorldRevisionServer` invokes its configured start committer, bound by `GameSession::bind_world_revision_server`; `GameSession::commit_regeneration_start(...)` validates the quote and journals the currency/card/start state. `finalize_regeneration_start(epoch)` resolves accepted card effects and starts generation. | One recoverable transaction still has to cover durable chunk reservations, barriers, session/deadline metadata, resource debit, opening deal and publication recovery. The direct call is an internal host callback, not a UI endpoint. |
+| Query lifecycle status | `World::world_revision()` exposes pending/regenerating flags and selection metadata; the server/session retain additional owner, deadline and committed-request state. | Add one authorized typed result spanning draft, committed decision window, queued/generating, complete and retryable failure, including whether cancel is permitted. |
+
+The public façade should return a stable draft/session ID, selection and policy
+revisions, structured eligibility/rejection reasons, paid/bonus counts, exact
+cost breakdown and committed lifecycle state. It must not return mutable world
+or CardGame internals. Keep a pure quote operation separate from the irreversible
+commit operation, and make cancellation a draft-only operation; after successful
+commit, player cancellation is rejected while server recovery remains possible.
 
 The starting deal is selectable from **4 through 7 cards**, defaulting to 4.
 Let `B4` be the configured total dust price for a four-card opening hand. The
@@ -345,7 +555,51 @@ remain separately reported and priced according to versioned world policy.
 
 Each session starts from a fresh immutable base-world rules snapshot. Build a session-local working rules value; apply cards sequentially to its current state. Freeze the final value for workers. Never mutate authoritative base-world rules, and never carry yesterday's temporary biome/ore changes into a new session. Persist provenance and permanent per-chunk instability/modifiers separately.
 
-Lifecycle: validate selection Ã¢â€ â€™ reserve target chunks and resources Ã¢â€ â€™ install visible glowing barriers Ã¢â€ â€™ draw cards/open five-minute multiplayer decision window Ã¢â€ â€™ resolve card actions Ã¢â€ â€™ freeze rules Ã¢â€ â€™ generate off-thread Ã¢â€ â€™ revision-checked publication Ã¢â€ â€™ remove barriers.
+### World Loom lifecycle state contract
+
+Treat these as externally meaningful logical states even if persistence stores
+them as a smaller set of flags/revision fields. The API must return the current
+state with every successful mutation and allow a caller to query it after
+reconnect. A pair of booleans such as `pending`/`regenerating` is not a
+sufficient public lifecycle result because it cannot distinguish a mutable
+draft from a committed decision window or a retryable failure.
+
+| Logical state | Allowed player actions | Durable invariants / next transition |
+|---|---|---|
+| `NO_DRAFT` | Begin a draft | No selection owned by this World Loom session; no spend or barrier. |
+| `DRAFT_OPEN` | Select/unselect eligible chunks, request quote, cancel draft | Selection and pricing revisions are authoritative. Cancellation clears draft selection and spends nothing. Exact request retry returns the same result. |
+| `START_PREPARED` (internal recovery state) | No further player mutation | A journal entry is checkpointed before currency/deck mutation. If commit fails or recovery finds only this prepared entry, restore the pre-debit/pre-deal state and mark it aborted; it is not an accepted regeneration and may be retried with a new request ID. |
+| `DECISION_WINDOW` | Play legal cards, complete required discards/choices; no selection edits or cancel | Start is committed, currency is spent once, the selected set is frozen, the opening hand is dealt once, barriers are active, and the authoritative five-minute deadline is persisted. Disconnect/restart does not reset the deadline or refund resources. |
+| `GENERATION_QUEUED` | No cancel; continue status queries | Deadline has expired or all decisions are resolved; deterministic defaults resolve remaining choices/discards, accepted effects are applied, and the final rules snapshot is frozen before work admission. |
+| `GENERATING` | No cancel; query progress | Worker results are revision-checked; barriers stay active until the authoritative replacement/repair policy permits release. No worker reads mutable session state. |
+| `COMPLETE` | Normal play resumes | All selected chunks and required multi-chunk features are published consistently; barriers are removed only after publication and durable completion state. |
+| `FAILED_RETRYABLE` | No player reroll/cancel; trusted recovery/retry only | Preserve the committed cost, accepted cards, reservations and barriers. Retry the same committed generation plan; do not silently choose a new seed/rules snapshot. If safe retry is impossible, use an explicit repair/refund policy with an audit record (still an open production decision). |
+
+The current source implements parts of this contract: `WorldRevisionServer`
+allows owner cancellation only before start commit; `WorldRevisionManager`
+rejects cancel once barriers are active or generation is running;
+`GameSession::commit_regeneration_start` writes a prepared journal/checkpoint,
+debits the quote and deals the opening hand, then activates barriers/deadline
+and marks the start committed; `finalize_regeneration_start` waits until the
+authoritative deadline, resolves pending choices/discards and intents, then
+starts generation. `retry_failed_regeneration` preserves the barrier and
+retries the failed revision. These are source-level findings, not proof that
+all lifecycle fields and transaction state recover correctly across a process
+crash. In particular, the public façade still needs one stable status result
+covering every state above, and completion/failure/barrier-release behavior
+needs end-to-end save/restart validators. The current `commit_regeneration_start`
+also always sets a five-minute deadline; the product requirement names that
+window for multiplayer. Add an explicit session mode/policy and make the
+single-player behavior deliberate/configurable rather than accidentally
+inheriting the multiplayer timer.
+
+The irreversible player-cancellation boundary is the successful
+`commit_regeneration_start`, not selection, quote, or the later worker start.
+Any error before the journal reaches committed state must restore the
+pre-start inventory and card session and must not leave a live barrier or
+deadline. Once committed, user cancellation, selection edits, and resource
+refund-by-retry are forbidden; only idempotent server recovery can advance or
+repair the same operation.
 
 Occupied chunks and all eight adjacent chunks are ineligible until players vacate; validate again atomically when reserving. The World API now accepts a host-fed occupied-chunk set, removes newly unsafe selections, and increments the selection revision when occupancy changes; the live player-location feed and commit-time refresh remain to be integrated. Selection expansion from cards repeats occupancy/protection checks. Barriers reject entry, teleports, vehicles and other authoritative movement paths, not just walking. Existing players cannot be trapped inside. Multiple sessions cannot reserve overlapping chunks or unsafe adjacent areas.
 
@@ -355,49 +609,246 @@ Generation never queries a mutable session. Feature footprints are reserved atom
 
 Persist per chunk: initial instability (default zero, optional world challenge setting), current instability, permanent modifier IDs/versions, feature outcome IDs, generation revision, rules hash and reward/danger bands. No floating global number may substitute for per-chunk records. Kiss/curse tables provide real reward opportunities coupled to danger, monotonic tiers and hard caps; increased instability does not hand out unconditional free loot.
 
+#### Current per-chunk persistence and behavior (source-audited)
+
+`WorldChunkInstabilityStore` is a World-owned sparse map keyed by signed chunk
+coordinates. Each materialized record stores initial/current integer values,
+reward and danger bands, record revision, generation revision, rules hash, and
+versioned permanent-modifier/feature-outcome IDs. Its bounded `WCI1` v1 codec
+checksums the payload, allows up to 100,000 records and 64 modifier/outcome
+entries per record, and stores a fingerprint of `WorldChunkInstabilityPolicy`.
+The latest `GameSessionPersistence` format is MCSP v18; the instability payload
+first appeared in v9 and remains an optional opaque section in later versions.
+Legacy snapshots before v9 therefore contain no such records.
+
+The fingerprint is **not** the policy itself. The world creation/save layer
+must persist the complete policy (maximum, initial default, threshold arrays
+and counts, and its schema version) and configure it before `GameSession`
+restores WCI1; the current MCSP payload cannot reconstruct those settings on
+its own. The World rejects a payload configured under a different policy
+fingerprint. A new world should explicitly configure `default_initial_value`
+to zero unless the player selects a challenge value; an unconfigured store is
+an error, not an implicit zero policy. When importing a pre-v9 save, define an
+explicit migration that applies the saved/world-selected default to existing
+chunks and does not silently raise challenge or erase recorded outcomes.
+
+`get` can synthesize the configured default for a coordinate without storing a
+record. The current source explicitly materializes records in the World
+Revision regeneration path; ensure other initial-generation/publication paths
+also create a record when a nonzero challenge default or durable generation
+provenance requires it. `WorldRegenerationResultApplier` records generation
+revision, rules hash, and feature outcomes and rolls back the in-memory chunk
+publication if the instability-store commit fails. That rollback does not
+prove crash-atomic persistence between chunk data and the MCSP/WCI1 state; a
+single recoverable world-save transaction or equivalent repair journal remains
+required. `WorldChunkInstabilityPublicView` exposes coordinates plus reward and
+danger bands, not exact instability values or hidden modifiers; the
+WorldRevisionServer requires a configured authorizer for that query.
+
+One gameplay decision needs resolution before Volatile Stabilizer is finalized:
+the current store makes **both** reward and danger bands monotonic unlocks, so
+reducing `current_value` does not lower either band. This preserves earned
+rewards, but it also means the card's stabilizing branch may not make a chunk
+safer to traverse after it has crossed a danger threshold. Recommended contract:
+keep earned reward opportunity monotonic, but derive active danger/spawn
+pressure from the current value (or a separately reversible danger tier),
+while never deleting already committed features or loot. If permanent danger
+is intended instead, state that explicitly on the card and in the preview.
+Add reduction-crossing tests either way; do not let the store's current
+implementation silently decide the game rule.
+
 ## 6. Complete current card catalogue and call mapping
 
-Every row registers one stable definition and effect ID via existing registration APIs. Gameplay enters through proposed `submit_action(PLAY_...)`; generic draw/discard operations stay in Libft, domain intent implementation stays in Minecraft. Names below are typed proposed **host intents**, not existing Libft functions. Parameters must be validated IDs, quantities and versioned bounds.
+Every row registers one stable definition and effect ID via existing registration APIs. Gameplay enters through the adapter path below; generic draw/discard operations stay in Libft, while domain-effect implementation stays in Minecraft. Names such as `biome_remove` and `feature_add` are proposed typed Minecraft **host-intent schemas**, not existing Libft functions. `request_draw` and `require_discard` instead name generic CardGame operations produced by an effect; they are not Minecraft intents. Parameters must be validated IDs, quantities and versioned bounds. The current enabled catalogue comprises seven starter definitions plus twelve non-starter definitions (IDs 11–22); only the seven starter cards seed the 20-instance opening deck.
+
+The currently exposed Minecraft backend path is `GameSession`, not a UI:
+
+| Caller need | Current API / sequence | Contract and gap |
+|---|---|---|
+| Ask whether a physical card/choice is valid | `query_regeneration_card_effect_status(instance_id, choice, ...)`; `query_regeneration_card_effect_choices(instance_id, chunk_candidates, choices_out)` | Read-only preflight returns status/no-effect information; candidate chunks are suggestions and are rechecked by the session. A future caller must pass a hand instance ID, not a definition ID. |
+| Play a card | `play_regeneration_card(request_id, card_instance_id, choice, intent_out)` | Requires active committed regeneration and a pending decision phase. It consumes/records the exact card action idempotently and returns the typed `RegenerationPolicyIntent`; it does not expose mutable World or generation-config internals. |
+| Apply the resolved domain effect | `apply_pending_regeneration_card_intent(replayed_out)` | Consumes the pending card intent while checkpointing CardGame and regeneration-rule state together. Host output delivery/recovery is a separate path and must not be acknowledged before durable acceptance. |
+| Resolve draw/discard effects | `draw_regeneration_cards(request_id, source_host_intent_sequence, count, required_discard_count, result)` then `discard_regeneration_hand_card(request_id, source_draw_request_id, card_instance_id, result)` | Preserve the source host-intent sequence, mandatory-discard obligation, exact physical instance and retry identity. Do not expose an independent UI-side draw implementation. |
+| Move a crafted card into or out of the deck | `import_regeneration_card_item_to_deck(slot, expected_inventory_revision, request_id, ...)` / `export_regeneration_card_to_inventory(instance_id, expected_inventory_revision, request_id, ...)` | Import consumes one inventory item and appends its definition to the session draw pile; export returns a card to inventory only if the 20-card minimum remains. Both preserve the 64-bit physical item identity through a session mapping and check inventory revision. GameSession routes both through a prepared/committed `WorldItemCardTransferTransaction` and startup recovery; public multiplayer authorization and durability/validation gates remain open. |
+
+These are callable backend APIs, not a claim that network routing, UI, or all
+multiplayer authorization is complete. The eventual UI should call a
+server-authorized service that exposes these operations with stable request IDs,
+structured error/status results, and no direct access to Libft zones or world
+state. Keep no-effect preflight advisory: the authoritative play path must
+revalidate every target and rule against the current session snapshot.
+
+Card-transfer source checkpoint (Minecraft `c422dcc`, source inspected):
+`WorldItemCardTransferTransaction` checkpoints a prepared journal record before
+mutating inventory/deck state, persists the terminal record with the combined
+session snapshot, and replays a pending prepared record during startup
+recovery. `RegenerationCardSession` persists the physical-item-to-card-instance
+mapping and bounded import/export retry caches. Startup checks physical IDs
+across inventory, equipment, ground items, entities, and session card mappings,
+and raises the output-ID allocator above those IDs. This is session-local
+transaction/recovery machinery, not a proof of host-wide uniqueness or
+fsync-level crash durability. The validator source covers prepared import
+recovery and exact retry; public GameSession wrapper behavior, export crash
+boundaries, and save-failure rollback on the fetched branch still need focused
+runtime validation. Network actor authorization remains outside these current
+single-player session methods.
+
+Concrete per-card call sequence (current function names; the typed names in
+the card tables below describe the policy operation, not a C++ symbol):
+
+```text
+GameSession::query_regeneration_card_effect_status
+  -> RegenerationWorldRules::preflight_card_effect       (read-only hint)
+
+GameSession::play_regeneration_card(request_id, card_instance_id, choice)
+  -> resolve physical hand instance and enabled recipe/unlock
+  -> RegenerationWorldRules::preflight_card_effect       (authoritative recheck)
+  -> RegenerationCardSession::play_card                  (sequenced Libft action)
+  -> persist action and return RegenerationPolicyIntent
+
+GameSession::apply_pending_regeneration_card_intent
+  -> snapshot card/rules/instability state
+  -> RegenerationWorldRules::consume_pending_card_intent
+       -> apply_intent                                    (rules overlay)
+       -> acknowledge the source host-intent sequence
+  -> update pending World Revision's frozen rules view
+  -> perform card-specific follow-up draw, if any
+  -> apply configured per-chunk instability, if this card has a cost
+  -> checkpoint; restore all snapshots if any step fails
+```
+
+#### Current CardGame host-intent encoding (source-audited)
+
+The current adapter does **not** serialize one host-intent schema per name
+such as `biome_remove` or `feature_add`. It registers a compact envelope and
+decodes it into `RegenerationPolicyIntent`; Minecraft then dispatches by
+`effect_kind`. Preserve this distinction when adding card definitions. The
+following is the current Libft host-intent representation at the reviewed
+Minecraft/Libft tips, not a proposed replacement wire format:
+
+| Record | Type ID | Version | Fields in order |
+|---|---:|---:|---|
+| Card policy intent | `0x4D435250` | `CONTENT_VERSION == 2` | `U32 card_definition_id`, `U32 card_instance_id`, `U32 effect_kind`, `U32 choice_kind`, `U32 choice_primary OR private_result`, `U32 choice_secondary OR private_ordinal`, `U32 content_version`, `U64 request_id` |
+| Empty-draw notice | `0x4D435245` | `CONTENT_VERSION == 2` | `U32 player_id`, `U32 zero` |
+| Hand-overflow notice | `0x4D43524F` | `CONTENT_VERSION == 2` | `U32 player_id`, `U32 overflow_count` (nonzero) |
+
+The engine record's monotonic `sequence` is outside the payload. For policy
+intents, fields 0–6 must be U32, field 7 U64, request and card-instance IDs
+must be nonzero, and the card definition must map to the exact registered
+effect kind. Field 6 must match both the outer version and the supported
+content version. Choice kinds are `0` none, `1` biome, `2` ore, and `3` target
+chunk; target chunk coordinates use their 32-bit modulo representation.
+Fields 4–5 decode as choice values for ordinary cards. For Volatile Stabilizer
+they instead hold the private overload result and use ordinal; for Unstable
+Catalyst they hold the private selected modifier ID and use ordinal. Those
+private values must never be sent in an ordinary client view. The no-effect
+choice mask is response metadata, not part of this engine payload.
+
+Definition IDs and effect-kind enum values are separate stable namespaces.
+The current mapping is:
+
+| Card definition ID | Effect-kind value | Card |
+|---:|---:|---|
+| 1–7 | 1–7 respectively | Starter cards in the order in the starter table |
+| 11 | 8 | Ore Overgrowth |
+| 12 | 9 | Ultimate Greed |
+| 13 | 10 | Biome Rupture |
+| 14 | 11 | Fortune's Draw |
+| 15 | 12 | Volcano Mark |
+| 16 | 13 | Volatile Stabilizer |
+| 17 | 14 | Ruined Village Relic |
+| 18 | 15 | Shipwreck Chart |
+| 19 | 16 | Unstable Catalyst |
+| 20 | 17 | Desert Pyramid Seal |
+| 21 | 18 | Ancient Canopy Seal |
+| 22 | 19 | Spider Nest Seal |
+
+Do not derive one ID from the other. Adding or changing a field, field type,
+choice interpretation, or enum mapping requires a content/intent version
+migration and replay compatibility tests. Existing draw notices are separate
+from policy effects and must retain their source sequence through the
+`draw_regeneration_cards` action path.
+
+The current GameSession calls `consume_pending_card_intent` inside its
+integration transaction; that helper applies the overlay intent and
+acknowledges the matching sequence. Do not acknowledge it a second time.
+Double Draft's queued draw notice is resolved by the separate
+`draw_regeneration_cards` / `discard_regeneration_hand_card` action path.
+Ultimate Greed and Fortune's Draw instead perform their follow-up draw through
+`RegenerationCardSession::draw_cards` inside `apply_pending_regeneration_card_intent`,
+keyed by the original request and host-intent sequence. Keep those routes
+explicitly idempotent; do not synthesize a UI-side draw. Before workers start,
+the World Revision manager materializes ore scales into a staged generation
+config with `RegenerationWorldRules::apply_ore_scales` and freezes the rules;
+never query mutable rules from a worker.
+
+Resolution order is deliberately split across the two owners. The card play
+enters Libft through `RegenerationCardSession::play_card` (called by
+`GameSession::play_regeneration_card`) and returns a sequenced card intent; it
+does not directly mutate World. The host then routes the result by kind:
+domain policy effects are validated/applied by
+`GameSession::apply_pending_regeneration_card_intent`, while a queued draw
+notice is resolved through `GameSession::draw_regeneration_cards` with its
+source host-intent sequence. Libft processes that draw as a sequenced command,
+including hand-cap burns and any required-discard obligation; the caller
+fulfills that obligation with `discard_regeneration_hand_card`. Other generic
+host outputs use `query_pending_regeneration_host_outputs` and
+`acknowledge_regeneration_host_output` only after durable acceptance. Never
+re-enter `draw_regeneration_cards` from inside an effect callback: it is a
+separate authoritative action that resolves a queued notice, not a callback
+primitive, and invoking it recursively would break the command transaction.
 
 ### Starter deck: exactly 20 instances
 
-| Card / copies | Ordered effect and host calls | Validation / no-effect behavior |
+| Definition ID — card / copies | Ordered effect and host calls | Validation / no-effect behavior |
 |---|---|---|
-| Biome Exclusion / 4 | Choice selects one biome; emit `biome_remove(id)` | Remove only from current eligible list. Already absent has no effect; reject removal of the final viable biome. UI states the no-effect reason |
-| Deep Seam / 4 | Choice selects ore; emit `ore_scale(id, 3, 2)` | Increase **current** selected spawn rate by 50%, checked integer rational arithmetic and configured cap, not ambiguous extra ore count |
-| Village Charter / 2 | Emit `feature_add(village, 1)` | Each use adds another village plan; validate full safe footprint/cap. Do not collapse multiple uses to a boolean |
-| Surface Magma / 2 | Emit `feature_add(surface_lava_pool, configured_count)` | Surface-only supported, bounded pools; reserve feasible positions, contain fluid, exclude protected areas |
-| Double Draft / 2 | Emit generic `request_draw(2)`, then `require_discard(1)` | Hand-cap burns and empty draws apply; required discard blocks further normal actions |
-| Biome Compass / 4 | Emit `biome_weight_adjust(configured_set)` | Only currently eligible biome IDs; cannot restore excluded biomes implicitly; normalize deterministically within caps |
-| Surveyor's Reach / 2 | Emit `target_scope_add(1)` and required chunk choice | One additional chunk this session, subject to occupancy/protection and budget; reserve before accepting |
+| 1 — Biome Exclusion / 4 | Choice selects one biome; emit `biome_remove(id)` | Remove only from current eligible list. Already absent has no effect; reject removal of the final viable biome. Return a structured no-effect reason; UI wording/layout are out of scope |
+| 2 — Deep Seam / 4 | Choice selects ore; emit `ore_scale(id, 3, 2)` | Increase **current** selected spawn rate by 50%, checked integer rational arithmetic and configured cap, not ambiguous extra ore count |
+| 3 — Village Charter / 2 | Emit `feature_add(village, 1)` | Each use adds another village plan; validate full safe footprint/cap. Do not collapse multiple uses to a boolean |
+| 4 — Surface Magma / 2 | Emit `feature_add(surface_lava_pool, configured_count)` | Surface-only supported, bounded pools; reserve feasible positions, contain fluid, exclude protected areas |
+| 5 — Double Draft / 2 | Emit generic `request_draw(2)`, then `require_discard(1)` | Hand-cap burns and empty draws apply; required discard blocks further normal actions |
+| 6 — Biome Compass / 4 | Emit `biome_weight_adjust(configured_set)` | Only currently eligible biome IDs; cannot restore excluded biomes implicitly; normalize deterministically within caps |
+| 7 — Surveyor's Reach / 2 | Emit `target_scope_add(1)` and required chunk choice | One additional chunk this session, subject to occupancy/protection and budget; reserve before accepting |
 
-The starter multiset is `4 + 4 + 2 + 2 + 2 + 4 + 2 = 20`. Cards with targets offer stable server-generated choices. Reject impossible structural guarantees before consuming their card; optional generation rolls cannot satisfy a guaranteed feature promise. A capped numerical effect can remain playable as an explicitly shown no-op if world policy permits it.
+The starter multiset is `4 + 4 + 2 + 2 + 2 + 4 + 2 = 20`. Cards with targets offer server-generated choices bound to the current rules/config revision. Important current-source limitation: biome choices are one-based indices into `voxel_generation_config`, not globally stable biome IDs. They may be used only with the exact generation/content manifest that produced the choice; never persist or replay them against a different biome ordering. Before cross-version save/network replay, migrate to stable biome IDs or reject with an explicit migration-required result. Ore choices currently use block IDs and still require validation against the active ore table. Reject impossible structural guarantees before consuming their card; optional generation rolls cannot satisfy a guaranteed feature promise. A capped numerical effect can remain playable as an explicitly shown no-op if world policy permits it.
 
 ### Craft-only rare cards
 
-Each accepted rare use consumes its authorized physical item and emits a configured instability adjustment in addition to the following effects, except that Volatile Stabilizer uses its own reduction/overload rule. Do not silently apply a common default amount to all cards. World policy sets footprint and progression requirements.
+Each instability-bearing rare use consumes its authorized physical item and
+emits a configured instability adjustment in addition to its listed effect;
+Volatile Stabilizer uses its own reduction/overload rule, while Fortune's Draw
+has no instability cost in the current definition. Do not silently apply a
+common default amount to all cards. World policy sets footprint and progression
+requirements.
 
-| Card | Ordered effect / host calls | Constraints |
+| Definition ID — card | Ordered effect / host calls | Constraints |
 |---|---|---|
-| Volcano Mark | `feature_add(volcano, 1)`, instability adjustment | Regeneration-only; minimum planned 9Ãƒâ€”9 chunk footprint and late progression/boss gates; confirm against roadmap before shipping |
-| Ultimate Greed | `request_draw(3)`, instability adjustment | Overflow burns and empty-deck events add their own costs; no compulsory discard unless configured separately |
-| Biome Rupture | Two distinct biome choices, `biome_remove` twice, instability adjustment | Cannot remove last viable biome; absent targets are clearly identified as no-effect, not silently substituted |
-| Ore Overgrowth | `ore_scale(selected, 2, 1)`, instability adjustment | Doubles current rate, checked arithmetic and safety cap; composes in play order with Deep Seam |
-| Shipwreck Chart | `feature_add(shipwreck, 1)`, underwater-hostile plan, instability adjustment | Ocean only, navigable underwater structure; loot/danger use final instability tier |
-| Ruined Village Relic | `feature_add(ruined_village, 1)`, instability adjustment | Hostile spawners and rare loot; biome-adapted variant only where explicitly supported |
-| Unstable Catalyst | Persist hidden deterministic `permanent_modifier_add(selected)`, instability adjustment | Backend knows result; client does not. Never removable by ordinary cards, reload, cancellation or reselecting a seed |
-| Desert Pyramid Seal | `feature_add(desert_pyramid, 1)`, instability adjustment | Desert, sandstone, reachable central loot and bounded spawners |
-| Ancient Canopy Seal | `feature_add(giant_forest_tree, 1)`, instability adjustment | Forest, climbable ladder interior, trapdoors, deliberately dark hostile chambers and loot |
-| Spider Nest Seal | `feature_add(cave_spider_nest, 1)`, instability adjustment | Must connect to an existing cave system; bounded spider spawners, loot-bearing corpses |
-| Volatile Stabilizer | Increment use counter; roll configured overload chance; emit reduction or irreversible surge plus danger/reward opportunity | Example risk curve 5%, 15%, 35%, 65%, 100%; illustrative only. No fixed instability numbers in this design. Immediate resolution, persisted use count and RNG, no cancellation/reroll |
+| 15 — Volcano Mark | `feature_add(volcano, 1)`, instability adjustment | Regeneration-only; minimum planned 9×9 chunk footprint and late progression/boss gates; confirm against roadmap before shipping |
+| 12 — Ultimate Greed | `request_draw(3)`, instability adjustment | Overflow burns and empty-deck events add their own costs; no compulsory discard unless configured separately |
+| 13 — Biome Rupture | Two distinct biome choices, `biome_remove` twice, instability adjustment | Cannot remove last viable biome; absent targets are clearly identified as no-effect, not silently substituted |
+| 11 — Ore Overgrowth | `ore_scale(selected, 2, 1)`, instability adjustment | Doubles current rate, checked arithmetic and safety cap; composes in play order with Deep Seam |
+| 18 — Shipwreck Chart | `feature_add(shipwreck, 1)`, underwater-hostile plan, instability adjustment | Ocean only, navigable underwater structure; loot/danger use final instability tier |
+| 17 — Ruined Village Relic | `feature_add(ruined_village, 1)`, instability adjustment | Hostile spawners and rare loot; biome-adapted variant only where explicitly supported |
+| 19 — Unstable Catalyst | Persist hidden deterministic `permanent_modifier_add(selected)`, instability adjustment | Backend knows result; client does not. Never removable by ordinary cards, reload, cancellation or reselecting a seed |
+| 20 — Desert Pyramid Seal | `feature_add(desert_pyramid, 1)`, instability adjustment | Desert, sandstone, reachable central loot and bounded spawners |
+| 21 — Ancient Canopy Seal | `feature_add(giant_forest_tree, 1)`, instability adjustment | Forest, climbable ladder interior, trapdoors, deliberately dark hostile chambers and loot |
+| 22 — Spider Nest Seal | `feature_add(cave_spider_nest, 1)`, instability adjustment | Must connect to an existing cave system; bounded spider spawners, loot-bearing corpses |
+| 16 — Volatile Stabilizer | Increment use counter; roll configured overload chance; emit reduction or irreversible surge plus danger/reward opportunity | Example risk curve 5%, 15%, 35%, 65%, 100%; illustrative only. No fixed instability numbers in this design. Immediate resolution, persisted use count and RNG, no cancellation/reroll |
+| 14 — Fortune's Draw | `request_draw(1)` through the configured draw policy | Discovery-locked recipe 2019; draw/empty/overflow effects are sequenced and idempotent; no instability cost unless a future content version explicitly adds one |
 
 Unstable Catalyst's validated dangerous/potentially dangerous pool includes shipwreck, volcano and ruined village variants plus eligible generic hostile overlays. Cards do not unlock unsafe placement. Generic instability content includes hostile towers, camps, spawner complexes, cursed mines, fortifications, nests and vaults. Towers may use a taller ocean-supported variant above water. Docks are not a required gameplay feature. Biome-specific reward structures remain card content; generic danger remains instability content, with explicit shared feature planners permitted.
 
 Hidden results must be redacted from client snapshots, previews, ordinary logs and accessible RNG state. Server replay retains them. Hashing a small secret option alone does not provide secrecy; use redacted views and authenticated server records rather than exposing enumerable hidden hashes.
 
-### Later cards (not required starter content)
+### Later cards (not enabled content)
 
-Biome Guarantee emits a feasible guaranteed biome plan and optionally `request_draw(1)` only if its definition says so. Fortune's Draw is enabled as a separate definition and discovery-locked Card Press recipe; it requests one card through the existing draw policy and exact request cache. Keep Biome Guarantee disabled until its feasible biome planner and recipe are implemented. Do not turn these into undocumented effects on starter cards.
+Biome Guarantee is a future definition: it would emit a feasible guaranteed
+biome plan and optionally `request_draw(1)` only if that behavior is explicitly
+part of its versioned definition. Keep it disabled until its feasible biome
+planner and recipe are implemented. Fortune's Draw is already an enabled
+non-starter definition (ID 14) with discovery-locked recipe 2019, as described
+above; do not count it as an unimplemented future card or add its effect to a
+starter definition.
 
 ## 7. Scripting extension
 
@@ -439,6 +890,65 @@ Transfers lock participants in the library's prescribed order or run under a doc
 
 Minecraft applies reach, ownership, claim, tool, station and chunk revision checks. Block destruction and ground-item creation commit together; pickup can be partial with exact remainder. Fluid collection and boat item/entity conversion are also transactions. Character-bound versus portable inventories/unlocks obey the world's join policy; imported progress cannot bypass world restrictions.
 
+### 8.1 Character/world scope at the Minecraft boundary
+
+The world-save roadmap defines `WORLD_BOUND` and `PORTABLE` characters and a
+per-world admission policy. Apply that policy to these systems explicitly;
+do not infer portability merely because two records have the same character
+ID:
+
+| State | Default ownership/scope | Admission behavior |
+|---|---|---|
+| Active World Loom regeneration session (selected chunks, dealt hand, draw/discard/burn zones, pending choices, RNG, locked snapshot and host-intent results) | World + one regeneration-session ID | Never imported into another world or resumed as a portable character session. It completes or recovers only in its owning world. |
+| World Loom deck collection and physical card instances | Character inventory/profile under its declared scope; each physical instance has one canonical owner | Apply destination inventory/card policy and the character's ownership mode. A join must not create a second card instance or duplicate deck membership. The active session's temporary zones are not the collection. |
+| Ordinary inventory/equipment/physical items | Character- or world-owned according to the persisted ownership record and admission policy | Deny, keep source-world, or transfer only through an explicit versioned policy. Do not silently copy a physical instance into a destination save. |
+| Recipe-book unlocks and discoveries | Each grant has stable recipe ID, source-event ID, and an explicit character/world scope | Import only explicitly portable grants accepted by the destination policy. World-local discoveries remain in the source world; destination-disabled recipes stay unusable even if a portable grant is retained. |
+| Card definitions/deck legality and world rules | Catalogue/ruleset-versioned; world-specific legality is evaluated by the destination | Revalidate every imported card against destination format, copy limit, unlock and content-version rules. Never trust a client-supplied deck or unlock list. |
+
+The durable record for an unlock or physical item must retain enough scope and
+source identity to decide admission after a save/reload. Libft should preserve
+stable IDs and unknown versioned fields without knowing what a Minecraft world
+is. Minecraft owns the scope labels, admission decision, source/destination
+transaction, and migration policy. An unmarked legacy record is not implicitly
+portable: use the documented migration/default policy and report quarantined
+or denied state instead of silently granting it.
+
+The backend join path should expose value-only, revision-bound operations along
+these lines (names are illustrative, contracts are required):
+
+1. `query_character_admission(character_id, world_id)` returns the effective
+   world-policy and character/profile revisions, the state categories allowed,
+   retained in the source, denied, or requiring approval, plus migration
+   warnings. It has no side effects and reveals no hidden source-world data.
+2. `prepare_character_join(request_id, character_id, world_id, expected_revisions)`
+   validates admission and builds an immutable transfer plan. It checks the
+   per-character lease, physical-ID uniqueness, inventory/card caps, recipe
+   scope, and content compatibility before reserving a spawn or mutating data.
+3. `commit_character_join(prepared_id, request_id)` atomically publishes the
+   admitted session and its ownership/lease record with durable idempotency.
+   Exact retries return the same outcome; changed payloads or stale revisions
+   are rejected. Failure leaves source ownership and destination state
+   unchanged. Leave/disconnect/recovery releases or restores the lease only
+   after the latest authoritative state is saved.
+
+Whether a portable inventory is a single account-owned canonical store or is
+transferred into and back out of a world-owned save is an implementation
+decision that must be resolved before serialization/API freeze. Either model
+must enforce one authoritative owner for every physical instance across
+concurrent sessions, crash recovery, retries, and world backup/restore. A
+per-character active-session lease is necessary but not by itself proof against
+duplication after rollback or restore.
+
+Current Libft building blocks are `game_inventory::add_item_revisioned`,
+`remove_item_instance`, `remove_item_quantity`, `transfer_to`,
+`get_snapshot`, and `restore_snapshot`. These cover revision checks, bounded
+in-process request replay for selected operations, and value snapshots; they do
+not yet provide the proposed general `prepare_transaction` object or a durable
+cross-container journal. Keep the proposed transaction API as the target
+instead of treating separate remove/add calls as atomic. Minecraft still owns
+global physical-ID uniqueness, world-item/block-edit coordination, and the
+durable journal spanning save files.
+
 ## 9. Recipe-book API and unlocks
 
 Extend `game_recipe_blueprint`/catalogue rather than inventing an unrelated crafting grid. Proposed fields: stable recipe/version ID, exact tagged/exact-ID ingredients, quantities, bound output definitions and quantities, returned containers/byproducts, station tags, unlock policy, processing ticks, fuel units, limits and compatible variants. Matching duplicate ingredient groups must allocate each input unit once. Alternatives are resolved deterministically and shown before confirmation.
@@ -448,7 +958,7 @@ Proposed APIs:
 | API | Behavior |
 |---|---|
 | `game_recipe_book::initialize(catalogue, defaults)` | Validate and grant only configured bootstrap unlocks |
-| `unlock_recipe(recipe_id, source_event_id, result)` | Idempotent grant with audited source, no client self-unlock |
+| `game_recipe_book::unlock_recipe_with_result(recipe_id, source_event_id, result)` | Idempotent receipt; separately reports `event_newly_recorded` and `recipe_newly_known`. The compatibility `unlock_recipe(..., newly_unlocked)` reports only whether knowledge changed. Minecraft remains responsible for source namespace/owner and authorization. |
 | `query_recipes(filter, inventory_view, station_context, output)` | Known/unknown/available/missing ingredients; no mutation |
 | `game_crafting::prepare_craft(request, inventory_view, book, station_context, output)` | Recipe-owned results, checked batch quantities, all capacity and access checks |
 | `commit_craft(prepared, transaction_id, result)` | Atomic input consumption, outputs/byproducts and optional unlock grant |
@@ -457,9 +967,302 @@ Proposed APIs:
 
 Minecraft supplies verified station context: actual station entity/block revision, usable range and permissions. The library must not accept an arbitrary client `has_workbench=true`. Unknown recipes remain locked even if the player guesses ingredients.
 
+The current recipe-book calls are `game_recipe_book::initialize`,
+`unlock_recipe_with_result(recipe_id, source_event_id, result)` (with the
+legacy `unlock_recipe(..., newly_unlocked)` wrapper),
+`is_recipe_known`, `export_book`, and `import_book`. Crafting uses
+`game_crafting::register_item_tag`, `register_recipe`, `unlock_recipe`,
+`query_recipe` / `query_recipe_at_station`,
+`prepare_craft` / `prepare_craft_at_station`, and `commit_craft`. Timed jobs
+use `prepare_processing_at_station` and `commit_processing_inputs`, with job
+advancement/completion owned by the host. The recipe book and crafting registry
+remain separate Libft objects, so the Minecraft catalog must keep their
+knowledge states consistent and roll back a partial unlock. Minecraft's
+`MinecraftRecipeCatalog::query_recipes` already combines known state, station
+availability and ingredient deficits into staged value outputs; do not
+reimplement that aggregation in Libft. There is no corresponding public
+`GameSession` list-query entry point or unified revision-bearing result yet,
+and no generic source-event transaction spanning book grant and
+world/inventory persistence; those remain explicit integration work.
+
+### 9.1 Snapshot-consistent query boundary
+
+The current Libft `game_crafting::query_recipe_at_station` accepts a live
+`game_inventory` and locks/reads it while evaluating one recipe. Minecraft's
+catalog currently calls that once per recipe. This is safe only under the
+catalog's single simulation-owner convention; it does not guarantee one view
+across a whole recipe list for concurrent readers. Constructing a temporary
+mutable inventory just to reuse the query is not the intended solution.
+
+Add a generic, read-only Libft overload that evaluates against the existing
+value snapshot, conceptually:
+
+```cpp
+query_recipe_at_station_snapshot(
+    recipe_id,
+    const game_inventory_snapshot &inventory_snapshot,
+    station_id,
+    result_out,
+    missing_groups_out);
+```
+
+It must use only snapshot values (`item_id`, quantity, rarity and item-state
+fields needed by matching), allocate no `game_item` handles, never mutate the
+snapshot or inventory, and return the same ingredient/station answer as the
+live-inventory overload for an equivalent state. Validate malformed snapshots
+and preserve deterministic recipe-order allocation when ingredient groups
+share alternative item IDs. Keep the current overload for compatibility.
+
+Minecraft's `MinecraftRecipeCatalog::query_recipes` should then capture one
+`game_inventory_snapshot` through `game_inventory::get_snapshot`, hold a
+stable catalogue/recipe-book read view for the duration of the list query, and
+evaluate every row against that exact snapshot. Add a monotonic catalogue
+revision that changes when unlock knowledge or query-relevant content changes;
+include it and the captured inventory revision in every list result. For a
+station query, validate the authenticated station once against its supplied
+station revision and echo that revision; hand crafting uses the explicit hand
+station ID and no station revision. If any captured revision cannot be held
+stable for the query, return a stale-state error rather than mixing rows from
+different states.
+
+Libft unit tests own the generic snapshot matcher: equivalent live/snapshot
+answers, recipe groups with shared alternatives, rarity filters, malformed
+snapshot rejection, unchanged inventory/snapshot, and deterministic missing
+group ordering. Minecraft validators own the cross-system contract: a full
+catalog result has one inventory revision and one catalogue revision, station
+authorization is checked, and a concurrent inventory/recipe update cannot
+produce a mixed-revision list. This snapshot overload is a missing Libft API;
+the existing `game_inventory_snapshot` alone does not make the current
+`game_crafting` query snapshot-consistent.
+
+Minecraft already exposes the core backend routes on `GameSession`:
+`query_hand_recipe` / `query_station_recipe` for read-only availability,
+`craft_hand_recipe` / `craft_station_recipe` for journalled craft actions,
+`grant_recipe_discovery` for a trusted source event,
+`research_card_recipe` for the Card Press research action, and
+`start_recipe_processing` for timed jobs. These methods carry request IDs and
+inventory/station revisions; station calls also carry station identity and
+coordinates for host validation. `MinecraftRecipeCatalog::query_recipes`
+already produces a combined catalogue result, but only code with catalog and
+inventory access can call it; `GameSession` exposes neither that list query
+nor a public immutable inventory-view query for a future caller. The existing
+single-recipe `GameSession` read calls take no explicit actor ID and do not
+return the inventory/catalogue revision used for the answer. Station query
+does recheck the configured station authorizer and revision; hand query only
+checks that the session is active. Add actor-authorized, value-returning
+service calls at the host boundary; do not expose the character's mutable
+inventory or `MinecraftRecipeCatalog` internals to a client.
+
+Required future caller sequence (backend contract only):
+
+1. Proposed `GameSession::query_inventory_view(authenticated_actor_id,
+   output)` returns a value snapshot with stable item-definition IDs,
+   quantities, physical instance IDs/modifiers where applicable, equipped
+   slots, and capacity/weight totals. It is actor-scoped and never returns
+   mutable `game_item` handles. Because Libft's `game_inventory_snapshot`
+   covers inventory containers but not character equipment, the host view must
+   combine both under the simulation-owner boundary and include both
+   `inventory_revision` and a `character_state_revision`; do not imply one
+   inventory revision versions equipment unless the host explicitly guarantees
+   that invariant. `authenticated_actor_id` is supplied by trusted server
+   authentication, not accepted as an untrusted client identity claim.
+2. Proposed `GameSession::query_recipe_catalog(authenticated_actor_id,
+   known_filter, optional_station_ref, output)` wraps the existing catalog
+   aggregation and returns stable recipe IDs plus known/locked,
+   station-available, craftable, missing ingredient groups, and the inventory,
+   catalogue, character, and (when applicable) station revisions used for the
+   answer. A station argument is an authenticated server-side reference; the
+   client does not assert that a station exists or is in reach. The filter and
+   destination-world information policy must not reveal hidden recipe IDs or
+   ingredients when that world forbids such disclosure.
+3. The caller submits `craft_hand_recipe` or `craft_station_recipe` with a
+   nonzero request ID, recipe ID, positive batch count, the exact inventory
+   revision from its view/query, and (for stations) station ID, coordinates
+   and station revision. An authenticated actor identity must be bound by the
+   multiplayer service before invoking the mutation; the current GameSession
+   craft methods do not take an actor ID and are not, by themselves, a
+   multiplayer authorization boundary. The host rechecks authorization,
+   recipe knowledge, ingredients, output capacity and station state under the
+   same transaction.
+4. The result identifies the request, whether it was replayed, committed
+   inventory revision, produced definition IDs/quantities and physical IDs for
+   unique outputs, or a structured rejection reason. An exact retry returns
+   the original result; changed payload under the same request ID is rejected.
+   A stale inventory/station revision requires a fresh query, not a blind retry
+   with new inputs under the old request ID.
+
+The current `MinecraftCraftActionResult` does not include the committed output
+definition/quantity delta or newly minted physical instance IDs, so the result
+contract above requires an additive versioned result/API change. Do not recover
+the output by diffing a later inventory query: another action could intervene,
+and unique output IDs are part of the exact replay result.
+
+The current `query_hand_recipe` / `query_station_recipe` only return the
+Libft aggregate `game_crafting_query_result` and missing groups; that result
+does not include the inventory revision or complete item view. The current
+`MinecraftRecipeCatalog::query_recipes` output entry contains recipe ID,
+`known`, and `game_crafting_query_result`; its separate missing-group list is
+keyed by recipe ID. Neither output carries the inventory revision or a
+catalogue revision. `GameSession` craft results carry the request ID and
+committed inventory revision, but the read API cannot currently tell a caller
+which revision it queried. The existing catalog loop queries recipes one at a
+time against the live inventory rather than an explicitly captured immutable
+snapshot; the future service must capture one inventory value snapshot first
+so every recipe row describes the same revision. Extend result/version
+contracts before a UI or network layer relies on them.
+
+#### Revision tuple and stale-read behavior
+
+Treat revisions as equality tokens scoped to one world/session epoch; never
+compare a revision from one character, world, catalogue instance, or restored
+session with a token from another. The query result must return the complete
+tuple used to build it:
+
+```text
+world/session epoch
+inventory revision
+character-state revision
+recipe-catalogue revision
+station identity and station revision, when station-bound
+```
+
+`inventory_revision` versions container contents and accounting only.
+`character_state_revision` separately versions equipment and any other
+character-owned query input. `recipe_catalogue_revision` changes whenever
+knowledge or recipe data affecting availability/deficits changes; immutable
+content must also be bound to a versioned catalogue/manifest identity so a
+restart or content update cannot produce an ABA match. The station revision
+comes from the authoritative station/world provider and is not supplied as
+truth by the requester. Reserve zero as invalid and fail closed rather than
+wrapping any revision; a new session/world epoch is required when a revision
+space is exhausted or replaced.
+
+The preferred implementation serializes the entire query on GameSession's
+simulation owner and evaluates one captured inventory value snapshot plus one
+stable recipe-book/catalogue view. If a future caller executes the read across
+threads, it must capture immutable views and verify their epochs/revisions are
+still the ones reported before publishing the result. If any participating
+revision changes or station authorization becomes stale, discard all staged
+rows and return a stale-state/permission result with caller outputs unchanged;
+do not return a partially mixed list or silently retry against newer state.
+The caller then issues a fresh query. Mutations always revalidate every token
+and authorization at commit time, because a coherent query can become stale
+immediately after it returns.
+
 Default unlocks must include planks, sticks, workbench and all necessary basic gathering/processing recipes to avoid progression softlocks. Proposed discoverable unlocks: rare card recipes, advanced gear, special inks and stronger processing tiers. Discovery sources are loot blueprints, exploration achievements or research; **which source unlocks each stronger item is a balance decision still open**. The implementation must support all of them through a data-driven source grant, not hard-code a final progression choice.
 
 Persist recipe book with character/world binding policy. Portable characters carry allowed unlocks, but world-disabled recipes remain unavailable. Migration maps stable IDs; unknown newer recipes are retained or quarantined, not silently converted into another item. Research synthesis is a distinct uncertain action with bounded deterministic pool and recorded RNG; exact known recipes never randomly yield another card.
+
+For every persisted recipe unlock, store `{recipe_id, catalogue_version,
+scope, source_event_id}` or an equivalent versioned record. The recipe ID alone
+cannot distinguish a world discovery from an account-portable research unlock.
+Use a migration rule for older recipe-book snapshots that lack scope, and keep
+that rule consistent with the character admission policy; do not default old
+records to globally portable. Joining a world filters the character-owned
+unlock projection against destination policy without deleting source-world
+knowledge. A denied recipe may remain visible as unavailable only if the
+destination's information policy permits revealing it.
+
+#### Source-audited recipe provenance gap
+
+The current Libft `game_recipe_book` format is v1 and each unlock record stores
+only `{recipe_id, source_event_id}`. It has no catalogue version, character or
+world owner, or portability discriminator. Unknown recipe IDs are retained in
+quarantine, but that does not supply the missing provenance. Minecraft's
+`MinecraftRecipeCatalog` persists the exported Libft book and its discovery
+source registry maps `(source_type_id, source_id)` to a recipe; neither records
+whether the grant belongs to a character, a particular world, or both. The
+configured grant authorizer and `RecipeDiscoveryTransaction` protect the
+current grant path and roll back the in-memory book if the session snapshot
+write fails, but they do not make an unlock portable/world-bound or provide a
+durable cross-store commit with the event that caused the discovery.
+
+The standalone discovery path has useful guarantees that the design must
+preserve: `GameSession::grant_recipe_discovery` authorizes the supplied source
+event, `RecipeDiscoveryTransaction` snapshots the old book, appends the unlock,
+and invokes the GameSession snapshot writer when a new event receipt is
+recorded. The prior omission for a distinct event that grants an already-known
+recipe is fixed in the current worktree: the result distinguishes
+`event_newly_recorded` from `recipe_newly_known`, and the transaction saves when
+the former is true. An exact duplicate receipt is a no-op and does not trigger
+another save; save failure restores the prior book and clears both output
+flags.
+
+This does not yet retain the original result payload for the event. On retry,
+the current two-boolean API reports both flags false, even if the first
+execution made the recipe newly known. Therefore it is an idempotent state
+transition, not a durable replay of the original semantic response. Any caller
+that must reproduce the original response after a timeout or restart must
+persist it in the enclosing action's result journal and return it from there.
+This is especially important when discovery is one part of another action. If
+opening a chest,
+claiming loot, consuming a research item, or completing a card effect both
+changes another store and grants a recipe, both mutations and their replay
+result must share one prepared/committed journal record and one recovery
+boundary. Otherwise a crash or retry can retain the unlock without its cost,
+duplicate the reward, or lose the unlock after the source event was consumed.
+The stable idempotency key must be namespaced across source types and owners;
+Libft currently deduplicates `source_event_id` alone inside a recipe book, so
+Minecraft must issue collision-free IDs or encode the full source namespace
+into the event identity before calling the generic API.
+
+The source-event receipt also needs an explicit retention/compaction contract.
+It cannot be evicted merely because the recipe is known: old requests may be
+replayed after save restore or delayed multiplayer delivery. Either retain
+receipts for the lifetime of the owning character/world, or use a monotonic
+per-owner sequence with a durable high-water mark plus a bounded exact-result
+window for requests that may still be retried. Any bounded policy must define
+the maximum retry horizon and reject expired requests without reapplying their
+effects; it must not silently treat an expired ID as a fresh discovery.
+
+Keep ownership semantics in Minecraft rather than making the reusable Libft
+book depend on Minecraft identities. Add a versioned Minecraft provenance
+section adjacent to the recipe-book snapshot. Each canonical grant must carry
+at least `{recipe_id, catalogue_version, scope, owner_id, source_type_id,
+source_id, source_event_id}`; `scope` must distinguish character-portable from
+world-bound grants, and `owner_id` must identify the character or world
+accordingly. If one discovery intentionally grants both scopes, persist two
+explicit grants rather than infer one from the other. Commit the generic book
+unlock and the provenance record through the same idempotent discovery
+transaction/checkpoint. Import, replay, or direct book mutation must not expose
+a recipe while its required provenance is absent. Recipe queries should derive
+an effective known/unavailable projection from canonical grants plus the
+destination world's admission policy; filtering a grant for one destination
+must never delete its source-owned record.
+
+Migration must fail closed. New-world bootstrap recipes are granted from the
+destination's current defaults, not treated as migrated portable discoveries.
+For a legacy v1 book, bind each non-default unlock to the source world only
+when the containing world's identity is known. If it is unavailable, quarantine
+the grant and keep it unusable until an explicit migration/resolution step;
+never infer global portability from recipe ID, source event ID, or the fact
+that the recipe is currently enabled. Preserve the original v1 bytes or a
+recoverable migration record until the new provenance snapshot is durably
+committed, and make migration idempotent across retries and backup restore.
+The exact treatment of pre-existing bootstrap/default grants must be explicit
+in the migration version so a legacy save does not accidentally turn defaults
+into portable progress.
+
+Acceptance tests must cover character-portable and world-bound unlocks,
+source/destination IDs, destination policy filtering without source-state
+mutation, identical and conflicting retries, crash/recovery between book and
+provenance publication, catalogue-version changes, unknown-ID quarantine,
+legacy v1 migration with and without a known source-world identity, repeated
+migration, and restore from a pre-migration backup. Libft tests should remain
+limited to the generic stable-ID, source-event idempotency, checksum and
+unknown-ID quarantine contract, including a distinct event for an already-known
+recipe being durably recorded (`event_newly_recorded=true`,
+`recipe_newly_known=false`) and an exact retry being a no-op; scope, identity
+and migration policy belong in Minecraft validators. Minecraft validators
+must separately cover the
+standalone-authorized grant/save/retry path and at least one loot/research
+action that grants a second discovery event for an already-known recipe and
+verifies that the new receipt survives save/restart, as well as one action that
+changes a second durable store. Inject failures before prepare,
+after prepare, between in-memory mutations, before snapshot replacement, and
+after replacement but before the caller observes success. Every recovered or
+retried case must match exactly one committed source event, one unlock record,
+one cost/reward outcome, and the same reported result.
 
 ## 10. Complete item and acquisition coverage
 
@@ -469,86 +1272,170 @@ The roadmap's item catalogue is the required content scope. At implementation, e
 - Grass drops dirt; air drops nothing; water/lava use containers. Bedrock has an admin/creative item mapping but is not ordinarily breakable. New technical blocks may explicitly have no item.
 - Add blocks/items for planks where applicable, workbench, furnace, Paper Mill, Card Press, World Loom, chest/storage, farmland, wheat and paper plants, including configured crop-state/drop mappings.
 - Processed resources: sticks, coal, iron/gold/copper bars, diamond/emerald products if their extraction recipes are enabled, plant fiber/binder, paper reed fiber, paper sheets, card stock, pigments, dark/colored/advanced ink and magical dust.
+- Hostile-mob loot: rotten flesh, bones, gunpowder, string and spider eyes, each tied to a named deterministic loot table and entity/death event. These are world-loot acquisitions, not recipe outputs; define chance/count ranges, eligibility, and replay-safe delivery in Minecraft.
 - Containers/vehicle: empty/water/lava buckets and boat; filled buckets stack to one and have validated fluid state.
 - Food/farm: wheat, seeds, bread, apple, pear, raw/cooked beef/pork/chicken/mutton; animal materials wool, leather, feathers and eggs.
-- Gear: configured wood/stone/iron/gold/copper/diamond pickaxes, axes and swords; bow, arrows, shield, staff; cloth/leather/iron armor for head/chest/legs/feet. Material variants are explicit enabled definitions, not assumed combat balance.
-- Cards: all seven starter definitions and eleven current craft-only definitions; later Biome Guarantee/Fortune's Draw only when enabled. Each output is a unique physical card.
+- Gear: wooden hoe; configured wood/stone/iron/gold/copper/diamond pickaxes, axes and swords; bow, arrows, shield, staff; cloth/leather/iron armor for head/chest/legs/feet. Material variants are explicit enabled definitions, not assumed combat balance. The hoe is also the required tool for the revision-checked farmland tilling action.
+- Cards: all seven starter definitions and twelve current non-starter, discovery-locked definitions (IDs 11–22, including Fortune's Draw); Biome Guarantee remains future and disabled. Each crafted output is a unique physical card.
 
-Every item must declare exactly one primary acquisition policy: exact recipe, world/block acquisition, mob/harvest acquisition, loot/discovery, or restricted admin/technical. Not every obtainable block needs an artificial crafting recipe. No enabled craftable item may lack a recipe. This exhaustive policy is what makes Ã¢â‚¬Å“all items and recipesÃ¢â‚¬Â testable without pretending bedrock or apples must be crafted.
+Every item must declare exactly one primary acquisition policy: exact recipe, world/block acquisition, mob/harvest acquisition, loot/discovery, or restricted admin/technical. Not every obtainable block needs an artificial crafting recipe. No enabled craftable item may lack a recipe. This exhaustive policy is what makes “all items and recipes” testable without pretending bedrock or apples must be crafted.
+
+Source audit note (2026-10-22): the checked-out Minecraft item catalogue already
+registers the five hostile-loot items above and a recipe-acquired wooden hoe;
+the prior prose list omitted them. `MinecraftLootCatalog` owns their loot
+tables, while `MinecraftRecipeCatalog` registers the hoe recipe as ID 3131.
+Keep this inventory list synchronized with those registries, but treat the
+registry-driven coverage validator—not this snapshot's item count—as the
+completeness check.
 
 ## 11. Placeholder ordinary recipes
 
-These are proposed versioned Minecraft **content data**, not Libft constants. `A Ãƒâ€” n` denotes n units. Every enabled wood variant expands the log/plank/station/boat family consistently; mixed-wood eligibility is a declared tag rule. Yields are per action. Fuel and processing durations are configured separately.
+These are proposed versioned Minecraft **content data**, not Libft constants. `A × n` denotes n units. Every enabled wood variant expands the log/plank/station/boat family consistently; mixed-wood eligibility is a declared tag rule. Yields are per action. Fuel and processing durations are configured separately.
 
 | Output | Inputs | Station / initial unlock |
 |---|---|---|
-| Planks Ãƒâ€” 4 | Log Ãƒâ€” 1 | Hand / default |
-| Sticks Ãƒâ€” 4 | Planks Ãƒâ€” 2 | Hand / default |
-| Workbench Ãƒâ€” 1 | Planks Ãƒâ€” 4 | Hand / default |
-| Furnace Ãƒâ€” 1 | Stone Ãƒâ€” 8 | Workbench / default |
-| Chest Ãƒâ€” 1 | Planks Ãƒâ€” 8 | Workbench / default |
-| Ladder Ãƒâ€” 3 | Sticks Ãƒâ€” 7 | Workbench / default |
-| Trapdoor Ãƒâ€” 2 | Planks Ãƒâ€” 6 | Workbench / default |
-| Sandstone Ãƒâ€” 1 | Sand Ãƒâ€” 4 | Hand / default |
-| Boat Ãƒâ€” 1 | Planks Ãƒâ€” 5 | Workbench / default |
-| Empty bucket Ãƒâ€” 1 | Iron bars Ãƒâ€” 3 | Workbench / default once material available |
-| Water/lava bucket Ãƒâ€” 1 | Empty bucket Ãƒâ€” 1 + valid source fluid | World transfer, not a crafting recipe; returns empty bucket when emptied |
-| Paper Mill Ãƒâ€” 1 | Planks Ãƒâ€” 6 + stone Ãƒâ€” 2 | Workbench / default |
-| Binder Ãƒâ€” 2 | Paper reed fiber Ãƒâ€” 2 | Paper Mill / default |
-| Paper sheets Ãƒâ€” 3 | Paper reed fiber Ãƒâ€” 3 + water unit Ãƒâ€” 1 | Paper Mill / default; return container atomically |
-| Card stock Ãƒâ€” 3 | Paper sheets Ãƒâ€” 3 + binder Ãƒâ€” 1 | Paper Mill / default |
-| Dark ink Ãƒâ€” 2 | Brown mushroom Ãƒâ€” 1 + binder Ãƒâ€” 1 + water unit Ãƒâ€” 1 | Paper Mill / default |
-| Colored ink Ãƒâ€” 2 | Red/yellow flower pigment Ãƒâ€” 1 + binder Ãƒâ€” 1 + water unit Ãƒâ€” 1 | Paper Mill / default |
-| Pigment Ãƒâ€” 2 | Appropriate flower Ãƒâ€” 1 | Hand / default |
-| Advanced ink Ãƒâ€” 2 | Quartz/amethyst/amber sample Ãƒâ€” 1 + binder Ãƒâ€” 1 + water unit Ãƒâ€” 1 | Paper Mill / unlock |
-| Card Press Ãƒâ€” 1 | Planks Ãƒâ€” 4 + stone Ãƒâ€” 4 + binder Ãƒâ€” 2 | Workbench / default; no metal-only bootstrap lock |
-| World Loom Ãƒâ€” 1 | Planks Ãƒâ€” 6 + card stock Ãƒâ€” 2 + stone Ãƒâ€” 2 | Workbench / default |
-| Iron/gold/copper bar Ãƒâ€” 1 | Corresponding ore-block item Ãƒâ€” 1 + configured fuel | Furnace / default |
-| Diamond/emerald material Ãƒâ€” 1 | Corresponding ore-block item Ãƒâ€” 1 | Workbench extraction / unlock; preserve the roadmap's ore-block drop rule |
-| Cooked beef/pork/chicken/mutton Ãƒâ€” 1 | Matching raw meat Ãƒâ€” 1 + configured fuel | Furnace / default |
-| Bread Ãƒâ€” 1 | Wheat Ãƒâ€” 3 | Hand / default |
-| Magical dust Ãƒâ€” 2 | Configured crystal sample Ãƒâ€” 1 | Workbench / unlock/configured regeneration introduction |
-| Pickaxe Ãƒâ€” 1, each enabled tier | Tier material Ãƒâ€” 3 + sticks Ãƒâ€” 2 | Workbench / basic default, stronger unlock |
-| Axe Ãƒâ€” 1, each enabled tier | Tier material Ãƒâ€” 3 + sticks Ãƒâ€” 2 | Workbench / basic default, stronger unlock |
-| Sword Ãƒâ€” 1, each enabled tier | Tier material Ãƒâ€” 2 + stick Ãƒâ€” 1 | Workbench / basic default, stronger unlock |
-| Bow Ãƒâ€” 1 | Sticks Ãƒâ€” 3 + plant fiber Ãƒâ€” 3 | Workbench / default |
-| Arrows Ãƒâ€” 4 | Gravel Ãƒâ€” 1 + stick Ãƒâ€” 1 + feather Ãƒâ€” 1 | Workbench / default; gravel is a placeholder until flint exists |
-| Shield Ãƒâ€” 1 | Planks Ãƒâ€” 6 + iron bar Ãƒâ€” 1 | Workbench / unlock |
-| Staff Ãƒâ€” 1 | Sticks Ãƒâ€” 3 + amethyst sample Ãƒâ€” 1 | Workbench / unlock |
-| Armor head/chest/legs/feet Ãƒâ€” 1 | Selected cloth fiber/leather/iron material Ãƒâ€” 5/8/7/4 respectively | Workbench / cloth default, stronger unlock |
+| Planks × 4 | Log × 1 | Hand / default |
+| Sticks × 4 | Planks × 2 | Hand / default |
+| Workbench × 1 | Planks × 4 | Hand / default |
+| Furnace × 1 | Stone × 8 | Workbench / default |
+| Chest × 1 | Planks × 8 | Workbench / default |
+| Ladder × 3 | Sticks × 7 | Workbench / default |
+| Trapdoor × 2 | Planks × 6 | Workbench / default |
+| Sandstone × 1 | Sand × 4 | Hand / default |
+| Boat × 1 | Planks × 5 | Workbench / default |
+| Wooden hoe × 1 | Planks × 2 + sticks × 2 | Workbench / default; required for farmland tilling |
+| Empty bucket × 1 | Iron bars × 3 | Workbench / default once material available |
+| Water/lava bucket × 1 | Empty bucket × 1 + valid source fluid | World transfer, not a crafting recipe; returns empty bucket when emptied |
+| Paper Mill × 1 | Planks × 6 + stone × 2 | Workbench / default |
+| Binder × 2 | Paper reed fiber × 2 | Paper Mill / default |
+| Paper sheets × 3 | Paper reed fiber × 3 + water unit × 1 | Paper Mill / default; return container atomically |
+| Card stock × 3 | Paper sheets × 3 + binder × 1 | Paper Mill / default |
+| Dark ink × 2 | Brown mushroom × 1 + binder × 1 + water unit × 1 | Paper Mill / default |
+| Colored ink × 2 | Red/yellow flower pigment × 1 + binder × 1 + water unit × 1 | Paper Mill / default |
+| Pigment × 2 | Appropriate flower × 1 | Hand / default |
+| Advanced ink × 2 | Quartz/amethyst/amber sample × 1 + binder × 1 + water unit × 1 | Paper Mill / unlock |
+| Card Press × 1 | Planks × 4 + stone × 4 + binder × 2 | Workbench / default; no metal-only bootstrap lock |
+| World Loom × 1 | Planks × 6 + card stock × 2 + stone × 2 | Workbench / default |
+| Iron/gold/copper bar × 1 | Corresponding ore-block item × 1 + configured fuel | Furnace / default |
+| Diamond/emerald material × 1 | Corresponding ore-block item × 1 | Workbench extraction / unlock; preserve the roadmap's ore-block drop rule |
+| Cooked beef/pork/chicken/mutton × 1 | Matching raw meat × 1 + configured fuel | Furnace / default |
+| Bread × 1 | Wheat × 3 | Hand / default |
+| Magical dust × 2 | Configured crystal sample × 1 | Workbench / unlock/configured regeneration introduction |
+| Pickaxe × 1, each enabled tier | Tier material × 3 + sticks × 2 | Workbench / basic default, stronger unlock |
+| Axe × 1, each enabled tier | Tier material × 3 + sticks × 2 | Workbench / basic default, stronger unlock |
+| Sword × 1, each enabled tier | Tier material × 2 + stick × 1 | Workbench / basic default, stronger unlock |
+| Bow × 1 | Sticks × 3 + plant fiber × 3 | Workbench / default |
+| Arrows × 4 | Gravel × 1 + stick × 1 + feather × 1 | Workbench / default; gravel is a placeholder until flint exists |
+| Shield × 1 | Planks × 6 + iron bar × 1 | Workbench / unlock |
+| Staff × 1 | Sticks × 3 + amethyst sample × 1 | Workbench / unlock |
+| Armor head/chest/legs/feet × 1 | Selected cloth fiber/leather/iron material × 5/8/7/4 respectively | Workbench / cloth default, stronger unlock |
+
+Current-catalog comparison (Minecraft `agent/analytics-performance`,
+`c422dcc43bd758394637555d300e67cd17380f9b`; source inspection only): the table
+above remains the proposed content target, not a verbatim dump of current
+recipe definitions. The existing `MinecraftRecipeCatalog` already registers
+the output families and stable IDs listed in Section 12.1, with these details
+important for reconciliation:
+
+| Area | Current source behavior | Handoff requirement |
+|---|---|---|
+| Wood recipes | Oak, pine, and birch planks have separate recipes; boat variants use recipe IDs 1011, 1024, and 1025, all producing the boat item. | Keep variant input eligibility explicit; do not assume one recipe accepts mixed wood unless the registered tag policy does. |
+| Water-container processing | Paper sheets, dark ink, colored ink, and advanced ink consume a water bucket and return an empty bucket as a byproduct. | Treat input consumption, byproduct capacity, and output placement as one craft transaction. Preserve this contract in any recipe rebalance. |
+| Smelting/cooking | IDs 1029–1035 are furnace recipes. Per-recipe fuel item, fuel quantity, and duration are host-configurable; defaults are coal × 1 and 200 server ticks. | Keep fuel/duration versioned policy, reserve input and fuel once, and test save/load plus full-output retry. |
+| Equipment progression | Wood and stone tool tiers are initially unlocked; iron, gold, copper, and diamond tool tiers are locked. Cloth and leather armor are initially unlocked; iron armor is locked. | Treat these as current defaults only. Final unlock sources and balance remain open and must be data-driven. |
+| Locked material recipes | Advanced ink, magical dust, diamond extraction, emerald extraction, and the stronger equipment families are registered locked by default. | Knowledge grants must be explicit, provenance-bearing, and idempotent; do not unlock these merely because ingredients are present. |
+
+The source catalogue's exact current ingredients remain authoritative for the
+current executable; the proposals above are the design target for a reviewed,
+versioned content update. Before changing either side, update the stable-ID
+mapping, unlock migration, and content validators together. The focused design
+does not claim that current recipe costs have been balance-tested.
 
 Logs/leaves/terrain, fruits, seeds, raw meat, wool, leather, feathers and eggs use harvesting/drops rather than fictional manufacturing recipes. Crystal samples can initially be their registered block items; do not duplicate IDs merely to invent a catalyst. Farmland is a validated world/tool transformation, not an item duplication recipe. Future health/focus consumables, repair, glass, bricks and storage blocks require explicit definitions/recipes when enabled, and are not silently claimed complete here.
 
-## 12. Placeholder card recipes and discovery
+## 12. Card recipes and discovery
 
-All exact card recipes use Card Press, output one unique card item, and use stable recipe IDs linked to a card definition. They never directly create a second deck instance. Basic recipes are initially known; rare recipes require an audited unlock. Costs are placeholders; replace through catalogue versions and balance tests.
+All exact card recipes use Card Press, output one unique physical card item,
+and use stable recipe IDs linked to (but distinct from) card definition IDs.
+They never directly create a second deck instance. The current catalog uses a
+common substrate of card stock × 1, either dark or colored ink × 1, and binder
+× 1 for starter cards. Its rare substrate is card stock × 2, advanced ink × 1,
+and quartz × 2. The row catalysts below are additional inputs. Recipe
+knowledge and ingredient acquisition are distinct gates.
 
-Common substrate for starter recipes: card stock Ãƒâ€” 1 + basic ink Ãƒâ€” 1 + binder Ãƒâ€” 1, plus row catalyst. Rare substrate: card stock Ãƒâ€” 2 + advanced ink Ãƒâ€” 1 + quartz Ãƒâ€” 2, plus row catalyst. Ã¢â‚¬Å“SampleÃ¢â‚¬Â references an existing registered item. Acquisition of recipe knowledge and acquisition of ingredients are distinct gates.
+The table records the current source-audited Minecraft catalog, not a frozen
+balance decision. Recipe inputs, station requirements, and unlock policy are
+versioned content and may be rebalanced only through an explicit catalog
+migration; IDs must not be repurposed. The current costs are placeholders for
+playtesting. Proposed alternatives must be recorded as a future catalog
+version rather than described as if already implemented.
 
-| Card | Additional catalyst | Knowledge |
-|---|---|---|
-| Biome Exclusion | Sand/dirt/snow sample Ãƒâ€” 1, chosen declared biome tag | Basic default |
-| Deep Seam | Selected ore sample Ãƒâ€” 1 | Basic default; typed ore target remains selected at play unless explicitly bound by definition |
-| Village Charter | Planks Ãƒâ€” 2 + wheat Ãƒâ€” 1 | Basic default |
-| Surface Magma | Volcanic rock Ãƒâ€” 1 | Basic default; alternate common stone catalyst may be configured to avoid biome lock |
-| Double Draft | Paper sheets Ãƒâ€” 2 | Basic default |
-| Biome Compass | Flower sample Ãƒâ€” 1 | Basic default |
-| Surveyor's Reach | Stone Ãƒâ€” 2 | Basic default |
-| Volcano Mark | Volcanic rock Ãƒâ€” 4 + obsidian Ãƒâ€” 2 | Rare blueprint/progression unlock |
-| Ultimate Greed | Gold bars Ãƒâ€” 2 + amber Ãƒâ€” 1 | Rare unlock |
-| Biome Rupture | Two distinct biome samples Ãƒâ€” 1 each | Rare unlock |
-| Ore Overgrowth | Selected ore Ãƒâ€” 2 + emerald material Ãƒâ€” 1 | Rare unlock |
-| Shipwreck Chart | Planks Ãƒâ€” 2 + copper bar Ãƒâ€” 1 + seagrass Ãƒâ€” 1 | Ocean exploration/rare unlock |
-| Ruined Village Relic | Cracked stone Ãƒâ€” 2 + iron bar Ãƒâ€” 1 | Rare unlock |
-| Unstable Catalyst | Shimmer stone Ãƒâ€” 2 + amethyst Ãƒâ€” 1 | Rare unlock; effect selection is only at accepted play |
-| Desert Pyramid Seal | Sandstone Ãƒâ€” 4 + gold bar Ãƒâ€” 1 | Desert discovery/rare unlock |
-| Ancient Canopy Seal | Forest log Ãƒâ€” 4 + ladder Ãƒâ€” 1 | Forest discovery/rare unlock |
-| Spider Nest Seal | Plant fiber Ãƒâ€” 4 + brown mushroom Ãƒâ€” 1 | Cave discovery/rare unlock |
-| Volatile Stabilizer | Quartz Ãƒâ€” 2 + amber Ãƒâ€” 1 | Rare unlock; no previous-session overload counter carried accidentally |
-| Biome Guarantee (later) | Selected eligible biome sample Ãƒâ€” 2 | Later unlock, not enabled until effect/recipe exists |
-| Fortune's Draw | Paper sheet Ãƒâ€” 1 | Later unlock; enabled with a discovery-locked recipe and one-card draw effect |
+| Recipe ID | Card | Current additional catalyst(s) | Current knowledge |
+|---|---|---|---|
+| 2001 | Biome Exclusion | One sand, dirt, or snow block item | Basic/default known |
+| 2002 | Deep Seam | One coal, iron, gold, diamond, emerald, or copper ore sample | Basic/default known; ore target at play is a separate typed choice |
+| 2003 | Village Charter | Wheat × 1 + oak planks × 2 | Basic/default known |
+| 2004 | Surface Magma | One volcanic rock or stone block item | Basic/default known |
+| 2005 | Double Draft | Paper sheets × 2 | Basic/default known |
+| 2006 | Biome Compass | One red or yellow flower item | Basic/default known |
+| 2007 | Surveyor's Reach | Stone block item × 2 | Basic/default known |
+| 2008 | Volcano Mark | Volcanic rock block item × 4 + obsidian block item × 2 | Rare; locked by default |
+| 2009 | Ultimate Greed | Gold bars × 2 + amber block item × 1 | Rare; locked by default |
+| 2010 | Biome Rupture | Sand block item × 1 + snow block item × 1 | Rare; locked by default; effect choices are validated separately at play |
+| 2011 | Ore Overgrowth | Any two ore-sample items + emerald material × 1 | Rare; locked by default; ore target at play is a separate typed choice |
+| 2012 | Shipwreck Chart | Oak planks × 2 + copper bar × 1 + paper reed fiber × 1 | Rare; locked by default |
+| 2013 | Ruined Village Relic | Cracked stone block item × 2 + iron bar × 1 | Rare; locked by default |
+| 2014 | Unstable Catalyst | Shimmer stone block item × 2 + amethyst sample × 1 | Rare; locked by default; hidden effect selection is resolved only on accepted play |
+| 2015 | Desert Pyramid Seal | Sandstone × 4 + gold bar × 1 | Rare; locked by default |
+| 2016 | Ancient Canopy Seal | Oak log × 4 + ladder × 1 | Rare; locked by default |
+| 2017 | Spider Nest Seal | Plant fiber × 4 + brown mushroom × 1 | Rare; locked by default |
+| 2018 | Volatile Stabilizer | Amber block item × 1 | Rare; locked by default; overload count belongs to its specified regeneration scope |
+| 2019 | Fortune's Draw | Paper sheet × 1 | Rare; locked by default; one-card draw follows configured policy |
+| Unassigned | Biome Guarantee (later) | Selected eligible biome sample × 2 | Later unlock, not enabled until effect/recipe exists; allocate only when versioned and shipped |
 
-Crafted cards cannot be consumed as their own unlock prerequisite. Optional research has a separate API/action, exact ingredient reservation, server RNG, finite candidate pool and guaranteed persisted result. Retrying or saving/reloading does not reroll. No magical dust in card recipes by default; it remains a regeneration resource unless reviewed balance explicitly changes that.
+The current catalog registers these recipes at the Card Press; its seven
+starter recipes are initially known and later card recipes are registered
+locked. Keep exact unlock-source policy separate from the recipe ingredient
+list. Crafted cards cannot be consumed as their own unlock prerequisite.
+Optional research has a separate API/action, exact ingredient reservation,
+server RNG, finite candidate pool and guaranteed persisted result. Retrying or
+saving/reloading does not reroll. Magical dust is not a card-recipe ingredient
+in the current catalog; it remains a regeneration resource unless a reviewed
+content version explicitly changes that.
+
+### 12.1 Stable recipe-ID map and migration rule
+
+The following map is source-audited against the current Minecraft catalog. IDs
+are persisted/request-visible content identity, not array positions. Once an
+ID has appeared in a save, unlock event, network request, or replay, never
+reassign it to a different recipe; retire it as a tombstone and allocate a new
+ID for changed semantics. Catalogue migrations preserve recipe IDs when the
+meaning is unchanged and explicitly migrate unlocks when the meaning or output
+changes.
+
+| ID(s) | Current recipe output / family |
+|---|---|
+| 1001–1003 | Oak, pine, birch planks respectively |
+| 1004–1010 | Sticks, workbench, furnace, chest, ladder, trapdoor, sandstone respectively |
+| 1011, 1024, 1025 | Oak, pine, birch boats respectively |
+| 1012–1018 | Empty bucket, Paper Mill, binder, paper sheets, card stock, dark ink, colored ink respectively |
+| 1021–1023 | Card Press, World Loom, magical dust respectively |
+| 1026–1028 | Advanced ink, diamond material extraction, emerald material extraction respectively |
+| 1029–1035 | Iron/gold/copper smelting, then beef/pork/chicken/mutton cooking respectively |
+| 2001–2019 | Card recipes in the exact order listed in the card table above |
+| 3001–3005 | Bread, bow, arrows, shield, staff respectively |
+| 3101–3106 | Wood/stone/iron/gold/copper/diamond pickaxes |
+| 3111–3116 | Wood/stone/iron/gold/copper/diamond axes |
+| 3121–3126 | Wood/stone/iron/gold/copper/diamond swords |
+| 3131 | Wooden hoe |
+| 3201–3204 | Cloth head/chest/legs/feet armor |
+| 3211–3214 | Leather head/chest/legs/feet armor |
+| 3221–3224 | Iron head/chest/legs/feet armor |
+
+Unlisted numeric gaps are not implicit aliases for new recipes; check the
+versioned registry and migration ledger before allocating them. A card
+definition ID and its recipe ID are distinct namespaces and must never be
+conflated.
 
 ## 13. Required tests: Libft
 
@@ -560,7 +1447,7 @@ Add focused files under `Test/Test`, following `AGENTS.md` naming; extend existi
 | Card identity/zones | Instance exists in exactly one zone; transactional transfer; failed move retains source; four-copy policy across all deck zones; boundary sizes and invalid policies |
 | Draw policy | Full-hand burn, partial multi-draw, empty pile, legal reshuffle, no eligible cards, empty+overflow costs exactly once, no infinite refill loop |
 | Obligations/choices | Draw-two-discard-one, multi-option validation, duplicate discard, foreign instance, zero hand, timeout default, save/load pending resolution, action blocked until complete |
-| Effect transactions | Callback/script fail after emitted output, allocation failure at every preparation point, host rejection, rollback including RNG/outputs; durable retry protocol fake-host recovery |
+| Effect transactions | Callback/script fail after emitted output, allocation failure at every preparation point, host rejection, rollback including RNG/outputs; producer-pending/outbox snapshot restore, ordered consumer deduplication, prepare/commit/ack retries, payload-conflict rejection and fake-host crash recovery at every protocol boundary |
 | Generic schemas | Unknown intent/version, bad quantities, arithmetic overflow, output/node/byte caps, callback reentrancy, no raw-pointer wire payload |
 | Script bridge | Native and scripted equivalent effects; stable bindings, wrong manifest, invalid bytecode, instruction/native/output caps, diagnostics, no world/I/O access, concurrent isolated owners |
 | Persistence | Snapshot/delta round trips, unknown versions/IDs, corrupted lengths/checksum, rules mismatch, pending choices, burns, use counters and idempotency restored |
@@ -576,14 +1463,21 @@ Use the existing failure-injection conventions: allocation limit zero disables l
 Add deterministic card, inventory, recipe and regeneration validators alongside existing validators; wire accepted validators into `make validate-all` and the platform-equivalent runner.
 
 - Catalogue exhaustiveness: every registered block has one drop policy; every enabled craftable item has a valid recipe; every enabled card has an effect, item, recipe, knowledge policy and preview description. Starter counts total 20 and no definition exceeds four.
-- One table-driven test per card verifies legal targets, ordered effect, caps, no-op display, instance consumption, rare sourcing, instability output and clean base rules next session.
+- Card intent compatibility: assert the policy/empty-draw/overflow type IDs, version 2 field counts and scalar types, definition-to-effect-kind mapping, source-instance/request/sequence identity, and rejection of unknown versions or a mismatched effect kind. Round-trip the payload through adapter snapshots and replay. Verify Volatile Stabilizer and Unstable Catalyst private results are hidden from every client-facing query, preview, save export and diagnostic while remaining available to authoritative server recovery.
+- Future inventory/recipe read APIs: immutable inventory view reports one consistent revision and value-only item data; combined recipe query reports knowledge, station availability and ingredient deficits against stated inventory/catalogue/station revisions. Verify unauthorized actor redaction, stale query rejection/requery, exact craft retry, changed-payload rejection, and that read-only queries never mutate inventory, recipe knowledge or action caches.
+- One table-driven test per card verifies stable definition-ID mapping, legal targets, ordered effect, caps, no-op display, instance consumption, rare sourcing, instability output and clean base rules next session. Biome choice tests must prove config-local indices are rejected under a changed manifest and never silently remapped to another biome.
 - Sequential composition: remove biome then compass/guarantee; Deep Seam then doubling; multiple villages; final instability applied consistently to feature loot/spawners. Test incompatible ocean/desert/forest/cave footprints and unsupported required feature failure before spending.
 - Unstable Catalyst secrecy/permanence, pool coverage, reload/retry consistency; Volatile Stabilizer escalating curve/session counter, deterministic overload and irreversible outcome; kiss/curse reward opportunities and caps.
 - Multiplayer occupied chunk plus eight-neighbor exclusion, simultaneous reservations, glowing-wall movement/teleport/boat paths, disconnect/restart, five-minute timeout, no voluntary cancellation, resource journal recovery.
-- World Loom start APIs: select/unselect exact coordinates with revision/idempotency checks; cost query is non-mutating; opening counts 4Ã¢â‚¬â€œ7 cost `B4, 2B4, 4B4, 8B4`; overflow/insufficient dust/stale selection/occupied chunk leaves dust, reservations, barriers and CardGame hand unchanged; retry never charges or deals twice; committed start freezes selection and cannot be cancelled.
-- Per-chunk instability save/reload and challenge defaults; untouched chunks unchanged; multi-chunk feature atomicity and stale generation rejection.
+- World Loom lifecycle state machine: cancel an owned draft before commit with no debit; commit exact retry spends/deals/installs barriers once; reject cancel, selection edits and changed request payload after commit even during the decision window; restart preserves the same deadline and committed session; only the authoritative clock expires choices; generation/retry retains the committed rules and barriers until safe publication. Verify the solo/multiplayer deadline policy explicitly.
+- Durable CardGame-to-world intent transaction: persist the accepted action and complete outbox before host mutation; bind world/session/actor/request/action/intent identity to the canonical payload; inject restart/failure at producer-save, host-prepare, each participant mutation, host-commit, producer-ack and response boundaries. Verify at-least-once delivery produces one effective mutation, an exact replay returns the stored result, conflicting payload reuse fails closed, intent order is preserved, and unresolved prior effects block dependent card actions. Include both rule/instability/feature-plan changes and inventory/resource changes; test asynchronous chunk publication separately so retries never charge or consume the card twice.
+- World Loom start APIs: select/unselect exact coordinates with revision/idempotency checks; cost query is non-mutating; opening counts 4–7 cost `B4, 2B4, 4B4, 8B4`; overflow/insufficient dust/stale selection/occupied chunk leaves dust, reservations, barriers and CardGame hand unchanged; retry never charges or deals twice; committed start freezes selection and cannot be cancelled.
+- Opening-deal accounting: a fresh 20-card starter deck yields hand/draw-pile counts of 4/16 by default and `n/(20-n)` for every allowed opening size `n=4..7`; physical instance IDs remain unique and total owned cards remain 20. Imported-card cases add only their actual imported count and still enforce deck/copy caps.
+- Per-chunk instability: persist/reload the full world policy plus WCI1 records; zero default and selected nonzero challenge default; pre-v9 migration; policy-hash mismatch fails closed; untouched chunks remain unchanged; reward unlock monotonicity versus active danger-tier reduction after stabilization; multi-chunk feature atomicity, capacity/stale-record rejection, chunk+record crash recovery, and stale generation rejection.
 - Each ordinary/card recipe expands into a content-driven craft test with expected costs/yields/byproducts. Test inventory capacity failures preserve ingredients and unlock state. Book default workbench path, rare discovery and portable/world-bound character rules.
+- Physical card transfer: crafting creates one unique physical item; import removes that exact inventory instance and adds one matching session instance; export restores the same physical ID and is rejected if it would reduce the deck below 20. Cover copy/deck caps, stale inventory revisions, changed-payload request reuse, exact retry, crash after prepared checkpoint, crash after mutation before terminal checkpoint, recovery, failed final save rollback, and duplicate-ID detection across inventory/equipment/ground/entity/session-card stores.
 - World integration: station reach/claims/destruction race, grass-to-dirt drops, ore-block extraction, fluid-container transfers, crop/fruit/animal acquisition, boat item/entity transfer and save/reload exactly once.
+- Character/world admission: portable versus world-bound physical card/deck instances, ordinary inventory/equipment, and recipe-unlock provenance; policy filtering without deleting source-world state; destination policy changes; missing-scope legacy migration; simultaneous-join leases; exact join retries; crashes between prepare/commit/save; backup/restore; and proof that no physical ID or active World Loom session is duplicated or imported.
 - Performance: matched idle/play/draw/discard/research/crafting/timeout workloads, maximum legal deck and output limits, continuous block breaking during regeneration, inventory saves and chunk publication. Report frame mean/p95/p99, action latency, script operations, bytes/snapshot, generation/commit time, queue depth and allocations. No render-thread unbounded loop.
 
 Libft tests prove mechanics; Minecraft tests prove named content and world rules. Do not duplicate a hard-coded Minecraft recipe/biome catalogue in Libft just to run library tests. Golden replay fixtures use versioned definitions and seed, not unspecified RNG outputs.
@@ -594,14 +1488,14 @@ Libft tests prove mechanics; Minecraft tests prove named content and world rules
 |---|---|---|---|
 | 0 | Baseline API/limit audit, build/tests, dependency and save-version plan | Nothing | Record actual existing passing tests; no new feature marked done |
 | 1 | Inventory prepare/commit and recipe-owned transactional outputs | Baseline | Failure/duplicate/concurrency tests pass; inventory/crafting foundations integrated status only |
-| 2 | Generic action envelopes, non-combat resolution, outputs and durable protocol | Baseline | Replay/rollback/snapshot tests pass; update Libft CardGame API status |
+| 2 | Generic action envelopes, non-combat resolution, outputs and durable protocol | Baseline | Libft outbox/ordering/rollback/snapshot tests and Minecraft shared-journal crash matrix pass; exact result replay, payload-conflict rejection, and safe retention/expiry are proven before the action is reported committed |
 | 3 | Draw/burn/mandatory discard/choice policies and copy limits | 2 | Full boundary matrix; update deck/hand decision mechanics status |
-| 4 | Script bridge and stable manifest | 2Ã¢â‚¬â€œ3 | Native/script equivalence, bounded failures, platform replay tests |
-| 5 | Recipe book/catalogue extensions and timed processing | 1 | Unlock, output/byproduct, save/load/fuel tests |
-| 6 | Minecraft item/drop/recipe catalogue and starter card host | 1Ã¢â‚¬â€œ5 | Full registry coverage, all starter effects, bootstrap economy and content validators |
+| 4 | Script bridge and stable manifest | 2–3 | Native/script equivalence, bounded failures, platform replay tests |
+| 5 | Recipe book/catalogue extensions and timed processing | 1 | Unlock, output/byproduct, snapshot-query consistency, save/load/fuel tests; verify all catalog rows bind to the same inventory/catalogue revisions |
+| 6 | Minecraft item/drop/recipe catalogue and starter card host | 1–5 | Full registry coverage, all starter effects, bootstrap economy and content validators |
 | 7 | Regeneration reservation/lifecycle and per-chunk persistence | 6 + existing generation | Multiplayer barriers/timeouts, base snapshot isolation and atomic publication |
 | 8 | Rare cards, instability overlays, discoveries/research | 7 | Every current rare card tested, hidden/permanent outcomes and kiss/curse balance checks |
-| 9 | UI/network/save integration, security and matched performance | All | Normal/analytics builds and full validators pass on target platforms |
+| 9 | Future-caller API/network/save integration, security and matched performance | All | Typed APIs are reachable through an authorized host boundary; normal/analytics builds and full validators pass on target platforms. UI design and implementation remain out of scope |
 
 Independent work can run in parallel after contracts are decided: generic inventory transactions, command envelope tests and content-table documentation. Avoid concurrent workers changing the same snapshot/wire schema. Narrow worker tasks specify exact files, behavior, constraints and tests; lead reviews integrations before marking complete.
 
@@ -659,9 +1553,9 @@ Validation update (2026-10-10): `game_crafting_ingredient` now accepts up to eig
 
 Validation update (2026-10-10): Minecraft's item catalogue now registers 97 ordinary content definitions covering processing materials, food, equipment, and the seven starter plus eleven current craft-only card items. Every definition declares a stack limit and one primary acquisition category (recipe, world, harvest, or discovery); built-in block items resolve to world acquisition, bedrock resolves to restricted acquisition, and filled buckets resolve to world acquisition. `validate_content_coverage` checks each content definition and policy against the registered catalogue. The edited catalog and validator compile with the repository's strict MinGW warning flags; a linked runtime smoke check passed catalog initialization, coverage validation, and representative recipe/harvest/world/restricted lookups. Full make validation was unavailable because the bundled `make.exe` crashed immediately, while `mingw32-make` could not start Git Bash under the current sandbox. The item catalogue is now present, but recipe registration, tag expansion, processing, card outputs, and the full acquisition pipeline remain open.
 
-Validation update (2026-10-10): The content catalog now contains 99 definitions after adding Card Press and World Loom. `MinecraftRecipeCatalog` registers 25 stable recipe IDs (1001Ã¢â‚¬â€œ1025), with explicit ingredient alternatives, station restrictions, initial recipe-book grants, a locked magical-dust recipe, and empty-bucket byproducts for paper and ink processing. Oak, pine, and birch boats all use the shared boat item definition. Strict MinGW compilation of the recipe catalog succeeds, and the linked `--validate-item-catalog` smoke harness passes, including a paper-mill craft that consumes water and returns an empty bucket. This remains a bootstrap subset: symbolic tags, the complete ordinary/equipment/card recipe set, timed furnace and paper-mill jobs, recipe-book persistence/session integration, unlock discovery, and the full acquisition transaction are still open. The full make target remains unavailable in this Windows runner because its make/Git Bash launch failures have not been resolved.
+Validation update (2026-10-10): The content catalog now contains 99 definitions after adding Card Press and World Loom. `MinecraftRecipeCatalog` registers 25 stable recipe IDs (1001–1025), with explicit ingredient alternatives, station restrictions, initial recipe-book grants, a locked magical-dust recipe, and empty-bucket byproducts for paper and ink processing. Oak, pine, and birch boats all use the shared boat item definition. Strict MinGW compilation of the recipe catalog succeeds, and the linked `--validate-item-catalog` smoke harness passes, including a paper-mill craft that consumes water and returns an empty bucket. This remains a bootstrap subset: symbolic tags, the complete ordinary/equipment/card recipe set, timed furnace and paper-mill jobs, recipe-book persistence/session integration, unlock discovery, and the full acquisition transaction are still open. The full make target remains unavailable in this Windows runner because its make/Git Bash launch failures have not been resolved.
 
-Validation update (2026-10-10): Superseding the previous count, `MinecraftRecipeCatalog` now registers 44 stable recipes: the 26-item-ID range 1001Ã¢â‚¬â€œ1026 (with 1024/1025 as pine/birch boats), plus 18 Card Press outputs at 2001Ã¢â‚¬â€œ2018. The seven common card recipes and the current 11 rare card recipes are registered with default-known and locked states respectively; advanced ink and magical dust are locked. The item-catalog validator checks those book states along with station gating and the water-bucket return transaction. Strict warning-as-error MinGW compilation and the linked validator pass (`content=99`). Card ingredients are still placeholder approximations for some chosen tags and multi-catalyst recipes, and recipe outputs do not yet mint globally unique physical card instance IDs. The ordinary gear/food/ore recipes, timed processing, recipe-book session persistence, data-driven progression unlock sources, symbolic tags, and full acquisition pipeline remain incomplete; the full make runner is still unable to start in this Windows environment.
+Validation update (2026-10-10): Superseding the previous count, `MinecraftRecipeCatalog` now registers 44 stable recipes: the 26-item-ID range 1001–1026 (with 1024/1025 as pine/birch boats), plus 18 Card Press outputs at 2001–2018. The seven common card recipes and the current 11 rare card recipes are registered with default-known and locked states respectively; advanced ink and magical dust are locked. The item-catalog validator checks those book states along with station gating and the water-bucket return transaction. Strict warning-as-error MinGW compilation and the linked validator pass (`content=99`). Card ingredients are still placeholder approximations for some chosen tags and multi-catalyst recipes, and recipe outputs do not yet mint globally unique physical card instance IDs. The ordinary gear/food/ore recipes, timed processing, recipe-book session persistence, data-driven progression unlock sources, symbolic tags, and full acquisition pipeline remain incomplete; the full make runner is still unable to start in this Windows environment.
 
 Validation update (2026-10-10): The bootstrap catalog has expanded to 79 registered recipes. It now includes bread, bow, arrows, shield, staff, all six configured pickaxe/axe/sword tiers, and cloth/leather/iron armor pieces. Wood and stone tool recipes and cloth/leather armor are initially known; stronger metal/diamond gear, shield and staff remain locked. The catalog compiles with strict MinGW warnings as errors, and the linked item-catalog validator passes after loading the expanded recipe book. This closes those immediate recipe registrations only: bar smelting and cooked meats still require timed fuel processing; ore extraction and remaining material/gear policies need coverage; card catalyst fidelity and unique physical output IDs remain open, as do session persistence, data-driven unlock sources, symbolic tags and end-to-end acquisition transactions.
 
@@ -679,7 +1573,7 @@ Unique output commit update (2026-10-10): `game_crafting::commit_craft` now has 
 
 Unique output allocation and persistence update (2026-10-10): `MinecraftRecipeCatalog::commit_unique_craft` now supplies monotonically increasing host IDs to the Libft commit overload and retries IDs already present in the inventory. The Shipwreck Chart integration validator crafts through this path and checks its nonzero instance ID. Session snapshot version 3 saves/restores the allocator's next ID alongside the recipe book; versions 1 and 2 remain supported. Strict MinGW compilation succeeds for the catalog, persistence layer, session, and affected validators. Relinked focused validators both pass: world-item/session persistence reports `inventory=paired recipe-book=restored`, and item catalog reports `builtin=64 runtime=0 content=99`. The persisted allocator counter is restored after load. This allocator is session-owned and does not yet guarantee uniqueness across separate sessions or all world/container stores. Timed processing, item acquisition transactions, and broader recipe coverage remain open.
 
-Recipe-acquisition coverage update (2026-10-10): `MinecraftRecipeCatalog` records all primary and returned-container outputs and validates them against the item catalogue. `--validate-item-catalog` now fails when a content item labeled recipe-acquired has no registered recipe. This found missing furnace recipes for iron, gold and copper bars and cooked beef, pork, chicken and mutton; stable recipe IDs 1029Ã¢â‚¬â€œ1035 now cover those seven outputs. Strict MinGW compilation and the linked item-catalog validator pass (`builtin=64 runtime=0 content=99`). The coverage check includes recipe-book-locked outputs and returned empty buckets. These furnace recipes currently use instant crafting transactions; reserved inputs/fuel, elapsed server ticks, pending outputs, and persisted timed jobs are still required by Section 9. Remaining acquisition contracts include harvest/drop execution and atomic coordination with block edits, inventory, ground items, and host intents.
+Recipe-acquisition coverage update (2026-10-10): `MinecraftRecipeCatalog` records all primary and returned-container outputs and validates them against the item catalogue. `--validate-item-catalog` now fails when a content item labeled recipe-acquired has no registered recipe. This found missing furnace recipes for iron, gold and copper bars and cooked beef, pork, chicken and mutton; stable recipe IDs 1029–1035 now cover those seven outputs. Strict MinGW compilation and the linked item-catalog validator pass (`builtin=64 runtime=0 content=99`). The coverage check includes recipe-book-locked outputs and returned empty buckets. These furnace recipes currently use instant crafting transactions; reserved inputs/fuel, elapsed server ticks, pending outputs, and persisted timed jobs are still required by Section 9. Remaining acquisition contracts include harvest/drop execution and atomic coordination with block edits, inventory, ground items, and host intents.
 
 Physical-ID load reconciliation update (2026-10-10): Combined session version-3 loading now scans staged character inventory and staged ground-item contents for the highest persisted physical item ID. If the saved recipe-catalog counter is nonzero but not above that ID, the loader advances it to the next ID (or leaves it exhausted after `UINT64_MAX`). `WorldItemStore::get_max_item_instance_id` performs the ground-item scan under the store lock. The persistence validator saves a deliberately stale counter (5002) alongside character ID 7000 and ground ID 9000, then verifies the restored allocator starts at 9001; attempts to lower it are rejected. Outer-checksum and inner-recipe corruption preserve the live counter and character state. Strict MinGW compilation and the linked world-item/session validator pass. This prevents new recipe outputs from reusing IDs present in these persisted stores; it does not yet reject duplicate IDs already present across inventories, or cover other world/container saves and concurrent sessions.
 
@@ -695,7 +1589,7 @@ Runtime block validator follow-up (2026-10-10): The changed `ItemCatalogValidato
 
 Hand crafting session API update (2026-10-10): `MinecraftRecipeCatalog` now exposes hand-only recipe query and craft actions, and `GameSession` routes them to its character inventory. Craft calls require a nonzero monotonically increasing request ID and the expected inventory revision. Exact retained retries return the original status/revision; changed payloads are rejected, stale revisions are cached as failures, and evicted IDs cannot execute again because the high-water mark is retained. The cache is bounded to 4,096 entries and is volatile per session. The item-catalog integration validator now confirms successful planks crafting, no duplicate output on retry, changed-payload rejection, and exact stale-revision failure replay. Strict MinGW compilation and a directly linked focused validator pass (`item-catalog: ok builtin=64 runtime=0 content=99`). The API always uses station 0, so it cannot claim workbench, Paper Mill, Card Press or Furnace access. Real station blocks/reach/permission checks, workstation craft actions, UI/network transport, durable cache persistence, and timed processing remain open.
 
-Craft action persistence update (2026-10-10): Combined GameSession snapshots now use version 4 to store the bounded hand-craft request cache beside character inventory, ground items, recipe book and physical-ID allocator. Cache records retain the request high-water mark, recipe/batch payload, expected and resulting inventory revisions, and terminal status; load validates cache checksum, record bounds/order and IDs before changing catalog state. Versions 1Ã¢â‚¬â€œ3 and legacy WISP saves remain readable, and older formats start with an empty craft-action cache. The WorldItemStore/session validator now crafts planks, records a stale-revision failure, saves/loads, verifies exact successful and failed retries do not mutate inventory, rejects changed payloads, and rejects a cache-checksum-corrupt file with a valid outer checksum while preserving live state. Strict MinGW compilation and the directly linked validator pass (`world-items: ok partial=2 merge=partial query=bounded retry=stable snapshot=file-roundtrip inventory=paired recipe-book=restored craft-cache=restored`). CardGame play/draw/discard state and caches, station craft jobs/fuel/ticks, and a shared crash-recovery journal remain open.
+Craft action persistence update (2026-10-10): Combined GameSession snapshots now use version 4 to store the bounded hand-craft request cache beside character inventory, ground items, recipe book and physical-ID allocator. Cache records retain the request high-water mark, recipe/batch payload, expected and resulting inventory revisions, and terminal status; load validates cache checksum, record bounds/order and IDs before changing catalog state. Versions 1–3 and legacy WISP saves remain readable, and older formats start with an empty craft-action cache. The WorldItemStore/session validator now crafts planks, records a stale-revision failure, saves/loads, verifies exact successful and failed retries do not mutate inventory, rejects changed payloads, and rejects a cache-checksum-corrupt file with a valid outer checksum while preserving live state. Strict MinGW compilation and the directly linked validator pass (`world-items: ok partial=2 merge=partial query=bounded retry=stable snapshot=file-roundtrip inventory=paired recipe-book=restored craft-cache=restored`). CardGame play/draw/discard state and caches, station craft jobs/fuel/ticks, and a shared crash-recovery journal remain open.
 
 Craft snapshot compatibility follow-up (2026-10-10): The world-item/session validator now derives a version-3 file from a valid version-4 snapshot by removing the v4 cache-length field and cache payload, recomputing the outer checksum, and loading it through the catalog-aware path. The v3 file restores the recipe book and allocator while clearing request-cache state; a subsequent v1 load uses a fresh catalog and confirms common defaults remain while the v3 rare unlock is not introduced. Strict MinGW compilation and the directly linked validator pass (`world-items: ok partial=2 merge=partial query=bounded retry=stable snapshot=file-roundtrip inventory=paired recipe-book=restored craft-cache=restored`). This verifies the v1/v3 compatibility paths after the v4 format change; version 2 remains covered by its legacy recipe-book overload behavior, while chunk/card-match persistence and crash recovery remain open.
 Physical card transfer prerequisite update (2026-10-10): `game_inventory::remove_item_instance(slot, expected_revision, instance_id)` now provides the checked removal primitive required before a physical card item can enter a CardGame deck. It only removes a single-unit, nonzero-ID item when both the slot identity and captured inventory revision still match, and advances inventory revision after updating weight and slot usage. Added a focused regression covering wrong ID, stale revision, successful removal and repeated missing-slot behavior; its test translation unit compiles under strict warning-as-error flags, and a directly linked smoke executable passes (`inventory-instance-smoke: ok`). CardGame import and durable shared inventory/deck transactions are still unimplemented; this primitive alone does not close crash recovery or persist the cross-system identity mapping.
@@ -703,9 +1597,9 @@ Physical card import update (2026-10-10): `RegenerationCardSession::import_card_
 Physical card return and revisioned insertion update (2026-10-10): Libft `game_inventory::add_item_revisioned` now adds a unique one-unit physical item only when the caller's inventory revision matches, and returns the committed slot under the same transaction lock. Its regression covers stale-revision no-mutation, exact slot return, revision advance and duplicate physical-ID rejection; strict compilation and a direct MinGW smoke executable pass (`revisioned-inventory-add: ok`). `RegenerationCardSession::export_card_to_inventory` now returns imported starter instances with their stored item metadata, rejects a return that would reduce the session-owned deck below 20, and caches transfer results for exact retries. The regeneration validator additionally covers full-inventory failure without deck mutation, successful return, identity-map removal and exact retry; strict builds and the linked validator pass (`physical-transfer=ok`). The transfer pair is still process-local and assumes the documented simulation owner; the physical identity map/action cache are not serialized, shared crash journaling and concurrency barriers are not present, and rare cards remain unavailable.
 Timed-processing transaction foundation update (2026-10-10): Libft `game_crafting::prepare_processing_at_station` now validates recipe ownership, unlock, station, ingredients and inventory revision while preparing an inputs-only inventory result. It returns a fixed-width, value-only snapshot for the primary product and every byproduct, scaled to the batch, without requiring product capacity in the source inventory. `commit_processing_inputs` commits only input consumption through the same stale-revision and staged-inventory checks; a host job can retain the product snapshot and retry delivery later if inventory is full. A regression covers normal immediate crafting failing for full output capacity, processing preparation succeeding, input consumption once, pending output remaining outside inventory while full, and later output insertion. Strict MinGW compilation and a directly linked smoke executable pass (`craft-processing-inputs: ok`). Fuel reservation policy, authoritative tick scheduler, pending-job cache, save/load, unload/reload and output-delivery idempotency are not yet implemented.
 
-Minecraft furnace queue update (2026-10-10): `MinecraftRecipeCatalog` now registers one coal per smelt input and exposes an authoritative-owner-thread processing queue for recipe IDs 1029Ã¢â‚¬â€œ1035. Starts are revision checked and cached for exact retries; the batch and queue are bounded. The tick API advances jobs within a caller-supplied budget, keeps finished output pending when inventory insertion fails for capacity or allocation, and removes the job only after successful insertion. This implementation is still volatile: queue state and retry results are not included in `GameSessionPersistence`, station entity/access checks are not integrated, and recovery across a crash between inventory commit and save is not guaranteed. Strict MinGW compile of `MinecraftRecipeCatalog.cpp` passed with `-Wall -Wextra -Werror`, `LIBFT_INTERNAL_HEADERS`, and the voxel backend define. Focused runtime validation and save/load coverage remain required.
+Minecraft furnace queue update (2026-10-10): `MinecraftRecipeCatalog` now registers one coal per smelt input and exposes an authoritative-owner-thread processing queue for recipe IDs 1029–1035. Starts are revision checked and cached for exact retries; the batch and queue are bounded. The tick API advances jobs within a caller-supplied budget, keeps finished output pending when inventory insertion fails for capacity or allocation, and removes the job only after successful insertion. This implementation is still volatile: queue state and retry results are not included in `GameSessionPersistence`, station entity/access checks are not integrated, and recovery across a crash between inventory commit and save is not guaranteed. Strict MinGW compile of `MinecraftRecipeCatalog.cpp` passed with `-Wall -Wextra -Werror`, `LIBFT_INTERNAL_HEADERS`, and the voxel backend define. Focused runtime validation and save/load coverage remain required.
 
-Furnace persistence follow-up (2026-10-10): Processing jobs and retained start results now serialize as bounded `MCPJ` version 1 state. Validation checks checksum, version, high-water mark, action/job correspondence, recipe/batch limits, output values and complete input consumption before restoring staged maps. Combined `GameSessionPersistence` is now version 5 and includes the processing payload; versions 1Ã¢â‚¬â€œ4 remain readable and older loads clear processing state. `MinecraftRecipeCatalog.cpp` and `GameSessionPersistence.cpp` compile with strict MinGW warnings as errors. This is save/load plumbing without runtime roundtrip verification. It does not make inventory input consumption and save writes one atomic durable transaction, nor does it persist the furnace block/station owner or handle chunk unload/reload.
+Furnace persistence follow-up (2026-10-10): Processing jobs and retained start results now serialize as bounded `MCPJ` version 1 state. Validation checks checksum, version, high-water mark, action/job correspondence, recipe/batch limits, output values and complete input consumption before restoring staged maps. Combined `GameSessionPersistence` is now version 5 and includes the processing payload; versions 1–4 remain readable and older loads clear processing state. `MinecraftRecipeCatalog.cpp` and `GameSessionPersistence.cpp` compile with strict MinGW warnings as errors. This is save/load plumbing without runtime roundtrip verification. It does not make inventory input consumption and save writes one atomic durable transaction, nor does it persist the furnace block/station owner or handle chunk unload/reload.
 
 Processing persistence validation follow-up (2026-10-10): `WorldItemStoreValidator` now drives a furnace job through the combined version-5 save/load path, checking consumed raw beef/coal, retained exact start retry, partial tick progress and single cooked-beef delivery after the resumed deadline. It also adapts the existing version-3 compatibility fixture from a version-5 file by removing both the cache fields and job payload, while retaining the separate version-1 load path. The changed validator compiles with strict MinGW warnings as errors; the runtime validator has not yet been linked or executed against the modified catalog and persistence objects.
 
@@ -748,7 +1642,7 @@ Durable hand-craft recovery update (2026-10-10): Added `WorldItemCraftTransactio
 
 CardGame byte snapshot codec update (2026-10-10): Added a versioned `GCGS` little-endian engine snapshot format in `card_game_snapshot.cpp`. It binds serialized state to the initialized rules hash, includes a checksum, and encodes player state, events, modifiers, host intents, custom zones, resources, allowances, choices, and usage limits. Restore stages dynamic data and delegates publication to the existing validated snapshot application path. A focused test covers state-hash equality after round-trip, rules-hash mismatch, and rejection of corruption/truncation without mutating live state. Review also found that vector allocation inside the `noexcept` writer path could terminate the process; writer allocation now propagates to the serializer's `FT_ERR_NO_MEMORY` handler. Codec and test translation units compile under strict MinGW warnings as errors, and a directly linked runtime smoke passed an engine snapshot round-trip with matching state hashes.
 
-CardGame session persistence update (2026-10-11): Added versioned `RCS1` serialization for `RegenerationCardSession`. It includes the engine snapshot, play/draw/discard/import/export replay caches, pending Double Draft obligation, transfer and command counters, and physical-card-to-item snapshots. Restore validates checksums, cache identities and physical-card bijection before publishing the reconstructed state. `GameSession` now initializes a seed-bound starter session for new/legacy worlds, restores adapter bytes from the v7 snapshot, and writes them at shutdown; v7 places this bounded payload after the v6 journal while versions 1Ã¢â‚¬â€œ6 retain their existing layouts. The RegenerationCard runtime validator passes with round-trip checks for imported physical identity, import/export request replay and Double Draft play/draw/discard replays. Strict MinGW compilation passes for the adapter, validator, GameSession and persistence sources. The session lifecycle test exposed that destroy/reinitialize retained stale engine subobjects; `RegenerationCardSession::destroy` now reconstructs its engine object, and the runtime validator covers reinitialization. The world-item v7 payload validator compiles but was not runnable: bundled Make crashes with `0xc0000008`, MinGW Make's Git Bash fails `NtCreateDirectoryObject` with `0xC0000022`, and a manually linked broad validator exits before reporting. Other CardGame effects still lack world consumers; host-intent economic journaling, action expiry/default policy, and World Loom atomic regeneration commits remain open.
+CardGame session persistence update (2026-10-11): Added versioned `RCS1` serialization for `RegenerationCardSession`. It includes the engine snapshot, play/draw/discard/import/export replay caches, pending Double Draft obligation, transfer and command counters, and physical-card-to-item snapshots. Restore validates checksums, cache identities and physical-card bijection before publishing the reconstructed state. `GameSession` now initializes a seed-bound starter session for new/legacy worlds, restores adapter bytes from the v7 snapshot, and writes them at shutdown; v7 places this bounded payload after the v6 journal while versions 1–6 retain their existing layouts. The RegenerationCard runtime validator passes with round-trip checks for imported physical identity, import/export request replay and Double Draft play/draw/discard replays. Strict MinGW compilation passes for the adapter, validator, GameSession and persistence sources. The session lifecycle test exposed that destroy/reinitialize retained stale engine subobjects; `RegenerationCardSession::destroy` now reconstructs its engine object, and the runtime validator covers reinitialization. The world-item v7 payload validator compiles but was not runnable: bundled Make crashes with `0xc0000008`, MinGW Make's Git Bash fails `NtCreateDirectoryObject` with `0xC0000022`, and a manually linked broad validator exits before reporting. Other CardGame effects still lack world consumers; host-intent economic journaling, action expiry/default policy, and World Loom atomic regeneration commits remain open.
 
 Deterministic choice expiry update (2026-10-11): Exposed the choice ledger's existing transactional default resolver through `card_game_engine::resolve_expired_choices(authoritative_epoch, resolved_count)`. The engine advances its state sequence only when one or more expired choices resolve, reports the count, and keeps the operation idempotent on subsequent calls. The choice ledger prevalidates every expired default before resolving any, so a missing/invalid default leaves all pending choices unchanged. Strict MinGW compilation and a directly linked runtime smoke pass for pre-deadline no-op, deadline default selection, state-hash update, and exact repeated-call no-op. This provides the engine primitive only; the authoritative multiplayer clock, durable server action record, session deadline/restart recovery, and World Loom expiry workflow remain open.
 
@@ -756,7 +1650,7 @@ GameSession v7 payload recovery fix (2026-10-11): Runtime round-trip exposed tha
 
 Minecraft item-tag update (2026-10-11): Added stable named tag groups for wood logs, wood planks, crystal samples, ore samples, and flower pigments to `MinecraftItemCatalog`. Tag resolution stages its result so unknown tags or allocation failure leave the caller's output unchanged. `MinecraftRecipeCatalog` now resolves its wood, crystal, ore-sample, and pigment ingredient groups from those tags, removing the previous repeated plank ID lists from recipe declarations. `ItemCatalogValidator` checks deterministic group membership and unknown-tag rollback. Strict MinGW compilation and a directly linked catalog/recipe runtime smoke pass (`minecraft-item-tags: ok wood-planks=3 recipes=registered`). The complete canonical item acquisition and recipe catalog remains open.
 
-GameSession regeneration-rules snapshot update (2026-10-11): GameSession now owns RegenerationWorldRules, initializes it from immutable world-generation configuration and session policy, serializes its state alongside the CardGame snapshot and transaction journal, and exposes apply_pending_regeneration_card_intent plus begin_card_regeneration_revision. The intent consumer stages the CardGame and rules snapshots, consumes the host intent, and checkpoints both in version 8; failures restore the pre-consumption snapshots. Versions 1Ã¢â‚¬â€œ7 remain readable, and existing save overloads keep their previous formats. A v8 runtime smoke initially exposed the card payload offset including trailing rules bytes; the loader now computes the card start after the journal and limits the copied range to the card payload. The rebuilt smoke passes exact card/rules payload and prepared-journal round-trip (save=0, load=0). WorldItemStoreValidator now covers v8 card/rules payload restoration and unchanged output vectors on checksum failure. Strict MinGW compilation passes for persistence, GameSession and validator translation units. This checkpoints rules and intent acknowledgement together but does not yet provide the full World Loom start transaction, durable expiry coordination, or atomic interaction with chunk reservations and currency debit.
+GameSession regeneration-rules snapshot update (2026-10-11): GameSession now owns RegenerationWorldRules, initializes it from immutable world-generation configuration and session policy, serializes its state alongside the CardGame snapshot and transaction journal, and exposes apply_pending_regeneration_card_intent plus begin_card_regeneration_revision. The intent consumer stages the CardGame and rules snapshots, consumes the host intent, and checkpoints both in version 8; failures restore the pre-consumption snapshots. Versions 1–7 remain readable, and existing save overloads keep their previous formats. A v8 runtime smoke initially exposed the card payload offset including trailing rules bytes; the loader now computes the card start after the journal and limits the copied range to the card payload. The rebuilt smoke passes exact card/rules payload and prepared-journal round-trip (save=0, load=0). WorldItemStoreValidator now covers v8 card/rules payload restoration and unchanged output vectors on checksum failure. Strict MinGW compilation passes for persistence, GameSession and validator translation units. This checkpoints rules and intent acknowledgement together but does not yet provide the full World Loom start transaction, durable expiry coordination, or atomic interaction with chunk reservations and currency debit.
 
 Authoritative choice-expiry session bridge (2026-10-11): `RegenerationCardSession` now exposes the engine default resolver, and `GameSession::resolve_expired_regeneration_choices(authoritative_epoch, resolved_count)` checkpoints resolved defaults through the combined v8 save. The method accepts only an externally supplied authoritative epoch; it does not use client time. It snapshots the adapter first and restores it if persistence fails, while a no-op expiry does not rewrite the save. The adapter, GameSession and regeneration-card validator translation units compile with strict MinGW warnings as errors. A runtime clock/restart coordinator still must call this API from authoritative server time and recover the decision window lifecycle.
 
@@ -895,13 +1789,13 @@ open.
 Host-intent consumer rollback reporting (2026-10-11): GameSession::apply_pending_regeneration_card_intent now checks each compensating operation after a failed rules/selection/session checkpoint: removing an added bonus chunk, restoring card and rules snapshots, and refreshing pending-revision rules. It returns the first rollback error when compensation fails, instead of hiding it behind the original operation error. Strict Windows MinGW syntax compilation passes for GameSession.cpp; the full validator remains unavailable through the Make runner's MSYS named-object error. Persistent host-intent delivery and journal coordination remain open.
 
 
-World Revision host commit boundary (2026-10-11): WorldRevisionServer no longer calls World::start_revision_regeneration() directly on confirm. Hosts must install a WorldRevisionServerStartCommitter before initialization; confirm supplies the resolved actor/Loom IDs, request ID, expected selection and pricing-policy revisions, and opening-card count (4â€“7). The server caches the callback result by actor/Loom/request, so exact retry does not invoke it twice and changed payload reuse is rejected. WorldRevisionValidator covers parameter delivery, exact retry, changed-payload rejection, and a server without a configured committer refusing confirm while leaving the draft pending. Strict MinGW syntax compilation passes for server and validator. No application currently wires the callback to GameSession; the durable resource debit, card deal, chunk reservation/barriers and generation commit remain open.
+World Revision host commit boundary (2026-10-11): WorldRevisionServer no longer calls World::start_revision_regeneration() directly on confirm. Hosts must install a WorldRevisionServerStartCommitter before initialization; confirm supplies the resolved actor/Loom IDs, request ID, expected selection and pricing-policy revisions, and opening-card count (4–7). The server caches the callback result by actor/Loom/request, so exact retry does not invoke it twice and changed payload reuse is rejected. WorldRevisionValidator covers parameter delivery, exact retry, changed-payload rejection, and a server without a configured committer refusing confirm while leaving the draft pending. Strict MinGW syntax compilation passes for server and validator. No application currently wires the callback to GameSession; the durable resource debit, card deal, chunk reservation/barriers and generation commit remain open.
 
 
-Opening-deal adapter slice (2026-10-11): RegenerationCardSession::deal_starting_hand can extend the pristine four-card bootstrap hand to a quoted 4â€“7 cards. It rejects use after card actions/transfers, stores request ID and target size in RCS1 snapshot version 3, returns the same result on exact retry after restore, and rejects changed request reuse. Versions 1 and 2 remain readable; the compatibility validator builds a v1 fixture by stripping the v3 extensions. A validator now checks hand/deck counts, in-process retry, snapshot restore, and restored retry. Strict MinGW compilation passes for adapter, persistence, and validator sources; runtime remains unverified because the full Make runner cannot launch Git Bash. Resource debit and invoking this operation through the World Loom commit transaction remain open.
+Opening-deal adapter slice (2026-10-11): RegenerationCardSession::deal_starting_hand can extend the pristine four-card bootstrap hand to a quoted 4–7 cards. It rejects use after card actions/transfers, stores request ID and target size in RCS1 snapshot version 3, returns the same result on exact retry after restore, and rejects changed request reuse. Versions 1 and 2 remain readable; the compatibility validator builds a v1 fixture by stripping the v3 extensions. A validator now checks hand/deck counts, in-process retry, snapshot restore, and restored retry. Strict MinGW compilation passes for adapter, persistence, and validator sources; runtime remains unverified because the full Make runner cannot launch Git Bash. Resource debit and invoking this operation through the World Loom commit transaction remain open.
 
 
-GameSession World Loom commit slice (2026-10-11): GameSession::bind_world_revision_server installs a host commit callback, and commit_regeneration_start validates actor/Loom/request IDs plus the quoted selection and cost-policy revisions, calculates the authoritative quote, rejects currency amounts that cannot fit the inventory API, prepares a WLS1 shared-journal record and saves before mutation, consumes the quoted currency, completes the persisted 4â€“7 opening deal, then starts selected-chunk generation and records COMMITTED. Failures before generation restore value-snapshot inventory and card session, mark the request ABORTED and checkpoint. Startup recovery aborts a remaining PREPARED record because World Revision draft/selection state is not persisted. Strict MinGW syntax compilation passes for GameSession and WorldRevisionServer. No production server currently binds the callback; durable draft/reservation state, barrier placement, and recovery of the generation commit remain open. A terminal checkpoint failure after generation begins is surfaced, with the live session retaining the committed journal state; crash-consistent world/chunk persistence is not yet available.
+GameSession World Loom commit slice (2026-10-11): GameSession::bind_world_revision_server installs a host commit callback, and commit_regeneration_start validates actor/Loom/request IDs plus the quoted selection and cost-policy revisions, calculates the authoritative quote, rejects currency amounts that cannot fit the inventory API, prepares a WLS1 shared-journal record and saves before mutation, consumes the quoted currency, completes the persisted 4–7 opening deal, then starts selected-chunk generation and records COMMITTED. Failures before generation restore value-snapshot inventory and card session, mark the request ABORTED and checkpoint. Startup recovery aborts a remaining PREPARED record because World Revision draft/selection state is not persisted. Strict MinGW syntax compilation passes for GameSession and WorldRevisionServer. No production server currently binds the callback; durable draft/reservation state, barrier placement, and recovery of the generation commit remain open. A terminal checkpoint failure after generation begins is surfaced, with the live session retaining the committed journal state; crash-consistent world/chunk persistence is not yet available.
 
 
 World Loom decision-window lifecycle correction (2026-10-11): The host commit now stops after the quoted debit and persisted opening deal, leaving the pending revision available during the card decision window. GameSession::finalize_regeneration_start(authoritative_epoch) resolves expired choices using the supplied host epoch, consumes pending card intents through the durable session bridge, then starts generation. WorldRevisionServer freezes draft mutations after a successful commit while preserving exact request replay. Strict MinGW syntax compilation passes for the changed GameSession, server, adapter, persistence, and validator units. The host still needs to schedule finalization at the authoritative deadline and persist/recover the draft lifecycle; pending choice state is not itself a deadline gate in this method.
@@ -944,7 +1838,7 @@ Manifest limit correction (2026-10-11): The bridge manifest also includes the co
 
 Canonical schema hash validation (2026-10-11): A focused Libft runtime check now constructs two engines with identical host-intent definitions registered in opposite orders and confirms `get_script_environment_hash()` returns the same value. The script-catalog test also passes operation-limit mismatch and policy-hash mismatch rollback, checks a corrupted checksum, then loads and executes the matching catalogue.
 
-Minecraft catalog lifecycle slice (2026-10-11): `RegenerationCardSession` RCS1 version 4 snapshots now store the bridge manifest hash. Restore registers the saved context-key schema, restores its values, loads an optional caller-supplied catalog against the independently trusted content hash and current generation-policy hash, verifies the resulting bridge hash against the snapshot, then restores engine state. Legacy RCS1 versions 1â€“3 remain supported for scriptless sessions. `GameSession::configure_regeneration_script_catalog` accepts the bounded catalog and authenticated expected hash before `start()`; startup binds it to the calculated generation-policy manifest for both new and saved sessions. Strict MinGW syntax compilation passes for GameSession and both adapter translation units. Authored catalog delivery and host authentication of the content hash remain caller responsibilities; no authored Minecraft card scripts are configured yet.
+Minecraft catalog lifecycle slice (2026-10-11): `RegenerationCardSession` RCS1 version 4 snapshots now store the bridge manifest hash. Restore registers the saved context-key schema, restores its values, loads an optional caller-supplied catalog against the independently trusted content hash and current generation-policy hash, verifies the resulting bridge hash against the snapshot, then restores engine state. Legacy RCS1 versions 1–3 remain supported for scriptless sessions. `GameSession::configure_regeneration_script_catalog` accepts the bounded catalog and authenticated expected hash before `start()`; startup binds it to the calculated generation-policy manifest for both new and saved sessions. Strict MinGW syntax compilation passes for GameSession and both adapter translation units. Authored catalog delivery and host authentication of the content hash remain caller responsibilities; no authored Minecraft card scripts are configured yet.
 
 Starter effect preflight slice (2026-10-11): GameSession now checks a new card effect against the active `RegenerationWorldRules` before the adapter consumes its physical card. Biome-final-removal, ore caps, village/magma plan caps, bonus-target caps and compass weight limits are checked read-only; Double Draft has no world-policy precondition. Cached play retries bypass preflight and continue through the adapter's exact-payload replay checks. The World Revision validator now checks that a capped Village Charter is rejected before mutation and that its plan count remains unchanged. Strict MinGW syntax compilation and `git diff --check` pass. A focused direct MinGW runtime harness linked to current CardGame and adapter sources passes the capped-plan rejection and unchanged-count assertions; the full World Revision validator has not run.
 
@@ -956,7 +1850,7 @@ Ore Overgrowth consumable path (2026-10-11): The session now maps the crafted ph
 
 Chunk-local instability record foundation (2026-10-11): Added a World-owned per-coordinate store with optional challenge defaults, integer policy caps, independently configured monotonic reward/danger thresholds, compare-and-set updates, permanent modifier/version and feature outcome/version records, and generation revision/rules hash provenance. Its `WCI1` v1 codec is bounded, checksummed, tied to the configured policy hash, and restores transactionally; safe file replacement is available through World APIs. World Revision validator source now checks defaults, band transitions, cap/stale-revision rejection, metadata roundtrip and corruption rollback. A directly linked MinGW smoke passes the record update/roundtrip/corruption path, and strict MinGW syntax compilation passes for the store, facade, World and validator. Runtime integration with card actions, generation result commit, generated structure outcomes, and client-redacted views remains open; this is persistent state groundwork, not a complete instability gameplay loop.
 
-Combined instability checkpoint update (2026-10-11): Combined GameSession snapshots now write version 9, with a bounded optional chunk-instability payload after the version-8 card and regeneration-rules payloads. Versions 1â€“8 remain readable; older snapshots yield an empty instability payload, and version 9 permits an empty payload when no policy is configured. GameSession accepts an explicit instability policy before startup, configures the World store before restore, rejects stored records when no policy is supplied, and serializes configured records with every session checkpoint. WorldItemStoreValidator now covers version-9 opaque payload roundtrip and leaves its destination unchanged on checksum failure. Strict MinGW syntax compilation passes for GameSession, persistence, the World facade and validator; runtime execution remains unavailable through the current Make/MSYS launcher. Card action updates, generation commit provenance, and reward/danger gameplay remain open.
+Combined instability checkpoint update (2026-10-11): Combined GameSession snapshots now write version 9, with a bounded optional chunk-instability payload after the version-8 card and regeneration-rules payloads. Versions 1–8 remain readable; older snapshots yield an empty instability payload, and version 9 permits an empty payload when no policy is configured. GameSession accepts an explicit instability policy before startup, configures the World store before restore, rejects stored records when no policy is supplied, and serializes configured records with every session checkpoint. WorldItemStoreValidator now covers version-9 opaque payload roundtrip and leaves its destination unchanged on checksum failure. Strict MinGW syntax compilation passes for GameSession, persistence, the World facade and validator; runtime execution remains unavailable through the current Make/MSYS launcher. Card action updates, generation commit provenance, and reward/danger gameplay remain open.
 
 Ore Overgrowth instability slice (2026-10-11): GameSession now requires a host-configured positive per-use instability delta, bounded by the configured store maximum. The amount is included in the canonical regeneration manifest, so scripts and restored rules reject a changed value. Card preflight checks the cost against every selected chunk before the physical card is consumed. Pending intent application updates the selected chunks and checkpoints instability together with the card/rules acknowledgement; any update or save failure restores the prior store snapshot. When regeneration starts, the World materializes bounded instability records for selected chunks before queue submission; successful chunk publication records a per-chunk monotonic generation revision and effective generation configuration signature as provenance. The revision advances beyond the stored value after restart, while record allocation happens before workers are queued. World Revision validator source now checks manifest-hash sensitivity, record materialization, and provenance update. Strict MinGW syntax compilation passes for the session, rules, revision manager/facade, generation applier and validator. Runtime session action, generation publication, and injected-save-failure coverage remain open; other rare cards, generated feature outcomes, and client-redacted views remain unimplemented.
 
@@ -968,7 +1862,7 @@ Durable GameSession checkpoint slice (2026-10-11): `GameSessionPersistence::save
 
 Durable policy-file follow-up (2026-10-11): Standalone `RegenerationWorldRules::save_file` and `WorldRevisionMetadataStore::save_file` now use the same safe replacement primitive instead of visibility-only atomic writes. Rules overlays still require coordinated session/draft recovery, but their file payload and replacement metadata are flushed consistently with the combined save. Strict syntax compilation and diff checks are recorded with the current persistence slice; runtime validators remain unavailable through Make.
 
-This update supersedes the Script effect adapter row's earlier RCS1 version 3 and â€œcatalogue loading remains openâ€ status: catalogue validation and restore-time trusted-hash enforcement are implemented in the bridge, adapter and GameSession lifecycle. The row's still-open policy wiring is now narrowed to delivery of authored catalogues and authentication of the trusted hash at the host boundary.
+This update supersedes the Script effect adapter row's earlier RCS1 version 3 and “catalogue loading remains open” status: catalogue validation and restore-time trusted-hash enforcement are implemented in the bridge, adapter and GameSession lifecycle. The row's still-open policy wiring is now narrowed to delivery of authored catalogues and authentication of the trusted hash at the host boundary.
 
 Authorized instability-view protocol slice (2026-10-12): `WorldRevisionServer` now accepts authenticated `instability_view` queries with request IDs and chunk coordinates, and responds only with coordinates plus reward/danger bands from the World's public view API. Its request cache preserves the queried result for exact retries and rejects changed-payload reuse. `WorldRevisionValidator` now covers the response's redacted shape, exact retry, and altered-payload rejection. Strict MinGW syntax compilation passes for the server and validator; `git diff --check` passes. The network-level validator has not been executed, and no client UI consumes this response yet.
 
@@ -1073,10 +1967,10 @@ Station-scoped recipe query (2026-10-12): `MinecraftRecipeCatalog::query_recipe_
 
 Station craft transaction (2026-10-12): `GameSession::craft_station_recipe` now applies the same exact-station host authorization before submitting a craft. `WorldItemCraftTransaction` format v2 binds station ID, signed coordinates, and expected station revision into its prepared journal record; its recovery reader retains format-v1 hand crafts. `MinecraftRecipeCatalog` prepares/commits against the requested station and includes that context in craft action cache v2, retaining the v1 hand-only cache reader so exact retry cannot change station context. Strict MinGW warning-as-error syntax compilation passes for the catalog, transaction, session, and world-item validator units. Runtime journal recovery, cache migration, station authorization failures, workstation block placement, and crafting UI remain open.
 
-Physical workstation blocks (2026-10-12): Appended built-in `voxel:workbench`, `voxel:paper_mill`, and `voxel:card_press` at IDs 68â€“70; the built-in count advances to 71 and generator version to 10. All three are solid/breakable, have atlas mappings and drop their existing recipe-acquired station item. Item-to-block placement resolution now maps those items to the corresponding block IDs. The local station authorizer resolves each station ID to its exact block, so the station query and craft APIs can be used with placed local workstations. Strict MinGW warning-as-error syntax compilation passes for the voxel registry/data, block texture registry, item catalog, GameSession, and ItemCatalogValidator. Runtime catalog validation, station craft/recovery validation, and the workstation UI remain open.
+Physical workstation blocks (2026-10-12): Appended built-in `voxel:workbench`, `voxel:paper_mill`, and `voxel:card_press` at IDs 68–70; the built-in count advances to 71 and generator version to 10. All three are solid/breakable, have atlas mappings and drop their existing recipe-acquired station item. Item-to-block placement resolution now maps those items to the corresponding block IDs. The local station authorizer resolves each station ID to its exact block, so the station query and craft APIs can be used with placed local workstations. Strict MinGW warning-as-error syntax compilation passes for the voxel registry/data, block texture registry, item catalog, GameSession, and ItemCatalogValidator. Runtime catalog validation, station craft/recovery validation, and the workstation UI remain open.
 
 Configured Volcano Mark footprint (2026-10-12): Added a pre-start host setting
-for a 9ï¿½16 chunk square footprint. The selected width is included in the
+for a 9–16 chunk square footprint. The selected width is included in the
 generation manifest when non-default, while width 9 preserves the earlier
 manifest input. Card preflight, paid-chunk square search, revision reservation,
 feature-plan transfer and worker geometry now use the configured width; the
@@ -1458,7 +2352,7 @@ offline behavior, configurable hydration radius, and gameplay/render coverage.
 
 Crop policy persistence (2026-10-14): MCSP v14 now stores the 16-byte validated crop growth policy and restores it as the session's authoritative policy. Existing snapshots through v13 remain readable and use constructor defaults; snapshot validation rejects malformed policy lengths and values. The World Item Store validator now retains a v13 spawner compatibility roundtrip and adds a v14 non-default policy roundtrip plus future-version rejection at v15. Production persistence/session translation units pass strict warning-as-error syntax compilation. A standalone direct-linked v14 save/load smoke test passes with a non-default policy, and --validate-wheat-crop passes. The full --validate-world-items run has not returned an exit result from the runner. The smoke test caught and fixed an entity-section boundary bug in v14 parsing. Per-chunk growth deadlines/offline catch-up and hydration-radius configuration remain open.
 
-Configurable crop hydration radius (2026-10-14): CropGrowthPolicy now configures the shared horizontal water radius (0�8) used for farmland hydration and paper-reed growth. MCSP v15 persists the radius; v14 continues loading its 16-byte policy with the historical radius-4 default. The crop validator rejects out-of-range radii and proves a reed stays immature with water one block away at radius 0, then matures with radius 1 and sufficient light. Strict production syntax compilation, the focused crop validator, v15 standalone persistence smoke test, and git diff --check pass. Per-chunk growth deadlines and offline catch-up remain open.
+Configurable crop hydration radius (2026-10-14): CropGrowthPolicy now configures the shared horizontal water radius (0–8) used for farmland hydration and paper-reed growth. MCSP v15 persists the radius; v14 continues loading its 16-byte policy with the historical radius-4 default. The crop validator rejects out-of-range radii and proves a reed stays immature with water one block away at radius 0, then matures with radius 1 and sufficient light. Strict production syntax compilation, the focused crop validator, v15 standalone persistence smoke test, and git diff --check pass. Per-chunk growth deadlines and offline catch-up remain open.
 
 Per-chunk crop deadlines and offline-time policy (2026-10-14): MCSP v16 now persists a checksummed crop-growth state containing the validated policy, world simulation tick, and bounded sorted per-chunk next-growth deadlines. Startup restores those values; growth checks only due nearby chunks and checkpoints updated deadlines with crop mutations. Simulation ticks pause while the session is offline, so the system performs no wall-clock catch-up; a stale deadline advances by one scheduled growth attempt and is rescheduled from the restored simulation tick. The World Item Store compatibility validator now round-trips a CGS1 v16 payload with a negative chunk coordinate and rejects v17. Strict validator syntax compilation, direct-linked --validate-wheat-crop, and the standalone v14/v15/v16 persistence smoke pass. The full --validate-world-items direct-linked invocation did not return or show a running process in this runner, so full suite execution is unverified. Gameplay/render validation and broader system design sections remain open.
 
@@ -2339,3 +3233,21 @@ the cache contains the full rule including attack and mining power. Melee uses
 the cached rule; mining still resolves its tool requirements in the journalled
 mining transaction and is not yet connected to this cache. Source only; tests
 and compilation remain deferred until implementation work is complete.
+
+Immutable inventory recipe-query slice (2026-10-22): Libft now exposes
+`game_crafting::query_recipe_at_station_snapshot(...)`, evaluating ingredient
+alternatives, rarity allocation, station eligibility, and deficits from a
+caller-captured `game_inventory_snapshot` without live inventory access or
+mutation. It validates slot/weight aggregates, stack bounds, and duplicate
+physical IDs while respecting the inventory's unlimited-capacity and
+`USE_INVENTORY_SLOTS` configurations. Minecraft's aggregate
+`MinecraftRecipeCatalog::query_recipes(...)` captures inventory once and uses
+that same snapshot for all rows; its ItemCatalog validator exercises a
+craftable filtered query. Focused Libft query tests pass (4/4), `make -j4 normal`
+builds both normal and analytics executables, and `--validate-item-catalog`
+passes on both. The full Libft suite passes 6,507/6,507 from its supported
+working directory outside the sandbox. `make validate-all` was attempted but
+failed at the block-edit emissive-delete convergence timeout before the full
+suite completed; this is outside the recipe-query change and remains open.
+Concurrent recipe-book/catalog revision
+consistency and broader query-result versioning remain outside this change.

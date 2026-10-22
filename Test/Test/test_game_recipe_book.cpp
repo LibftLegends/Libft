@@ -104,6 +104,44 @@ FT_TEST(test_game_recipe_book_distinct_sources_do_not_duplicate_unlock)
     return (1);
 }
 
+FT_TEST(test_game_recipe_book_known_recipe_records_each_source_event)
+{
+    ft_vector<uint32_t> recipe_ids;
+    game_recipe_book source;
+    game_recipe_book restored;
+    game_recipe_unlock_result result = {};
+    ft_byte_buffer output;
+    ft_byte_buffer input;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&recipe_ids,
+        77U, 78U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.unlock_recipe_with_result(77U,
+        101U, &result));
+    FT_ASSERT_EQ(FT_TRUE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_TRUE, result.recipe_newly_known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.unlock_recipe_with_result(77U,
+        102U, &result));
+    FT_ASSERT_EQ(FT_TRUE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_FALSE, result.recipe_newly_known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.export_book(output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, input.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, input.append(output.data(), output.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.import_book(input));
+    FT_ASSERT_EQ(input.size(), input.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe_with_result(77U,
+        102U, &result));
+    FT_ASSERT_EQ(FT_FALSE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_FALSE, result.recipe_newly_known);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, restored.unlock_recipe_with_result(78U,
+        102U, &result));
+    FT_ASSERT_EQ(FT_FALSE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_FALSE, result.recipe_newly_known);
+    return (1);
+}
+
 FT_TEST(test_game_recipe_book_serialization_round_trip)
 {
     ft_vector<uint32_t> recipe_ids;

@@ -139,18 +139,19 @@ int32_t game_recipe_book::destroy() noexcept
     return (first_error);
 }
 
-int32_t game_recipe_book::unlock_recipe(uint32_t recipe_id,
-    uint64_t source_event_id, ft_bool *newly_unlocked) noexcept
+int32_t game_recipe_book::unlock_recipe_with_result(uint32_t recipe_id,
+    uint64_t source_event_id, game_recipe_unlock_result *result_out) noexcept
 {
     ft_size_t index;
     ft_bool was_unlocked;
     int32_t error_code;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
-        || newly_unlocked == ft_nullptr || recipe_id == 0U
+        || result_out == ft_nullptr || recipe_id == 0U
         || source_event_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    *newly_unlocked = FT_FALSE;
+    result_out->event_newly_recorded = FT_FALSE;
+    result_out->recipe_newly_known = FT_FALSE;
     if (this->_catalogue.find(recipe_id) == this->_catalogue.end())
         return (FT_ERR_NOT_FOUND);
     index = 0U;
@@ -176,9 +177,26 @@ int32_t game_recipe_book::unlock_recipe(uint32_t recipe_id,
     error_code = this->_unlock_events.push_back(record);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    result_out->event_newly_recorded = FT_TRUE;
     if (was_unlocked == FT_FALSE)
-        *newly_unlocked = FT_TRUE;
+        result_out->recipe_newly_known = FT_TRUE;
     return (FT_ERR_SUCCESS);
+}
+
+int32_t game_recipe_book::unlock_recipe(uint32_t recipe_id,
+    uint64_t source_event_id, ft_bool *newly_unlocked) noexcept
+{
+    game_recipe_unlock_result unlock_result = {};
+    int32_t error_code;
+
+    if (newly_unlocked == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    *newly_unlocked = FT_FALSE;
+    error_code = this->unlock_recipe_with_result(recipe_id, source_event_id,
+        &unlock_result);
+    if (error_code == FT_ERR_SUCCESS)
+        *newly_unlocked = unlock_result.recipe_newly_known;
+    return (error_code);
 }
 
 int32_t game_recipe_book::is_recipe_known(uint32_t recipe_id,

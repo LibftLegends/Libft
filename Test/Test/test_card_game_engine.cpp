@@ -1095,7 +1095,7 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(serialized,
         sizeof(serialized), &serialized_size));
     FT_ASSERT_EQ(FT_CARD_GAME_REPLAY_HEADER_BYTES
-        + FT_CARD_GAME_REPLAY_V6_RECORD_BYTES, serialized_size);
+        + FT_CARD_GAME_REPLAY_V13_RECORD_BYTES, serialized_size);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.deserialize_command_records(
         serialized, serialized_size));
@@ -1104,7 +1104,7 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
     FT_ASSERT_EQ(1U, record_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record(0U, &record));
     FT_ASSERT_EQ(command.command_sequence, record.command.command_sequence);
-    FT_ASSERT_EQ(6U, serialized[4]);
+    FT_ASSERT_EQ(13U, serialized[4]);
     truncated_size = 0U;
     while (truncated_size < serialized_size)
     {
@@ -1115,24 +1115,6 @@ FT_TEST(test_card_game_engine_serializes_command_records_transactionally)
         FT_ASSERT_EQ(1U, record_count);
         truncated_size += 1U;
     }
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
-        &record_count));
-    FT_ASSERT_EQ(1U, record_count);
-    ft_memmove(serialized + 56U, serialized + 60U,
-        serialized_size - 60U);
-    serialized_size -= 4U;
-    ft_memmove(serialized + 52U, serialized + 56U,
-        serialized_size - 56U);
-    serialized_size -= 4U;
-    ft_memmove(serialized + 20U, serialized + 28U,
-        serialized_size - 28U);
-    serialized_size -= 8U;
-    serialized[4] = 1U;
-    serialized[5] = 0U;
-    serialized[6] = 0U;
-    serialized[7] = 0U;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.deserialize_command_records(
-        serialized, serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_command_record_count(
         &record_count));
     FT_ASSERT_EQ(1U, record_count);

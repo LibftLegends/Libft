@@ -153,7 +153,8 @@ int32_t card_game_engine::validate_owned_card_copy_limit(
     if (result != FT_ERR_SUCCESS)
         return (result);
     result = this->get_card_type(type_id, &type);
-    if (result == FT_ERR_NOT_FOUND && type_id < 4U)
+    if (type_id < 4U && (result == FT_ERR_NOT_FOUND
+            || result == FT_ERR_INVALID_ARGUMENT))
         return (FT_ERR_SUCCESS);
     if (result != FT_ERR_SUCCESS)
         return (result);

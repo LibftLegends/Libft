@@ -484,6 +484,7 @@ FT_TEST(test_prepared_craft_alternative_ingredients_share_inventory_units)
     game_crafting_ingredient exact;
     ft_sharedptr<game_item> output;
     ft_sharedptr<game_item> input;
+    ft_sharedptr<game_item> second_input;
     const int32_t alternative_ids[2] = {7, 9};
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.initialize());
@@ -509,8 +510,9 @@ FT_TEST(test_prepared_craft_alternative_ingredients_share_inventory_units)
     FT_ASSERT_EQ(1U, query.missing_group_count);
     FT_ASSERT_EQ(1, query.missing_units);
     FT_ASSERT_EQ(9, missing[0].item_id);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_prepared_craft_item(9, 1, &input));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_prepared_craft_item(9, 1,
+        &second_input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(second_input));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.prepare_craft(inventory, 94,
         1, &prepared));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.commit_craft(inventory, &prepared));

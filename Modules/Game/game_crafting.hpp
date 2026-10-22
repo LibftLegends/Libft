@@ -267,6 +267,13 @@ class game_crafting
             const game_inventory &inventory, int32_t station_id,
             game_crafting_query_result *result,
             ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept;
+        /* Evaluates against one caller-captured immutable inventory revision.
+         * The snapshot and its items must remain unchanged for the duration
+         * of this call. */
+        int32_t query_recipe_at_station_snapshot(int32_t recipe_id,
+            const game_inventory_snapshot &inventory_snapshot,
+            int32_t station_id, game_crafting_query_result *result,
+            ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept;
         int32_t prepare_craft(const game_inventory &inventory, int32_t recipe_id,
             int32_t batch_count, game_crafting_prepared *prepared) noexcept;
         int32_t prepare_craft_at_station(const game_inventory &inventory,

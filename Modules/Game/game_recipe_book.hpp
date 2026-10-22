@@ -14,6 +14,12 @@ struct game_recipe_unlock_record
     uint32_t recipe_id;
 };
 
+struct game_recipe_unlock_result
+{
+    ft_bool event_newly_recorded;
+    ft_bool recipe_newly_known;
+};
+
 /*
  * Recipe IDs are stable catalogue IDs supplied at initialization. Unknown
  * imported IDs remain quarantined and round-trip for future catalogues.
@@ -44,6 +50,9 @@ class game_recipe_book
             const game_recipe_unlock_record *initial_unlocks,
             uint32_t initial_unlock_count) noexcept;
         int32_t destroy() noexcept;
+        int32_t unlock_recipe_with_result(uint32_t recipe_id,
+            uint64_t source_event_id,
+            game_recipe_unlock_result *result_out) noexcept;
         int32_t unlock_recipe(uint32_t recipe_id, uint64_t source_event_id,
             ft_bool *newly_unlocked) noexcept;
         int32_t is_recipe_known(uint32_t recipe_id, ft_bool *known) const noexcept;

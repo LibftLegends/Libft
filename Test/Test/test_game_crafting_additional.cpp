@@ -17,7 +17,7 @@ static void make_ingredient(game_crafting_ingredient &ingredient, int32_t id,
 FT_TEST(test_game_crafting_ingredient_default_rarity)
 {
     game_crafting_ingredient ingredient;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(0, 0, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(1, 1, -1));
     FT_ASSERT_EQ(-1, ingredient.get_rarity());
     return (1);
 }
@@ -35,7 +35,7 @@ FT_TEST(test_game_crafting_ingredient_values)
 FT_TEST(test_game_crafting_ingredient_set_item_id)
 {
     game_crafting_ingredient ingredient;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(0, 0, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(1, 1, -1));
     ingredient.set_item_id(12);
     FT_ASSERT_EQ(12, ingredient.get_item_id());
     return (1);
@@ -44,7 +44,7 @@ FT_TEST(test_game_crafting_ingredient_set_item_id)
 FT_TEST(test_game_crafting_ingredient_set_count)
 {
     game_crafting_ingredient ingredient;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(0, 0, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(1, 1, -1));
     ingredient.set_count(12);
     FT_ASSERT_EQ(12, ingredient.get_count());
     return (1);
@@ -53,7 +53,7 @@ FT_TEST(test_game_crafting_ingredient_set_count)
 FT_TEST(test_game_crafting_ingredient_set_rarity)
 {
     game_crafting_ingredient ingredient;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(0, 0, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(1, 1, -1));
     ingredient.set_rarity(3);
     FT_ASSERT_EQ(3, ingredient.get_rarity());
     return (1);
@@ -96,7 +96,7 @@ FT_TEST(test_game_crafting_ingredient_destroy_reset)
 FT_TEST(test_game_crafting_ingredient_thread_safety)
 {
     game_crafting_ingredient ingredient;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(0, 0, -1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.initialize(1, 1, -1));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.enable_thread_safety());
     FT_ASSERT_EQ(FT_TRUE, ingredient.is_thread_safe());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ingredient.disable_thread_safety());
