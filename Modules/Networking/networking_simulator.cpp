@@ -51,6 +51,8 @@ networking_simulated_datagram_io::~networking_simulated_datagram_io() noexcept
 int32_t networking_simulated_datagram_io::initialize(networking_datagram_io &underlying,
     const networking_simulator_config &configuration) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
     if (configuration.loss_parts_per_million > 1000000U
@@ -69,12 +71,14 @@ int32_t networking_simulated_datagram_io::initialize(networking_datagram_io &und
     this->_send_ordinal = 0U;
     this->_bandwidth_window_start = 0U;
     this->_bandwidth_window_bytes = 0U;
-    if (this->_pending.initialize() != FT_ERR_SUCCESS
-        || this->_script.initialize() != FT_ERR_SUCCESS)
+    result = this->_pending.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = this->_script.initialize();
+    if (result != FT_ERR_SUCCESS)
     {
         (void)this->_pending.destroy();
         (void)this->_script.destroy();
-        return (FT_ERR_INITIALIZATION_FAILED);
+        return (result);
     }
     while (!this->_pending.empty())
         delete this->_pending.pop_front();
@@ -98,6 +102,8 @@ int32_t networking_simulated_datagram_io::destroy() noexcept
 
 int32_t networking_simulated_datagram_io::move(networking_simulated_datagram_io &other) noexcept
 {
+    int32_t result;
+
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -105,9 +111,11 @@ int32_t networking_simulated_datagram_io::move(networking_simulated_datagram_io 
     (void)this->destroy();
     this->_underlying = other._underlying;
     this->_configuration = other._configuration;
-    if (this->_pending.move(other._pending) != FT_ERR_SUCCESS
-        || this->_script.move(other._script) != FT_ERR_SUCCESS)
-        return (FT_ERR_INITIALIZATION_FAILED);
+    result = this->_pending.move(other._pending);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_script.move(other._script);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     this->_now = other._now;
     this->_random_state = other._random_state;
     this->_send_ordinal = other._send_ordinal;
@@ -364,17 +372,34 @@ int32_t networking_simulated_datagram_io::receive_datagram(networking_message_en
     uint8_t *data, ft_size_t capacity, ft_size_t *received_size) noexcept
 {
     int32_t flush_result;
+    int32_t receive_result;
+    networking_message_endpoint staged_source;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || this->_underlying == ft_nullptr)
         return (FT_ERR_NOT_INITIALISED);
+    if (data == ft_nullptr || received_size == ft_nullptr)
+        return (FT_ERR_INVALID_POINTER);
+    *received_size = 0U;
     if (this->_configuration.disconnect != FT_FALSE
         || this->_configuration.blackhole_incoming != FT_FALSE)
         return (FT_ERR_EMPTY);
     flush_result = this->flush_ready_datagrams();
     if (flush_result != FT_ERR_SUCCESS)
         return (flush_result);
-    return (this->_underlying->receive_datagram(source, data, capacity, received_size));
+    ft_memset(&staged_source, 0, sizeof(staged_source));
+    receive_result = this->_underlying->receive_datagram(staged_source,
+        data, capacity, received_size);
+    if (receive_result == FT_ERR_SUCCESS && *received_size > capacity)
+    {
+        *received_size = 0U;
+        return (FT_ERR_OUT_OF_RANGE);
+    }
+    if (receive_result == FT_ERR_SUCCESS)
+        source = staged_source;
+    else
+        *received_size = 0U;
+    return (receive_result);
 }
 
 uint64_t networking_simulated_datagram_io::now_milliseconds() const noexcept

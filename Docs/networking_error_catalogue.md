@@ -12,7 +12,7 @@ an exception or process abort.
 | `FT_ERR_NOT_INITIALISED` | Lifecycle setup has not completed. | Call the required `initialize(...)` first. |
 | `FT_ERR_ALREADY_INITIALISED` | Initialization was requested twice. | Destroy or reuse the initialized object according to its API. |
 | `FT_ERR_INVALID_ARGUMENT` | A local argument is malformed. | Correct the caller input. |
-| `FT_ERR_INVALID_HANDLE` | The connection handle is unknown or closed. | Discard the stale handle. |
+| `FT_ERR_INVALID_HANDLE` | The connection handle is unknown, closed, or belongs to an earlier transport lifecycle generation. | Discard the stale handle and obtain a current handle from the transport. |
 | `FT_ERR_INVALID_STATE` | The operation is not legal in the current state. | Wait for the relevant event or change lifecycle state. |
 | `FT_ERR_FULL` | A queue, flow-control window, or bounded resource is full. | Apply backpressure and retry after progress. |
 | `FT_ERR_EMPTY` | No message or event is currently queued. | Poll again later. |

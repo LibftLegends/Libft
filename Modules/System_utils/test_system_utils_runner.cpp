@@ -657,7 +657,9 @@ static int32_t execute_test_function(const s_test_case *test,
     (void)pthread_sigmask(SIG_UNBLOCK, &unblocked_signals, nullptr);
 #endif
     su_service_clear_signal_handlers();
+#ifdef LIBFT_TEST_BUILD
     su_service_force_no_fork(FT_FALSE);
+#endif
 
     preserve_output = diagnostic_output_enabled();
     if (preserve_output == 0 && dup2(null_descriptor, STDOUT_FILENO) < 0)

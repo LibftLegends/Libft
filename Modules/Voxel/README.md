@@ -1,5 +1,16 @@
 # Voxel public headers
 
+## Configuration JSON persistence
+
+Voxel JSON serializers build a complete document in staging storage and only
+replace the caller's `ft_string` after serialization succeeds. Unsigned fields
+are emitted as unsigned decimal JSON numbers, including the full `uint32_t`
+range. File saves support `VOXEL_JSON_FILE_CREATE_ONLY` and
+`VOXEL_JSON_FILE_REPLACE`; create-only never changes an existing target.
+Replace truncates the destination before writing, so a failed write can leave a
+partial file. Both modes return mapped open/write/close errors and close the
+descriptor on every path.
+
 The Voxel module exposes focused headers so callers can include only the API
 they need:
 

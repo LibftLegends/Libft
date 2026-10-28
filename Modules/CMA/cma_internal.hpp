@@ -154,7 +154,9 @@ int32_t cma_small_arena_deallocate_locked(void *memory_pointer)
             __attribute__ ((hot));
 void    *cma_small_arena_reallocate_locked(void *memory_pointer,
             ft_size_t size) __attribute__ ((warn_unused_result, hot));
+#ifdef LIBFT_TEST_BUILD
 void    cma_small_arena_reset_for_tests(void);
+#endif
 #ifndef CMA_ENABLE_METADATA_PROTECTION
 # define CMA_ENABLE_METADATA_PROTECTION 1
 #endif

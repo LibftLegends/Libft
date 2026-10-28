@@ -331,6 +331,7 @@ struct card_game_host_intent
 struct card_game_host_intent_record
 {
     uint64_t sequence;
+    uint64_t action_request_id;
     card_game_host_intent intent;
 };
 

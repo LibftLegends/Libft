@@ -7,6 +7,7 @@ static ft_bool card_game_host_intents_equal(
     uint32_t field_index;
 
     if (left.sequence != right.sequence
+        || left.action_request_id != right.action_request_id
         || left.intent.type_id != right.intent.type_id
         || left.intent.version != right.intent.version
         || left.intent.field_count != right.intent.field_count)

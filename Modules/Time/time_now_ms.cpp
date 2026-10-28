@@ -6,7 +6,9 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 extern thread_local t_time_clock_now_hook g_time_clock_now_hook;
+#endif
 
 int64_t    time_now_ms(void)
 {
@@ -14,9 +16,11 @@ int64_t    time_now_ms(void)
     std::chrono::milliseconds milliseconds;
     int64_t milliseconds_count;
 
+#ifdef LIBFT_TEST_BUILD
     if (g_time_clock_now_hook != ft_nullptr)
         time_now = g_time_clock_now_hook();
     else
+#endif
         time_now = std::chrono::system_clock::now();
     milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_now.time_since_epoch());
     milliseconds_count = milliseconds.count();

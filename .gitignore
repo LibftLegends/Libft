@@ -32,6 +32,8 @@ Test/objs_efficiency_opt3/
 Test/objs_efficiency_test_opt0/
 Test/objs_efficiency_test_opt3/
 **/*.a
+**/*.a.config
+**/*.a.config.tmp.*
 Test/libft_tests
 Test/libft_efficiency_tests
 Test/libft_tests.exe

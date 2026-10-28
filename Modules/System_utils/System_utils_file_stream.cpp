@@ -10,7 +10,9 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 static ft_bool g_force_file_stream_allocation_failure = FT_FALSE;
+#endif
 
 int32_t su_file_prepare_thread_safety(su_file *stream)
 {
@@ -46,11 +48,13 @@ void su_file_teardown_thread_safety(su_file *stream)
     return ;
 }
 
+#ifdef LIBFT_TEST_BUILD
 void su_force_file_stream_allocation_failure(ft_bool should_fail)
 {
     g_force_file_stream_allocation_failure = should_fail;
     return ;
 }
+#endif
 
 int32_t su_file_lock(su_file *stream, ft_bool *lock_acquired)
 {
@@ -82,11 +86,13 @@ static su_file *create_file_stream(int32_t file_descriptor)
 
     if (file_descriptor < 0)
         return (ft_nullptr);
+#ifdef LIBFT_TEST_BUILD
     if (g_force_file_stream_allocation_failure == FT_TRUE)
     {
         (void)cmp_close(file_descriptor);
         return (ft_nullptr);
     }
+#endif
     file_stream = static_cast<su_file*>(std::malloc(sizeof(su_file)));
     if (file_stream == ft_nullptr)
     {

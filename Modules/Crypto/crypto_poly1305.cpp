@@ -1,4 +1,5 @@
 #include "crypto_poly1305.hpp"
+#include "crypto_primitives.hpp"
 #include "../Errno/errno.hpp"
 
 namespace
@@ -64,7 +65,11 @@ int32_t crypto_poly1305_auth(uint8_t tag[16], const uint8_t *message,
 
     if (tag == ft_nullptr || key == ft_nullptr
         || (message == ft_nullptr && length != 0U))
+    {
+        if (tag != ft_nullptr)
+            (void)crypto_secure_wipe(tag, 16U);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     r0 = load_u32_le(key) & 0x3ffffffU;
     r1 = (load_u32_le(key + 3U) >> 2U) & 0x3ffff03U;
     r2 = (load_u32_le(key + 6U) >> 4U) & 0x3ffc0ffU;
@@ -139,7 +144,7 @@ int32_t crypto_poly1305_auth(uint8_t tag[16], const uint8_t *message,
     }
     if (length != 0U)
     {
-        ft_memset(block, 0, sizeof(block));
+        (void)crypto_secure_wipe(block, sizeof(block));
         ft_memcpy(block, message, length);
         block[length] = 1U;
         t0 = load_u32_le(block) & 0x3ffffffU;
@@ -248,6 +253,42 @@ int32_t crypto_poly1305_auth(uint8_t tag[16], const uint8_t *message,
     store_u32_le(tag + 4U, f1);
     store_u32_le(tag + 8U, f2);
     store_u32_le(tag + 12U, f3);
-    ft_memset(block, 0, sizeof(block));
+    (void)crypto_secure_wipe(block, sizeof(block));
+    (void)crypto_secure_wipe(&r0, sizeof(r0));
+    (void)crypto_secure_wipe(&r1, sizeof(r1));
+    (void)crypto_secure_wipe(&r2, sizeof(r2));
+    (void)crypto_secure_wipe(&r3, sizeof(r3));
+    (void)crypto_secure_wipe(&r4, sizeof(r4));
+    (void)crypto_secure_wipe(&h0, sizeof(h0));
+    (void)crypto_secure_wipe(&h1, sizeof(h1));
+    (void)crypto_secure_wipe(&h2, sizeof(h2));
+    (void)crypto_secure_wipe(&h3, sizeof(h3));
+    (void)crypto_secure_wipe(&h4, sizeof(h4));
+    (void)crypto_secure_wipe(&pad0, sizeof(pad0));
+    (void)crypto_secure_wipe(&pad1, sizeof(pad1));
+    (void)crypto_secure_wipe(&pad2, sizeof(pad2));
+    (void)crypto_secure_wipe(&pad3, sizeof(pad3));
+    (void)crypto_secure_wipe(&t0, sizeof(t0));
+    (void)crypto_secure_wipe(&t1, sizeof(t1));
+    (void)crypto_secure_wipe(&t2, sizeof(t2));
+    (void)crypto_secure_wipe(&t3, sizeof(t3));
+    (void)crypto_secure_wipe(&t4, sizeof(t4));
+    (void)crypto_secure_wipe(&d0, sizeof(d0));
+    (void)crypto_secure_wipe(&d1, sizeof(d1));
+    (void)crypto_secure_wipe(&d2, sizeof(d2));
+    (void)crypto_secure_wipe(&d3, sizeof(d3));
+    (void)crypto_secure_wipe(&d4, sizeof(d4));
+    (void)crypto_secure_wipe(&carry, sizeof(carry));
+    (void)crypto_secure_wipe(&mask, sizeof(mask));
+    (void)crypto_secure_wipe(&g0, sizeof(g0));
+    (void)crypto_secure_wipe(&g1, sizeof(g1));
+    (void)crypto_secure_wipe(&g2, sizeof(g2));
+    (void)crypto_secure_wipe(&g3, sizeof(g3));
+    (void)crypto_secure_wipe(&g4, sizeof(g4));
+    (void)crypto_secure_wipe(&f0, sizeof(f0));
+    (void)crypto_secure_wipe(&f1, sizeof(f1));
+    (void)crypto_secure_wipe(&f2, sizeof(f2));
+    (void)crypto_secure_wipe(&f3, sizeof(f3));
+    (void)crypto_secure_wipe(&sum, sizeof(sum));
     return (FT_ERR_SUCCESS);
 }

@@ -1,4 +1,5 @@
 #include "crypto_x25519.hpp"
+#include "crypto_primitives.hpp"
 #include "../Errno/errno.hpp"
 
 namespace
@@ -18,16 +19,7 @@ namespace
 
     static void wipe(void *data, ft_size_t length) noexcept
     {
-        volatile uint8_t *bytes;
-        ft_size_t index;
-
-        bytes = static_cast<volatile uint8_t *>(data);
-        index = 0U;
-        while (index < length)
-        {
-            bytes[index] = 0U;
-            index += 1U;
-        }
+        (void)crypto_secure_wipe(data, length);
         return ;
     }
 
@@ -348,7 +340,11 @@ namespace
 
         if (scalar_input == ft_nullptr || public_input == ft_nullptr
             || output == ft_nullptr)
+        {
+            if (output != ft_nullptr)
+                wipe(output, 32U);
             return (FT_ERR_INVALID_ARGUMENT);
+        }
         ft_memcpy(scalar, scalar_input, sizeof(scalar));
         scalar[0] &= 248U;
         scalar[31] &= 127U;
@@ -433,10 +429,20 @@ int32_t crypto_x25519_public_key(const uint8_t private_key[32],
     uint8_t basepoint[32];
 
     if (private_key == ft_nullptr || public_key == ft_nullptr)
+    {
+        if (public_key != ft_nullptr)
+            wipe(public_key, 32U);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     ft_memset(basepoint, 0, sizeof(basepoint));
     basepoint[0] = 9U;
-    return (scalar_multiply(private_key, basepoint, public_key));
+    {
+        int32_t result;
+
+        result = scalar_multiply(private_key, basepoint, public_key);
+        wipe(basepoint, sizeof(basepoint));
+        return (result);
+    }
 }
 
 int32_t crypto_x25519_shared_secret(const uint8_t private_key[32],

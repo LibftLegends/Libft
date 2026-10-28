@@ -6,7 +6,8 @@
 
 namespace
 {
-	static const uint32_t CARD_GAME_SNAPSHOT_SERIAL_VERSION = 1U;
+	static const uint32_t CARD_GAME_SNAPSHOT_SERIAL_VERSION = 2U;
+	static const uint32_t CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY = 1U;
 	static const std::size_t CARD_GAME_SNAPSHOT_HEADER_BYTES = 16U;
 	static const std::size_t CARD_GAME_SNAPSHOT_CHECKSUM_BYTES = 8U;
 
@@ -190,6 +191,7 @@ namespace
 
 		if (record.intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS
 			|| !writer.u64(record.sequence)
+			|| !writer.u64(record.action_request_id)
 			|| !writer.u32(record.intent.type_id)
 			|| !writer.u32(record.intent.version)
 			|| !writer.u32(record.intent.field_count))
@@ -203,17 +205,21 @@ namespace
 	}
 
 	static bool read_host_intent(card_game_snapshot_reader &reader,
-		card_game_host_intent_record *record) noexcept
+		card_game_host_intent_record *record, uint32_t snapshot_version) noexcept
 	{
 		uint32_t field;
 		uint32_t type;
 
 		if (record == ft_nullptr || !reader.u64(&record->sequence)
+			|| (snapshot_version >= CARD_GAME_SNAPSHOT_SERIAL_VERSION
+				&& !reader.u64(&record->action_request_id))
 			|| !reader.u32(&record->intent.type_id)
 			|| !reader.u32(&record->intent.version)
 			|| !reader.u32(&record->intent.field_count)
 			|| record->intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
 			return (false);
+		if (snapshot_version == CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY)
+			record->action_request_id = 0U;
 		for (field = 0U; field < record->intent.field_count; ++field)
 		{
 			if (!reader.u32(&type)
@@ -911,7 +917,8 @@ int32_t card_game_engine::restore_snapshot(const uint8_t *bytes,
 			return (FT_ERR_INVALID_ARGUMENT);
 	if (signature[0] != 'G' || signature[1] != 'C' || signature[2] != 'G'
 		|| signature[3] != 'S' || !reader.u32(&version)
-		|| version != CARD_GAME_SNAPSHOT_SERIAL_VERSION
+		|| (version != CARD_GAME_SNAPSHOT_SERIAL_VERSION
+			&& version != CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY)
 		|| !reader.u64(&rules_hash))
 		return (FT_ERR_INVALID_ARGUMENT);
 	uint64_t current_rules_hash;
@@ -962,7 +969,7 @@ int32_t card_game_engine::restore_snapshot(const uint8_t *bytes,
 		return (FT_ERR_NO_MEMORY);
 	}
 	for (host_index = 0U; host_index < host_count; ++host_index)
-		if (!read_host_intent(reader, &host_records[host_index]))
+		if (!read_host_intent(reader, &host_records[host_index], version))
 			return (FT_ERR_INVALID_ARGUMENT);
 	result = snapshot.host_intents.initialize(host_records.data(), host_count);
 	if (result != FT_ERR_SUCCESS)
@@ -1361,6 +1368,8 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
             return (FT_ERR_INVALID_STATE);
         }
         card_game_hash_u64(&calculated_hash, host_intent_record.sequence);
+        card_game_hash_u64(&calculated_hash,
+            host_intent_record.action_request_id);
         card_game_hash_u32(&calculated_hash,
             host_intent_record.intent.type_id);
         card_game_hash_u32(&calculated_hash,

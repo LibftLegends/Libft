@@ -23,7 +23,5 @@ ft_bool ft_constant_time_equal(const void *pointer1, const void *pointer2,
             | static_cast<uint8_t>(bytes_left[index] ^ bytes_right[index]));
         ++index;
     }
-    if (difference == 0)
-        return (FT_TRUE);
-    return (FT_FALSE);
+    return (static_cast<ft_bool>(difference == 0U));
 }

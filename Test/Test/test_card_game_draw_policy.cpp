@@ -524,7 +524,7 @@ FT_TEST(test_card_game_draw_required_discard_snapshot_delta_and_replay)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&replay_encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(replay_encoded,
         sizeof(replay_encoded), &replay_encoded_size));
-    FT_ASSERT_EQ(11U, replay_encoded[4]);
+    FT_ASSERT_EQ(12U, replay_encoded[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.deserialize(replay_encoded,
         replay_encoded_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_copy.get_event(0U, &replay_event));
@@ -603,6 +603,7 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     card_game_replay_header replay_header;
     card_game_replay replay;
     card_game_replay restored_replay;
+    card_game_replay_event replay_event;
     card_game_action action;
     card_game_action_result action_result;
     uint8_t encoded[1024];
@@ -670,9 +671,15 @@ FT_TEST(test_card_game_multi_draw_count_survives_log_replay_and_retry)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&replay_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(encoded, sizeof(encoded),
         &replay_size));
-    FT_ASSERT_EQ(11U, encoded[4]);
+    FT_ASSERT_EQ(12U, encoded[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.deserialize(encoded,
         replay_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_replay.get_event(0U,
+        &replay_event));
+    FT_ASSERT_EQ(4U, replay_event.draw_count);
+    FT_ASSERT_EQ(record.request_id, replay_event.request_id);
+    FT_ASSERT_EQ(record.state_hash_before, replay_event.state_hash_before);
+    FT_ASSERT_EQ(record.state_hash_after, replay_event.state_hash_after);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(
         *replay_target, rules, card, discard, burned, empty_event,
         overflow_event, FT_TRUE));

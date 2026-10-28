@@ -196,6 +196,23 @@ int32_t crypto_sha256::destroy() noexcept
     return (FT_ERR_SUCCESS);
 }
 
+#ifdef LIBFT_TEST_BUILD
+ft_bool crypto_sha256::test_state_is_wiped() const noexcept
+{
+    uint32_t zero_hash[8];
+    uint8_t zero_buffer[64];
+
+    ft_memset(zero_hash, 0U, sizeof(zero_hash));
+    ft_memset(zero_buffer, 0U, sizeof(zero_buffer));
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        || ft_memcmp(this->_hash, zero_hash, sizeof(zero_hash)) != 0
+        || ft_memcmp(this->_buffer, zero_buffer, sizeof(zero_buffer)) != 0
+        || this->_buffer_size != 0U || this->_message_length_bytes != 0U)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+#endif
+
 int32_t crypto_sha256::move(crypto_sha256 &other) noexcept
 {
     if (this == &other)
@@ -327,6 +344,8 @@ int32_t crypto_sha256::final(uint8_t digest[32]) noexcept
     ft_size_t index;
     uint64_t bit_length;
 
+    if (digest != ft_nullptr)
+        clear_sensitive(digest, 32U);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (digest == ft_nullptr)
@@ -365,13 +384,22 @@ int32_t crypto_sha256_hash(const void *data, ft_size_t length,
     uint8_t digest[32]) noexcept
 {
     crypto_sha256 context;
+    uint8_t staged_digest[32];
     int32_t result;
 
+    ft_memset(staged_digest, 0, sizeof(staged_digest));
+    if (digest == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
     result = context.initialize();
     if (result == FT_ERR_SUCCESS)
         result = context.update(data, length);
     if (result == FT_ERR_SUCCESS)
-        result = context.final(digest);
+        result = context.final(staged_digest);
+    if (result == FT_ERR_SUCCESS)
+        ft_memcpy(digest, staged_digest, sizeof(staged_digest));
+    else
+        clear_sensitive(digest, 32U);
+    clear_sensitive(staged_digest, sizeof(staged_digest));
     (void)context.destroy();
     return (result);
 }
@@ -379,9 +407,14 @@ int32_t crypto_sha256_hash(const void *data, ft_size_t length,
 int32_t crypto_hmac_sha256(const uint8_t *key, ft_size_t key_length,
     const void *data, ft_size_t data_length, uint8_t digest[32]) noexcept
 {
-    return (hmac_sha256_parts(key, key_length,
+    int32_t result;
+
+    result = hmac_sha256_parts(key, key_length,
         static_cast<const uint8_t *>(data), data_length,
-        ft_nullptr, 0U, ft_nullptr, 0U, digest));
+        ft_nullptr, 0U, ft_nullptr, 0U, digest);
+    if (result != FT_ERR_SUCCESS && digest != ft_nullptr)
+        clear_sensitive(digest, 32U);
+    return (result);
 }
 
 int32_t crypto_hkdf_sha256_extract(const uint8_t *salt, ft_size_t salt_length,
@@ -400,8 +433,16 @@ int32_t crypto_hkdf_sha256_extract(const uint8_t *salt, ft_size_t salt_length,
         salt = zero_salt;
         salt_length = sizeof(zero_salt);
     }
-    return (crypto_hmac_sha256(salt, salt_length, input_key_material,
-        input_key_material_length, pseudorandom_key));
+    {
+        int32_t result;
+
+        result = crypto_hmac_sha256(salt, salt_length, input_key_material,
+            input_key_material_length, pseudorandom_key);
+        clear_sensitive(zero_salt, sizeof(zero_salt));
+        if (result != FT_ERR_SUCCESS)
+            clear_sensitive(pseudorandom_key, 32U);
+        return (result);
+    }
 }
 
 int32_t crypto_hkdf_sha256_expand(const uint8_t pseudorandom_key[32],
@@ -443,6 +484,7 @@ int32_t crypto_hkdf_sha256_expand(const uint8_t pseudorandom_key[32],
         {
             clear_sensitive(previous, sizeof(previous));
             clear_sensitive(block, sizeof(block));
+            clear_sensitive(output, offset);
             return (result);
         }
         ft_memcpy(previous, block, sizeof(previous));

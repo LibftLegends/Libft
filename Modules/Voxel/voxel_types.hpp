@@ -212,6 +212,8 @@ enum voxel_biome
     VOXEL_BIOME_MOUNTAINS = 4
 };
 
+/* REPLACE truncates the target before writing. A write or close failure can
+ * leave a partial file; this mode does not provide atomic replacement. */
 enum voxel_json_file_mode
 {
     VOXEL_JSON_FILE_CREATE_ONLY = 0,
@@ -229,10 +231,13 @@ enum voxel_json_test_file_operation
     VOXEL_JSON_TEST_FILE_CLOSE = 6
 };
 
+/* Each failure uses the platform error that the named syscall would report.
+ * EINTR is accepted only for the retryable interrupted-write operation. */
 int32_t voxel_json_test_fail_file_operation(
-    voxel_json_test_file_operation operation, int32_t error_code,
+    voxel_json_test_file_operation operation, int32_t system_error,
     ft_size_t partial_write_after) noexcept;
 void voxel_json_test_clear_file_failure(void) noexcept;
+int32_t voxel_json_test_fail_commit_lock(int32_t error_code) noexcept;
 #endif
 struct voxel_biome_profile
 {

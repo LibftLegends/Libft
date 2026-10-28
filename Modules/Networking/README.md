@@ -12,7 +12,7 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   reported by filtering the supplied arrays in place. Do not pass persistent
   event-loop registration storage to it. Its return value counts unique ready
   descriptors, even when a descriptor is registered for both read and write.
-- `t_nw_socket_hook` and `nw_set_socket_hook` - Test hook for socket creation.
+- `t_nw_socket_hook` and `nw_set_socket_hook` - Test-build hook for socket creation.
 - `networking_check_socket_after_send(...)` and `networking_check_ssl_after_send(...)` - Convert send/SSL state into project error codes.
 
 ## DNS and Event Loops
@@ -76,6 +76,12 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   key epochs, and externally driven or socket-readiness-backed worker-driven
   operation.
   Thread-safe operation is opt-in through the transport configuration.
+  Connection count, per-connection reassembly bytes/messages, and aggregate
+  reassembly bytes are capped by `maximum_connections`,
+  `maximum_reassembly_bytes`, `maximum_reassembly_messages`, and
+  `maximum_total_reassembly_bytes` respectively. Reassembly byte accounting
+  includes payload storage, the compact receive bitmap, and record metadata;
+  the `reassembly_bytes` statistic continues to report payload bytes.
   Authenticated path challenge/response validates a new source before emitting
   `PATH_CHANGED` and migrating the active endpoint.
   `connect_peer` requires a caller-supplied ticket verifier; reliable sends are
@@ -85,7 +91,9 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   the worker is running, mutating calls are copied into a bounded command queue
   and complete synchronously with the worker's result. Statistics include
   per-lane message/byte totals, queue pressure, weights/reservations, and the
-  current lane send rate.
+  current lane send rate. Monotonic counters and exported aggregate sums
+  saturate at `UINT64_MAX` instead of wrapping. Queue gauges check capacity
+  before reserving space and use underflow-safe release accounting.
 - `networking_udp_datagram_io` - Non-blocking production UDP adapter for the
   transport layer.
 - `networking_crypto_backend.hpp` - source-compatible forwarding alias for the
@@ -97,19 +105,30 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   Applications must provide key material; the message transport enables
   encryption by default and does not silently downgrade to plaintext. Key
   epoch rotation prepares replacement directional backends before committing,
-  so preparation failures leave the prior channel usable.
+  so preparation failures leave the prior channel usable. Endpoint migration is
+  accepted only on an encrypted connection and only after the authenticated
+  path challenge completes. A key update that receives no acknowledgment after
+  six transmissions wipes its session keys, moves the connection to `FAILED`,
+  and emits a timeout event.
 - `networking_handshake.hpp` - Canonical client/server hello exchange,
-  transcript-bound directional key derivation, Finished MAC verification,
-  address-bound retry cookies, stateless retry challenges, and bounded
-  retransmission. The connection API exposes the authenticated handshake's
-  ephemeral peer key for diagnostics; long-term identity verification remains
-  release-gated work.
+  version 2 length-prefixed transcript-bound directional key derivation,
+  Finished MAC verification, address-bound retry cookies, stateless retry
+  challenges, and bounded retransmission. Version 2 peers reject version 1
+  handshakes before key derivation. Before cookie verification validates the
+  source address, retry-cookie replies are capped at three times the triggering
+  hello datagram size. The connection API exposes the
+  authenticated handshake's ephemeral peer key for diagnostics; long-term
+  identity verification remains release-gated work.
 - `networking_simulator.hpp` - Seeded latency, jitter, loss, duplication,
   corruption, reordering, MTU, and manual-clock simulation adapter.
 - `networking_nat_traversal.hpp` - Candidate-provider gathering, authenticated
   ticket validation hooks, concurrent candidate-pair probing, direct-path
-  nomination, and relay-fallback state machine. Rendezvous/STUN/relay services
-  provide the network-side infrastructure and application ticket verifier.
+  nomination and caller-scheduled direct-path keepalives, relay-path
+  classification and loss reprobes, and the relay-fallback state machine.
+  `get_selected_pair(...)` reports no usable pair while a lost path is being
+  reprobed; it becomes available after direct or relay nomination succeeds.
+  Rendezvous/STUN/relay services provide the network-side infrastructure and
+  application ticket verifier.
 - `networking_replication_protocol.hpp` - Generic authoritative-replication
   envelope with version and payload-length validation, transactional framing
   decode, a transport-owned payload copier, and stateless sender helpers for

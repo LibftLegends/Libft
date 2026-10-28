@@ -14,10 +14,11 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef LIBFT_TEST_BUILD
 typedef ft_bool (*api_request_wait_until_ready_hook)(void);
-
 void api_request_set_downgrade_wait_hook(
     api_request_wait_until_ready_hook hook);
+#endif
 
 enum class api_connection_security_mode
 {

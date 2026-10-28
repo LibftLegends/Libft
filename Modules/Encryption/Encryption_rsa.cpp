@@ -6,7 +6,9 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 static ft_bool g_force_mod_inverse_failure = FT_FALSE;
+#endif
 
 static uint64_t rsa_gcd(uint64_t first_value, uint64_t second_value)
 {
@@ -107,9 +109,11 @@ int32_t rsa_generate_key_pair(uint64_t *public_key, uint64_t *private_key,
     }
     uint64_t private_exponent = 0;
     int32_t inverse_result;
+#ifdef LIBFT_TEST_BUILD
     if (g_force_mod_inverse_failure == FT_TRUE)
         inverse_result = FT_ERR_INVALID_STATE;
     else
+#endif
         inverse_result = rsa_mod_inverse(public_exponent, phi_value,
             &private_exponent);
     if (inverse_result != FT_ERR_SUCCESS)
@@ -119,6 +123,7 @@ int32_t rsa_generate_key_pair(uint64_t *public_key, uint64_t *private_key,
     return (FT_ERR_SUCCESS);
 }
 
+#ifdef LIBFT_TEST_BUILD
 void rsa_set_force_mod_inverse_failure(ft_bool enable)
 {
     if (enable != FT_FALSE)
@@ -127,6 +132,7 @@ void rsa_set_force_mod_inverse_failure(ft_bool enable)
         g_force_mod_inverse_failure = FT_FALSE;
     return ;
 }
+#endif
 
 uint64_t rsa_encrypt(uint64_t message, uint64_t public_key, uint64_t modulus)
 {

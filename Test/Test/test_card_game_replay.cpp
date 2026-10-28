@@ -67,7 +67,7 @@ FT_TEST(test_card_game_replay_full_round_trip_and_player_projection)
     FT_ASSERT_EQ(0U, read_event.private_data[0]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, view.serialize(serialized, sizeof(serialized),
         &serialized_size));
-    FT_ASSERT_EQ(11U, serialized[4]);
+    FT_ASSERT_EQ(12U, serialized[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(serialized,
         serialized_size));
     FT_ASSERT_EQ(2U, restored.event_count());
@@ -598,7 +598,7 @@ FT_TEST(test_card_game_replay_reconstructs_physical_hand_discard)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(serialized,
         sizeof(serialized), &serialized_size));
-    FT_ASSERT_EQ(11U, serialized[4]);
+    FT_ASSERT_EQ(12U, serialized[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(serialized,
         serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_event(0U, &restored_event));
@@ -685,7 +685,7 @@ FT_TEST(test_card_game_draw_command_is_replayable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialized_size(&serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay.serialize(serialized,
         sizeof(serialized), &serialized_size));
-    FT_ASSERT_EQ(11U, serialized[4]);
+    FT_ASSERT_EQ(12U, serialized[4]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.register_card(definition));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.start_match(1U));

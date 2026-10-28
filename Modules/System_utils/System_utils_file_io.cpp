@@ -8,20 +8,8 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 static t_su_write_syscall_hook    g_su_write_syscall_hook = ft_nullptr;
-
-static int64_t su_default_write_syscall(int32_t file_descriptor,
-    const void *buffer, ft_size_t count)
-{
-    int64_t bytes_written;
-    int32_t error_code;
-
-    bytes_written = 0;
-    error_code = cmp_write(file_descriptor, buffer, count, &bytes_written);
-    if (error_code != FT_ERR_SUCCESS)
-        return (-1);
-    return (bytes_written);
-}
 
 void    su_set_write_syscall_hook(t_su_write_syscall_hook hook)
 {
@@ -39,6 +27,7 @@ void    su_reset_write_syscall_hook(void)
     g_su_write_syscall_hook = ft_nullptr;
     return ;
 }
+#endif
 
 int64_t su_read(int32_t file_descriptor, void *buffer, ft_size_t count)
 {
@@ -73,37 +62,39 @@ int64_t su_read(int32_t file_descriptor, void *buffer, ft_size_t count)
     }
 }
 
-int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
+static int64_t su_write_internal(int32_t file_descriptor,
+    const void *buffer, ft_size_t count, int32_t *error_code_out)
 {
     ft_size_t total_written;
     int32_t retry_attempts;
     const char *byte_buffer;
-    t_su_write_syscall_hook write_function;
     int64_t bytes_written_value;
+#ifdef LIBFT_TEST_BUILD
+    t_su_write_syscall_hook write_function;
+#endif
 
     total_written = 0;
     retry_attempts = 0;
     byte_buffer = static_cast<const char*>(buffer);
+#ifdef LIBFT_TEST_BUILD
     write_function = g_su_write_syscall_hook;
-    if (write_function == ft_nullptr)
-        write_function = su_default_write_syscall;
+#endif
+    if (error_code_out != ft_nullptr)
+        *error_code_out = FT_ERR_SUCCESS;
     while (total_written < count)
     {
         int64_t write_result;
         int32_t error_code;
 
         error_code = FT_ERR_SUCCESS;
-        if (write_function == su_default_write_syscall)
+#ifdef LIBFT_TEST_BUILD
+        if (su_test_take_write_interrupt() == FT_TRUE)
         {
-            bytes_written_value = 0;
-            error_code = cmp_write(file_descriptor, byte_buffer + total_written,
-                count - total_written, &bytes_written_value);
-            if (error_code == FT_ERR_SUCCESS)
-                write_result = bytes_written_value;
-            else
-                write_result = -1;
+            errno = EINTR;
+            error_code = cmp_map_system_error_to_ft(errno);
+            write_result = -1;
         }
-        else
+        else if (write_function != ft_nullptr)
         {
             write_result = write_function(file_descriptor,
                 byte_buffer + total_written, count - total_written);
@@ -114,12 +105,27 @@ int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
                     error_code = FT_ERR_IO;
             }
         }
+        else
+#endif
+        {
+            bytes_written_value = 0;
+            error_code = cmp_write(file_descriptor, byte_buffer + total_written,
+                count - total_written, &bytes_written_value);
+            if (error_code == FT_ERR_SUCCESS)
+                write_result = bytes_written_value;
+            else
+                write_result = -1;
+        }
         if (write_result > 0)
             total_written += static_cast<ft_size_t>(write_result);
         else
         {
             if (write_result == 0)
+            {
+                if (error_code_out != ft_nullptr)
+                    *error_code_out = FT_ERR_IO;
                 return (-1);
+            }
             const int32_t max_retries = 10;
             const int32_t retry_delay_ms = 500;
             if (error_code == cmp_map_system_error_to_ft(EINTR))
@@ -133,12 +139,30 @@ int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
                     (void)cmp_thread_sleep(static_cast<uint32_t>(retry_delay_ms));
                     continue ;
                 }
+                if (error_code_out != ft_nullptr)
+                    *error_code_out = error_code;
                 return (-1);
             }
+            if (error_code_out != ft_nullptr)
+                *error_code_out = error_code;
             return (-1);
         }
     }
     return (static_cast<int64_t>(total_written));
+}
+
+int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
+{
+    return (su_write_internal(file_descriptor, buffer, count, ft_nullptr));
+}
+
+int64_t su_write_with_error(int32_t file_descriptor, const void *buffer,
+    ft_size_t count, int32_t *error_code_out)
+{
+    if (error_code_out == ft_nullptr)
+        return (-1);
+    *error_code_out = FT_ERR_SUCCESS;
+    return (su_write_internal(file_descriptor, buffer, count, error_code_out));
 }
 
 off_t su_lseek(int32_t file_descriptor, off_t offset, int32_t whence)

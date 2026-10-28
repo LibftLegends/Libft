@@ -10,6 +10,18 @@
 
 static ft_networking_observability_sample g_observability_last_sample;
 static int g_observability_export_count = 0;
+static int32_t g_observability_reentrant_shutdown_result = FT_ERR_SUCCESS;
+static uint32_t g_observability_reentrant_export_count = 0U;
+
+static void observability_reentrant_shutdown_exporter(
+    const ft_networking_observability_sample &sample)
+{
+    (void)sample;
+    g_observability_reentrant_export_count += 1U;
+    g_observability_reentrant_shutdown_result
+        = observability_networking_metrics_shutdown();
+    return ;
+}
 
 static bool observability_strings_equal(const char *left, const char *right)
 {
@@ -160,5 +172,37 @@ FT_TEST(test_observability_networking_record_propagates_error_details)
 
     FT_ASSERT_EQ(0, observability_networking_metrics_shutdown());
     FT_ASSERT_EQ(0, observability_networking_metrics_disable_thread_safety());
+    return (1);
+}
+
+FT_TEST(test_observability_networking_exporter_runs_outside_internal_lock)
+{
+    ft_networking_observability_sample sample;
+
+    observability_networking_metrics_shutdown();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_networking_metrics_enable_thread_safety());
+    g_observability_reentrant_export_count = 0U;
+    g_observability_reentrant_shutdown_result = FT_ERR_INTERNAL;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_initialize(
+        &observability_reentrant_shutdown_exporter));
+    sample.labels.component = "transport";
+    sample.labels.operation = "send";
+    sample.labels.target = "peer";
+    sample.labels.resource = "packet";
+    sample.duration_ms = 1;
+    sample.request_bytes = 8U;
+    sample.response_bytes = 0U;
+    sample.status_code = 0;
+    sample.error_code = FT_ERR_SUCCESS;
+    sample.error_tag = ft_nullptr;
+    sample.success = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_record(sample));
+    FT_ASSERT_EQ(1U, g_observability_reentrant_export_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, g_observability_reentrant_shutdown_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_record(sample));
+    FT_ASSERT_EQ(1U, g_observability_reentrant_export_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_networking_metrics_disable_thread_safety());
     return (1);
 }

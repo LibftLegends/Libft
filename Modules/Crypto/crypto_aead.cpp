@@ -1,6 +1,7 @@
 #include "crypto_aead.hpp"
 #include "crypto_chacha20.hpp"
 #include "crypto_poly1305.hpp"
+#include "crypto_primitives.hpp"
 #include "../Errno/errno.hpp"
 
 namespace
@@ -18,21 +19,23 @@ namespace
         return ;
     }
 
-    static ft_bool append_bytes(ft_vector<uint8_t> &buffer,
+    static int32_t append_bytes(ft_vector<uint8_t> &buffer,
         const uint8_t *data, ft_size_t size) noexcept
     {
         ft_size_t index;
 
         if (data == ft_nullptr && size != 0U)
-            return (FT_FALSE);
+            return (FT_ERR_INVALID_ARGUMENT);
         index = 0U;
         while (index < size)
         {
-            if (buffer.push_back(data[index]) != FT_ERR_SUCCESS)
-                return (FT_FALSE);
+            int32_t result = buffer.push_back(data[index]);
+
+            if (result != FT_ERR_SUCCESS)
+                return (result);
             index += 1U;
         }
-        return (FT_TRUE);
+        return (FT_ERR_SUCCESS);
     }
 
     static ft_bool constant_time_equal(const uint8_t *left,
@@ -49,9 +52,7 @@ namespace
                 | (left[index] ^ right[index]));
             index += 1U;
         }
-        if (difference == 0U)
-            return (FT_TRUE);
-        return (FT_FALSE);
+        return (static_cast<ft_bool>(difference == 0U));
     }
 
     static int32_t build_authentication_data(const uint8_t *associated_data,
@@ -60,6 +61,7 @@ namespace
     {
         uint8_t lengths[16];
         uint8_t zero_padding[16];
+        int32_t result;
 
         if (associated_data == ft_nullptr && associated_data_length != 0U)
             return (FT_ERR_INVALID_ARGUMENT);
@@ -69,21 +71,25 @@ namespace
         ft_memset(zero_padding, 0, sizeof(zero_padding));
         store_u64_le(lengths, associated_data_length);
         store_u64_le(lengths + 8U, ciphertext_length);
-        if (authenticated.initialize() != FT_ERR_SUCCESS
-            || append_bytes(authenticated, associated_data, associated_data_length)
-                == FT_FALSE
-            || (associated_data_length % 16U != 0U
-                && append_bytes(authenticated, zero_padding,
-                    16U - (associated_data_length % 16U)) == FT_FALSE)
-            || append_bytes(authenticated, ciphertext, ciphertext_length)
-                == FT_FALSE
-            || (ciphertext_length % 16U != 0U
-                && append_bytes(authenticated, zero_padding,
-                    16U - (ciphertext_length % 16U)) == FT_FALSE)
-            || append_bytes(authenticated, lengths, sizeof(lengths)) == FT_FALSE)
+        result = authenticated.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = append_bytes(authenticated, associated_data,
+                associated_data_length);
+        if (result == FT_ERR_SUCCESS && associated_data_length % 16U != 0U)
+            result = append_bytes(authenticated, zero_padding,
+                16U - (associated_data_length % 16U));
+        if (result == FT_ERR_SUCCESS)
+            result = append_bytes(authenticated, ciphertext,
+                ciphertext_length);
+        if (result == FT_ERR_SUCCESS && ciphertext_length % 16U != 0U)
+            result = append_bytes(authenticated, zero_padding,
+                16U - (ciphertext_length % 16U));
+        if (result == FT_ERR_SUCCESS)
+            result = append_bytes(authenticated, lengths, sizeof(lengths));
+        if (result != FT_ERR_SUCCESS)
         {
             (void)authenticated.destroy();
-            return (FT_ERR_NO_MEMORY);
+            return (result);
         }
         return (FT_ERR_SUCCESS);
     }
@@ -104,7 +110,16 @@ int32_t crypto_chacha20_poly1305_seal(const uint8_t key[32],
         || authentication_tag == ft_nullptr
         || (associated_data == ft_nullptr && associated_data_length != 0U)
         || (plaintext == ft_nullptr && plaintext_length != 0U))
+    {
+        if (ciphertext.is_initialised() == FT_CLASS_STATE_INITIALISED)
+            ciphertext.clear();
+        if (authentication_tag != ft_nullptr)
+            ft_memset(authentication_tag, 0, 16U);
+        (void)crypto_secure_wipe(poly1305_key_stream,
+            sizeof(poly1305_key_stream));
         return (FT_ERR_INVALID_ARGUMENT);
+    }
+    ft_memset(poly1305_key_stream, 0, sizeof(poly1305_key_stream));
     result = crypto_chacha20_xor(key, nonce, 1U, plaintext, plaintext_length,
         ciphertext);
     if (result != FT_ERR_SUCCESS)
@@ -125,7 +140,8 @@ int32_t crypto_chacha20_poly1305_seal(const uint8_t key[32],
         result = crypto_poly1305_auth(authentication_tag, &authenticated[0],
             authenticated.size(), poly1305_key_stream);
     (void)authenticated.destroy();
-    ft_memset(poly1305_key_stream, 0, sizeof(poly1305_key_stream));
+    (void)crypto_secure_wipe(poly1305_key_stream,
+        sizeof(poly1305_key_stream));
     if (result != FT_ERR_SUCCESS)
     {
         ciphertext.clear();
@@ -147,11 +163,18 @@ int32_t crypto_chacha20_poly1305_open(const uint8_t key[32],
 
     if (plaintext.is_initialised() == FT_CLASS_STATE_INITIALISED)
         plaintext.clear();
+    ft_memset(expected_tag, 0, sizeof(expected_tag));
+    ft_memset(poly1305_key_stream, 0, sizeof(poly1305_key_stream));
     if (key == ft_nullptr || nonce == ft_nullptr
         || authentication_tag == ft_nullptr
         || (associated_data == ft_nullptr && associated_data_length != 0U)
         || (ciphertext == ft_nullptr && ciphertext_length != 0U))
+    {
+        (void)crypto_secure_wipe(expected_tag, sizeof(expected_tag));
+        (void)crypto_secure_wipe(poly1305_key_stream,
+            sizeof(poly1305_key_stream));
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     crypto_chacha20_block(key, 0U, nonce, poly1305_key_stream);
     result = build_authentication_data(associated_data, associated_data_length,
         ciphertext, ciphertext_length, authenticated);
@@ -166,8 +189,9 @@ int32_t crypto_chacha20_poly1305_open(const uint8_t key[32],
         if (plaintext.is_initialised() == FT_CLASS_STATE_INITIALISED)
             plaintext.clear();
         (void)authenticated.destroy();
-        ft_memset(expected_tag, 0, sizeof(expected_tag));
-        ft_memset(poly1305_key_stream, 0, sizeof(poly1305_key_stream));
+        (void)crypto_secure_wipe(expected_tag, sizeof(expected_tag));
+        (void)crypto_secure_wipe(poly1305_key_stream,
+            sizeof(poly1305_key_stream));
         return (result);
     }
     result = crypto_chacha20_xor(key, nonce, 1U, ciphertext, ciphertext_length,
@@ -176,7 +200,8 @@ int32_t crypto_chacha20_poly1305_open(const uint8_t key[32],
         && plaintext.is_initialised() == FT_CLASS_STATE_INITIALISED)
         plaintext.clear();
     (void)authenticated.destroy();
-    ft_memset(expected_tag, 0, sizeof(expected_tag));
-    ft_memset(poly1305_key_stream, 0, sizeof(poly1305_key_stream));
+    (void)crypto_secure_wipe(expected_tag, sizeof(expected_tag));
+    (void)crypto_secure_wipe(poly1305_key_stream,
+        sizeof(poly1305_key_stream));
     return (result);
 }

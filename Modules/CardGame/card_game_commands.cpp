@@ -42,6 +42,8 @@ int32_t card_game_engine::append_draw_host_intent(
         return (result);
     this->_host_intent_records[this->_host_intent_record_count].sequence =
         this->_next_host_intent_sequence;
+    this->_host_intent_records[this->_host_intent_record_count]
+        .action_request_id = this->_active_action_request_id;
     this->_host_intent_records[this->_host_intent_record_count].intent = intent;
     this->_host_intent_record_count += 1U;
     this->_next_host_intent_sequence += 1U;

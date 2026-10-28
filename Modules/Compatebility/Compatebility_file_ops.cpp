@@ -46,9 +46,10 @@ static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 # include <errno.h>
 # include <sys/stat.h>
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move);
-
 static ft_bool global_force_cross_device_move = FT_FALSE;
+#endif
 
 int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
 {
@@ -83,6 +84,7 @@ int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
     return (cmp_map_system_error_to_ft(system_error));
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
 {
     if (force_cross_device_move != 0)
@@ -91,6 +93,7 @@ void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
         global_force_cross_device_move = FT_FALSE;
     return ;
 }
+#endif
 
 int32_t cmp_file_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out)
@@ -209,7 +212,9 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
         cmp_set_error_code(error_code_out, FT_ERR_NO_MEMORY);
         return (FT_ERR_NO_MEMORY);
     }
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_cross_device_move == FT_FALSE)
+#endif
     {
         move_attempt = 0U;
         while (move_attempt < 16U)
@@ -232,8 +237,10 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
             ++move_attempt;
         }
     }
+#if defined(LIBFT_TEST_BUILD)
     else
         last_error = ERROR_NOT_SAME_DEVICE;
+#endif
     if (last_error == ERROR_NOT_SAME_DEVICE)
     {
         cma_free(native_source_path);
@@ -535,9 +542,10 @@ int32_t cmp_file_set_permissions(const char *path, int32_t owner_permissions,
 # include <new>
 # include <sys/stat.h>
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move);
-
 static ft_bool global_force_cross_device_move = FT_FALSE;
+#endif
 
 int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
 {
@@ -560,6 +568,7 @@ int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
     return (cmp_map_system_error_to_ft(system_error));
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
 {
     if (force_cross_device_move != 0)
@@ -568,6 +577,7 @@ void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
         global_force_cross_device_move = FT_FALSE;
     return ;
 }
+#endif
 
 int32_t cmp_file_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out)
@@ -642,9 +652,11 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
             cmp_set_error_code(error_code_out, FT_ERR_INVALID_ARGUMENT);
             return (FT_ERR_INVALID_ARGUMENT);
         }
+#if defined(LIBFT_TEST_BUILD)
         if (global_force_cross_device_move != FT_FALSE)
             errno = EXDEV;
         if (global_force_cross_device_move == FT_FALSE)
+#endif
         {
             if (rename(source_path, destination_path) == 0)
             {

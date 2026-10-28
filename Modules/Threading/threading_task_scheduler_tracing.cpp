@@ -138,6 +138,7 @@ int task_scheduler_unregister_trace_sink(task_scheduler_trace_sink sink)
     return (-1);
 }
 
+#ifdef LIBFT_TEST_BUILD
 int32_t task_scheduler_trace_reset_for_tests(void)
 {
     int32_t runtime_error;
@@ -166,6 +167,7 @@ int32_t task_scheduler_trace_reset_for_tests(void)
     }
     return (FT_ERR_SUCCESS);
 }
+#endif
 
 #ifdef LIBFT_TEST_BUILD
 void task_scheduler_trace_destroy_for_tests(void)

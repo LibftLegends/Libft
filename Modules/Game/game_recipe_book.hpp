@@ -56,6 +56,9 @@ class game_recipe_book
         int32_t unlock_recipe(uint32_t recipe_id, uint64_t source_event_id,
             ft_bool *newly_unlocked) noexcept;
         int32_t is_recipe_known(uint32_t recipe_id, ft_bool *known) const noexcept;
+        /* Stable fingerprint of the current unlock-event state for optimistic
+         * query/commit coordination. */
+        int32_t get_revision(uint64_t *revision_out) const noexcept;
         int32_t quarantined_unlock_count(uint32_t *count) const noexcept;
         int32_t export_book(ft_byte_buffer &output) const noexcept;
         int32_t import_book(ft_byte_buffer &input) noexcept;

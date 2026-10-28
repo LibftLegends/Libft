@@ -490,6 +490,7 @@ static int32_t runtime_compile_and_run_helper(void)
     std::string archive_path;
     std::string modules_path;
     const char *compiler;
+    const char *archive_override;
     std::string compile_command;
     std::string run_command;
     int32_t formatted_length;
@@ -518,6 +519,9 @@ static int32_t runtime_compile_and_run_helper(void)
         modules_path = (project_root_path / "Modules").string();
     }
 #endif
+    archive_override = std::getenv("LIBFT_TEST_ARCHIVE");
+    if (archive_override != ft_nullptr && archive_override[0] != '\0')
+        archive_path = archive_override;
     runtime_cleanup_stale_child_process();
     (void)unlink(source_path.c_str());
     (void)unlink(executable_path.c_str());

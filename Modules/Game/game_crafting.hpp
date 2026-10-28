@@ -274,6 +274,16 @@ class game_crafting
             const game_inventory_snapshot &inventory_snapshot,
             int32_t station_id, game_crafting_query_result *result,
             ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept;
+        int32_t query_recipe_at_station_snapshot(int32_t recipe_id,
+            const game_inventory_snapshot &inventory_snapshot,
+            int32_t station_id, int32_t batch_count,
+            game_crafting_query_result *result,
+            ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept;
+        /* Returns immutable product metadata without checking ingredients or
+         * changing inventory. Quantities are scaled for the requested batch. */
+        int32_t query_recipe_output_snapshot(int32_t recipe_id,
+            int32_t batch_count,
+            game_crafting_output_snapshot *output_out) const noexcept;
         int32_t prepare_craft(const game_inventory &inventory, int32_t recipe_id,
             int32_t batch_count, game_crafting_prepared *prepared) noexcept;
         int32_t prepare_craft_at_station(const game_inventory &inventory,

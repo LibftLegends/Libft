@@ -6,7 +6,9 @@
 #include "../../Modules/Voxel/voxel_api.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/Compatebility/compatebility_internal.hpp"
 #include <stdio.h>
+#include <cerrno>
 
 static int32_t test_voxel_surface_height(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept
@@ -1680,8 +1682,11 @@ FT_TEST(test_voxel_generation_config_file_round_trip)
 FT_TEST(test_voxel_config_json_serialization_and_file_modes)
 {
     const char *file_path = "voxel_config_test.jsonl";
+    const char *replace_new_path = "voxel_config_replace_new_test.jsonl";
     voxel_generation_config generation;
     ft_string output;
+    ft_string longer_output;
+    ft_string shorter_output;
     ft_string file_contents;
     int32_t invalid_mode_value = 2;
 
@@ -1710,11 +1715,20 @@ FT_TEST(test_voxel_config_json_serialization_and_file_modes)
     int32_t directory_error = generation.save_json_file(".",
         VOXEL_JSON_FILE_CREATE_ONLY);
     FT_ASSERT(directory_error != FT_ERR_SUCCESS);
-    FT_ASSERT(generation.save_json_file(
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, generation.save_json_file(
         "voxel_json_missing_parent_7f2e/config.json",
-        VOXEL_JSON_FILE_CREATE_ONLY) != FT_ERR_ALREADY_EXISTS);
+        VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
         VOXEL_JSON_FILE_CREATE_ONLY));
+    (void)file_delete(replace_new_path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(replace_new_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(replace_new_path,
+        file_contents));
+    FT_ASSERT_EQ(output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(output.c_str(), file_contents.c_str(),
+        output.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(replace_new_path));
     FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, generation.save_json_file(file_path,
         VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
@@ -1723,9 +1737,41 @@ FT_TEST(test_voxel_config_json_serialization_and_file_modes)
         VOXEL_JSON_FILE_REPLACE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
     FT_ASSERT_EQ(output.size(), file_contents.size());
+    generation.biome_count = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(longer_output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
+    generation.biome_count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(shorter_output));
+    FT_ASSERT(shorter_output.size() < longer_output.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(shorter_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(shorter_output.c_str(), file_contents.c_str(),
+        shorter_output.size()));
+    generation.biome_count = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, generation.save_json_file(
+        ft_nullptr, VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, generation.save_json_file(file_path,
         static_cast<voxel_json_file_mode>(invalid_mode_value)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shorter_output.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, longer_output.destroy());
     return (1);
 }
 
@@ -1806,41 +1852,98 @@ FT_TEST(test_voxel_json_file_failure_hooks_are_transactional)
     const char *file_path = "voxel_config_file_failure_hooks.jsonl";
     voxel_generation_config generation;
     ft_string file_contents;
+    ft_string original_contents;
+    ft_string expected_output;
+    int32_t open_errors[9] = {EACCES, EPERM, EROFS, EINVAL, ENAMETOOLONG,
+        EMFILE, ENFILE, ENOMEM, EIO};
+    uint32_t open_error_index = 0U;
+    int32_t system_error;
     int32_t error_code;
 
     voxel_default_generation_config(generation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(expected_output));
     (void)file_delete(file_path);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
         VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original_contents.initialize(file_contents));
+    system_error = EACCES;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
-        VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY, FT_ERR_PERMISSION_DENIED, 0U));
+        VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY, system_error, 0U));
     error_code = generation.save_json_file(file_path,
         VOXEL_JSON_FILE_CREATE_ONLY);
-    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, error_code);
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
     FT_ASSERT(ft_strstr(file_contents.c_str(), "voxel_generation_config")
         != ft_nullptr);
+    while (open_error_index < 9U)
+    {
+        system_error = open_errors[open_error_index];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+            VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY, system_error, 0U));
+        error_code = generation.save_json_file(file_path,
+            VOXEL_JSON_FILE_CREATE_ONLY);
+        FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+        FT_ASSERT_EQ(original_contents.size(), file_contents.size());
+        FT_ASSERT_EQ(0, ft_memcmp(original_contents.c_str(),
+            file_contents.c_str(), original_contents.size()));
+        open_error_index = open_error_index + 1U;
+    }
 
+    open_error_index = 0U;
+    while (open_error_index < 9U)
+    {
+        system_error = open_errors[open_error_index];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+            VOXEL_JSON_TEST_FILE_OPEN_REPLACE, system_error, 0U));
+        error_code = generation.save_json_file(file_path,
+            VOXEL_JSON_FILE_REPLACE);
+        FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+        FT_ASSERT_EQ(original_contents.size(), file_contents.size());
+        FT_ASSERT_EQ(0, ft_memcmp(original_contents.c_str(),
+            file_contents.c_str(), original_contents.size()));
+        open_error_index = open_error_index + 1U;
+    }
+
+    system_error = ENOSPC;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
-        VOXEL_JSON_TEST_FILE_FIRST_WRITE, FT_ERR_DISK_FULL, 0U));
-    FT_ASSERT_EQ(FT_ERR_DISK_FULL, generation.save_json_file(file_path,
-        VOXEL_JSON_FILE_REPLACE));
+        VOXEL_JSON_TEST_FILE_FIRST_WRITE, system_error, 0U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(0U, file_contents.size());
+    system_error = EIO;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
-        VOXEL_JSON_TEST_FILE_PARTIAL_WRITE, FT_ERR_IO, 4U));
-    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
-        VOXEL_JSON_FILE_REPLACE));
+        VOXEL_JSON_TEST_FILE_PARTIAL_WRITE, system_error, 4U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(4U, file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(file_contents.c_str(), expected_output.c_str(),
+        file_contents.size()));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
-        VOXEL_JSON_TEST_FILE_INTERRUPTED_WRITE, FT_ERR_INVALID_STATE, 0U));
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, generation.save_json_file(file_path,
+        VOXEL_JSON_TEST_FILE_INTERRUPTED_WRITE, EINTR, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
         VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "voxel_generation_config")
+        != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
-        VOXEL_JSON_TEST_FILE_CLOSE, FT_ERR_IO, 0U));
-    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
-        VOXEL_JSON_FILE_REPLACE));
+        VOXEL_JSON_TEST_FILE_CLOSE, system_error, 0U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(expected_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected_output.c_str(), file_contents.c_str(),
+        expected_output.size()));
     voxel_json_test_clear_file_failure();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original_contents.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, expected_output.destroy());
     return (1);
 }
 

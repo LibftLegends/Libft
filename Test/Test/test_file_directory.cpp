@@ -56,7 +56,7 @@ FT_TEST(test_file_cmp_dir_open_os_error)
     int error_code = FT_ERR_SUCCESS;
 
     FT_ASSERT_EQ(ft_nullptr, cmp_dir_open("cmp_dir_open_os_error_missing", &error_code));
-    FT_ASSERT_EQ(FT_ERR_IO, error_code);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, error_code);
     return (1);
 }
 
@@ -114,10 +114,10 @@ FT_TEST(test_file_cmp_directory_exists_missing_directory)
     int error_code = FT_ERR_SUCCESS;
     int exists_value = 1;
 
-    FT_ASSERT_EQ(FT_ERR_IO, cmp_directory_exists(
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, cmp_directory_exists(
         "cmp_directory_exists_missing_directory", &exists_value, &error_code));
     FT_ASSERT_EQ(0, exists_value);
-    FT_ASSERT_EQ(FT_ERR_IO, error_code);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, error_code);
     return (1);
 }
 

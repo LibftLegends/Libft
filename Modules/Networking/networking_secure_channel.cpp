@@ -55,22 +55,26 @@ int32_t networking_secure_channel::initialize_directional(
     const uint8_t send_initialization_vector[12],
     const uint8_t receive_initialization_vector[12]) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
     if (send_key == ft_nullptr || receive_key == ft_nullptr
         || send_initialization_vector == ft_nullptr
         || receive_initialization_vector == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (this->_send_backend.initialize(send_key, 32U) != FT_ERR_SUCCESS)
+    result = this->_send_backend.initialize(send_key, 32U);
+    if (result != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_INITIALIZATION_FAILED);
+        return (result);
     }
-    if (this->_receive_backend.initialize(receive_key, 32U) != FT_ERR_SUCCESS)
+    result = this->_receive_backend.initialize(receive_key, 32U);
+    if (result != FT_ERR_SUCCESS)
     {
         (void)this->_send_backend.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_INITIALIZATION_FAILED);
+        return (result);
     }
     ft_memcpy(this->_send_initialization_vector, send_initialization_vector,
         sizeof(this->_send_initialization_vector));
@@ -131,6 +135,37 @@ int32_t networking_secure_channel::destroy() noexcept
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
+
+#ifdef LIBFT_TEST_BUILD
+ft_bool networking_secure_channel::test_secret_state_is_wiped() const noexcept
+{
+    uint8_t zero_initialization_vector[12];
+    uint8_t zero_key[32];
+
+    ft_memset(zero_initialization_vector, 0U,
+        sizeof(zero_initialization_vector));
+    ft_memset(zero_key, 0U, sizeof(zero_key));
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        || ft_memcmp(this->_send_initialization_vector,
+            zero_initialization_vector, sizeof(zero_initialization_vector))
+            != 0
+        || ft_memcmp(this->_receive_initialization_vector,
+            zero_initialization_vector, sizeof(zero_initialization_vector))
+            != 0
+        || ft_memcmp(this->_previous_receive_initialization_vector,
+            zero_initialization_vector, sizeof(zero_initialization_vector))
+            != 0
+        || ft_memcmp(this->_send_key, zero_key, sizeof(zero_key)) != 0
+        || ft_memcmp(this->_receive_key, zero_key, sizeof(zero_key)) != 0
+        || ft_memcmp(this->_previous_receive_key, zero_key,
+            sizeof(zero_key)) != 0
+        || this->_send_backend.test_is_wiped() == FT_FALSE
+        || this->_receive_backend.test_is_wiped() == FT_FALSE
+        || this->_previous_receive_backend.test_is_wiped() == FT_FALSE)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+#endif
 
 int32_t networking_secure_channel::update_key_epoch(uint64_t next_epoch) noexcept
 {
@@ -777,6 +812,10 @@ ft_bool networking_secure_channel::seal(uint64_t packet_number,
 {
     uint8_t nonce[12];
 
+    if (ciphertext.is_initialised() == FT_CLASS_STATE_INITIALISED)
+        ciphertext.clear();
+    if (authentication_tag != ft_nullptr)
+        ft_memset(authentication_tag, 0, 16U);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || authentication_tag == ft_nullptr
         || (plaintext == ft_nullptr && plaintext_length != 0U)
@@ -816,13 +855,15 @@ ft_bool networking_secure_channel::open_at_epoch(uint64_t packet_number,
     uint64_t key_epoch, const uint8_t *associated_data,
     ft_size_t associated_data_length, const uint8_t *ciphertext,
     ft_size_t ciphertext_length, const uint8_t authentication_tag[16],
-    ft_vector<uint8_t> &plaintext) noexcept
+    ft_vector<uint8_t> &plaintext, ft_bool record_packet) noexcept
 {
     uint8_t nonce[12];
     const uint8_t *initialization_vector;
     networking_crypto_backend *backend;
     ft_bool use_previous;
 
+    if (plaintext.is_initialised() == FT_CLASS_STATE_INITIALISED)
+        plaintext.clear();
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || authentication_tag == ft_nullptr
         || (ciphertext == ft_nullptr && ciphertext_length != 0U)
@@ -857,11 +898,36 @@ ft_bool networking_secure_channel::open_at_epoch(uint64_t packet_number,
     if (backend->open(nonce, associated_data, associated_data_length,
         ciphertext, ciphertext_length, authentication_tag, plaintext) == FT_FALSE)
         return (FT_FALSE);
-    if (use_previous == FT_FALSE)
-        this->record_packet_number(packet_number);
-    else
-        this->record_previous_packet_number(packet_number);
+    if (record_packet != FT_FALSE)
+    {
+        if (use_previous == FT_FALSE)
+            this->record_packet_number(packet_number);
+        else
+            this->record_previous_packet_number(packet_number);
+    }
     return (FT_TRUE);
+}
+
+int32_t networking_secure_channel::commit_received_packet(
+    uint64_t packet_number, uint64_t key_epoch) noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->has_receive_epoch(key_epoch) == FT_FALSE)
+        return (FT_ERR_PERMISSION_DENIED);
+    if (key_epoch == this->_receive_key_epoch)
+    {
+        if (this->accepts_packet_number(packet_number) == FT_FALSE)
+            return (FT_ERR_PERMISSION_DENIED);
+        this->record_packet_number(packet_number);
+    }
+    else
+    {
+        if (this->accepts_previous_packet_number(packet_number) == FT_FALSE)
+            return (FT_ERR_PERMISSION_DENIED);
+        this->record_previous_packet_number(packet_number);
+    }
+    return (FT_ERR_SUCCESS);
 }
 
 ft_bool networking_secure_channel::has_receive_epoch(
@@ -881,5 +947,22 @@ ft_bool networking_secure_channel::is_replay(uint64_t packet_number) const noexc
 {
     if (this->accepts_packet_number(packet_number) == FT_FALSE)
         return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+ft_bool networking_secure_channel::is_replay_at_epoch(
+    uint64_t packet_number, uint64_t key_epoch) const noexcept
+{
+    if (key_epoch == this->_receive_key_epoch)
+    {
+        if (this->accepts_packet_number(packet_number) == FT_FALSE)
+            return (FT_TRUE);
+    }
+    else if (this->_has_previous_receive_key != FT_FALSE
+        && key_epoch == this->_previous_receive_key_epoch)
+    {
+        if (this->accepts_previous_packet_number(packet_number) == FT_FALSE)
+            return (FT_TRUE);
+    }
     return (FT_FALSE);
 }

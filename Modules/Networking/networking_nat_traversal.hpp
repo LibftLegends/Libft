@@ -12,6 +12,8 @@ enum class networking_nat_candidate_type : uint8_t
     RELAY = 2U
 };
 
+static const uint32_t NETWORKING_NAT_MAX_CANDIDATES = 8U;
+
 struct networking_nat_candidate
 {
     networking_message_endpoint endpoint;
@@ -65,6 +67,10 @@ class networking_nat_probe_io
 
         virtual int32_t send_probe(const networking_message_endpoint &local,
             const networking_message_endpoint &remote, uint64_t attempt_id) noexcept = 0;
+        virtual int32_t send_keepalive(
+            const networking_message_endpoint &local,
+            const networking_message_endpoint &remote,
+            uint64_t attempt_id) noexcept;
 };
 
 class networking_nat_candidate_provider
@@ -182,7 +188,7 @@ class networking_nat_traversal
         networking_nat_candidate _selected_remote;
 
         int32_t select_pair() noexcept;
-        static int32_t candidate_score(const networking_nat_candidate &local,
+        static int64_t candidate_score(const networking_nat_candidate &local,
             const networking_nat_candidate &remote) noexcept;
 
     public:
@@ -213,6 +219,9 @@ class networking_nat_traversal
             uint32_t &sent_probes) noexcept;
         int32_t fallback_to_relay(uint64_t now_milliseconds,
             networking_nat_relay_io &relay_io) noexcept;
+        int32_t mark_direct_path_lost(uint64_t now_milliseconds) noexcept;
+        int32_t mark_relay_path_lost(uint64_t now_milliseconds) noexcept;
+        int32_t send_keepalive(networking_nat_probe_io &probe_io) noexcept;
         int32_t mark_probe_success(const networking_message_endpoint &local,
             const networking_message_endpoint &remote,
             uint64_t attempt_id) noexcept;

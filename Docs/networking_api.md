@@ -25,6 +25,29 @@ For authenticated incoming connections, the server receives a
 `reject(connection_id, reason)`. A request is not promoted to `CONNECTED` by
 merely receiving a hello.
 
+Connection handles are scoped to the transport instance and its current
+lifecycle generation. Destroying or moving a transport invalidates handles
+bound to its previous state; reinitialization does not make those handles
+valid again. Connection identifiers are not reset when a transport is
+reinitialized, and every handle operation also validates its generation so an
+identifier collision cannot redirect a stale handle to a new connection.
+Obtain a fresh handle with `get_connection()` after a transport move.
+
+An authenticated handshake retry exhaustion transitions the connection to
+`FAILED` and queues one `FAILED` event with `FT_ERR_TIMEOUT`. Subsequent polls
+do not emit another terminal event for that connection.
+
+If both peers open an authenticated connection at the same time, they compare
+their handshake public keys lexicographically, then their nonces if the keys
+match. The peer with the greater value takes the server role; the other remains
+the client. Both finish the same transcript-bound handshake and reach
+`CONNECTED`.
+
+Wire connection identifiers are scoped to each peer, so simultaneous opens can
+use different local identifiers. The transport associates handshake and data
+packets with the peer's identifier and the configured remote endpoint; callers
+continue to use their local connection handle.
+
 Minecraft's replication server exposes two peer-admission paths around this
 transport contract. Its transitional in-process adapter may register a peer
 for deterministic vertical-slice tests, but production admission must use the
@@ -278,9 +301,14 @@ Initialize the Observability exporter before calling this method.
 `start_worker` starts one long-lived worker. UDP-backed transports wait for
 socket readability with a platform-neutral readiness boundary; custom
 `networking_datagram_io` implementations that do not provide readiness use the
-Libft wakeable timed fallback. `stop_worker` wakes and joins the worker. User
-callbacks are never invoked by the worker; call `dispatch_callbacks()` from the
-owning/application thread to drain deferred callbacks. While the worker is
+Libft wakeable timed fallback. `stop_worker` wakes and joins the worker. If
+multiple callers stop the same worker concurrently, one caller performs the
+join and the others receive that join result after it completes. A start that
+overlaps transport destruction returns a lifecycle/thread error; destruction
+waits for an in-progress stop and prevents a new worker from starting during
+teardown. User callbacks are never invoked by the worker; call
+`dispatch_callbacks()` from the owning/application thread to drain deferred
+callbacks. While the worker is
 running, mutating operations
 (`open_connection`, `listen`, `accept`, `reject`, connection sends, close/key
 updates, lane/queue changes, flush, and callback registration) are copied into

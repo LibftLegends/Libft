@@ -294,6 +294,12 @@ FT_TEST(test_crypto_hmac_sha256_rfc4231_remaining_vectors)
         0x85U, 0xf0U, 0xfaU, 0xa3U, 0xe5U, 0x78U, 0xf8U, 0x07U,
         0x7aU, 0x2eU, 0x3fU, 0xf4U, 0x67U, 0x29U, 0x66U, 0x5bU
     };
+    uint8_t case_five_key[20];
+    const uint8_t case_five_data[] = "Test With Truncation";
+    const uint8_t case_five_expected_prefix[16] = {
+        0xa3U, 0xb6U, 0x16U, 0x74U, 0x73U, 0x10U, 0x0eU, 0xe0U,
+        0x6eU, 0x0cU, 0x79U, 0x6cU, 0x29U, 0x55U, 0x55U, 0x2bU
+    };
     uint8_t case_six_key[131];
     const uint8_t case_six_data[] =
         "Test Using Larger Than Block-Size Key - Hash Key First";
@@ -339,6 +345,12 @@ FT_TEST(test_crypto_hmac_sha256_rfc4231_remaining_vectors)
         digest));
     FT_ASSERT(crypto_bytes_equal(digest, case_four_expected,
         sizeof(digest)));
+    ft_memset(case_five_key, 0x0cU, sizeof(case_five_key));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hmac_sha256(case_five_key,
+        sizeof(case_five_key), case_five_data, sizeof(case_five_data) - 1U,
+        digest));
+    FT_ASSERT(crypto_bytes_equal(digest, case_five_expected_prefix,
+        sizeof(case_five_expected_prefix)));
     ft_memset(case_six_key, 0xaaU, sizeof(case_six_key));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hmac_sha256(case_six_key,
         sizeof(case_six_key), case_six_data, sizeof(case_six_data) - 1U,
@@ -494,6 +506,12 @@ FT_TEST(test_crypto_x25519_rfc7748_key_agreement)
         0x3fU, 0x83U, 0x43U, 0xc8U, 0x5bU, 0x78U, 0x67U, 0x4dU,
         0xadU, 0xfcU, 0x7eU, 0x14U, 0x6fU, 0x88U, 0x2bU, 0x4fU
     };
+    const uint8_t expected_shared_secret[32] = {
+        0x4aU, 0x5dU, 0x9dU, 0x5bU, 0xa4U, 0xceU, 0x2dU, 0xe1U,
+        0x72U, 0x8eU, 0x3bU, 0xf4U, 0x80U, 0x35U, 0x0fU, 0x25U,
+        0xe0U, 0x7eU, 0x21U, 0xc9U, 0x47U, 0xd1U, 0x9eU, 0x33U,
+        0x76U, 0xf0U, 0x9bU, 0x3cU, 0x1eU, 0x16U, 0x17U, 0x42U
+    };
     uint8_t alice_public_key[32];
     uint8_t bob_public_key[32];
     uint8_t alice_shared_secret[32];
@@ -513,6 +531,8 @@ FT_TEST(test_crypto_x25519_rfc7748_key_agreement)
         alice_public_key, bob_shared_secret));
     FT_ASSERT(crypto_bytes_equal(alice_shared_secret, bob_shared_secret,
         sizeof(alice_shared_secret)));
+    FT_ASSERT(crypto_bytes_equal(alice_shared_secret,
+        expected_shared_secret, sizeof(alice_shared_secret)));
     ft_memset(bob_public_key, 0, sizeof(bob_public_key));
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
         crypto_x25519_shared_secret(alice_private_key, bob_public_key,
@@ -641,9 +661,11 @@ FT_TEST(test_crypto_chacha20_poly1305_rfc8439_aead_vector)
     };
     uint8_t tag[16];
     uint8_t bad_tag[16];
+    uint8_t bad_ciphertext[sizeof(expected_ciphertext)];
     ft_vector<uint8_t> ciphertext;
     ft_vector<uint8_t> recovered;
     ft_size_t index;
+    uint32_t bit_index;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_poly1305_seal(key, nonce,
         associated_data, sizeof(associated_data), plaintext,
@@ -656,17 +678,32 @@ FT_TEST(test_crypto_chacha20_poly1305_rfc8439_aead_vector)
         ciphertext.size(), tag, recovered));
     FT_ASSERT_EQ(sizeof(plaintext) - 1U, recovered.size());
     FT_ASSERT(crypto_bytes_equal(&recovered[0], plaintext, recovered.size()));
-    index = 0U;
-    while (index < sizeof(bad_tag))
+    bit_index = 0U;
+    while (bit_index < 128U)
     {
-        bad_tag[index] = tag[index];
+        ft_memcpy(bad_tag, tag, sizeof(bad_tag));
+        bad_tag[bit_index / 8U] ^= static_cast<uint8_t>(
+            1U << (bit_index % 8U));
+        FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, crypto_chacha20_poly1305_open(
+            key, nonce, associated_data, sizeof(associated_data),
+            &ciphertext[0], ciphertext.size(), bad_tag, recovered));
+        FT_ASSERT_EQ(0U, recovered.size());
+        bit_index += 1U;
+    }
+    ft_memcpy(bad_ciphertext, expected_ciphertext,
+        sizeof(bad_ciphertext));
+    index = 0U;
+    while (index < sizeof(bad_ciphertext))
+    {
+        bad_ciphertext[index] ^= 1U;
+        FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
+            crypto_chacha20_poly1305_open(key, nonce, associated_data,
+                sizeof(associated_data), bad_ciphertext,
+                sizeof(bad_ciphertext), expected_tag, recovered));
+        FT_ASSERT_EQ(0U, recovered.size());
+        bad_ciphertext[index] ^= 1U;
         index += 1U;
     }
-    bad_tag[0] ^= 1U;
-    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, crypto_chacha20_poly1305_open(key,
-        nonce, associated_data, sizeof(associated_data), &ciphertext[0],
-        ciphertext.size(), bad_tag, recovered));
-    FT_ASSERT_EQ(0U, recovered.size());
     (void)ciphertext.destroy();
     (void)recovered.destroy();
     return (1);
@@ -829,6 +866,40 @@ FT_TEST(test_crypto_aead_allocation_failure_sweep_is_transactional)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, ciphertext.destroy());
         failure_after += 1U;
     }
+    return (1);
+}
+
+FT_TEST(test_crypto_aead_open_allocation_failure_releases_no_plaintext)
+{
+    const uint8_t key[32] = {0x21U};
+    const uint8_t nonce[12] = {0x34U};
+    const uint8_t plaintext[48] = {0x56U};
+    uint8_t tag[16];
+    uint8_t saved_tag[16];
+    ft_vector<uint8_t> ciphertext;
+    ft_vector<uint8_t> opened;
+    test_cma_failure_controller controller;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_poly1305_seal(key, nonce,
+        ft_nullptr, 0U, plaintext, sizeof(plaintext), ciphertext, tag));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, opened.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, opened.push_back(0xa5U));
+    ft_memcpy(saved_tag, tag, sizeof(saved_tag));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_begin(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_cma_failure_controller_fail_next(controller,
+            TEST_CMA_FAILURE_ALLOCATE));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, crypto_chacha20_poly1305_open(key, nonce,
+        ft_nullptr, 0U, &ciphertext[0], ciphertext.size(), tag, opened));
+    FT_ASSERT_EQ(0U, opened.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(0, ft_memcmp(saved_tag, tag, sizeof(tag)));
+    FT_ASSERT_EQ(sizeof(plaintext), ciphertext.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, opened.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ciphertext.destroy());
     return (1);
 }
 

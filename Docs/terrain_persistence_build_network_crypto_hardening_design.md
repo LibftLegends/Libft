@@ -330,7 +330,10 @@ events emitted by `BUILD_PLAN_MODE=1`.
     Require separate output roots/configuration fingerprints and intact archives.
 12. Use paths containing spaces and long paths on Windows/macOS/Linux.
 13. Change a module manifest, root graph, and compiler configuration separately;
-    assert each invalidates the intended targets.
+    assert each invalidates the intended targets. Change the host/target
+    platform while keeping the compiler command and flags the same; assert the
+    object root changes and shared archive filenames are rebuilt for that
+    platform before linking.
 14. Run the stale-source/member scanner after every scenario.
 
 Manifest invalidation must be content-based rather than dependent solely on
@@ -804,6 +807,8 @@ The work is complete only when the grouped gates below are evidenced:
   two remaining file modes preserve precise mapped errors and never leak handles.
 - Every incremental-build scenario and archive-integrity check passes on
   Windows, Linux, and macOS, including sanitizer/release separation.
+- Host/target platform and compiler-target changes never reuse incompatible
+  object files or link shared archive filenames from another configuration.
 - Crypto vectors, boundaries, lifecycle/failure, mutation, differential, fuzz,
   randomness, wiping, and review gates pass; the standalone path has no OpenSSL
   dependency.

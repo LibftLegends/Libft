@@ -53,6 +53,9 @@ class crypto_network_backend
         int32_t destroy() noexcept;
         int32_t move(crypto_network_backend &other) noexcept;
         int32_t swap(crypto_network_backend &other) noexcept;
+#ifdef LIBFT_TEST_BUILD
+        ft_bool test_is_wiped() const noexcept;
+#endif
         ft_bool seal(const uint8_t nonce[12], const uint8_t *associated_data,
             ft_size_t associated_data_length, const uint8_t *plaintext,
             ft_size_t plaintext_length, ft_vector<uint8_t> &ciphertext,

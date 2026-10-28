@@ -19,10 +19,16 @@ static HANDLE g_file_handles[1024];
 static pt_mutex g_file_mutex;
 static ft_bool g_file_mutex_ready = FT_FALSE;
 static thread_local int32_t g_last_open_error = 0;
+static thread_local int32_t g_last_open_error_code = FT_ERR_SUCCESS;
 
 int32_t cmp_get_last_open_error(void)
 {
     return (g_last_open_error);
+}
+
+int32_t cmp_get_last_open_error_code(void)
+{
+    return (g_last_open_error_code);
 }
 
 static int32_t cmp_ensure_file_mutex_initialized(void)
@@ -81,11 +87,13 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     DWORD desired_access;
     DWORD creation_disposition;
     DWORD flags_and_attributes;
+    DWORD open_error;
     int32_t open_flags;
     HANDLE file_handle;
     int32_t file_descriptor;
 
     g_last_open_error = 0;
+    g_last_open_error_code = FT_ERR_SUCCESS;
     if (path_name == ft_nullptr)
     {
         g_last_open_error = ERROR_INVALID_PARAMETER;
@@ -96,12 +104,14 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     if (translate_error != FT_ERR_SUCCESS)
     {
         g_last_open_error = ERROR_INVALID_NAME;
+        g_last_open_error_code = translate_error;
         return (-1);
     }
     lock_error = cmp_lock_file_mutex();
     if (lock_error != FT_ERR_SUCCESS)
     {
         cma_free(native_path);
+        g_last_open_error_code = lock_error;
         return (-1);
     }
     desired_access = 0;
@@ -138,10 +148,11 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     file_handle = CreateFileA(native_path, desired_access,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, ft_nullptr, creation_disposition,
         flags_and_attributes, ft_nullptr);
+    open_error = file_handle == INVALID_HANDLE_VALUE ? GetLastError() : 0U;
     cma_free(native_path);
     if (file_handle == INVALID_HANDLE_VALUE)
     {
-        g_last_open_error = static_cast<int32_t>(GetLastError());
+        g_last_open_error = static_cast<int32_t>(open_error);
         cmp_unlock_file_mutex();
         return (-1);
     }
@@ -157,7 +168,8 @@ static int32_t cmp_open_internal(const char *path_name, int32_t flags, int32_t m
     file_descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(file_handle), open_flags);
     if (file_descriptor < 0)
     {
-        g_last_open_error = static_cast<int32_t>(GetLastError());
+        g_last_open_error = errno;
+        g_last_open_error_code = cmp_map_system_error_to_ft(errno);
         CloseHandle(file_handle);
         cmp_unlock_file_mutex();
         return (-1);
@@ -325,6 +337,11 @@ void cmp_initialize_standard_file_descriptors()
 int32_t cmp_get_last_open_error(void)
 {
     return (errno);
+}
+
+int32_t cmp_get_last_open_error_code(void)
+{
+    return (cmp_map_system_error_to_ft(errno));
 }
 
 int32_t cmp_open(const char *path_name)

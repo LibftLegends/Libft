@@ -180,3 +180,86 @@ FT_TEST(test_networking_secure_channel_move_failure_preserves_source)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
     return (1);
 }
+
+FT_TEST(test_networking_secure_channel_long_packet_and_epoch_progression)
+{
+    uint8_t key[32];
+    uint8_t initialization_vector[12];
+    uint8_t associated_data[8];
+    uint8_t message[37];
+    uint8_t authentication_tag[16];
+    networking_secure_channel sender;
+    networking_secure_channel receiver;
+    ft_vector<uint8_t> ciphertext;
+    ft_vector<uint8_t> plaintext;
+    uint32_t byte_index = 0U;
+    uint64_t epoch = 0U;
+    uint64_t packet_number = 0U;
+
+    while (byte_index < sizeof(key))
+    {
+        key[byte_index] = static_cast<uint8_t>(byte_index * 17U + 3U);
+        byte_index += 1U;
+    }
+    byte_index = 0U;
+    while (byte_index < sizeof(initialization_vector))
+    {
+        initialization_vector[byte_index] =
+            static_cast<uint8_t>(byte_index * 11U + 7U);
+        byte_index += 1U;
+    }
+    byte_index = 0U;
+    while (byte_index < sizeof(message))
+    {
+        message[byte_index] = static_cast<uint8_t>(byte_index * 29U + 5U);
+        byte_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.initialize(key, sizeof(key),
+        initialization_vector, sizeof(initialization_vector)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.initialize(key, sizeof(key),
+        initialization_vector, sizeof(initialization_vector)));
+    while (epoch < 64U)
+    {
+        uint32_t packet_index = 0U;
+
+        if (epoch != 0U)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.update_send_key_epoch(epoch));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS,
+                receiver.update_receive_key_epoch(epoch));
+        }
+        ft_memset(associated_data, static_cast<uint8_t>(epoch),
+            sizeof(associated_data));
+        while (packet_index < 8U)
+        {
+            ft_size_t message_length =
+                (packet_number + packet_index) % (sizeof(message) + 1U);
+            const uint8_t *ciphertext_data = ft_nullptr;
+
+            packet_number += 1U;
+            FT_ASSERT_EQ(FT_TRUE, sender.seal(packet_number, associated_data,
+                sizeof(associated_data), message, message_length, ciphertext,
+                authentication_tag));
+            if (ciphertext.size() != 0U)
+                ciphertext_data = &ciphertext[0U];
+            FT_ASSERT_EQ(FT_TRUE, receiver.open_at_epoch(packet_number, epoch,
+                associated_data, sizeof(associated_data),
+                ciphertext_data, ciphertext.size(), authentication_tag,
+                plaintext));
+            FT_ASSERT_EQ(message_length, plaintext.size());
+            if (message_length != 0U)
+                FT_ASSERT_EQ(0, ft_memcmp(&plaintext[0], message,
+                    message_length));
+            packet_index += 1U;
+        }
+        epoch += 1U;
+    }
+    FT_ASSERT_EQ(512U, packet_number);
+    FT_ASSERT_EQ(63U, sender.get_send_key_epoch());
+    FT_ASSERT_EQ(63U, receiver.get_receive_key_epoch());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ciphertext.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, plaintext.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.destroy());
+    return (1);
+}

@@ -5,6 +5,23 @@
 
 namespace
 {
+    static ft_bool memory_ranges_overlap(const void *left,
+        ft_size_t left_length, const void *right,
+        ft_size_t right_length) noexcept
+    {
+        uintptr_t left_address;
+        uintptr_t right_address;
+
+        if (left == ft_nullptr || right == ft_nullptr
+            || left_length == 0U || right_length == 0U)
+            return (FT_FALSE);
+        left_address = reinterpret_cast<uintptr_t>(left);
+        right_address = reinterpret_cast<uintptr_t>(right);
+        if (left_address <= right_address)
+            return (right_address - left_address < left_length);
+        return (left_address - right_address < right_length);
+    }
+
     static void wipe(void *data, ft_size_t length) noexcept
     {
         (void)crypto_secure_wipe(data, length);
@@ -17,6 +34,21 @@ namespace
     {
         return (crypto_hkdf_sha256_expand(pseudorandom_key, label,
             label_length, output, output_length));
+    }
+
+    static void clear_session_outputs(uint8_t send_key[32],
+        uint8_t receive_key[32], uint8_t send_initialization_vector[12],
+        uint8_t receive_initialization_vector[12]) noexcept
+    {
+        if (send_key != ft_nullptr)
+            wipe(send_key, 32U);
+        if (receive_key != ft_nullptr)
+            wipe(receive_key, 32U);
+        if (send_initialization_vector != ft_nullptr)
+            wipe(send_initialization_vector, 12U);
+        if (receive_initialization_vector != ft_nullptr)
+            wipe(receive_initialization_vector, 12U);
+        return ;
     }
 }
 
@@ -48,15 +80,55 @@ int32_t crypto_derive_session_keys(const uint8_t private_key[32],
     const uint8_t *receive_iv_label;
     int32_t result;
 
+    if (memory_ranges_overlap(send_key, 32U, receive_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(send_key, 32U,
+            send_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(send_key, 32U,
+            receive_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(receive_key, 32U,
+            send_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(receive_key, 32U,
+            receive_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(send_initialization_vector, 12U,
+            receive_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(private_key, 32U, send_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(private_key, 32U, receive_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(private_key, 32U,
+            send_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(private_key, 32U,
+            receive_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(peer_public_key, 32U, send_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(peer_public_key, 32U, receive_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(peer_public_key, 32U,
+            send_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(peer_public_key, 32U,
+            receive_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(transcript, transcript_length,
+            send_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(transcript, transcript_length,
+            receive_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(transcript, transcript_length,
+            send_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(transcript, transcript_length,
+            receive_initialization_vector, 12U) != FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (private_key == ft_nullptr || peer_public_key == ft_nullptr
         || transcript == ft_nullptr || transcript_length == 0U
         || send_key == ft_nullptr || receive_key == ft_nullptr
         || send_initialization_vector == ft_nullptr
         || receive_initialization_vector == ft_nullptr)
+    {
+        clear_session_outputs(send_key, receive_key,
+            send_initialization_vector, receive_initialization_vector);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     if (role != crypto_session_role::CLIENT
         && role != crypto_session_role::SERVER)
+    {
+        clear_session_outputs(send_key, receive_key,
+            send_initialization_vector, receive_initialization_vector);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     ft_memset(shared_secret, 0, sizeof(shared_secret));
     ft_memset(transcript_hash, 0, sizeof(transcript_hash));
     ft_memset(pseudorandom_key, 0, sizeof(pseudorandom_key));
@@ -121,6 +193,18 @@ int32_t crypto_derive_key_update(const uint8_t current_key[32],
 
     if (current_key == ft_nullptr || updated_key == ft_nullptr
         || updated_initialization_vector == ft_nullptr)
+    {
+        if (updated_key != ft_nullptr)
+            wipe(updated_key, 32U);
+        if (updated_initialization_vector != ft_nullptr)
+            wipe(updated_initialization_vector, 12U);
+        return (FT_ERR_INVALID_ARGUMENT);
+    }
+    if (memory_ranges_overlap(current_key, 32U, updated_key, 32U) != FT_FALSE
+        || memory_ranges_overlap(current_key, 32U,
+            updated_initialization_vector, 12U) != FT_FALSE
+        || memory_ranges_overlap(updated_key, 32U,
+            updated_initialization_vector, 12U) != FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     ft_memset(pseudorandom_key, 0, sizeof(pseudorandom_key));
     ft_memset(info, 0, sizeof(info));
@@ -145,8 +229,8 @@ int32_t crypto_derive_key_update(const uint8_t current_key[32],
     }
     else
     {
-        ft_memset(updated_key, 0, 32U);
-        ft_memset(updated_initialization_vector, 0, 12U);
+        wipe(updated_key, 32U);
+        wipe(updated_initialization_vector, 12U);
     }
     wipe(pseudorandom_key, sizeof(pseudorandom_key));
     wipe(info, sizeof(info));

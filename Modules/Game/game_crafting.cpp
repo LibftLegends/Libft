@@ -1521,6 +1521,15 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
     game_crafting_query_result *query_result,
     ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept
 {
+    return (this->query_recipe_at_station_snapshot(recipe_id,
+        inventory_snapshot, station_id, 1, query_result, missing_groups));
+}
+
+int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
+    const game_inventory_snapshot &inventory_snapshot, int32_t station_id,
+    int32_t batch_count, game_crafting_query_result *query_result,
+    ft_vector<game_crafting_missing_ingredient> *missing_groups) const noexcept
+{
     const Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
     const Pair<int32_t, ft_bool> *unlock_entry;
     const Pair<int32_t, int32_t> *required_station;
@@ -1539,7 +1548,7 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
     ft_bool crafting_locked = FT_FALSE;
 
     if (query_result == ft_nullptr || missing_groups == ft_nullptr
-        || station_id < 0)
+        || station_id < 0 || batch_count <= 0)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     query_result->found = FT_FALSE;
     query_result->known = FT_FALSE;
@@ -1677,11 +1686,16 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
         group.item_id = ingredient.get_item_id();
         group.rarity = ingredient.get_rarity();
         group.alternative_count = alternative_count;
-        group.required_units = ingredient.get_count();
-        if (group.item_id <= 0 || group.required_units <= 0
+        const int32_t ingredient_count = ingredient.get_count();
+        if (group.item_id <= 0 || ingredient_count <= 0
             || group.rarity < -1 || alternative_count == 0U
-            || alternative_count > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
+            || alternative_count
+                > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
             result = FT_ERR_CONFIGURATION;
+        else if (ingredient_count > FT_INT32_MAX / batch_count)
+            result = FT_ERR_OUT_OF_RANGE;
+        else
+            group.required_units = ingredient_count * batch_count;
         alternative_index = 0U;
         while (result == FT_ERR_SUCCESS
             && alternative_index < alternative_count)
@@ -1823,6 +1837,86 @@ int32_t game_crafting::prepare_craft_at_station(const game_inventory &inventory,
 {
     return (this->prepare_craft_internal(inventory, recipe_id, station_id,
         batch_count, prepared, FT_TRUE, ft_nullptr));
+}
+
+int32_t game_crafting::query_recipe_output_snapshot(int32_t recipe_id,
+    int32_t batch_count, game_crafting_output_snapshot *output_out) const noexcept
+{
+    const Pair<int32_t, game_crafting_output> *output_entry;
+    game_crafting_output_snapshot snapshot = {};
+    ft_bool crafting_locked = FT_FALSE;
+    int32_t result;
+
+    if (output_out == ft_nullptr || batch_count <= 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_crafting::query_recipe_output_snapshot");
+    result = this->lock_internal(&crafting_locked);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    output_entry = this->_recipe_outputs.find(recipe_id);
+    if (output_entry == this->_recipe_outputs.end())
+        result = FT_ERR_NOT_FOUND;
+    else if (!output_entry->value.item_definition
+        || output_entry->value.quantity > FT_INT32_MAX / batch_count)
+        result = FT_ERR_INVALID_ARGUMENT;
+    for (ft_size_t index = 0U; result == FT_ERR_SUCCESS
+        && index < output_entry->value.byproduct_count; ++index)
+    {
+        if (output_entry->value.byproducts[index].quantity
+            > FT_INT32_MAX / batch_count)
+            result = FT_ERR_INVALID_ARGUMENT;
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        const ft_sharedptr<game_item> &definition =
+            output_entry->value.item_definition;
+        game_crafting_product_snapshot &primary = snapshot.primary;
+        primary.item_id = definition->get_item_id();
+        primary.quantity = output_entry->value.quantity * batch_count;
+        primary.max_stack = definition->get_max_stack();
+        primary.rarity = definition->get_rarity();
+        primary.width = definition->get_width();
+        primary.height = definition->get_height();
+        primary.modifier1_id = definition->get_modifier1_id();
+        primary.modifier1_value = definition->get_modifier1_value();
+        primary.modifier2_id = definition->get_modifier2_id();
+        primary.modifier2_value = definition->get_modifier2_value();
+        primary.modifier3_id = definition->get_modifier3_id();
+        primary.modifier3_value = definition->get_modifier3_value();
+        primary.modifier4_id = definition->get_modifier4_id();
+        primary.modifier4_value = definition->get_modifier4_value();
+        primary.instance_id = definition->get_instance_id();
+        snapshot.byproduct_count = static_cast<uint32_t>(
+            output_entry->value.byproduct_count);
+        for (ft_size_t index = 0U; index < output_entry->value.byproduct_count;
+            ++index)
+        {
+            const game_crafting_byproduct &source =
+                output_entry->value.byproducts[index];
+            game_crafting_product_snapshot &destination =
+                snapshot.byproducts[index];
+            destination.item_id = source.item_id;
+            destination.quantity = source.quantity * batch_count;
+            destination.max_stack = source.max_stack;
+            destination.rarity = source.rarity;
+            destination.width = source.width;
+            destination.height = source.height;
+            destination.modifier1_id = source.modifier1_id;
+            destination.modifier1_value = source.modifier1_value;
+            destination.modifier2_id = source.modifier2_id;
+            destination.modifier2_value = source.modifier2_value;
+            destination.modifier3_id = source.modifier3_id;
+            destination.modifier3_value = source.modifier3_value;
+            destination.modifier4_id = source.modifier4_id;
+            destination.modifier4_value = source.modifier4_value;
+            destination.instance_id = source.instance_id;
+        }
+    }
+    this->unlock_internal(crafting_locked);
+    if (result == FT_ERR_SUCCESS)
+        *output_out = snapshot;
+    return (result);
 }
 
 int32_t game_crafting::prepare_processing_at_station(

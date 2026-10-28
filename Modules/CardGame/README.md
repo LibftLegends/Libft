@@ -42,11 +42,14 @@ sequence is rejected, so callers cannot accidentally acknowledge a later
 intent. Pending host intents, their sequence, and acknowledgement state are part
 of the in-memory `card_game_snapshot` and `card_game_delta` contracts and the
 authoritative state hash. Applying a snapshot or delta restores the exact pending
-queue. The state format version is 2; callers must not treat version-1 snapshots
-as compatible. This does not yet add a byte-level persistence codec or include
-host intents in serialized command/replay records. Replaying commands re-runs
-deterministic callbacks and can emit intents again, so a host still needs a
-durable idempotency journal around consumer acceptance and replay recovery.
+queue. Every pending host intent records the originating action request ID
+(zero for intents produced outside a submitted action); snapshots, deltas, and
+state hashes preserve it. The byte snapshot codec writes version 2 and reads
+version 1 snapshots with a zero action request ID for legacy intents. Host
+intents are not included in serialized command/replay records. Replaying
+commands re-runs deterministic callbacks and can emit intents again, so a host
+still needs a durable idempotency journal around consumer acceptance and replay
+recovery.
 
 `card_game_script_bridge` is an optional adapter for consumers that want effect
 callbacks written with Libft's bounded Scripting module. Initialize the bridge
@@ -347,8 +350,8 @@ exact physical hand instance, effect event, and discard destination as one
 transaction. Its fixed 64-byte `play_payload` is copied into the effect context
 and preserved by command-log and replay serialization, so typed choices and
 other deterministic effect inputs are available during replay. Command-log
-version 13 and replay version 11 add this payload and a dedicated discard-zone
-field while older versions remain readable.
+version 13 and replay version 12 add this payload, the action request ID, and a
+dedicated discard-zone field while older versions remain readable.
 For session-bound actions and replay, the Minecraft regeneration callback also
 checks that the payload request ID matches the engine's active action request
 ID before producing a host intent.

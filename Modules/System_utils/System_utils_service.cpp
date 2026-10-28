@@ -10,7 +10,9 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 static ft_bool g_su_service_force_no_fork = FT_FALSE;
+#endif
 static t_su_service_signal_handler g_su_service_signal_handler = ft_nullptr;
 static void *g_su_service_signal_context = ft_nullptr;
 
@@ -25,11 +27,13 @@ static void su_service_signal_dispatch(int32_t signal_number,
     return ;
 }
 
+#ifdef LIBFT_TEST_BUILD
 void su_service_force_no_fork(ft_bool enable)
 {
     g_su_service_force_no_fork = enable;
     return ;
 }
+#endif
 
 static int32_t su_service_redirect_standard_streams(int32_t *error_code)
 {
@@ -137,7 +141,11 @@ int32_t su_service_daemonize(const char *working_directory,
 {
     int32_t detach_result;
 
+#ifdef LIBFT_TEST_BUILD
     detach_result = cmp_service_detach_process(g_su_service_force_no_fork);
+#else
+    detach_result = cmp_service_detach_process(FT_FALSE);
+#endif
     if (detach_result != 0)
         return (detach_result);
     if (cmp_service_set_working_directory(working_directory) != 0)

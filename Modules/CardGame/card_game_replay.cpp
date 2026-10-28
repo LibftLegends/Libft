@@ -3,12 +3,13 @@
 #include "../File/file_utils.hpp"
 
 static const uint32_t CARD_GAME_REPLAY_MAGIC = 0x43524732U;
-static const uint32_t CARD_GAME_REPLAY_VERSION = 11U;
+static const uint32_t CARD_GAME_REPLAY_VERSION = 12U;
 static const uint32_t CARD_GAME_REPLAY_HEADER_BYTES = 84U;
 static const uint32_t CARD_GAME_REPLAY_EVENT_BYTES = 144U;
 static const uint32_t CARD_GAME_REPLAY_V9_EVENT_BYTES = 152U;
 static const uint32_t CARD_GAME_REPLAY_V10_EVENT_BYTES = 216U;
 static const uint32_t CARD_GAME_REPLAY_V11_EVENT_BYTES = 220U;
+static const uint32_t CARD_GAME_REPLAY_V12_EVENT_BYTES = 228U;
 static const uint32_t CARD_GAME_REPLAY_V7_EVENT_BYTES = 140U;
 static const uint32_t CARD_GAME_REPLAY_V5_EVENT_BYTES = 128U;
 static const uint32_t CARD_GAME_REPLAY_V6_EVENT_BYTES = 136U;
@@ -253,6 +254,7 @@ int32_t card_game_replay::append_command_record(
     event.authoritative_epoch = record.command.authoritative_epoch;
     event.result_value = record.result_value;
     event.session_id = record.session_id;
+    event.request_id = record.request_id;
     ft_memcpy(event.play_payload, record.command.play_payload,
         FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
     event.destination_zone_id = record.command.destination_zone_id;
@@ -402,7 +404,7 @@ int32_t card_game_replay::serialize(uint8_t *output,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_event_count > FT_CARD_GAME_MAX_REPLAY_EVENTS
         || output_capacity < CARD_GAME_REPLAY_HEADER_BYTES
-            + this->_event_count * CARD_GAME_REPLAY_V11_EVENT_BYTES + 4U)
+            + this->_event_count * CARD_GAME_REPLAY_V12_EVENT_BYTES + 4U)
         return (FT_ERR_FULL);
     offset = 0U;
     replay_write_u32(output, &offset, CARD_GAME_REPLAY_MAGIC);
@@ -446,6 +448,7 @@ int32_t card_game_replay::serialize(uint8_t *output,
         offset += FT_CARD_GAME_REPLAY_PRIVATE_BYTES;
         replay_write_u32(output, &offset, event->result_value);
         replay_write_u64(output, &offset, event->session_id);
+        replay_write_u64(output, &offset, event->request_id);
         ft_memcpy(output + offset, event->play_payload,
             FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
         offset += FT_CARD_GAME_COMMAND_PAYLOAD_BYTES;
@@ -469,9 +472,9 @@ int32_t card_game_replay::serialized_size(uint32_t *size) const noexcept
         return (FT_ERR_FULL);
     required_size = CARD_GAME_REPLAY_HEADER_BYTES + 4U;
     if (this->_event_count > (UINT32_MAX - required_size)
-        / CARD_GAME_REPLAY_V11_EVENT_BYTES)
+        / CARD_GAME_REPLAY_V12_EVENT_BYTES)
         return (FT_ERR_FULL);
-    required_size += this->_event_count * CARD_GAME_REPLAY_V11_EVENT_BYTES;
+    required_size += this->_event_count * CARD_GAME_REPLAY_V12_EVENT_BYTES;
     *size = required_size;
     return (FT_ERR_SUCCESS);
 }
@@ -639,6 +642,8 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
         event_size = CARD_GAME_REPLAY_V10_EVENT_BYTES;
     if (version >= 11U)
         event_size = CARD_GAME_REPLAY_V11_EVENT_BYTES;
+    if (version >= 12U)
+        event_size = CARD_GAME_REPLAY_V12_EVENT_BYTES;
     if (input_size != CARD_GAME_REPLAY_HEADER_BYTES
         + event_count * event_size + 4U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -750,10 +755,18 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
                 return (result);
         }
         event.session_id = 0U;
+        event.request_id = 0U;
         if (version >= 9U)
         {
             result = replay_read_u64(input, input_size - 4U, &offset,
                 &event.session_id);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+        }
+        if (version >= 12U)
+        {
+            result = replay_read_u64(input, input_size - 4U, &offset,
+                &event.request_id);
             if (result != FT_ERR_SUCCESS)
                 return (result);
         }
@@ -848,6 +861,7 @@ int32_t card_game_replay::replay_into(card_game_engine &engine) const noexcept
         records[index].command.destination_zone_id =
             event.destination_zone_id;
         records[index].session_id = event.session_id;
+        records[index].request_id = event.request_id;
         records[index].result_value = event.result_value;
         records[index].rules_hash = this->_header.rules_hash;
         records[index].state_hash_before = event.state_hash_before;

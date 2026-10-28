@@ -46,6 +46,12 @@ struct file_dir
     ft_bool closed;
 };
 HANDLE cmp_retrieve_handle(int32_t file_descriptor);
+# ifdef LIBFT_TEST_BUILD
+void cmp_force_rng_windows_acquire_failure(uint32_t last_error);
+void cmp_force_rng_windows_generate_failure(uint32_t last_error);
+void cmp_force_rng_windows_release_failure(uint32_t last_error);
+void cmp_clear_force_rng_windows_failures(void);
+# endif
 off_t cmp_lseek(int32_t file_descriptor, off_t offset, int32_t whence);
 int32_t cmp_open(const char *path_name);
 int32_t cmp_open(const char *path_name, int32_t flags);
@@ -84,6 +90,7 @@ int32_t cmp_write(int32_t file_descriptor, const void *buffer, ft_size_t count,
     int64_t *bytes_written_out);
 #endif
 int32_t cmp_get_last_open_error(void);
+int32_t cmp_get_last_open_error_code(void);
 off_t cmp_lseek(int32_t file_descriptor, off_t offset, int32_t whence);
 int32_t cmp_close(int32_t file_descriptor);
 void cmp_initialize_standard_file_descriptors();

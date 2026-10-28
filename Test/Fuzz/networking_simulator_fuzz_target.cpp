@@ -1,6 +1,7 @@
 #include "../../Modules/Networking/networking_simulator.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
+#include "networking_structured_fuzz_mutator.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -67,4 +68,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (simulator.destroy() == FT_ERR_NO_MEMORY || result == FT_ERR_NO_MEMORY)
         return (0);
     return (0);
+}
+
+extern "C" size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size,
+    size_t maximum_size, unsigned int seed)
+{
+    return (networking_structured_fuzz_mutate(data, size, maximum_size,
+        seed, 2048U));
 }

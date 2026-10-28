@@ -10,7 +10,9 @@ enum class networking_nat_model_type : uint8_t
     PORT_RESTRICTED = 2U,
     SYMMETRIC = 3U,
     DOUBLE_NAT = 4U,
-    UDP_BLOCKED = 5U
+    UDP_BLOCKED = 5U,
+    HAIRPIN_SUPPORTED = 6U,
+    HAIRPIN_UNSUPPORTED = 7U
 };
 
 class networking_nat_test_model : public networking_nat_probe_io
@@ -18,6 +20,7 @@ class networking_nat_test_model : public networking_nat_probe_io
     private:
         networking_nat_model_type _type;
         ft_bool _mapped;
+        networking_message_endpoint _last_local;
         networking_message_endpoint _last_remote;
 
         static ft_bool same_host(const networking_message_endpoint &left,
@@ -62,8 +65,9 @@ class networking_nat_test_model : public networking_nat_probe_io
     public:
         networking_nat_test_model() noexcept
             : networking_nat_probe_io(), _type(networking_nat_model_type::FULL_CONE),
-              _mapped(FT_FALSE), _last_remote()
+              _mapped(FT_FALSE), _last_local(), _last_remote()
         {
+            ft_memset(&this->_last_local, 0, sizeof(this->_last_local));
             ft_memset(&this->_last_remote, 0, sizeof(this->_last_remote));
             return ;
         }
@@ -77,6 +81,7 @@ class networking_nat_test_model : public networking_nat_probe_io
         {
             this->_type = type;
             this->_mapped = FT_FALSE;
+            ft_memset(&this->_last_local, 0, sizeof(this->_last_local));
             ft_memset(&this->_last_remote, 0, sizeof(this->_last_remote));
             return (FT_ERR_SUCCESS);
         }
@@ -85,12 +90,12 @@ class networking_nat_test_model : public networking_nat_probe_io
             const networking_message_endpoint &remote, uint64_t attempt_id)
             noexcept override
         {
-            (void)local;
             (void)attempt_id;
             if (remote.length == 0U)
                 return (FT_ERR_INVALID_ARGUMENT);
             if (this->_type == networking_nat_model_type::UDP_BLOCKED)
                 return (FT_ERR_SOCKET_SEND_FAILED);
+            this->_last_local = local;
             this->_last_remote = remote;
             this->_mapped = FT_TRUE;
             return (FT_ERR_SUCCESS);
@@ -108,6 +113,11 @@ class networking_nat_test_model : public networking_nat_probe_io
                 return (FT_TRUE);
             if (this->_type == networking_nat_model_type::DOUBLE_NAT
                 || this->_type == networking_nat_model_type::UDP_BLOCKED)
+                return (FT_FALSE);
+            if (this->_type == networking_nat_model_type::HAIRPIN_SUPPORTED)
+                return (networking_nat_test_model::same_host(
+                    this->_last_local, remote));
+            if (this->_type == networking_nat_model_type::HAIRPIN_UNSUPPORTED)
                 return (FT_FALSE);
             if (this->_type == networking_nat_model_type::ADDRESS_RESTRICTED)
                 return (networking_nat_test_model::same_host(

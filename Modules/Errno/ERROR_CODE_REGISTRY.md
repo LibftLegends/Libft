@@ -10,11 +10,11 @@ This registry enumerates every error code defined in [`Errno/errno.hpp`](errno.h
 | `FT_ERR_INVALID_ARGUMENT` | 3 | Arguments failed validation (null pointers, invalid flags, etc.). | Libft string/memory helpers, System_utils, Networking |
 | `FT_ERR_INVALID_POINTER` | 4 | Pointer values were malformed or not owned by the caller. | Libft memory helpers, CMA guard checks |
 | `FT_ERR_INVALID_HANDLE` | 5 | Handle-based API received an invalid descriptor/object. | File module, Networking sockets, System_utils handles |
-| `FT_ERR_INVALID_OPERATION` | 6 | Requested action violates API preconditions or invariants. | Libft algorithms, CMA stateful helpers |
+| `FT_ERR_INVALID_OPERATION` | 6 | Requested action violates API preconditions or invariants, including permission-denied and non-directory path errors from file opens. | Libft algorithms, CMA stateful helpers, Compatebility/System_utils |
 | `FT_ERR_INVALID_STATE` | 7 | Component was not initialised or is already shut down. | CMA allocator toggles, Logger, Template task utilities |
-| `FT_ERR_NOT_FOUND` | 8 | Item lookup failed. | Storage KV store, Template containers, JSON/YAML lookups |
+| `FT_ERR_NOT_FOUND` | 8 | Item lookup failed, including missing files or parent paths. | Storage KV store, Template containers, JSON/YAML lookups, Compatebility/System_utils |
 | `FT_ERR_ALREADY_EXISTS` | 9 | Resource already present, preventing creation. | Filesystem helpers, Storage, Networking |
-| `FT_ERR_OUT_OF_RANGE` | 10 | Index or numeric value outside accepted range. | Math utilities, Template containers, Libft parsing |
+| `FT_ERR_OUT_OF_RANGE` | 10 | Index, numeric value, or path length outside accepted range. | Math utilities, Template containers, Libft parsing, Compatebility/System_utils |
 | `FT_ERR_EMPTY` | 11 | Operation requires data but the container/resource is empty. | Template containers, Queue helpers |
 | `FT_ERR_FULL` | 12 | Container cannot accept more data. | Template circular buffer, CMA bounded allocators |
 | `FT_ERR_IO` | 13 | General I/O failure. | File module, System_utils file helpers, Networking streams |
@@ -71,6 +71,13 @@ This registry enumerates every error code defined in [`Errno/errno.hpp`](errno.h
 | `FT_ERR_SYS_MUTEX_NOT_OWNER` | 64 | System mutex unlock attempted by non-owner. | Errno module (mutex wrappers) |
 | `FT_ERR_SYS_MUTEX_UNLOCK_FAILED` | 65 | System mutex unlock failed. | Errno module (mutex wrappers) |
 | `FT_ERR_SYS_INTERNAL` | 66 | Internal system error. | Errno module (system wrappers) |
+| `FT_ERR_NOT_INITIALISED` | 67 | Lifecycle operation requires an initialized object. | Lifecycle classes across Libft |
+| `FT_ERR_PERMISSION_DENIED` | 68 | Operation was rejected by an authorization or authentication policy. | Crypto, Networking |
+| `FT_ERR_NOT_DIRECTORY` | 69 | A path component is not a directory. | Filesystem, Compatebility, System_utils |
+| `FT_ERR_IS_DIRECTORY` | 70 | File operation targeted a directory where a regular file was required. | Filesystem, Compatebility, System_utils |
+| `FT_ERR_PATH_TOO_LONG` | 71 | Path exceeds the platform or API path limit. | Filesystem, Compatebility, System_utils |
+| `FT_ERR_INVALID_PATH` | 72 | Path syntax or components are invalid. Windows `ERROR_INVALID_NAME` and `ERROR_BAD_PATHNAME` map here. | Filesystem, Compatebility, System_utils |
+| `FT_ERR_DISK_FULL` | 73 | Storage device has insufficient capacity. | Filesystem, Compatebility, System_utils |
 | `FT_ERR_RWLOCK_READER_CAPACITY` | 74 | Thread-local RW-lock reader ownership capacity reached. | PThread optimized RW-lock |
 | `FT_ERR_SSL_SYSCALL_ERROR` | 2005 | SSL syscall failure propagated from platform `errno`. | Networking TLS wrappers |
 | `FT_ERR_HTTP_PROTOCOL_MISMATCH` | 2006 | Server replied with a different HTTP version than requested. | API HTTP clients |

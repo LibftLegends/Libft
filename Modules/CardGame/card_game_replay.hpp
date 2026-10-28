@@ -49,6 +49,7 @@ struct card_game_replay_event
     uint32_t private_size;
     uint8_t private_data[FT_CARD_GAME_REPLAY_PRIVATE_BYTES];
     uint64_t session_id;
+    uint64_t request_id;
     uint8_t play_payload[FT_CARD_GAME_COMMAND_PAYLOAD_BYTES];
     uint32_t destination_zone_id;
 };

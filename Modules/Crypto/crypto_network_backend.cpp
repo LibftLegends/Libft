@@ -137,6 +137,20 @@ int32_t crypto_network_backend::swap(
     return (FT_ERR_SUCCESS);
 }
 
+#ifdef LIBFT_TEST_BUILD
+ft_bool crypto_network_backend::test_is_wiped() const noexcept
+{
+    uint8_t zero_key[sizeof(this->_encryption_key)];
+
+    ft_memset(zero_key, 0U, sizeof(zero_key));
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        || ft_memcmp(this->_encryption_key, zero_key,
+            sizeof(this->_encryption_key)) != 0)
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+#endif
+
 ft_bool crypto_network_backend::seal(const uint8_t nonce[12],
     const uint8_t *associated_data, ft_size_t associated_data_length,
     const uint8_t *plaintext, ft_size_t plaintext_length,

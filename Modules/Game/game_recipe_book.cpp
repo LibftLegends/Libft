@@ -223,6 +223,35 @@ int32_t game_recipe_book::is_recipe_known(uint32_t recipe_id,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t game_recipe_book::get_revision(uint64_t *revision_out) const noexcept
+{
+    uint64_t revision = 14695981039346656037ULL;
+    ft_size_t index = 0U;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || revision_out == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    while (index < this->_unlock_events.size())
+    {
+        const game_recipe_unlock_record &record = this->_unlock_events[index];
+        for (uint32_t byte_index = 0U; byte_index < 8U; ++byte_index)
+        {
+            revision ^= static_cast<uint8_t>(record.source_event_id
+                >> (byte_index * 8U));
+            revision *= 1099511628211ULL;
+        }
+        for (uint32_t byte_index = 0U; byte_index < 4U; ++byte_index)
+        {
+            revision ^= static_cast<uint8_t>(record.recipe_id
+                >> (byte_index * 8U));
+            revision *= 1099511628211ULL;
+        }
+        ++index;
+    }
+    *revision_out = revision;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t game_recipe_book::quarantined_unlock_count(uint32_t *count) const noexcept
 {
     ft_size_t index;

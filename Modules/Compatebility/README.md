@@ -30,6 +30,10 @@ The `Compatebility` module contains platform-specific adapters used by higher-le
 - `cmp_retrieve_handle(...)` - Returns the platform handle tracked for a descriptor on Windows.
 - `cmp_lseek(...)` - Platform-specific descriptor seek helper used by `System_utils`.
 
+## Secure Randomness
+
+- `cmp_rng_secure_bytes(...)` - Uses the platform cryptographic random source. Under `LIBFT_TEST_BUILD`, the Windows provider exposes one-shot failure hooks for provider acquisition, byte generation, and provider release; these hooks are absent from production builds.
+
 ## Stack Trace and Optional SQLite
 
 - `CMP_STACK_TRACE_MAX_FRAMES` - Maximum platform stack frames captured by the compatibility helper.
