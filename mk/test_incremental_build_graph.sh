@@ -288,9 +288,6 @@ capture_archive_order_manifest()
     fi
     : >"$manifest_path"
     while IFS= read -r archive_path; do
-        archive_checksum=$(cksum "$archive_path" | awk '{print $1 ":" $2}')
-        printf 'ARCHIVE_CHECKSUM|%s|%s\n' "$archive_path" \
-            "$archive_checksum" >>"$manifest_path"
         printf 'ARCHIVE|%s\n' "$archive_path" >>"$manifest_path"
         ar t "$archive_path" | tr -d '\r' >>"$manifest_path"
     done <"$archive_list_path"

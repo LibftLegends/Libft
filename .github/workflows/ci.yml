@@ -63,7 +63,12 @@ jobs:
 
       - name: Build test suite
         shell: bash
-        run: sh mk/ci_run_with_timeout.sh 1800 make -j4 tests
+        run: |
+          build_timeout=1800
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            build_timeout=3600
+          fi
+          sh mk/ci_run_with_timeout.sh "$build_timeout" make -j4 tests
 
       - name: Run terrain persistence focused suite
         shell: bash

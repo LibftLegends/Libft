@@ -293,8 +293,8 @@ FT_TEST(test_networking_secure_channel_matches_crypto_and_libsodium)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_poly1305_seal(key, nonce,
         associated_data, sizeof(associated_data), plaintext,
         sizeof(plaintext), standalone_ciphertext, standalone_tag));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        reference_ciphertext.resize(sizeof(plaintext)));
+    reference_ciphertext.resize(sizeof(plaintext));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_ciphertext.get_error());
     FT_ASSERT_EQ(0, crypto_aead_chacha20poly1305_ietf_encrypt_detached(
         &reference_ciphertext[0],
         reference_tag, ft_nullptr, plaintext, sizeof(plaintext),
