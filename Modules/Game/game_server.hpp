@@ -62,6 +62,8 @@ class game_server
         void set_leave_callback(void (*callback)(int32_t)) noexcept;
         void set_message_callback(game_server_message_callback callback,
             void *user_data) noexcept;
+        int32_t send_to_client(int32_t client_handle,
+            const ft_string &message) noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;

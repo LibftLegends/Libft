@@ -9,7 +9,33 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 
-"$@" &
+terminate_command_tree()
+{
+    if [ "${OS:-}" = "Windows_NT" ] \
+        && command -v taskkill >/dev/null 2>&1; then
+        taskkill /PID "$command_pid" /T /F >/dev/null 2>&1 || true
+        return 0
+    fi
+    if [ "${command_process_group:-0}" = "1" ]; then
+        kill -TERM -- "-$command_pid" >/dev/null 2>&1 || true
+        sleep 5
+        kill -KILL -- "-$command_pid" >/dev/null 2>&1 || true
+        return 0
+    fi
+    kill -TERM "$command_pid" >/dev/null 2>&1 || true
+    sleep 5
+    kill -KILL "$command_pid" >/dev/null 2>&1 || true
+    return 0
+}
+
+command_process_group=0
+if [ "${OS:-}" != "Windows_NT" ] \
+    && command -v setsid >/dev/null 2>&1; then
+    setsid "$@" &
+    command_process_group=1
+else
+    "$@" &
+fi
 command_pid=$!
 elapsed_seconds=0
 heartbeat_seconds=${LIBFT_CI_HEARTBEAT_SECONDS:-30}
@@ -27,9 +53,7 @@ while kill -0 "$command_pid" >/dev/null 2>&1; do
     fi
     if [ "$elapsed_seconds" -ge "$timeout_seconds" ]; then
         printf '%s\n' "CI timeout: terminating command after ${timeout_seconds}s: $*" >&2
-        kill -TERM "$command_pid" >/dev/null 2>&1 || true
-        sleep 5
-        kill -KILL "$command_pid" >/dev/null 2>&1 || true
+        terminate_command_tree
         wait "$command_pid" >/dev/null 2>&1 || true
         exit 124
     fi

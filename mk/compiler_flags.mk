@@ -4,6 +4,7 @@ COMPILER_FLAGS_INCLUDED := 1
 OPT_LEVEL ?= 0
 LIBFT_ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 UNAME_S := $(shell uname -s 2>/dev/null)
+LIBFT_TARGET_PLATFORM ?= $(UNAME_S)-$(shell uname -m 2>/dev/null)
 
 ifeq ($(OPT_LEVEL),0)
     OPT_FLAGS = -O0 -g

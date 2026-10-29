@@ -1,6 +1,6 @@
 #include "../test_internal.hpp"
 #include "networking_test_support.hpp"
-#include "networking_test_hooks.hpp"
+#include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "../../Modules/Networking/http_server.hpp"
 #include "../../Modules/Networking/socket_class.hpp"
 #include "../../Modules/Networking/networking.hpp"

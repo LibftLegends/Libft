@@ -62,6 +62,16 @@ static int32_t build_item_field_key(const ft_string &item_prefix,
 
 static int32_t serialize_item_fields(json_group *group, const game_item &item, const ft_string &item_prefix)
 {
+    char instance_id_value[32];
+    std::snprintf(instance_id_value, sizeof(instance_id_value), FT_UINT64_DECIMAL_FORMAT,
+        item.get_instance_id());
+    ft_string key_instance_id;
+    if (build_item_field_key(item_prefix, "_instance_id", key_instance_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    json_item *instance_id_item = json_create_item(key_instance_id.c_str(), instance_id_value);
+    if (!instance_id_item)
+        return (FT_ERR_NO_MEMORY);
+    json_add_item_to_group(group, instance_id_item);
     ft_string key_max;
     if (build_item_field_key(item_prefix, "_max_stack", key_max) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
@@ -76,6 +86,11 @@ static int32_t serialize_item_fields(json_group *group, const game_item &item, c
     if (build_item_field_key(item_prefix, "_id", key_id) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
     if (add_item_field(group, key_id, item.get_item_id()) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    ft_string key_rarity;
+    if (build_item_field_key(item_prefix, "_rarity", key_rarity) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (add_item_field(group, key_rarity, item.get_rarity()) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
     ft_string key_width;
     if (build_item_field_key(item_prefix, "_width", key_width) != FT_ERR_SUCCESS)
@@ -130,8 +145,47 @@ static int32_t serialize_item_fields(json_group *group, const game_item &item, c
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t serialize_inventory_snapshot_item(json_group *group,
+    const game_inventory_item_snapshot &item, const ft_string &item_prefix)
+{
+    char instance_id_value[32];
+    std::snprintf(instance_id_value, sizeof(instance_id_value), FT_UINT64_DECIMAL_FORMAT,
+        item.instance_id);
+    ft_string key_instance_id;
+    if (build_item_field_key(item_prefix, "_instance_id", key_instance_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    json_item *instance_id_item = json_create_item(key_instance_id.c_str(), instance_id_value);
+    if (!instance_id_item)
+        return (FT_ERR_NO_MEMORY);
+    json_add_item_to_group(group, instance_id_item);
+    const char *suffixes[14] = {
+        "_max_stack", "_stack_size", "_id", "_width", "_height",
+        "_mod1_id", "_mod1_value", "_mod2_id", "_mod2_value",
+        "_mod3_id", "_mod3_value", "_mod4_id", "_mod4_value",
+        "_rarity"
+    };
+    int32_t values[14] = {
+        item.max_stack, item.stack_size, item.item_id, item.width, item.height,
+        item.modifier1_id, item.modifier1_value, item.modifier2_id, item.modifier2_value,
+        item.modifier3_id, item.modifier3_value, item.modifier4_id, item.modifier4_value,
+        item.rarity
+    };
+    ft_size_t index = 0;
+    while (index < 14)
+    {
+        ft_string key;
+        if (build_item_field_key(item_prefix, suffixes[index], key) != FT_ERR_SUCCESS)
+            return (FT_ERR_NO_MEMORY);
+        if (add_item_field(group, key, values[index]) != FT_ERR_SUCCESS)
+            return (FT_ERR_NO_MEMORY);
+        ++index;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 json_group *serialize_inventory(const game_inventory &inventory)
 {
+    game_inventory_snapshot snapshot;
     json_group *group = json_create_json_group("inventory");
     if (!group)
     {
@@ -140,35 +194,50 @@ json_group *serialize_inventory(const game_inventory &inventory)
     ft_bool has_error = FT_FALSE;
     do
     {
-        json_item *capacity_item = json_create_item("capacity", static_cast<int32_t>(inventory.get_capacity()));
+        if (inventory.get_snapshot(snapshot) != FT_ERR_SUCCESS)
+        {
+            has_error = FT_TRUE;
+            break ;
+        }
+        json_item *capacity_item = json_create_item("capacity", static_cast<int32_t>(snapshot.capacity));
         if (!capacity_item)
         {
             has_error = FT_TRUE;
             break ;
         }
         json_add_item_to_group(group, capacity_item);
-        json_item *weight_limit_item = json_create_item("weight_limit", inventory.get_weight_limit());
+        json_item *weight_limit_item = json_create_item("weight_limit", snapshot.weight_limit);
         if (!weight_limit_item)
         {
             has_error = FT_TRUE;
             break ;
         }
         json_add_item_to_group(group, weight_limit_item);
-        json_item *current_weight_item = json_create_item("current_weight", inventory.get_current_weight());
+        json_item *current_weight_item = json_create_item("current_weight", snapshot.current_weight);
         if (!current_weight_item)
         {
             has_error = FT_TRUE;
             break ;
         }
         json_add_item_to_group(group, current_weight_item);
-        json_item *used_slots_item = json_create_item("used_slots", static_cast<int32_t>(inventory.get_used()));
+        json_item *used_slots_item = json_create_item("used_slots", static_cast<int32_t>(snapshot.used_slots));
         if (!used_slots_item)
         {
             has_error = FT_TRUE;
             break ;
         }
         json_add_item_to_group(group, used_slots_item);
-        ft_size_t item_count = inventory.get_items().size();
+        char revision_text[32];
+        std::snprintf(revision_text, sizeof(revision_text), "%llu",
+            static_cast<unsigned long long>(snapshot.revision));
+        json_item *revision_item = json_create_item("revision", revision_text);
+        if (!revision_item)
+        {
+            has_error = FT_TRUE;
+            break ;
+        }
+        json_add_item_to_group(group, revision_item);
+        ft_size_t item_count = snapshot.items.size();
         json_item *count_item = json_create_item("item_count", static_cast<int32_t>(item_count));
         if (!count_item)
         {
@@ -176,17 +245,6 @@ json_group *serialize_inventory(const game_inventory &inventory)
             break ;
         }
         json_add_item_to_group(group, count_item);
-        const Pair<int32_t, ft_sharedptr<game_item> > *items_end = inventory.get_items().end();
-        const Pair<int32_t, ft_sharedptr<game_item> > *item_start = items_end;
-        if (item_count > 0)
-        {
-            if (!items_end)
-            {
-                has_error = FT_TRUE;
-                break ;
-            }
-            item_start = items_end - item_count;
-        }
         ft_size_t item_index = 0;
         while (item_index < item_count)
         {
@@ -201,12 +259,8 @@ json_group *serialize_inventory(const game_inventory &inventory)
                 break ;
             }
             item_prefix += item_index_string;
-            if (!item_start[item_index].value)
-            {
-                has_error = FT_TRUE;
-                break ;
-            }
-            if (serialize_item_fields(group, *item_start[item_index].value, item_prefix) != FT_ERR_SUCCESS)
+            const game_inventory_item_snapshot &item = snapshot.items[item_index];
+            if (serialize_inventory_snapshot_item(group, item, item_prefix) != FT_ERR_SUCCESS)
             {
                 has_error = FT_TRUE;
                 break ;
@@ -222,6 +276,49 @@ json_group *serialize_inventory(const game_inventory &inventory)
         return (ft_nullptr);
     }
     return (group);
+}
+
+static int32_t serialize_equipment_extra_slot(json_group *group,
+    const game_character &character, int32_t slot, const char *name)
+{
+    ft_sharedptr<game_item> *item = character.get_equipped_item(slot);
+    char present_name[32];
+    int32_t item_present;
+
+    if (item == ft_nullptr)
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    if (std::snprintf(present_name, sizeof(present_name), "%s_present", name)
+        < 0)
+    {
+        game_save_delete_item_handle(item);
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    }
+    item_present = 0;
+    if (*item)
+        item_present = 1;
+    json_item *present = json_create_item(present_name, item_present);
+    if (present == ft_nullptr)
+    {
+        game_save_delete_item_handle(item);
+        return (FT_ERR_NO_MEMORY);
+    }
+    json_add_item_to_group(group, present);
+    if (*item)
+    {
+        ft_string prefix;
+        if (prefix.initialize(name) != FT_ERR_SUCCESS)
+        {
+            game_save_delete_item_handle(item);
+            return (FT_ERR_NO_MEMORY);
+        }
+        if (serialize_item_fields(group, **item, prefix) != FT_ERR_SUCCESS)
+        {
+            game_save_delete_item_handle(item);
+            return (FT_ERR_GAME_GENERAL_ERROR);
+        }
+    }
+    game_save_delete_item_handle(item);
+    return (FT_ERR_SUCCESS);
 }
 
 json_group *serialize_equipment(const game_character &character)
@@ -336,6 +433,16 @@ json_group *serialize_equipment(const game_character &character)
         return (ft_nullptr);
     }
     game_save_delete_item_handle(weapon);
+    if (serialize_equipment_extra_slot(group, character, EQUIP_LEGS, "legs")
+            != FT_ERR_SUCCESS
+        || serialize_equipment_extra_slot(group, character, EQUIP_FEET, "feet")
+            != FT_ERR_SUCCESS
+        || serialize_equipment_extra_slot(group, character, EQUIP_OFF_HAND,
+            "off_hand") != FT_ERR_SUCCESS)
+    {
+        json_free_groups(group);
+        return (ft_nullptr);
+    }
     return (group);
 }
 

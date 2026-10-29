@@ -657,7 +657,9 @@ static int32_t execute_test_function(const s_test_case *test,
     (void)pthread_sigmask(SIG_UNBLOCK, &unblocked_signals, nullptr);
 #endif
     su_service_clear_signal_handlers();
+#ifdef LIBFT_TEST_BUILD
     su_service_force_no_fork(FT_FALSE);
+#endif
 
     preserve_output = diagnostic_output_enabled();
     if (preserve_output == 0 && dup2(null_descriptor, STDOUT_FILENO) < 0)
@@ -808,6 +810,25 @@ void ft_test_fail_values(const char *expression, const char *file, int32_t line,
 
     append_test_failure_log(failure_message);
     return ;
+}
+
+ft_bool ft_test_assert_condition(ft_bool condition, const char *expression,
+    const char *file, int32_t line)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail(expression, file, line);
+    return (FT_FALSE);
+}
+
+ft_bool ft_test_assert_values_condition(ft_bool condition,
+    const char *expression, const char *file, int32_t line,
+    const char *expected_value, const char *actual_value)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail_values(expression, file, line, expected_value, actual_value);
+    return (FT_FALSE);
 }
 
 int32_t ft_run_registered_tests(void)

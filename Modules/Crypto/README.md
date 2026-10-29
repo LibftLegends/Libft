@@ -17,7 +17,11 @@ Current implementation:
 
 The implementation has no OpenSSL or third-party cryptographic-provider
 dependency. Secure random bytes are obtained through Libft's OS CSPRNG boundary;
-the Networking module's `networking_crypto_backend` is only an adapter over this
-module. The later Ed25519 implementation remains planned work and must not be
-treated as available until its RFC vectors, malformed-input tests, and
-independent review gates pass.
+`crypto_network_backend` is the networking-facing adapter owned by this module.
+It exposes authenticated packet protection, directional session-key derivation,
+key updates, X25519, hashing, HMAC, secure randomness, and wiping without
+making Networking own cryptographic implementation code. The old
+`Networking/networking_crypto_backend.hpp` include remains a source-compatible
+forwarding alias. The later Ed25519 implementation remains planned work and
+must not be treated as available until its RFC vectors, malformed-input tests,
+and independent review gates pass.

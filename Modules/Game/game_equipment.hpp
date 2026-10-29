@@ -13,7 +13,10 @@ enum game_equipment_slot
 {
     EQUIP_HEAD,
     EQUIP_CHEST,
-    EQUIP_WEAPON
+    EQUIP_WEAPON,
+    EQUIP_LEGS,
+    EQUIP_FEET,
+    EQUIP_OFF_HAND
 };
 
 class game_equipment
@@ -26,6 +29,9 @@ class game_equipment
         ft_sharedptr<game_item> _head;
         ft_sharedptr<game_item> _chest;
         ft_sharedptr<game_item> _weapon;
+        ft_sharedptr<game_item> _legs;
+        ft_sharedptr<game_item> _feet;
+        ft_sharedptr<game_item> _off_hand;
         mutable pt_recursive_mutex      *_mutex;
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;

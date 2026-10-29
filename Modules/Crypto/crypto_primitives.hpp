@@ -31,6 +31,9 @@ class crypto_sha256
         int32_t move(crypto_sha256 &other) noexcept;
         int32_t update(const void *data, ft_size_t length) noexcept;
         int32_t final(uint8_t digest[32]) noexcept;
+#ifdef LIBFT_TEST_BUILD
+        ft_bool test_state_is_wiped() const noexcept;
+#endif
 };
 
 int32_t crypto_sha256_hash(const void *data, ft_size_t length,

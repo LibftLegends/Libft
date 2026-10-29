@@ -38,21 +38,32 @@ LIBFT_GLOBAL_TARGET := $(TARGET)
 LIBFT_GLOBAL_DEBUG_TARGET := $(DEBUG_TARGET)
 LIBFT_GLOBAL_TEST_TARGET := $(TEST_TARGET)
 LIBFT_GLOBAL_TEST_DEBUG_TARGET := $(TEST_DEBUG_TARGET)
+
+LIBFT_GLOBAL_RELEASE_ARCHIVE_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TARGET)" ] && ! sh mk/check_archive_members.sh "$(LIBFT_GLOBAL_TARGET)" --from-archives $(LIBFT_GLOBAL_RELEASE_ARCHIVES) >/dev/null 2>&1; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_DEBUG_ARCHIVE_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_DEBUG_TARGET)" ] && ! sh mk/check_archive_members.sh "$(LIBFT_GLOBAL_DEBUG_TARGET)" --from-archives $(LIBFT_GLOBAL_DEBUG_ARCHIVES) >/dev/null 2>&1; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_TEST_ARCHIVE_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TEST_TARGET)" ] && ! sh mk/check_archive_members.sh "$(LIBFT_GLOBAL_TEST_TARGET)" --from-archives $(LIBFT_GLOBAL_TEST_ARCHIVES) >/dev/null 2>&1; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_TEST_DEBUG_ARCHIVE_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TEST_DEBUG_TARGET)" ] && ! sh mk/check_archive_members.sh "$(LIBFT_GLOBAL_TEST_DEBUG_TARGET)" --from-archives $(LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES) >/dev/null 2>&1; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_RELEASE_ARCHIVE_CONFIG_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TARGET)" ] && [ "$$(cat "$(LIBFT_GLOBAL_TARGET).config" 2>/dev/null)" != "$(LIBFT_GLOBAL_CONFIG)" ]; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_DEBUG_ARCHIVE_CONFIG_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_DEBUG_TARGET)" ] && [ "$$(cat "$(LIBFT_GLOBAL_DEBUG_TARGET).config" 2>/dev/null)" != "$(LIBFT_GLOBAL_CONFIG)" ]; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_TEST_ARCHIVE_CONFIG_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TEST_TARGET)" ] && [ "$$(cat "$(LIBFT_GLOBAL_TEST_TARGET).config" 2>/dev/null)" != "$(LIBFT_GLOBAL_CONFIG)" ]; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
+LIBFT_GLOBAL_TEST_DEBUG_ARCHIVE_CONFIG_REPAIR := $(shell if [ -f "$(LIBFT_GLOBAL_TEST_DEBUG_TARGET)" ] && [ "$$(cat "$(LIBFT_GLOBAL_TEST_DEBUG_TARGET).config" 2>/dev/null)" != "$(LIBFT_GLOBAL_CONFIG)" ]; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
 LIBFT_LEGACY_OBJECT_ROOTS := $(wildcard Modules/*/objs_* Test/objs_*)
 
 define LIBFT_GLOBAL_ARCHIVE_RULE
-$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/global_graph.mk $(LIBFT_GLOBAL_$(3)_ARCHIVE_REPAIR) $(LIBFT_GLOBAL_$(3)_ARCHIVE_CONFIG_REPAIR)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Full_Libft|$(1)"; else printf '\033[1;35m[LIBFT] Archiving %s\033[0m\n' "$(1)"; fi
 	@$(MKDIR) $(dir $$@)
-	@$(RM) $$@.tmp
+	@$(RM) $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		libtool -static -o "$$@.tmp" $(2); \
+		libtool -static -o "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)" $(2); \
 	else \
-		{ printf 'CREATE %s\n' "$$@.tmp"; \
+		{ printf 'CREATE %s\n' "$$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX)"; \
 		  for lib in $(2); do printf 'ADDLIB %s\n' "$$$$lib"; done; \
 		  printf 'SAVE\nEND\n'; } | $(AR) -M; \
 	fi
-	@mv $$@.tmp $$@
+	@mv $$@$(LIBFT_GLOBAL_ARCHIVE_TEMP_SUFFIX) $$@
+	@printf '%s\n' '$(LIBFT_GLOBAL_CONFIG)' > "$$@.config.tmp.$$$$"
+	@mv "$$@.config.tmp.$$$$" "$$@.config"
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Full_Libft "$(1)" || true; \
 	else \
@@ -60,10 +71,10 @@ $(1): $(2) $(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
 	fi
 endef
 
-$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
-$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_DEBUG_TARGET),$(LIBFT_GLOBAL_DEBUG_ARCHIVES)))
-$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_TARGET),$(LIBFT_GLOBAL_TEST_ARCHIVES)))
-$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_DEBUG_TARGET),$(LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES)))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TARGET),$(LIBFT_GLOBAL_RELEASE_ARCHIVES),RELEASE))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_DEBUG_TARGET),$(LIBFT_GLOBAL_DEBUG_ARCHIVES),DEBUG))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_TARGET),$(LIBFT_GLOBAL_TEST_ARCHIVES),TEST))
+$(eval $(call LIBFT_GLOBAL_ARCHIVE_RULE,$(LIBFT_GLOBAL_TEST_DEBUG_TARGET),$(LIBFT_GLOBAL_TEST_DEBUG_ARCHIVES),TEST_DEBUG))
 include mk/global_test_graph.mk
 include mk/global_efficiency_graph.mk
 
@@ -72,8 +83,22 @@ ssh:
 	git remote set-url origin git@github.com:Adyem/Libft.git
 	git remote -v
 
-all:
+all: normal analytics
+
+normal:
 	@sh mk/run_build_with_progress.sh "$(MAKE)" internal-all
+
+analytics:
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-all
+
+analytics-debug:
+	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
+		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-debug
 
 plan:
 	@sh mk/print_build_plan.sh "$(MAKE)" internal-all
@@ -130,10 +155,17 @@ LIBFT_CRYPTO_SHA_FUZZ_EXECUTABLE := Test/crypto_sha_fuzz
 LIBFT_CRYPTO_AEAD_FUZZ_EXECUTABLE := Test/crypto_aead_fuzz
 LIBFT_CRYPTO_X25519_FUZZ_EXECUTABLE := Test/crypto_x25519_fuzz
 LIBFT_CRYPTO_HMAC_HKDF_FUZZ_EXECUTABLE := Test/crypto_hmac_hkdf_fuzz
+LIBFT_CRYPTO_SESSION_FUZZ_EXECUTABLE := Test/crypto_session_fuzz
 LIBFT_CRYPTO_X25519_MILLION_EXECUTABLE := Test/crypto_x25519_million
+LIBFT_CRYPTO_TIMING_REVIEW_EXECUTABLE := Test/crypto_constant_time_review
 LIBFT_NETWORKING_SIMULATOR_FUZZ_EXECUTABLE := Test/networking_simulator_fuzz
 LIBFT_NETWORKING_NAT_FUZZ_EXECUTABLE := Test/networking_nat_fuzz
 LIBFT_NETWORKING_HANDSHAKE_FUZZ_EXECUTABLE := Test/networking_handshake_fuzz
+LIBFT_NETWORKING_REASSEMBLY_FUZZ_EXECUTABLE := Test/networking_reassembly_fuzz
+LIBFT_NETWORKING_CODEC_FUZZ_EXECUTABLE := Test/networking_codec_fuzz
+LIBFT_NETWORKING_ACK_STATE_FUZZ_EXECUTABLE := Test/networking_ack_state_fuzz
+LIBFT_NETWORKING_ENCRYPTED_FUZZ_EXECUTABLE := Test/networking_encrypted_fuzz
+LIBFT_NETWORKING_STATE_MACHINE_FUZZ_EXECUTABLE := Test/networking_state_machine_fuzz
 FUZZ_COMPILE_FLAGS := $(filter-out -Wuseless-cast -Wmaybe-uninitialized,$(LIBFT_GLOBAL_TEST_CXX_FLAGS))
 FUZZ_TEST_HOOK_SOURCES := Test/Test/networking_test_hooks.cpp \
 	Test/Test/crypto_test_hooks.cpp
@@ -188,6 +220,13 @@ crypto-hmac-hkdf-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_hmac_hkdf_fu
 		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
+crypto-session-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/crypto_session_fuzz_target.cpp
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_CRYPTO_SESSION_FUZZ_EXECUTABLE) \
+		Test/Fuzz/crypto_session_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
 networking-simulator-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_simulator_fuzz_target.cpp
 	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
 		-o $(LIBFT_NETWORKING_SIMULATOR_FUZZ_EXECUTABLE) \
@@ -211,6 +250,44 @@ networking-handshake-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_hand
 		$(FUZZ_TEST_HOOK_SOURCES) \
 		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
 
+networking-reassembly-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_reassembly_fuzz_target.cpp
+	@$(MKDIR) "$(dir $(LIBFT_NETWORKING_REASSEMBLY_FUZZ_EXECUTABLE))"
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_NETWORKING_REASSEMBLY_FUZZ_EXECUTABLE) \
+		Test/Fuzz/networking_reassembly_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
+networking-codec-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_codec_fuzz_target.cpp
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_NETWORKING_CODEC_FUZZ_EXECUTABLE) \
+		Test/Fuzz/networking_codec_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
+networking-ack-state-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_ack_state_fuzz_target.cpp
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_NETWORKING_ACK_STATE_FUZZ_EXECUTABLE) \
+		Test/Fuzz/networking_ack_state_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
+networking-encrypted-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_encrypted_packet_fuzz_target.cpp
+	@$(MKDIR) "$(dir $(LIBFT_NETWORKING_ENCRYPTED_FUZZ_EXECUTABLE))"
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_NETWORKING_ENCRYPTED_FUZZ_EXECUTABLE) \
+		Test/Fuzz/networking_encrypted_packet_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
+networking-state-machine-fuzz: $(LIBFT_GLOBAL_TEST_TARGET) Test/Fuzz/networking_state_machine_fuzz_target.cpp
+	@$(MKDIR) "$(dir $(LIBFT_NETWORKING_STATE_MACHINE_FUZZ_EXECUTABLE))"
+	@$(FUZZ_CXX) $(FUZZ_COMPILE_FLAGS) -I. $(FUZZ_SANITIZER_FLAGS) \
+		-o $(LIBFT_NETWORKING_STATE_MACHINE_FUZZ_EXECUTABLE) \
+		Test/Fuzz/networking_state_machine_fuzz_target.cpp \
+		$(FUZZ_TEST_HOOK_SOURCES) \
+		$(LIBFT_GLOBAL_TEST_TARGET) $(LIBFT_FUZZ_LINK_FLAGS)
+
 crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
 		Test/Slow/crypto_x25519_million_runner.cpp
 	@$(MKDIR) "$(dir $(LIBFT_CRYPTO_X25519_MILLION_EXECUTABLE))"
@@ -218,26 +295,43 @@ crypto-x25519-million: Modules/Crypto/crypto.a Modules/Basic/Basic.a \
 		Test/Slow/crypto_x25519_million_runner.cpp \
 		Modules/Crypto/crypto.a Modules/Basic/Basic.a $(LINK_OPT_FLAGS)
 
+crypto-timing-review: $(LIBFT_GLOBAL_Crypto_TARGET) \
+		$(LIBFT_GLOBAL_Basic_TARGET) \
+		Test/Slow/crypto_constant_time_review.cpp
+	@$(CXX) $(COMPILE_FLAGS) -O2 -I. \
+		-o $(LIBFT_CRYPTO_TIMING_REVIEW_EXECUTABLE) \
+		Test/Slow/crypto_constant_time_review.cpp \
+		$(LIBFT_GLOBAL_Crypto_TARGET) $(LIBFT_GLOBAL_Basic_TARGET) \
+		$(LINK_OPT_FLAGS)
+	@./$(LIBFT_CRYPTO_TIMING_REVIEW_EXECUTABLE)
+
 terrain-persistence-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && FT_TEST_NAME_FILTER="test_terrain_json_unsigned_boundaries_and_transaction,test_terrain_json_file_failure_hooks_are_transactional" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+	@cd Test && FT_TEST_NAME_FILTER="test_voxel_config_json_serialization_and_file_modes,test_voxel_json_unsigned_boundaries_and_transaction,test_voxel_json_file_failure_hooks_are_transactional,test_voxel_json_allocation_failure_sweep_is_transactional,test_voxel_json_replaces_empty_large_and_thread_safe_outputs,test_voxel_json_commit_lock_failure_preserves_output,test_voxel_json_unsigned_boundaries_roundtrip_all_families,test_voxel_json_uninitialised_config_preserves_output" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 crypto-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && FT_TEST_NAME_FILTER="test_crypto_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+	@cd Test && FT_TEST_NAME_FILTER="test_crypto_,test_rng_secure_bytes_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 networking-message-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && FT_TEST_NAME_FILTER="test_networking_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+	@cd Test && FT_TEST_NAME_FILTER="test_networking_,test_observability_networking" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+
+networking-reliability-matrix: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@cd Test && LIBFT_NETWORKING_TRACE_COUNT=$(if $(LIBFT_NETWORKING_TRACE_COUNT),$(LIBFT_NETWORKING_TRACE_COUNT),1000) FT_TEST_NAME_FILTER="test_networking_reliable_delivery_seeded_impairment_trace_matrix" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 networking-netem-tests: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 	@cd Test && FT_TEST_NAME_FILTER="test_networking_simulator_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
+
+networking-performance-baseline: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@cd Test && LIBFT_NETWORKING_PERF_BASELINE=1 FT_TEST_NAME_FILTER="test_networking_message_performance_baseline" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE))
 
 networking-namespace-netem-tests:
 	@sh mk/run_linux_network_namespace_tests.sh
 
 networking-soak: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
-	@cd Test && run_count=0; while [ $$run_count -lt 10 ]; do FT_TEST_NAME_FILTER="test_networking_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE)) || exit $$?; run_count=$$(($$run_count + 1)); done
+	@cd Test && run_count=0; soak_seed=$$(date +%s); soak_end=$$(($$(date +%s) + $(if $(LIBFT_NETWORKING_SOAK_SECONDS),$(LIBFT_NETWORKING_SOAK_SECONDS),7200))); while [ $$(date +%s) -lt $$soak_end ]; do printf '%s\n' "networking soak iteration=$$run_count impairment_seed=$$soak_seed"; LIBFT_NETWORKING_SOAK_SEED=$$soak_seed FT_TEST_NAME_FILTER="test_networking_" ./$(notdir $(LIBFT_GLOBAL_TEST_EXECUTABLE)) || exit $$?; run_count=$$(($$run_count + 1)); soak_seed=$$(($$soak_seed + 1)); done; printf '%s\n' "networking soak completed: $$run_count suite passes"
 
 LIBFT_GLOBAL_AGGREGATE_RELEASE_OBJECTS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))
 LIBFT_ARCHIVE_INTEGRITY_TARGETS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),archive-integrity-$(module_name)) archive-integrity-Full_Libft
+LIBFT_ARCHIVE_MEMBER_CHECK_TARGETS := $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),archive-members-$(module_name)) archive-members-Full_Libft
 LIBFT_ARCHIVE_NOOP_STATE := $(LIBFT_GLOBAL_ROOT)/archive-noop-timestamps
 
 define LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE
@@ -248,8 +342,35 @@ endef
 $(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,$(module_name),$(LIBFT_GLOBAL_$(module_name)_TARGET),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))))
 $(eval $(call LIBFT_DEFINE_ARCHIVE_INTEGRITY_RULE,Full_Libft,$(LIBFT_GLOBAL_TARGET),--from-archives $(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
 
-archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS)
+define LIBFT_DEFINE_ARCHIVE_MEMBER_CHECK_RULE
+archive-members-$(1): $(2)
+	@sh mk/check_archive_integrity.sh "$(2)" $(3)
+endef
+
+$(foreach module_name,$(LIBFT_GLOBAL_ARCHIVE_MODULE_NAMES),$(eval $(call LIBFT_DEFINE_ARCHIVE_MEMBER_CHECK_RULE,$(module_name),$(LIBFT_GLOBAL_$(module_name)_TARGET),$(LIBFT_GLOBAL_$(module_name)_RELEASE_OBJECTS))))
+$(eval $(call LIBFT_DEFINE_ARCHIVE_MEMBER_CHECK_RULE,Full_Libft,$(LIBFT_GLOBAL_TARGET),--from-archives $(LIBFT_GLOBAL_RELEASE_ARCHIVES)))
+
+archive-members-check: $(LIBFT_ARCHIVE_MEMBER_CHECK_TARGETS)
+
+crypto-review:
+	@sh mk/check_crypto_review.sh
+	@$(MAKE) --no-print-directory crypto-assembly-review
+
+crypto-assembly-review:
+	@mkdir -p build/crypto-review
+	@printf 'CXX=%s\nCOMPILE_FLAGS=%s\n' '$(CXX)' '$(COMPILE_FLAGS)' \
+		> build/crypto-review/compiler.txt
+	@$(CXX) $(COMPILE_FLAGS) -I. -S Modules/Crypto/crypto_aead.cpp \
+		-o build/crypto-review/crypto_aead.s
+	@$(CXX) $(COMPILE_FLAGS) -I. -S Modules/Crypto/crypto_x25519.cpp \
+		-o build/crypto-review/crypto_x25519.s
+	@$(CXX) --version >> build/crypto-review/compiler.txt
+
+archive-integrity: $(LIBFT_ARCHIVE_INTEGRITY_TARGETS) global-debug
 	@sh mk/check_archive_no_test_symbols.sh $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
+	@sh mk/check_archive_no_test_symbols.sh $(LIBFT_GLOBAL_DEBUG_ARCHIVES) $(LIBFT_GLOBAL_DEBUG_TARGET)
+	@sh mk/check_archive_no_analytics.sh "$(LIBFT_GLOBAL_TARGET)"
+	@sh mk/check_networking_crypto_boundary.sh
 	@sh mk/check_archive_rebuild.sh "$(LIBFT_GLOBAL_Basic_TARGET)" "$(LIBFT_GLOBAL_Basic_MANIFEST)" $(LIBFT_GLOBAL_Basic_RELEASE_OBJECTS)
 	+$(MAKE) --no-print-directory global-all
 	@sh mk/check_archive_noop.sh capture "$(LIBFT_ARCHIVE_NOOP_STATE)" $(LIBFT_GLOBAL_RELEASE_ARCHIVES) $(LIBFT_GLOBAL_TARGET)
@@ -263,6 +384,12 @@ incremental-build-tests:
 
 agents-policy-scan:
 	@sh mk/check_agents_policy.sh
+
+test-coverage-manifest: $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/test_failure_controller.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/crypto_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/networking_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
+	@sh mk/check_test_coverage_manifest.sh Docs/test_coverage/compression_stream_test_hooks.tsv $(LIBFT_GLOBAL_TEST_EXECUTABLE)
 
 run_performance_benchmarks run_Efficiency: $(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
 	@./$(LIBFT_GLOBAL_EFFICIENCY_EXECUTABLE)
@@ -342,7 +469,9 @@ clean:
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a \
+		$(wildcard Modules/*/*.a.config* Test/*.a.config* Full_Libft*.a.config*)
 
 fclean:
 	@$(RMDIR) build/libft
@@ -351,9 +480,11 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
-		$(LIBFT_GLOBAL_Template_TARGET)
+		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
+		Full_Libft_analytics_debug.a \
+		$(wildcard Modules/*/*.a.config* Test/*.a.config* Full_Libft*.a.config*)
 
-.PHONY: all plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity incremental-build-tests print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-namespace-netem-tests networking-soak \
+.PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity archive-members-check crypto-review crypto-assembly-review crypto-timing-review incremental-build-tests agents-policy-scan test-coverage-manifest print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-session-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz networking-reassembly-fuzz networking-codec-fuzz networking-ack-state-fuzz networking-encrypted-fuzz networking-state-machine-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-performance-baseline networking-namespace-netem-tests networking-soak \
           run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \
           run-tsan-tests asan asan-tests ubsan ubsan-tests tsan tsan-tests \
           asan-ubsan asan-ubsan-tests

@@ -40,7 +40,9 @@ static void api_request_copy_ip(char destination[46], const char *source)
     return ;
 }
 
+#ifdef LIBFT_TEST_BUILD
 static api_request_wait_until_ready_hook g_api_request_wait_hook = ft_nullptr;
+#endif
 
 #ifdef DEBUG
 static void api_request_debug_log(const char *message)
@@ -58,12 +60,14 @@ static void api_request_debug_log(const char *message)
 #define api_request_debug_log(message) do { } while (0)
 #endif
 
+#ifdef LIBFT_TEST_BUILD
 void api_request_set_downgrade_wait_hook(
     api_request_wait_until_ready_hook hook)
 {
     g_api_request_wait_hook = hook;
     return ;
 }
+#endif
 
 ft_bool api_request(const char *ip_address, uint16_t port,
     const char *method, const char *path,
@@ -688,6 +692,7 @@ char *api_request_string_http2(const char *ip_address, uint16_t port,
     } connection_guard(connection_handle);
     if (downgrade_due_to_connect_failure)
     {
+#ifdef LIBFT_TEST_BUILD
         if (g_api_request_wait_hook)
         {
             ft_bool wait_ready;
@@ -696,6 +701,7 @@ char *api_request_string_http2(const char *ip_address, uint16_t port,
             if (!wait_ready)
                 return (ft_nullptr);
         }
+#endif
 #if NETWORKING_HAS_OPENSSL
         int32_t max_attempts;
         int32_t attempt_index;

@@ -6,8 +6,8 @@ The `GetNextLine` module reads line-oriented text from file descriptors, `FILE *
 
 - `ft_strjoin_gnl(char *string_one, char *string_two)` - Joins two allocated line fragments for the line reader.
 - `get_next_line(int32_t file_descriptor, ft_size_t buffer_size)` - Reads and returns the next line from a file descriptor.
-- `gnl_set_leftover_alloc_hook(void *(*hook)(ft_size_t size))` - Installs a test/allocation hook for leftover storage.
-- `gnl_reset_leftover_alloc_hook()` - Restores the default leftover allocator.
+- `gnl_set_leftover_alloc_hook(void *(*hook)(ft_size_t size))` - Installs a test-build allocation hook for leftover storage.
+- `gnl_reset_leftover_alloc_hook()` - Restores the default leftover allocator in test builds.
 - `gnl_reset_all_streams()` - Clears cached leftover state for all tracked descriptors.
 - `gnl_clear_stream(int32_t file_descriptor)` - Clears cached leftover state for one descriptor.
 - `ft_read_file_lines(int32_t file_descriptor, ft_vector<ft_string> &lines, ft_size_t buffer_size)` - Reads all lines from a descriptor into a vector.

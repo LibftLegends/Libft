@@ -1,0 +1,6 @@
+# kind|symbol|declaration|test|required coverage
+api|ft_compress_stream_set_deflate_init_hook|Modules/Compression/compression_stream_test_hooks.hpp|Test/Test/test_compression_stream.cpp|deflate initialization failure injection and reset
+api|ft_compress_stream_set_deflate_hook|Modules/Compression/compression_stream_test_hooks.hpp|Test/Test/test_compression_stream.cpp|deflate failure,buffer exhaustion,and reset
+api|ft_decompress_stream_set_inflate_init_hook|Modules/Compression/compression_stream_test_hooks.hpp|Test/Test/test_compression_stream.cpp|inflate initialization failure injection and reset
+api|ft_decompress_stream_set_inflate_hook|Modules/Compression/compression_stream_test_hooks.hpp|Test/Test/test_compression_stream.cpp|inflate failure,buffer exhaustion,and reset
+api|ft_compress_stream_set_read_hook|Modules/Compression/compression_stream_test_hooks.hpp|Test/Test/test_compression_stream.cpp|fragmented producer reads and reset

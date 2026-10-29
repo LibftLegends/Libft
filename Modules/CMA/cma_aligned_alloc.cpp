@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #ifdef _WIN32
 # include <malloc.h>
 #endif
@@ -12,6 +13,9 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
 static ft_bool normalize_alignment_padding(ft_size_t *padding)
 {
@@ -170,7 +174,8 @@ static ft_size_t    compute_extended_page_request(ft_size_t aligned_size,
 }
 
 
-void    *cma_aligned_alloc(ft_size_t alignment, ft_size_t size)
+static void *cma_aligned_alloc_uninstrumented(ft_size_t alignment,
+    ft_size_t size)
 {
     if ((alignment & (alignment - 1)) != 0
         || alignment < sizeof(void *))
@@ -280,4 +285,27 @@ void    *cma_aligned_alloc(ft_size_t alignment, ft_size_t size)
             static_cast<unsigned long long>(request_size),
             static_cast<unsigned long long>(alignment), result);
     return (result);
+}
+
+void *cma_aligned_alloc(ft_size_t alignment, ft_size_t size)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    void *result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_ALIGNED_ALLOC, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_aligned_alloc_uninstrumented(alignment, size));
+    result = cma_aligned_alloc_uninstrumented(alignment, size);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] cma_aligned_alloc scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_aligned_alloc_uninstrumented(alignment, size));
+#endif
 }

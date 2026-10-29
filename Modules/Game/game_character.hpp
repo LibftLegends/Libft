@@ -230,6 +230,12 @@ class game_character
         game_reputation       &get_reputation() noexcept;
         const game_reputation &get_reputation() const noexcept;
 
+        /* Server-owned inventory access. Inventory contents are revised by
+         * game_inventory operations; the item map is private in production builds
+         * concurrently with revision-checked transfers. */
+        game_inventory       &get_inventory() noexcept;
+        const game_inventory &get_inventory() const noexcept;
+
         game_experience_table       &get_experience_table() noexcept;
         const game_experience_table &get_experience_table() const noexcept;
 

@@ -6,11 +6,11 @@ The `Encryption` module provides AES block operations, save-game encryption help
 
 - `aes_encrypt(...)` / `aes_decrypt(...)` - Encrypt or decrypt one AES block, using the currently registered block-cipher hook when available and falling back to software AES otherwise.
 - `aes_encrypt_software(...)` / `aes_decrypt_software(...)` - Force the software AES implementation for one block.
-- `t_be_open_function` / `t_be_write_function` - File IO hooks used by save-game helpers.
+- `t_be_open_function` / `t_be_write_function` - Test-build file IO hooks used by save-game helpers.
 - `be_save_game(...)` - Encrypts and writes save-game data.
 - `be_decrypt_data(...)` - Decrypts a null-terminated data buffer array with a key string.
 - `be_get_encryption_key()` - Returns a generated encryption key string.
-- `be_set_save_game_hooks(...)` - Installs custom file open/write hooks.
+- `be_set_save_game_hooks(...)` - Installs custom file open/write hooks in test builds.
 
 ## Key Material and Secure Wipe
 
@@ -31,7 +31,7 @@ The `Encryption` module provides AES block operations, save-game encryption help
 - `hmac_sha256_stream_init(...)`, `update(...)`, `final(...)`, and `cleanup(...)` - Manage streaming HMAC-SHA-256.
 - `rsa_generate_key_pair(...)` - Generates a small demonstration RSA key pair.
 - `rsa_encrypt(...)` / `rsa_decrypt(...)` - Perform RSA modular exponentiation for small integer payloads.
-- `rsa_set_force_mod_inverse_failure(ft_bool enable)` - Test hook for RSA inverse-failure paths.
+- `rsa_set_force_mod_inverse_failure(ft_bool enable)` - Test-build hook for RSA inverse-failure paths.
 
 ## Block-Cipher Hooks
 

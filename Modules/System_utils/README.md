@@ -14,10 +14,16 @@ The `System_utils` module wraps environment variables, low-level file descriptor
 ## File Descriptors and File Streams
 
 - `su_open(...)` overloads - Open a file path with default or explicit flags/mode.
+- `su_open_with_error(...)` - Opens once and returns the captured, mapped
+  platform error without a later library call overwriting it.
 - `su_read(...)` / `su_write(...)` / `su_lseek(...)` / `su_close(...)` - Low-level descriptor IO.
-- `t_su_write_syscall_hook`, `su_set_write_syscall_hook(...)`, and `su_reset_write_syscall_hook()` - Test hook for write calls.
+- `su_write_with_error(...)` - Writes with the exact mapped error returned
+  through an output parameter while retaining the normal EINTR retry behavior.
+- Under `LIBFT_TEST_BUILD`, the open-error and interrupted-write injectors
+  exercise the same mapping/retry paths without adding production symbols.
+- Under `LIBFT_TEST_BUILD`, `t_su_write_syscall_hook`, `su_set_write_syscall_hook(...)`, and `su_reset_write_syscall_hook()` provide a test hook for write calls.
 - `su_file` - Lightweight stream wrapper with mutex, closed flag, and descriptor.
-- `su_force_file_stream_allocation_failure(...)` - Test hook for stream allocation.
+- Under `LIBFT_TEST_BUILD`, `su_force_file_stream_allocation_failure(...)` injects stream allocation failures.
 - `su_fopen(...)`, `su_fclose(...)`, `su_fread(...)`, `su_fwrite(...)`, `su_fseek(...)`, and `su_ftell(...)` - File-stream style API over descriptors.
 - `su_file_prepare_thread_safety(...)`, `teardown`, `lock`, and `unlock` - Optional stream synchronization helpers.
 
@@ -39,7 +45,7 @@ The `System_utils` module wraps environment variables, low-level file descriptor
 - `su_inspect_permissions(...)` - Reads filesystem permissions.
 - `su_chmod(...)` - Sets owner/group/other permissions.
 - `t_su_service_signal_handler` - Service signal callback.
-- `su_service_force_no_fork(...)` - Test/control hook for daemonization.
+- `su_service_force_no_fork(...)` - Test-build hook for daemonization.
 - `su_service_daemonize(...)` - Turns the process into a daemon/service.
 - `su_service_install_signal_handlers(...)` / `su_service_clear_signal_handlers()` - Manage service signal callbacks.
 

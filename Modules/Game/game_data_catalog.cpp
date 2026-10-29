@@ -2438,6 +2438,8 @@ int32_t game_data_catalog::register_item_definition(const game_item_definition &
     ft_bool lock_acquired;
     int32_t lock_error;
     int32_t identifier;
+    int32_t map_error;
+    const Pair<int32_t, game_item_definition> *entry;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_data_catalog::register_item_definition");
     lock_acquired = FT_FALSE;
@@ -2449,6 +2451,20 @@ int32_t game_data_catalog::register_item_definition(const game_item_definition &
     }
     identifier = definition.get_item_id();
     this->_item_definitions.insert(identifier, definition);
+    map_error = this->_item_definitions.get_error();
+    if (map_error != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        this->set_error(map_error);
+        return (map_error);
+    }
+    entry = this->_item_definitions.find(identifier);
+    if (entry == this->_item_definitions.end())
+    {
+        this->unlock_internal(lock_acquired);
+        this->set_error(FT_ERR_INVALID_STATE);
+        return (FT_ERR_INVALID_STATE);
+    }
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);

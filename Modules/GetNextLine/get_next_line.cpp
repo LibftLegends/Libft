@@ -195,6 +195,7 @@ static char* allocate_new_string(char* string_one, char* string_two, int32_t *al
     return (new_string);
 }
 
+#ifdef LIBFT_TEST_BUILD
 static void    *(*g_gnl_leftover_alloc_hook)(ft_size_t size) = cma_malloc;
 
 void    gnl_set_leftover_alloc_hook(void *(*hook)(ft_size_t size))
@@ -211,6 +212,7 @@ void    gnl_reset_leftover_alloc_hook(void)
     g_gnl_leftover_alloc_hook = cma_malloc;
     return ;
 }
+#endif
 
 void    gnl_reset_all_streams(void)
 {
@@ -310,8 +312,13 @@ static char* leftovers(char* readed_string, ft_bool *buffer_was_freed, int32_t *
             *buffer_was_freed = FT_TRUE;
         return (ft_nullptr);
     }
-    string = static_cast<char*>(g_gnl_leftover_alloc_hook(ft_strlen(readed_string)
+#ifdef LIBFT_TEST_BUILD
+    string = static_cast<char*>(g_gnl_leftover_alloc_hook(
+            ft_strlen(readed_string) - read_index + 1));
+#else
+    string = static_cast<char*>(cma_malloc(ft_strlen(readed_string)
             - read_index + 1));
+#endif
     if (!string)
     {
         if (leftover_error)

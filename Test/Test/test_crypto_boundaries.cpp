@@ -96,8 +96,9 @@ FT_TEST(test_crypto_chacha20_boundary_arguments_and_counter_wrap)
 
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, crypto_chacha20_xor(key, nonce,
         1U, ft_nullptr, 1U, output));
-    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, crypto_chacha20_xor(key, nonce,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_xor(key, nonce,
         0U, input, 1U, output));
+    FT_ASSERT_EQ(1U, output.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_xor(key, nonce,
         0xffffffffU, input, 64U, output));
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, crypto_chacha20_xor(key, nonce,
@@ -167,19 +168,44 @@ FT_TEST(test_crypto_aead_tag_mutation_matrix)
 FT_TEST(test_crypto_x25519_low_order_inputs_are_rejected)
 {
     const uint8_t private_key[32] = {7U};
-    uint8_t low_order_public[32] = {0U};
+    const uint8_t low_order_public[7][32] = {
+        {0U},
+        {1U},
+        {0xecU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0x7fU},
+        {0xedU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0x7fU},
+        {0xeeU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+            0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0x7fU},
+        {0xe0U, 0xebU, 0x7aU, 0x7cU, 0x3bU, 0x41U, 0xb8U, 0xaeU,
+            0x16U, 0x56U, 0xe3U, 0xfaU, 0xf1U, 0x9fU, 0xc4U, 0x6aU,
+            0xdaU, 0x09U, 0x8dU, 0xebU, 0x9cU, 0x32U, 0xb1U, 0xfdU,
+            0x86U, 0x62U, 0x05U, 0x16U, 0x5fU, 0x49U, 0xb8U, 0x00U},
+        {0x5fU, 0x9cU, 0x95U, 0xbcU, 0xa3U, 0x50U, 0x8cU, 0x24U,
+            0xb1U, 0xd0U, 0xb1U, 0x55U, 0x9cU, 0x83U, 0xefU, 0x5bU,
+            0x04U, 0x44U, 0x5cU, 0xc4U, 0x58U, 0x1cU, 0x8eU, 0x86U,
+            0xd8U, 0x22U, 0x4eU, 0xddU, 0xd0U, 0x9fU, 0x11U, 0x57U}
+    };
     uint8_t shared_secret[32];
+    uint32_t point_index;
 
-    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
-        crypto_x25519_shared_secret(private_key, low_order_public,
-            shared_secret));
-    ft_memset(low_order_public, 0, sizeof(low_order_public));
-    low_order_public[0] = 1U;
-    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
-        crypto_x25519_shared_secret(private_key, low_order_public,
-            shared_secret));
+    point_index = 0U;
+    while (point_index < 7U)
+    {
+        FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED,
+            crypto_x25519_shared_secret(private_key,
+                low_order_public[point_index], shared_secret));
+        point_index += 1U;
+    }
     return (1);
 }
+
 
 FT_TEST(test_crypto_poly1305_boundary_lengths_and_mutations)
 {
@@ -283,5 +309,47 @@ FT_TEST(test_crypto_session_key_update_epochs_are_distinct)
     FT_ASSERT(!crypto_boundary_equal(first_iv, second_iv, 12U));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, crypto_derive_key_update(
         ft_nullptr, 1U, first_key, first_iv));
+    return (1);
+}
+
+FT_TEST(test_crypto_session_key_update_rejects_overlapping_buffers)
+{
+    uint8_t current_key[32];
+    uint8_t current_key_snapshot[32];
+    uint8_t output_storage[64];
+    uint8_t output_snapshot[64];
+    uint8_t separate_key[32];
+    uint8_t separate_key_snapshot[32];
+    uint8_t separate_iv[12];
+    uint8_t separate_iv_snapshot[12];
+
+    ft_memset(current_key, 0x31, sizeof(current_key));
+    ft_memcpy(current_key_snapshot, current_key, sizeof(current_key));
+    ft_memset(output_storage, 0xa5, sizeof(output_storage));
+    ft_memcpy(output_snapshot, output_storage, sizeof(output_storage));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, crypto_derive_key_update(
+        current_key, 3U, &output_storage[0], &output_storage[24]));
+    FT_ASSERT_EQ(0, ft_memcmp(output_snapshot, output_storage,
+        sizeof(output_storage)));
+    FT_ASSERT_EQ(0, ft_memcmp(current_key_snapshot, current_key,
+        sizeof(current_key)));
+
+    ft_memset(separate_iv, 0x6c, sizeof(separate_iv));
+    ft_memcpy(separate_iv_snapshot, separate_iv, sizeof(separate_iv));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, crypto_derive_key_update(
+        current_key, 3U, current_key, separate_iv));
+    FT_ASSERT_EQ(0, ft_memcmp(current_key_snapshot, current_key,
+        sizeof(current_key)));
+    FT_ASSERT_EQ(0, ft_memcmp(separate_iv_snapshot, separate_iv,
+        sizeof(separate_iv)));
+
+    ft_memset(separate_key, 0x7d, sizeof(separate_key));
+    ft_memcpy(separate_key_snapshot, separate_key, sizeof(separate_key));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, crypto_derive_key_update(
+        current_key, 3U, separate_key, &current_key[16]));
+    FT_ASSERT_EQ(0, ft_memcmp(current_key_snapshot, current_key,
+        sizeof(current_key)));
+    FT_ASSERT_EQ(0, ft_memcmp(separate_key_snapshot, separate_key,
+        sizeof(separate_key)));
     return (1);
 }

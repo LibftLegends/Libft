@@ -16,7 +16,9 @@ int32_t game_equipment::set_error(int32_t error_code) noexcept
 
 game_equipment::game_equipment() noexcept
     : _head(ft_sharedptr<game_item>()), _chest(ft_sharedptr<game_item>()),
-      _weapon(ft_sharedptr<game_item>()), _mutex(ft_nullptr),
+      _weapon(ft_sharedptr<game_item>()), _legs(ft_sharedptr<game_item>()),
+      _feet(ft_sharedptr<game_item>()), _off_hand(ft_sharedptr<game_item>()),
+      _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -34,6 +36,9 @@ int32_t game_equipment::initialize() noexcept
     int32_t head_initialize_error;
     int32_t chest_initialize_error;
     int32_t weapon_initialize_error;
+    int32_t legs_initialize_error;
+    int32_t feet_initialize_error;
+    int32_t off_hand_initialize_error;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
@@ -65,6 +70,39 @@ int32_t game_equipment::initialize() noexcept
         this->set_error(weapon_initialize_error);
         return (weapon_initialize_error);
     }
+    legs_initialize_error = this->_legs.initialize();
+    if (legs_initialize_error != FT_ERR_SUCCESS)
+    {
+        (void)this->_weapon.destroy();
+        (void)this->_chest.destroy();
+        (void)this->_head.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(legs_initialize_error);
+        return (legs_initialize_error);
+    }
+    feet_initialize_error = this->_feet.initialize();
+    if (feet_initialize_error != FT_ERR_SUCCESS)
+    {
+        (void)this->_legs.destroy();
+        (void)this->_weapon.destroy();
+        (void)this->_chest.destroy();
+        (void)this->_head.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(feet_initialize_error);
+        return (feet_initialize_error);
+    }
+    off_hand_initialize_error = this->_off_hand.initialize();
+    if (off_hand_initialize_error != FT_ERR_SUCCESS)
+    {
+        (void)this->_feet.destroy();
+        (void)this->_legs.destroy();
+        (void)this->_weapon.destroy();
+        (void)this->_chest.destroy();
+        (void)this->_head.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(off_hand_initialize_error);
+        return (off_hand_initialize_error);
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -76,6 +114,9 @@ int32_t game_equipment::destroy() noexcept
     int32_t head_destroy_error;
     int32_t chest_destroy_error;
     int32_t weapon_destroy_error;
+    int32_t legs_destroy_error;
+    int32_t feet_destroy_error;
+    int32_t off_hand_destroy_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
     {
@@ -86,6 +127,9 @@ int32_t game_equipment::destroy() noexcept
     head_destroy_error = this->_head.destroy();
     chest_destroy_error = this->_chest.destroy();
     weapon_destroy_error = this->_weapon.destroy();
+    legs_destroy_error = this->_legs.destroy();
+    feet_destroy_error = this->_feet.destroy();
+    off_hand_destroy_error = this->_off_hand.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (disable_error != FT_ERR_SUCCESS)
     {
@@ -102,8 +146,14 @@ int32_t game_equipment::destroy() noexcept
         this->set_error(chest_destroy_error);
         return (chest_destroy_error);
     }
-    this->set_error(weapon_destroy_error);
-    return (weapon_destroy_error);
+    if (weapon_destroy_error != FT_ERR_SUCCESS)
+        return (this->set_error(weapon_destroy_error));
+    if (legs_destroy_error != FT_ERR_SUCCESS)
+        return (this->set_error(legs_destroy_error));
+    if (feet_destroy_error != FT_ERR_SUCCESS)
+        return (this->set_error(feet_destroy_error));
+    this->set_error(off_hand_destroy_error);
+    return (off_hand_destroy_error);
 }
 
 int32_t game_equipment::move(game_equipment &other) noexcept
@@ -137,6 +187,9 @@ int32_t game_equipment::move(game_equipment &other) noexcept
     this->_head = other._head;
     this->_chest = other._chest;
     this->_weapon = other._weapon;
+    this->_legs = other._legs;
+    this->_feet = other._feet;
+    this->_off_hand = other._off_hand;
     source_error = other.get_error();
     source_destroy_error = other.destroy();
     if (source_destroy_error != FT_ERR_SUCCESS)
@@ -216,6 +269,21 @@ int32_t game_equipment::equip(int32_t slot, const ft_sharedptr<game_item> &item)
         this->_weapon = item;
         result = FT_ERR_SUCCESS;
     }
+    else if (slot == EQUIP_LEGS)
+    {
+        this->_legs = item;
+        result = FT_ERR_SUCCESS;
+    }
+    else if (slot == EQUIP_FEET)
+    {
+        this->_feet = item;
+        result = FT_ERR_SUCCESS;
+    }
+    else if (slot == EQUIP_OFF_HAND)
+    {
+        this->_off_hand = item;
+        result = FT_ERR_SUCCESS;
+    }
     else
     {
         result = FT_ERR_INVALID_ARGUMENT;
@@ -250,6 +318,21 @@ void game_equipment::unequip(int32_t slot) noexcept
     {
         (void)this->_weapon.destroy();
         result = this->_weapon.initialize();
+    }
+    else if (slot == EQUIP_LEGS)
+    {
+        (void)this->_legs.destroy();
+        result = this->_legs.initialize();
+    }
+    else if (slot == EQUIP_FEET)
+    {
+        (void)this->_feet.destroy();
+        result = this->_feet.initialize();
+    }
+    else if (slot == EQUIP_OFF_HAND)
+    {
+        (void)this->_off_hand.destroy();
+        result = this->_off_hand.initialize();
     }
     else
     {
@@ -312,6 +395,21 @@ ft_sharedptr<game_item> *game_equipment::get_item(int32_t slot) noexcept
         *result = this->_weapon;
         result_error = FT_ERR_SUCCESS;
     }
+    else if (slot == EQUIP_LEGS)
+    {
+        *result = this->_legs;
+        result_error = FT_ERR_SUCCESS;
+    }
+    else if (slot == EQUIP_FEET)
+    {
+        *result = this->_feet;
+        result_error = FT_ERR_SUCCESS;
+    }
+    else if (slot == EQUIP_OFF_HAND)
+    {
+        *result = this->_off_hand;
+        result_error = FT_ERR_SUCCESS;
+    }
     else
     {
         result_error = FT_ERR_INVALID_ARGUMENT;
@@ -361,6 +459,12 @@ ft_sharedptr<game_item> *game_equipment::get_item(int32_t slot) const noexcept
         *result = this->_chest;
     else if (slot == EQUIP_WEAPON)
         *result = this->_weapon;
+    else if (slot == EQUIP_LEGS)
+        *result = this->_legs;
+    else if (slot == EQUIP_FEET)
+        *result = this->_feet;
+    else if (slot == EQUIP_OFF_HAND)
+        *result = this->_off_hand;
     else
     {
         this->unlock_internal(lock_acquired);

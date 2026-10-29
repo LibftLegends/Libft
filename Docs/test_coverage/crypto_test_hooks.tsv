@@ -1,0 +1,9 @@
+# kind|symbol|declaration|test|required coverage
+api|crypto_test_random_seed|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|deterministic provider setup,invalid seed
+api|crypto_test_random_clear|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|provider teardown and reset
+api|crypto_test_random_fail_next|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|next random failure
+api|crypto_test_random_fail_after|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|delayed random failure
+api|crypto_test_random_attempt_count|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|attempt accounting
+api|crypto_test_random_failure_count|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|failure accounting
+api|crypto_test_random_should_fail|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|failure decision path
+api|crypto_test_random_bytes|Modules/Crypto/crypto_test_hooks.hpp|Test/Test/test_crypto_primitives.cpp|deterministic bytes,invalid arguments

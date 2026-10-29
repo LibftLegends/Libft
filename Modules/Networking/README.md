@@ -12,7 +12,7 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   reported by filtering the supplied arrays in place. Do not pass persistent
   event-loop registration storage to it. Its return value counts unique ready
   descriptors, even when a descriptor is registered for both read and write.
-- `t_nw_socket_hook` and `nw_set_socket_hook` - Test hook for socket creation.
+- `t_nw_socket_hook` and `nw_set_socket_hook` - Test-build hook for socket creation.
 - `networking_check_socket_after_send(...)` and `networking_check_ssl_after_send(...)` - Convert send/SSL state into project error codes.
 
 ## DNS and Event Loops
@@ -76,6 +76,12 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   key epochs, and externally driven or socket-readiness-backed worker-driven
   operation.
   Thread-safe operation is opt-in through the transport configuration.
+  Connection count, per-connection reassembly bytes/messages, and aggregate
+  reassembly bytes are capped by `maximum_connections`,
+  `maximum_reassembly_bytes`, `maximum_reassembly_messages`, and
+  `maximum_total_reassembly_bytes` respectively. Reassembly byte accounting
+  includes payload storage, the compact receive bitmap, and record metadata;
+  the `reassembly_bytes` statistic continues to report payload bytes.
   Authenticated path challenge/response validates a new source before emitting
   `PATH_CHANGED` and migrating the active endpoint.
   `connect_peer` requires a caller-supplied ticket verifier; reliable sends are
@@ -85,31 +91,77 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
   the worker is running, mutating calls are copied into a bounded command queue
   and complete synchronously with the worker's result. Statistics include
   per-lane message/byte totals, queue pressure, weights/reservations, and the
-  current lane send rate.
+  current lane send rate. Monotonic counters and exported aggregate sums
+  saturate at `UINT64_MAX` instead of wrapping. Queue gauges check capacity
+  before reserving space and use underflow-safe release accounting.
 - `networking_udp_datagram_io` - Non-blocking production UDP adapter for the
   transport layer.
-- `networking_crypto_backend.hpp` - Libft-owned cryptographic backend boundary;
-  it has no OpenSSL dependency and adapts the standalone `Modules/Crypto`
-  implementation to the transport. It does not contain the primitive algorithms;
-  it exposes directional session-key derivation, secure randomness, and wiping
-  for the handshake layer.
+- `networking_crypto_backend.hpp` - source-compatible forwarding alias for the
+  Crypto module's `crypto_network_backend`. Networking consumes the narrow
+  byte-oriented crypto boundary but does not own cryptographic implementation
+  code. OpenSSL-specific TLS adapters remain isolated to the HTTP/TLS paths.
 - `networking_secure_channel.hpp` - Encrypted channel wrapper with packet
   number-derived nonces, authenticated headers, and a replay window.
   Applications must provide key material; the message transport enables
-  encryption by default and does not silently downgrade to plaintext.
+  encryption by default and does not silently downgrade to plaintext. Key
+  epoch rotation prepares replacement directional backends before committing,
+  so preparation failures leave the prior channel usable. Endpoint migration is
+  accepted only on an encrypted connection and only after the authenticated
+  path challenge completes. A key update that receives no acknowledgment after
+  six transmissions wipes its session keys, moves the connection to `FAILED`,
+  and emits a timeout event.
 - `networking_handshake.hpp` - Canonical client/server hello exchange,
-  transcript-bound directional key derivation, Finished MAC verification,
-  address-bound retry cookies, stateless retry challenges, and bounded
-  retransmission. The connection API exposes the authenticated handshake's
-  ephemeral peer key for diagnostics; long-term identity verification remains
-  release-gated work.
+  version 2 length-prefixed transcript-bound directional key derivation,
+  Finished MAC verification, address-bound retry cookies, stateless retry
+  challenges, and bounded retransmission. Version 2 peers reject version 1
+  handshakes before key derivation. Before cookie verification validates the
+  source address, retry-cookie replies are capped at three times the triggering
+  hello datagram size. The connection API exposes the
+  authenticated handshake's ephemeral peer key for diagnostics; long-term
+  identity verification remains release-gated work.
 - `networking_simulator.hpp` - Seeded latency, jitter, loss, duplication,
   corruption, reordering, MTU, and manual-clock simulation adapter.
 - `networking_nat_traversal.hpp` - Candidate-provider gathering, authenticated
   ticket validation hooks, concurrent candidate-pair probing, direct-path
-  nomination, and relay-fallback state machine. Rendezvous/STUN/relay services
-  provide the network-side infrastructure and application ticket verifier.
+  nomination and caller-scheduled direct-path keepalives, relay-path
+  classification and loss reprobes, and the relay-fallback state machine.
+  `get_selected_pair(...)` reports no usable pair while a lost path is being
+  reprobed; it becomes available after direct or relay nomination succeeds.
+  Rendezvous/STUN/relay services provide the network-side infrastructure and
+  application ticket verifier.
+- `networking_replication_protocol.hpp` - Generic authoritative-replication
+  envelope with version and payload-length validation, transactional framing
+  decode, a transport-owned payload copier, and stateless sender helpers for
+  reliable control/delta/snapshot lanes and unreliable-sequenced updates.
+  Message types and payload schemas
+  remain owned by the consuming application; this API only frames and sends
+  bytes through `networking_message_connection`.
+- `networking_replication_hash_payload` - Computes a SHA-256 content hash for
+  caller-owned canonical payload bytes. Revision numbers are deliberately not
+  included, so content equality and synchronization position remain separate.
+- `networking_replication_revision_tracker` - Caller-owned revision gate for
+  one replicated stream. It accepts a complete snapshot, requires contiguous
+  block and light revisions, and rejects light results calculated from an
+  obsolete block revision before the application commits decoded data. It owns
+  no world, block, light, mesh, or transport state and is not thread-safe; the
+  consuming replica must serialize calls to one tracker.
+- `networking_replication_apply_budget` - Per-pump message, payload-byte, and
+  operation budget. A rejected consumption returns `FT_ERR_FULL` without
+  changing counters, allowing a client to defer the remaining work to a later
+  frame or tick.
+- `networking_replication_client` - Caller-owned client replica gate that
+  applies snapshots, block deltas, and light deltas through application
+  callbacks while enforcing contiguous revisions and per-frame budgets.
+- `networking_replication_retention_window` - Contiguous server-side revision
+  window with acknowledgement tracking and snapshot-fallback decisions. It
+  tracks revision availability only; applications retain and own the actual
+  delta payloads.
+- `networking_replication_peer_cursor` - Fixed, transactional reconnect
+  cursor containing authenticated server/session/subscription identity and
+  block/light acknowledgement state. It contains no pointers or handles;
+  applications own durable storage and must re-authenticate before restoring
+  it.
 
 The detailed implementation contract, wire-format rules, resource limits,
-security requirements, and test gates are documented in
-`Docs/steam_style_networking_design.md` until implementation completion.
+security requirements, client budgets, and test gates are documented in
+`Docs/rendering_main_thread_optimization_design.md`, especially section 11.

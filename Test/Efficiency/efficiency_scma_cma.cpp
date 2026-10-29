@@ -26,9 +26,9 @@ static const ft_size_t EFFICIENCY_MUTEX_OPERATIONS = 1000000;
 static const ft_size_t EFFICIENCY_TRANSITION_OPERATIONS = 128;
 static const ft_size_t EFFICIENCY_THREAD_LIFECYCLE_OPERATIONS = 128;
 static const ft_size_t EFFICIENCY_SAMPLE_COUNT = 10;
-static const char *EFFICIENCY_JSON_PATH = "performance_benchmarks.json";
+static const char *EFFICIENCY_JSON_PATH = "Test/performance_benchmarks.json";
 static const char *EFFICIENCY_FAILED_JSON_PATH =
-    "performance_benchmarks_failed.json";
+    "Test/performance_benchmarks_failed.json";
 
 struct s_allocator_result
 {
@@ -408,6 +408,8 @@ static s_mutex_result benchmark_pt_thread_lifecycle(void)
     t_active_clock clock;
     s_mutex_result result;
     pthread_t thread;
+    int create_error;
+    int join_error;
     ft_size_t operation_index;
 
     result.passed = FT_TRUE;
@@ -417,10 +419,24 @@ static s_mutex_result benchmark_pt_thread_lifecycle(void)
     operation_index = 0;
     while (operation_index < EFFICIENCY_THREAD_LIFECYCLE_OPERATIONS)
     {
-        if (pt_thread_create(&thread, ft_nullptr,
-                efficiency_thread_lifecycle_worker, ft_nullptr) != 0
-            || pt_thread_join(thread, ft_nullptr) != 0)
+        create_error = pt_thread_create(&thread, ft_nullptr,
+            efficiency_thread_lifecycle_worker, ft_nullptr);
+        if (create_error != 0)
         {
+            std::fprintf(stderr,
+                "[PERFORMANCE] pt thread lifecycle create failed at "
+                "operation=%zu error=%d\n",
+                static_cast<std::size_t>(operation_index), create_error);
+            result.passed = FT_FALSE;
+            break ;
+        }
+        join_error = pt_thread_join(thread, ft_nullptr);
+        if (join_error != 0)
+        {
+            std::fprintf(stderr,
+                "[PERFORMANCE] pt thread lifecycle join failed at "
+                "operation=%zu error=%d\n",
+                static_cast<std::size_t>(operation_index), join_error);
             result.passed = FT_FALSE;
             break ;
         }

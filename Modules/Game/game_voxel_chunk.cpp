@@ -906,6 +906,9 @@ int32_t game_voxel_chunk::apply_authoritative_block_change_locked(
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (request.protocol_version != GAME_WORLD_DELTA_PROTOCOL_VERSION)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    if (request.session_id == 0U || request.request_id == 0U
+        || request.world_id == 0U)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     if (this->_last_request_valid != FT_FALSE
         && request.session_id == this->_last_request.session_id
         && request.request_id == this->_last_request.request_id)
@@ -998,6 +1001,9 @@ int32_t game_voxel_chunk::apply_authoritative_block_delta_locked(
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_voxel_chunk::apply_authoritative_block_delta");
     if (delta.protocol_version != GAME_WORLD_DELTA_PROTOCOL_VERSION
+        || delta.session_id == 0U
+        || delta.request_id == 0U
+        || delta.world_id == 0U
         || delta.revision == 0U
         || delta.revision != delta.previous_revision + 1U)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
@@ -1484,6 +1490,51 @@ int32_t game_voxel_chunk::copy_x_border_locked(uint32_t *blocks_out,
     return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
 }
 
+int32_t game_voxel_chunk::copy_region_locked(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t first_x, uint32_t first_z,
+    uint32_t region_width, uint32_t region_depth) const noexcept
+{
+    uint32_t expected_block_count;
+    uint32_t local_z;
+    uint32_t local_y;
+    uint32_t local_x;
+    uint32_t output_index;
+    uint8_t section_index;
+
+    expected_block_count = region_width * region_depth
+        * GAME_VOXEL_CHUNK_HEIGHT;
+    if (blocks_out == ft_nullptr || block_count != expected_block_count
+        || region_width == 0U || region_depth == 0U
+        || first_x >= GAME_VOXEL_CHUNK_WIDTH
+        || first_z >= GAME_VOXEL_CHUNK_DEPTH
+        || region_width > GAME_VOXEL_CHUNK_WIDTH - first_x
+        || region_depth > GAME_VOXEL_CHUNK_DEPTH - first_z)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
+    output_index = 0U;
+    local_z = first_z;
+    while (local_z < first_z + region_depth)
+    {
+        local_y = 0U;
+        while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+        {
+            section_index = static_cast<uint8_t>(local_y >> 4U);
+            local_x = first_x;
+            while (local_x < first_x + region_width)
+            {
+                blocks_out[output_index] = this->_sections[section_index]
+                    .get_block(static_cast<uint16_t>(local_x
+                        + ((local_z & 15U) << 4U)
+                        + ((local_y & 15U) << 8U)));
+                output_index += 1U;
+                local_x += 1U;
+            }
+            local_y += 1U;
+        }
+        local_z += 1U;
+    }
+    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+}
+
 int32_t game_voxel_chunk::copy_z_border_locked(uint32_t *blocks_out,
     uint32_t block_count, uint32_t local_z) const noexcept
 {
@@ -1565,6 +1616,25 @@ int32_t game_voxel_chunk::copy_blocks(uint32_t *blocks_out,
     if (error_code != FT_ERR_SUCCESS)
         return (game_voxel_chunk::set_error(error_code));
     error_code = this->copy_blocks_locked(blocks_out, block_count);
+    (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
+    return (error_code);
+}
+
+int32_t game_voxel_chunk::copy_region(uint32_t *blocks_out,
+    uint32_t block_count, uint32_t first_x, uint32_t first_z,
+    uint32_t region_width, uint32_t region_depth) const noexcept
+{
+    int32_t error_code;
+
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk::copy_region");
+    if (this->_access_lock == ft_nullptr)
+        return (game_voxel_chunk::set_error(FT_ERR_INVALID_STATE));
+    error_code = pt_rwlock_strategy_rdlock(this->_access_lock);
+    if (error_code != FT_ERR_SUCCESS)
+        return (game_voxel_chunk::set_error(error_code));
+    error_code = this->copy_region_locked(blocks_out, block_count, first_x,
+        first_z, region_width, region_depth);
     (void)pt_rwlock_strategy_rdunlock(this->_access_lock);
     return (error_code);
 }

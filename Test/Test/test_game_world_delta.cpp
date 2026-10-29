@@ -63,6 +63,7 @@ FT_TEST(test_game_world_delta_deserialization_is_transactional)
     game_block_delta delta;
     game_block_delta original_delta;
     ft_byte_buffer buffer;
+    ft_size_t initial_read_position;
 
     original_delta.protocol_version = 9U;
     original_delta.session_id = 8U;
@@ -81,10 +82,153 @@ FT_TEST(test_game_world_delta_deserialization_is_transactional)
     delta = original_delta;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append_u16_le(1U));
+    initial_read_position = buffer.read_position();
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
         game_block_delta_deserialize(delta, buffer));
+    FT_ASSERT_EQ(initial_read_position, buffer.read_position());
     FT_ASSERT_EQ(original_delta.request_id, delta.request_id);
     FT_ASSERT_EQ(original_delta.current_block_id, delta.current_block_id);
+    return (1);
+}
+
+FT_TEST(test_game_world_delta_request_deserialization_preserves_cursor)
+{
+    game_block_change_request request;
+    game_block_change_request original_request;
+    ft_byte_buffer buffer;
+    ft_size_t initial_read_position;
+
+    original_request.protocol_version = 99U;
+    original_request.request_id = 88U;
+    original_request.requested_block_id = 77U;
+    request = original_request;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append_u16_le(
+        GAME_WORLD_DELTA_PROTOCOL_VERSION));
+    initial_read_position = buffer.read_position();
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        game_block_change_request_deserialize(request, buffer));
+    FT_ASSERT_EQ(initial_read_position, buffer.read_position());
+    FT_ASSERT_EQ(original_request.request_id, request.request_id);
+    FT_ASSERT_EQ(original_request.requested_block_id,
+        request.requested_block_id);
+    return (1);
+}
+
+FT_TEST(test_game_world_delta_decoders_reject_every_truncation)
+{
+    game_block_change_request request;
+    game_block_change_request original_request = {};
+    game_block_delta delta;
+    game_block_delta original_delta = {};
+    ft_byte_buffer encoded_request;
+    ft_byte_buffer encoded_delta;
+    ft_byte_buffer truncated;
+    ft_size_t truncated_size;
+
+    original_request.protocol_version = GAME_WORLD_DELTA_PROTOCOL_VERSION;
+    original_request.session_id = 11U;
+    original_request.request_id = 12U;
+    original_request.world_id = 13U;
+    original_request.chunk_x = -14;
+    original_request.chunk_z = 15;
+    original_request.expected_revision = 16U;
+    original_request.expected_block_id = 17U;
+    original_request.requested_block_id = 18U;
+    original_request.local_x = 1U;
+    original_request.local_y = 2U;
+    original_request.local_z = 3U;
+    original_delta.protocol_version = GAME_WORLD_DELTA_PROTOCOL_VERSION;
+    original_delta.session_id = 21U;
+    original_delta.request_id = 22U;
+    original_delta.world_id = 23U;
+    original_delta.chunk_x = -24;
+    original_delta.chunk_z = 25;
+    original_delta.previous_revision = 26U;
+    original_delta.revision = 27U;
+    original_delta.current_block_id = 28U;
+    original_delta.player_modified = FT_TRUE;
+    original_delta.server_tick = 29U;
+    original_delta.local_x = 4U;
+    original_delta.local_y = 5U;
+    original_delta.local_z = 6U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded_request.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded_delta.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, game_block_change_request_serialize(
+        original_request, encoded_request));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, game_block_delta_serialize(original_delta,
+        encoded_delta));
+    truncated_size = 0U;
+    while (truncated_size < encoded_request.size())
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded_request.data(),
+            truncated_size));
+        request = original_request;
+        FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+            game_block_change_request_deserialize(request, truncated));
+        FT_ASSERT_EQ(static_cast<ft_size_t>(0U), truncated.read_position());
+        FT_ASSERT_EQ(original_request.request_id, request.request_id);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.destroy());
+        truncated_size += 1U;
+    }
+    truncated_size = 0U;
+    while (truncated_size < encoded_delta.size())
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded_delta.data(),
+            truncated_size));
+        delta = original_delta;
+        FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+            game_block_delta_deserialize(delta, truncated));
+        FT_ASSERT_EQ(static_cast<ft_size_t>(0U), truncated.read_position());
+        FT_ASSERT_EQ(original_delta.request_id, delta.request_id);
+        FT_ASSERT_EQ(original_delta.revision, delta.revision);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.destroy());
+        truncated_size += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded_request.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded_delta.destroy());
+    return (1);
+}
+
+FT_TEST(test_game_world_delta_rejects_zero_identity_fields)
+{
+    game_block_change_request request = {};
+    game_block_delta delta = {};
+    ft_byte_buffer request_buffer;
+    ft_byte_buffer delta_buffer;
+
+    request.protocol_version = GAME_WORLD_DELTA_PROTOCOL_VERSION;
+    request.session_id = 0U;
+    request.request_id = 2U;
+    request.world_id = 3U;
+    request.local_x = 1U;
+    request.local_y = 2U;
+    request.local_z = 3U;
+    delta.protocol_version = GAME_WORLD_DELTA_PROTOCOL_VERSION;
+    delta.session_id = 1U;
+    delta.request_id = 0U;
+    delta.world_id = 3U;
+    delta.previous_revision = 0U;
+    delta.revision = 1U;
+    delta.local_x = 1U;
+    delta.local_y = 2U;
+    delta.local_z = 3U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, request_buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, delta_buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, game_block_change_request_serialize(
+        request, request_buffer));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, game_block_delta_serialize(delta,
+        delta_buffer));
+    request = {};
+    delta = {};
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        game_block_change_request_deserialize(request, request_buffer));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        game_block_delta_deserialize(delta, delta_buffer));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(0U), request_buffer.read_position());
+    FT_ASSERT_EQ(static_cast<ft_size_t>(0U), delta_buffer.read_position());
     return (1);
 }
 
@@ -199,6 +343,7 @@ FT_TEST(test_game_world_delta_history_recovers_or_requests_snapshot)
     FT_ASSERT_EQ(2U, recovered[0U].revision);
     FT_ASSERT_EQ(3U, recovered[1U].revision);
     FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, history.get_since(0U, recovered));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(2U), recovered.size());
     return (1);
 }
 
@@ -272,9 +417,14 @@ FT_TEST(test_game_world_delta_channel_authority_and_recovery)
     request.local_z = 3U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, channel.apply_request(request, delta));
     FT_ASSERT_EQ(1U, channel.get_revision());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, channel.apply_request(request, delta));
+    FT_ASSERT_EQ(1U, channel.get_revision());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, channel.collect_live_clients(live_clients));
     FT_ASSERT_EQ(static_cast<ft_size_t>(1U), live_clients.size());
     FT_ASSERT_EQ(10U, live_clients[0U]);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, channel.acknowledge_revision(10U,
+        2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, channel.acknowledge_revision(10U, 1U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, channel.recover_from(0U, recovered));
     FT_ASSERT_EQ(static_cast<ft_size_t>(1U), recovered.size());
     FT_ASSERT_EQ(1U, recovered[0U].revision);
@@ -293,6 +443,7 @@ FT_TEST(test_game_world_delta_snapshot_checksum_rejects_corruption)
     ft_byte_buffer snapshot;
     ft_byte_buffer corrupted_snapshot;
     uint32_t block_id;
+    ft_size_t initial_read_position;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_chunk.initialize());
@@ -312,9 +463,11 @@ FT_TEST(test_game_world_delta_snapshot_checksum_rejects_corruption)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, corrupted_snapshot.initialize(snapshot));
     corrupted_snapshot._data[corrupted_snapshot.size() - 1U] ^= 1U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, corrupted_snapshot.reset_read_position());
+    initial_read_position = corrupted_snapshot.read_position();
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
         game_world_delta_snapshot_deserialize(destination_chunk,
             corrupted_snapshot));
+    FT_ASSERT_EQ(initial_read_position, corrupted_snapshot.read_position());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination_chunk.read_block(5, 6, 7,
         &block_id));
     FT_ASSERT_EQ(42U, block_id);

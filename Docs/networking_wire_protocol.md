@@ -19,6 +19,13 @@ Authenticated application packets then carry a connection identifier, packet
 number, key epoch, and an AEAD tag. The header through the key epoch is
 associated data. ChaCha20-Poly1305 uses a directional IV combined with the
 packet number and key epoch; a packet number is never reused within a key epoch.
+Packet numbers increase monotonically and a connection fails the attempted send
+with an out-of-range error at exhaustion; the counter never wraps to zero.
+
+Connection identifiers are allocated independently by each peer. A packet's
+identifier names the sender's local connection; the receiver resolves it to the
+connection's stored peer identifier and authenticates encrypted packets before
+applying their contents. Application handles always use the local identifier.
 
 ## Packet kinds
 
@@ -74,6 +81,9 @@ ordered hello transcript and prove possession of the derived directional keys.
 Malformed, unauthenticated, replayed, wrong-epoch, and wrong-source packets are
 not delivered to the application. Unknown protocol extensions must be assigned
 a new version until a length-delimited optional-frame parser is added.
+The per-connection `authentication_failures` statistic counts failed AEAD
+authentication and failed handshake authentication; replay and malformed-packet
+rejections are tracked separately.
 
 ## Compatibility rules
 

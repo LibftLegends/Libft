@@ -26,12 +26,16 @@ int32_t nw_bind(int32_t sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int32_t nw_connect(int32_t sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int32_t nw_accept(int32_t sockfd, struct sockaddr *addr, socklen_t *addrlen);
 int32_t nw_listen(int32_t sockfd, int32_t backlog);
+#ifdef LIBFT_TEST_BUILD
 typedef int32_t (*t_nw_socket_hook)(int32_t domain, int32_t type, int32_t protocol);
+#endif
 
 int32_t nw_socket(int32_t domain, int32_t type, int32_t protocol);
 int32_t nw_close(int32_t sockfd);
 int32_t nw_shutdown(int32_t sockfd, int32_t how);
+#ifdef LIBFT_TEST_BUILD
 void nw_set_socket_hook(t_nw_socket_hook hook);
+#endif
 ssize_t nw_send(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_recv(int32_t sockfd, void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_sendto(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags,

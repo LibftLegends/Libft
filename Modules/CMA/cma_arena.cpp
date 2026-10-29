@@ -346,6 +346,7 @@ static ft_bool cma_small_arena_size_is_supported(ft_size_t size)
     return (FT_FALSE);
 }
 
+#ifdef LIBFT_TEST_BUILD
 void cma_small_arena_reset_for_tests(void)
 {
     if (g_cma_small_arena.buffer == nullptr)
@@ -366,6 +367,7 @@ void cma_small_arena_reset_for_tests(void)
     cma_small_arena_clear_free_lists();
     return ;
 }
+#endif
 
 static ft_bool cma_small_arena_prepare_locked(void)
 {

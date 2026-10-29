@@ -149,7 +149,7 @@ Relevant files:
 
 - `Libft/Modules/Voxel/voxel_data.cpp`
 - `Libft/Modules/Voxel/voxel_generation.cpp`
-- `Libft/Modules/Voxel/voxel.hpp`
+- `Libft/Modules/Voxel/terrain_api.hpp` and the other focused Voxel headers
 - `Libft/Test/Test/test_voxel_generator.cpp`
 
 ### Confirmed defects

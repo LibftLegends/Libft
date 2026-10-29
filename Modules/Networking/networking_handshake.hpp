@@ -49,6 +49,7 @@ class networking_handshake
         ft_bool _keys_derived;
         ft_bool _finished_verified;
 
+        void clear_secret_state() noexcept;
         int32_t build_local_hello() noexcept;
         int32_t build_transcript() noexcept;
         int32_t append_u64(ft_vector<uint8_t> &buffer, uint64_t value) noexcept;
@@ -64,6 +65,8 @@ class networking_handshake
 
         int32_t initialize(networking_handshake_role role,
             uint64_t local_connection_id) noexcept;
+        int32_t become_server_for_simultaneous_open() noexcept;
+        int32_t clear_traffic_secrets() noexcept;
         int32_t destroy() noexcept;
         int32_t move(networking_handshake &other) noexcept;
         int32_t get_local_hello(ft_vector<uint8_t> &hello) const noexcept;
@@ -79,6 +82,9 @@ class networking_handshake
         networking_handshake_role get_role() const noexcept;
         uint64_t get_peer_connection_id() const noexcept;
         int32_t get_peer_public_key(uint8_t public_key[32]) const noexcept;
+#ifdef LIBFT_TEST_BUILD
+        ft_bool test_secret_state_is_wiped() const noexcept;
+#endif
 
         static int32_t hash_hello(const uint8_t *hello, ft_size_t hello_length,
             uint8_t digest[32]) noexcept;

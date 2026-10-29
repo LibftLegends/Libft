@@ -388,7 +388,7 @@ int32_t game_item::lock_pair(const game_item &first, const game_item &second,
 
 game_item::game_item() noexcept
     : _max_stack(0), _stack_size(0), _item_id(0), _rarity(0),
-      _width(1), _height(1), _modifier1(), _modifier2(),
+      _width(1), _height(1), _instance_id(0U), _modifier1(), _modifier2(),
       _modifier3(), _modifier4(),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED), _mutex(ft_nullptr)
 {
@@ -414,6 +414,7 @@ int32_t game_item::initialize() noexcept
     this->_rarity = 0;
     this->_width = 1;
     this->_height = 1;
+    this->_instance_id = 0U;
     (void)this->_modifier1.initialize();
     (void)this->_modifier2.initialize();
     (void)this->_modifier3.initialize();
@@ -454,6 +455,7 @@ int32_t game_item::initialize(const game_item &other) noexcept
     this->_rarity = other._rarity;
     this->_width = other._width;
     this->_height = other._height;
+    this->_instance_id = other._instance_id;
     modifier_error = this->_modifier1.initialize(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -517,6 +519,7 @@ int32_t game_item::initialize(game_item &&other) noexcept
     this->_rarity = other._rarity;
     this->_width = other._width;
     this->_height = other._height;
+    this->_instance_id = other._instance_id;
     modifier_error = this->_modifier1.initialize(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -556,6 +559,7 @@ int32_t game_item::initialize(game_item &&other) noexcept
     other._rarity = 0;
     other._width = 1;
     other._height = 1;
+    other._instance_id = 0U;
     modifier_error = game_item_reset_modifier(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -624,6 +628,7 @@ int32_t game_item::destroy() noexcept
     this->_rarity = 0;
     this->_width = 1;
     this->_height = 1;
+    this->_instance_id = 0U;
     (void)this->_modifier1.destroy();
     (void)this->_modifier2.destroy();
     (void)this->_modifier3.destroy();
@@ -821,6 +826,42 @@ void game_item::set_item_id(int32_t id) noexcept
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return ;
+}
+
+uint64_t game_item::get_instance_id() const noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+    uint64_t instance_identifier;
+
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        const_cast<game_item *>(this)->set_error(lock_error);
+        return (0U);
+    }
+    instance_identifier = this->_instance_id;
+    const_cast<game_item *>(this)->set_error(FT_ERR_SUCCESS);
+    this->unlock_internal(lock_acquired);
+    return (instance_identifier);
+}
+
+void game_item::set_instance_id(uint64_t instance_id) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        this->set_error(lock_error);
+        return ;
+    }
+    this->_instance_id = instance_id;
+    this->set_error(FT_ERR_SUCCESS);
+    this->unlock_internal(lock_acquired);
 }
 
 int32_t game_item::get_width() const noexcept

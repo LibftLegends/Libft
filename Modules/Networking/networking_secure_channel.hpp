@@ -64,6 +64,9 @@ class networking_secure_channel
         uint64_t get_receive_key_epoch() const noexcept;
         int32_t destroy() noexcept;
         int32_t move(networking_secure_channel &other) noexcept;
+#ifdef LIBFT_TEST_BUILD
+        ft_bool test_secret_state_is_wiped() const noexcept;
+#endif
         ft_bool seal(uint64_t packet_number, const uint8_t *associated_data,
             ft_size_t associated_data_length, const uint8_t *plaintext,
             ft_size_t plaintext_length, ft_vector<uint8_t> &ciphertext,
@@ -76,9 +79,14 @@ class networking_secure_channel
             const uint8_t *associated_data, ft_size_t associated_data_length,
             const uint8_t *ciphertext, ft_size_t ciphertext_length,
             const uint8_t authentication_tag[16],
-            ft_vector<uint8_t> &plaintext) noexcept;
+            ft_vector<uint8_t> &plaintext,
+            ft_bool record_packet = FT_TRUE) noexcept;
+        int32_t commit_received_packet(uint64_t packet_number,
+            uint64_t key_epoch) noexcept;
         ft_bool has_receive_epoch(uint64_t key_epoch) const noexcept;
         ft_bool is_replay(uint64_t packet_number) const noexcept;
+        ft_bool is_replay_at_epoch(uint64_t packet_number,
+            uint64_t key_epoch) const noexcept;
 };
 
 #endif

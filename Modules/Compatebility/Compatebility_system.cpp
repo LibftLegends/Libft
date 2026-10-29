@@ -44,6 +44,7 @@ int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size,
     return (FT_ERR_SUCCESS);
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_unsetenv_result(int32_t result, int32_t errno_value);
 void cmp_clear_force_unsetenv_result(void);
 void cmp_set_force_unsetenv_windows_errors(int32_t last_error, int32_t socket_error);
@@ -59,6 +60,7 @@ void cmp_set_force_total_memory_failure(int32_t errno_value);
 void cmp_set_force_total_memory_windows_failure(uint64_t last_error);
 #endif
 void cmp_clear_force_total_memory_result(void);
+#endif
 
 #if defined(_WIN32) || defined(_WIN64)
 # include <winsock2.h>
@@ -73,6 +75,7 @@ void cmp_clear_force_total_memory_result(void);
 # endif
 #endif
 
+#if defined(LIBFT_TEST_BUILD)
 static int32_t global_force_unsetenv_enabled = 0;
 static int32_t global_force_unsetenv_result = 0;
 static int32_t global_force_unsetenv_errno_value = 0;
@@ -94,6 +97,7 @@ static uint64_t global_force_total_memory_value = 0;
 static int32_t global_force_total_memory_errno_value = 0;
 #if defined(_WIN32) || defined(_WIN64)
 static uint64_t global_force_total_memory_last_error = 0;
+#endif
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -186,9 +190,13 @@ static int32_t cmp_translate_windows_error(int32_t error_code)
     if (error_code == WSANO_DATA)
         return (FT_ERR_SOCKET_RESOLVE_NO_NAME);
     if (error_code == ERROR_FILE_NOT_FOUND)
-        return (FT_ERR_IO);
+        return (FT_ERR_NOT_FOUND);
     if (error_code == ERROR_PATH_NOT_FOUND)
-        return (FT_ERR_IO);
+        return (FT_ERR_NOT_FOUND);
+#if defined(ERROR_FILENAME_EXCED_RANGE)
+    if (error_code == ERROR_FILENAME_EXCED_RANGE)
+        return (FT_ERR_OUT_OF_RANGE);
+#endif
     if (error_code == EACCES)
         return (FT_ERR_INVALID_OPERATION);
     if (error_code == EPERM)
@@ -213,12 +221,24 @@ static int32_t cmp_translate_windows_error(int32_t error_code)
         return (FT_ERR_NO_MEMORY);
     if (error_code == ERROR_DISK_FULL)
         return (FT_ERR_FULL);
+#if defined(ERROR_TOO_MANY_OPEN_FILES)
+    if (error_code == ERROR_TOO_MANY_OPEN_FILES)
+        return (FT_ERR_FULL);
+#endif
+#if defined(ERROR_NO_SYSTEM_RESOURCES)
+    if (error_code == ERROR_NO_SYSTEM_RESOURCES)
+        return (FT_ERR_FULL);
+#endif
     if (error_code == ERROR_HANDLE_EOF)
         return (FT_ERR_END_OF_FILE);
     if (error_code == ERROR_INVALID_PARAMETER)
         return (FT_ERR_INVALID_ARGUMENT);
     if (error_code == ERROR_INVALID_NAME)
-        return (FT_ERR_INVALID_ARGUMENT);
+        return (FT_ERR_INVALID_PATH);
+#if defined(ERROR_BAD_PATHNAME)
+    if (error_code == ERROR_BAD_PATHNAME)
+        return (FT_ERR_INVALID_PATH);
+#endif
     if (error_code == EINVAL)
         return (FT_ERR_INVALID_OPERATION);
     if (error_code == ERROR_BROKEN_PIPE)
@@ -241,7 +261,7 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
     if (error_code == ENOENT)
         return (FT_ERR_NOT_FOUND);
     if (error_code == ENOTDIR)
-        return (FT_ERR_IO);
+        return (FT_ERR_INVALID_OPERATION);
     if (error_code == EISDIR)
         return (FT_ERR_INVALID_OPERATION);
     if (error_code == EACCES)
@@ -286,8 +306,6 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
     if (error_code == ENXIO)
         return (FT_ERR_NOT_FOUND);
 #endif
-    if (error_code == ENOTDIR)
-        return (FT_ERR_IO);
     if (error_code == ENOENT)
         return (FT_ERR_NOT_FOUND);
 #if defined(ENFILE)
@@ -342,7 +360,7 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
         return (FT_ERR_UNSUPPORTED_TYPE);
 #if defined(ENAMETOOLONG)
     if (error_code == ENAMETOOLONG)
-        return (FT_ERR_INVALID_ARGUMENT);
+        return (FT_ERR_OUT_OF_RANGE);
 #endif
 #if defined(ELOOP)
     if (error_code == ELOOP)
@@ -533,6 +551,7 @@ int32_t cmp_decode_errno_offset_error(int32_t error_code)
     return (normalized_error);
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_unsetenv_result(int32_t result, int32_t errno_value)
 {
     global_force_unsetenv_enabled = 1;
@@ -664,6 +683,7 @@ void cmp_clear_force_total_memory_result(void)
 #endif
     return ;
 }
+#endif
 
 int32_t cmp_secure_memzero(void *buffer, ft_size_t length)
 {
@@ -755,6 +775,7 @@ int32_t cmp_unsetenv(const char *name)
         return (FT_ERR_INVALID_ARGUMENT);
     }
 #if defined(_WIN32) || defined(_WIN64)
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_unsetenv_enabled != 0)
     {
         errno = global_force_unsetenv_errno_value;
@@ -762,6 +783,7 @@ int32_t cmp_unsetenv(const char *name)
         WSASetLastError(global_force_unsetenv_socket_error);
         return (global_force_unsetenv_result);
     }
+#endif
     errno = 0;
     SetLastError(0);
     WSASetLastError(0);
@@ -774,11 +796,13 @@ int32_t cmp_unsetenv(const char *name)
     }
     return (FT_ERR_SUCCESS);
 #else
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_unsetenv_enabled != 0)
     {
         errno = global_force_unsetenv_errno_value;
         return (global_force_unsetenv_result);
     }
+#endif
     errno = 0;
     int32_t result = unsetenv(name);
     if (result != 0)
@@ -797,6 +821,7 @@ int32_t cmp_putenv(char *string)
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_putenv_enabled != 0)
     {
         errno = global_force_putenv_errno_value;
@@ -809,6 +834,7 @@ int32_t cmp_putenv(char *string)
             return (cmp_environment_map_last_error());
         return (FT_ERR_SUCCESS);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     SetLastError(0);
     WSASetLastError(0);
@@ -957,12 +983,14 @@ char *cmp_get_home_directory(void)
 
 uint32_t cmp_get_cpu_count(void)
 {
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_cpu_count_enabled != 0)
     {
         if (global_force_cpu_count_should_fail != 0)
             return (0);
         return (global_force_cpu_count_value);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     SYSTEM_INFO system_info;
 
@@ -996,6 +1024,7 @@ int32_t cmp_get_total_memory(uint64_t *total_memory)
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_total_memory_enabled != 0)
     {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1023,6 +1052,7 @@ int32_t cmp_get_total_memory(uint64_t *total_memory)
         *total_memory = global_force_total_memory_value;
         return (FT_ERR_SUCCESS);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     MEMORYSTATUSEX memory_status;
 

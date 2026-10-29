@@ -141,7 +141,7 @@ ft_deque<ElementType>::ft_deque()
 template <typename ElementType>
 ft_deque<ElementType>::~ft_deque()
 {
-    uint32_t previous_error;
+    int32_t previous_error;
 
     previous_error = ft_deque<ElementType>::_last_error;
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)

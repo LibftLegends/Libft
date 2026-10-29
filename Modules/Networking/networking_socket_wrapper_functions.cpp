@@ -270,6 +270,7 @@ int32_t nw_accept(int32_t socket_file_descriptor, struct sockaddr *address_value
     return (accepted_file_descriptor);
 }
 
+#ifdef LIBFT_TEST_BUILD
 static t_nw_socket_hook g_nw_socket_hook = socket_platform;
 
 void nw_set_socket_hook(t_nw_socket_hook hook)
@@ -282,6 +283,7 @@ void nw_set_socket_hook(t_nw_socket_hook hook)
     g_nw_socket_hook = socket_platform;
     return ;
 }
+#endif
 
 int32_t nw_socket(int32_t domain_value, int32_t type_value, int32_t protocol_value)
 {
@@ -289,7 +291,13 @@ int32_t nw_socket(int32_t domain_value, int32_t type_value, int32_t protocol_val
 
     networking_observability_emit("socket", FT_OBSERVABILITY_TRACE_START,
         FT_ERR_SUCCESS, 0, 0);
-    socket_file_descriptor = g_nw_socket_hook(domain_value, type_value, protocol_value);
+#ifdef LIBFT_TEST_BUILD
+    socket_file_descriptor = g_nw_socket_hook(domain_value, type_value,
+            protocol_value);
+#else
+    socket_file_descriptor = socket_platform(domain_value, type_value,
+            protocol_value);
+#endif
     if (socket_file_descriptor < 0)
     {
         networking_observability_emit("socket", FT_OBSERVABILITY_TRACE_FINISH,

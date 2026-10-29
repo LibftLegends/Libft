@@ -7,10 +7,15 @@
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno.hpp"
 #include "mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 
 static const uint32_t PT_RECURSIVE_MUTEX_TRY_LOCK_ATTEMPTS = 2U;
 
-int pt_recursive_mutex::try_lock(pt_thread_id_type thread_id) const
+int pt_recursive_mutex::try_lock_uninstrumented(
+    pt_thread_id_type thread_id) const
 {
     int ensure_error = this->ensure_native_mutex();
     const void *mutex_handle;
@@ -76,4 +81,27 @@ int pt_recursive_mutex::try_lock(pt_thread_id_type thread_id) const
     }
 
     return (FT_ERR_SUCCESS);
+}
+
+int pt_recursive_mutex::try_lock(pt_thread_id_type thread_id) const
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int analytics_error;
+    int result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RECURSIVE_MUTEX_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (this->try_lock_uninstrumented(thread_id));
+    result = this->try_lock_uninstrumented(thread_id);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_recursive_mutex_try_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (this->try_lock_uninstrumented(thread_id));
+#endif
 }

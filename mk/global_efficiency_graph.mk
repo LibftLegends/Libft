@@ -6,9 +6,10 @@ EFFICIENCY_OPT_LEVEL ?= 3
 LIBFT_GLOBAL_EFFICIENCY_MODULE_NAMES := Basic Compatebility Debug Errno CMA \
 	SCMA System_utils Printf PThread CPP_class Time Sink
 LIBFT_GLOBAL_EFFICIENCY_CONFIG_FINGERPRINT := $(shell printf '%s\n' \
-	'$(CXX)|$(COMPILE_FLAGS)|$(EFFICIENCY_OPT_LEVEL)|FT_EFFICIENCY_BUILD' | \
+	'$(LIBFT_TARGET_PLATFORM)|$(shell $(CXX) -dumpmachine 2>/dev/null)|$(CXX)|$(COMPILE_FLAGS)|$(EFFICIENCY_OPT_LEVEL)|FT_EFFICIENCY_BUILD' | \
 	cksum | awk '{print $$1}')
 LIBFT_GLOBAL_EFFICIENCY_ROOT := build/libft/efficiency_opt$(EFFICIENCY_OPT_LEVEL)_cfg$(LIBFT_GLOBAL_EFFICIENCY_CONFIG_FINGERPRINT)
+LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_CONFIG_MARKER_SUFFIX := .config
 LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS := $(COMPILE_FLAGS) \
 	-Wno-missing-declarations -DFT_EFFICIENCY_BUILD -pthread
 LIBFT_GLOBAL_EFFICIENCY_ARCHIVES :=
@@ -18,13 +19,16 @@ LIBFT_GLOBAL_$(1)_EFFICIENCY_CPP_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PRE
 LIBFT_GLOBAL_$(1)_EFFICIENCY_MM_OBJECTS := $$(patsubst $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm,$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)/%.o,$$(LIBFT_GLOBAL_$(1)_MM_SOURCES))
 LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECTS := $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_CPP_OBJECTS) $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_MM_OBJECTS)
 LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE := $$(patsubst %.a,%_opt$(EFFICIENCY_OPT_LEVEL).a,$$(LIBFT_GLOBAL_$(1)_TARGET))
+LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE_CONFIG_REPAIR := $$(shell if [ -f "$$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE)" ] && [ "$$(cat "$$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE)$(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_CONFIG_MARKER_SUFFIX)" 2>/dev/null)" != "$(LIBFT_GLOBAL_EFFICIENCY_ROOT)" ]; then printf '%s' LIBFT_GLOBAL_FORCE_ARCHIVE_REBUILD; fi)
 
-$$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE): $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS)
+$$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE): $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECTS) $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/modules/$(1).mk $$(LIBFT_GLOBAL_ARCHIVE_CONFIG_INPUTS) $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_ARCHIVE_CONFIG_REPAIR)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|archive|libft|Efficiency$(1)|$$@"; else printf '\033[1;35m[LIBFT][Efficiency$(1)] Archiving %s\033[0m\n' "$$@"; fi
 	@$$(MKDIR) $$(dir $$@)
 	@$$(RM) $$@.tmp
 	@$$(AR) $$(ARFLAGS) $$@.tmp $$(LIBFT_GLOBAL_$(1)_EFFICIENCY_OBJECTS) >/dev/null
 	@$$(LIBFT_GLOBAL_MV) $$@.tmp $$@
+	@printf '%s\n' '$(LIBFT_GLOBAL_EFFICIENCY_ROOT)' > "$$@$(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_CONFIG_MARKER_SUFFIX).tmp.$$$$"
+	@mv "$$@$(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_CONFIG_MARKER_SUFFIX).tmp.$$$$" "$$@$(LIBFT_GLOBAL_EFFICIENCY_ARCHIVE_CONFIG_MARKER_SUFFIX)"
 	@if [ "$$(BUILD_PROGRESS_ACTIVE)" = "1" ]; then \
 		sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/update_build_progress.sh "$$(BUILD_PROGRESS_SESSION_DIR)" archive libft Efficiency$(1) "$$@" || true; \
 	else \
@@ -36,6 +40,7 @@ define LIBFT_GLOBAL_DEFINE_EFFICIENCY_CPP_RULE
 $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.cpp | $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/normalize_make_depfile.sh "$$(@:.o=.d)"
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Efficiency$(1))
 endef
 
@@ -43,6 +48,7 @@ define LIBFT_GLOBAL_DEFINE_EFFICIENCY_MM_RULE
 $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)/%.o: $(LIBFT_GLOBAL_GRAPH_PREFIX)Modules/$(1)/%.mm | $$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/Modules/$(1)
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Efficiency$(1)|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) $$(LIBFT_GLOBAL_$(1)_CPP_FLAGS) $$(LIBFT_GLOBAL_$(1)_MM_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/normalize_make_depfile.sh "$$(@:.o=.d)"
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Efficiency$(1))
 endef
 
@@ -81,6 +87,7 @@ define LIBFT_GLOBAL_DEFINE_EFFICIENCY_TEST_OBJECT
 $(1): $(2) | $(patsubst %/,%,$(dir $(1)))
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|EfficiencyTest|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_EFFICIENCY_COMPILE_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/normalize_make_depfile.sh "$$(@:.o=.d)"
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,EfficiencyTest)
 endef
 $(foreach source_file,$(LIBFT_GLOBAL_EFFICIENCY_SOURCE_FILES),$(eval $(call LIBFT_GLOBAL_DEFINE_EFFICIENCY_TEST_OBJECT,$(patsubst %.cpp,$(LIBFT_GLOBAL_EFFICIENCY_ROOT)/%.o,$(source_file)),$(source_file))))

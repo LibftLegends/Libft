@@ -137,7 +137,9 @@ struct networking_message_transport_config
     uint32_t maximum_datagram_size;
     uint32_t maximum_message_size;
     uint32_t maximum_reassembly_bytes;
+    uint64_t maximum_total_reassembly_bytes;
     uint32_t maximum_reassembly_messages;
+    uint32_t maximum_connections;
     uint32_t maximum_queued_bytes;
     uint32_t maximum_events;
     uint32_t retransmission_timeout_milliseconds;
@@ -280,6 +282,12 @@ class networking_message_connection
         uint8_t _initialised_state;
         networking_message_transport *_transport;
         uint64_t _connection_id;
+        uint64_t _generation;
+
+        void bind(networking_message_transport *transport,
+            uint64_t connection_id, uint64_t generation) noexcept;
+
+        friend class networking_message_transport;
 
     public:
         networking_message_connection() noexcept;
@@ -311,7 +319,8 @@ class networking_message_connection
         int32_t get_remote_identity(
             networking_message_peer_identity &identity) const noexcept;
 
-        void bind(networking_message_transport *transport, uint64_t connection_id) noexcept;
+        void bind(networking_message_transport *transport,
+            uint64_t connection_id) noexcept;
 };
 
 class networking_message_transport
@@ -319,7 +328,11 @@ class networking_message_transport
     public:
         struct connection_record;
 
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
         networking_message_transport_config _configuration;
         networking_datagram_io *_io;
@@ -334,37 +347,60 @@ class networking_message_transport
         void *_event_callback_user_data;
         ft_bool _containers_initialised;
         uint64_t _next_connection_id;
+        uint64_t _generation;
         uint64_t _last_error;
         pthread_t _worker_thread;
         std::atomic<ft_bool> _worker_thread_created;
+        std::atomic<ft_bool> _worker_join_in_progress;
+        std::atomic<int32_t> _worker_join_result;
+        std::atomic<ft_bool> _destroy_in_progress;
+        std::atomic<int32_t> _destroy_result;
         std::atomic<pt_thread_id_type> _worker_native_id;
         std::atomic<ft_bool> _worker_stop_requested;
         std::atomic<uint32_t> _worker_wakeup_epoch;
         mutable pt_recursive_mutex *_mutex;
 
-        int32_t send_connection_message(uint64_t connection_id, const void *data,
-            ft_size_t size, const networking_message_send_options &options) noexcept;
-        int32_t close_connection(uint64_t connection_id,
+        int32_t send_connection_message(uint64_t connection_id,
+            uint64_t generation, const void *data, ft_size_t size,
+            const networking_message_send_options &options) noexcept;
+        int32_t close_connection(uint64_t connection_id, uint64_t generation,
             networking_message_close_reason reason, const char *debug_text,
             ft_bool abort_connection) noexcept;
         int32_t update_connection_key_epoch(uint64_t connection_id,
-            uint64_t next_epoch) noexcept;
+            uint64_t generation, uint64_t next_epoch) noexcept;
         int32_t request_connection_key_update(uint64_t connection_id,
-            uint64_t next_epoch) noexcept;
+            uint64_t generation, uint64_t next_epoch) noexcept;
         int32_t get_connection_state(uint64_t connection_id,
+            uint64_t generation,
             networking_message_connection_state &state) const noexcept;
         int32_t get_connection_statistics(uint64_t connection_id,
+            uint64_t generation,
             networking_message_statistics &statistics) const noexcept;
         int32_t get_connection_identity(uint64_t connection_id,
+            uint64_t generation,
             networking_message_peer_identity &identity) const noexcept;
-        int32_t configure_connection_lane(uint64_t connection_id, uint8_t lane,
+        int32_t configure_connection_lane(uint64_t connection_id,
+            uint64_t generation, uint8_t lane,
             uint32_t priority_weight,
             uint32_t reserved_bandwidth_bytes_per_second) noexcept;
         int32_t set_connection_queue_limits(uint64_t connection_id,
-            uint32_t maximum_queued_bytes) noexcept;
-        int32_t flush_connection(uint64_t connection_id) noexcept;
+            uint64_t generation, uint32_t maximum_queued_bytes) noexcept;
+        int32_t flush_connection(uint64_t connection_id,
+            uint64_t generation) noexcept;
+        void clear_connection_reassembly(connection_record &connection) noexcept;
+        int32_t process_datagram_impl(
+            const networking_message_endpoint &source, const uint8_t *data,
+            ft_size_t size) noexcept;
 #ifdef LIBFT_TEST_BUILD
     public:
+        int32_t test_get_connection_peer_id(uint64_t connection_id,
+            uint64_t &peer_connection_id) const noexcept;
+        int32_t test_set_connection_statistics_counters(
+            uint64_t connection_id, uint64_t packets_sent,
+            uint64_t bytes_sent, uint8_t lane,
+            uint64_t lane_bytes_sent) noexcept;
+        int32_t test_set_connection_next_packet(
+            uint64_t connection_id, uint64_t next_packet) noexcept;
 #endif
         int32_t process_datagram(const networking_message_endpoint &source,
             const uint8_t *data, ft_size_t size) noexcept;
@@ -391,7 +427,8 @@ class networking_message_transport
             networking_message_close_reason reason,
             const char *debug_text) noexcept;
         int32_t send_handshake_retry(const networking_message_endpoint &remote,
-            uint64_t connection_id, const uint8_t cookie[40]) noexcept;
+            uint64_t connection_id, const uint8_t cookie[40],
+            ft_size_t received_size) noexcept;
         connection_record *find_connection(uint64_t connection_id) const noexcept;
         void clear_records() noexcept;
         int32_t emit_event(networking_message_event_type type,
@@ -403,6 +440,12 @@ class networking_message_transport
         void process_command_queue() noexcept;
         int32_t execute_command(networking_message_command &command) noexcept;
         void fail_pending_commands(int32_t result) noexcept;
+        connection_record *find_peer_connection(uint64_t peer_connection_id,
+            const networking_message_endpoint &remote) const noexcept;
+        connection_record *find_peer_connection_by_id(
+            uint64_t peer_connection_id) const noexcept;
+        connection_record *find_handshaking_client(
+            const networking_message_endpoint &remote) const noexcept;
         static void *worker_entry(void *argument) noexcept;
         void worker_loop() noexcept;
         void wake_worker() noexcept;

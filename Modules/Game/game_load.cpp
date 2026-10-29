@@ -8,6 +8,9 @@
 #include "../CPP_class/class_string.hpp"
 #include "../Template/shared_ptr.hpp"
 #include <cstdio>
+#include <stdint.h>
+#include <limits>
+#include <new>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -70,6 +73,38 @@ static int32_t build_item_from_group(game_item &item, json_group *group, const f
     if (parse_item_field(group, key_id, value) != FT_ERR_SUCCESS)
         return (FT_ERR_GAME_GENERAL_ERROR);
     item.set_item_id(value);
+    ft_string key_instance_id;
+    if (build_item_field_key(item_prefix, "_instance_id", key_instance_id) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    json_item *instance_id_item = json_find_item(group, key_instance_id.c_str());
+    uint64_t instance_id = 0;
+    if (instance_id_item)
+    {
+        const char *digit = instance_id_item->value;
+        if (!digit || !*digit)
+            return (FT_ERR_GAME_GENERAL_ERROR);
+        while (*digit)
+        {
+            uint32_t number;
+            if (*digit < '0' || *digit > '9')
+                return (FT_ERR_GAME_GENERAL_ERROR);
+            number = static_cast<uint32_t>(*digit - '0');
+            if (instance_id > (UINT64_MAX - number) / 10)
+                return (FT_ERR_GAME_GENERAL_ERROR);
+            instance_id = instance_id * 10 + number;
+            ++digit;
+        }
+    }
+    item.set_instance_id(instance_id);
+    ft_string key_rarity;
+    if (build_item_field_key(item_prefix, "_rarity", key_rarity) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    json_item *rarity_item = json_find_item(group, key_rarity.c_str());
+    if (rarity_item)
+    {
+        value = ft_atoi(rarity_item->value);
+        item.set_rarity(value);
+    }
     ft_string key_width;
     if (build_item_field_key(item_prefix, "_width", key_width) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
@@ -136,6 +171,7 @@ static int32_t build_item_from_group(game_item &item, json_group *group, const f
 int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
 {
     int32_t initialize_error;
+    json_item *revision_item;
 
     initialize_error = inventory.destroy();
     if (initialize_error != FT_ERR_SUCCESS)
@@ -167,9 +203,8 @@ int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
         return (FT_ERR_GAME_GENERAL_ERROR);
     }
     int32_t serialized_slots = ft_atoi(used_slots_item->value);
-    inventory.set_current_weight(0);
-    inventory.set_used_slots(0);
-    inventory.get_items().clear();
+    if (inventory.clear_items() != FT_ERR_SUCCESS)
+        return (inventory.get_error());
     json_item *count_item = json_find_item(group, "item_count");
     if (!count_item)
     {
@@ -215,7 +250,61 @@ int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
     }
     inventory.set_current_weight(serialized_weight);
     inventory.set_used_slots(serialized_slots);
+    revision_item = json_find_item(group, "revision");
+    if (revision_item != ft_nullptr)
+    {
+        uint64_t revision = 0U;
+        const char *cursor = revision_item->value;
+
+        if (cursor == ft_nullptr || *cursor == '\0')
+            return (FT_ERR_INVALID_ARGUMENT);
+        while (*cursor != '\0')
+        {
+            uint32_t digit;
+
+            if (*cursor < '0' || *cursor > '9')
+                return (FT_ERR_INVALID_ARGUMENT);
+            digit = static_cast<uint32_t>(*cursor - '0');
+            if (revision > (std::numeric_limits<uint64_t>::max() - digit)
+                    / 10U)
+                return (FT_ERR_OUT_OF_RANGE);
+            revision = revision * 10U + digit;
+            ++cursor;
+        }
+        return (inventory.restore_revision(revision));
+    }
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t deserialize_equipment_extra_slot(game_character &character,
+    json_group *group, int32_t slot, const char *name)
+{
+    char present_name[32];
+    if (std::snprintf(present_name, sizeof(present_name), "%s_present", name)
+        < 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    json_item *present = json_find_item(group, present_name);
+    if (present == ft_nullptr || ft_atoi(present->value) != 1)
+    {
+        character.unequip_item(slot);
+        return (FT_ERR_SUCCESS);
+    }
+    game_item item_temp;
+    ft_string prefix;
+    if (prefix.initialize(name) != FT_ERR_SUCCESS
+        || item_temp.initialize() != FT_ERR_SUCCESS)
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    int32_t result = build_item_from_group(item_temp, group, prefix);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_sharedptr<game_item> item(new (std::nothrow) game_item());
+    if (!item)
+        return (FT_ERR_NO_MEMORY);
+    result = item->initialize(item_temp);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = character.equip_item(slot, item);
+    return (result);
 }
 
 int32_t deserialize_equipment(game_character &character, json_group *group)
@@ -277,6 +366,16 @@ int32_t deserialize_equipment(game_character &character, json_group *group)
     }
     else
         character.unequip_item(EQUIP_WEAPON);
+    int32_t extra_result = deserialize_equipment_extra_slot(character, group,
+        EQUIP_LEGS, "legs");
+    if (extra_result == FT_ERR_SUCCESS)
+        extra_result = deserialize_equipment_extra_slot(character, group,
+            EQUIP_FEET, "feet");
+    if (extra_result == FT_ERR_SUCCESS)
+        extra_result = deserialize_equipment_extra_slot(character, group,
+            EQUIP_OFF_HAND, "off_hand");
+    if (extra_result != FT_ERR_SUCCESS)
+        return (extra_result);
     return (FT_ERR_SUCCESS);
 }
 

@@ -62,6 +62,7 @@ class game_item
         int32_t             _rarity;
         int32_t             _width;
         int32_t             _height;
+        uint64_t            _instance_id;
         game_item_modifier _modifier1;
         game_item_modifier _modifier2;
         game_item_modifier _modifier3;
@@ -104,6 +105,11 @@ class game_item
 
         int32_t get_item_id() const noexcept;
         void set_item_id(int32_t id) noexcept;
+
+		/* Zero identifies a stackable/untracked item. Nonzero IDs identify
+		 * one physical instance and require a single-unit stack. */
+		uint64_t get_instance_id() const noexcept;
+		void set_instance_id(uint64_t instance_id) noexcept;
 
         int32_t get_width() const noexcept;
         void set_width(int32_t width) noexcept;

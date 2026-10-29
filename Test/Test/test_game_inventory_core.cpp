@@ -114,6 +114,106 @@ FT_TEST(test_game_inventory_remove_clears_usage)
     return (1);
 }
 
+FT_TEST(test_game_inventory_snapshot_is_value_only_and_revisioned)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item(new game_item());
+    std::vector<game_inventory_item_snapshot> snapshot;
+    std::vector<game_inventory_item_snapshot> empty_snapshot;
+    game_inventory_snapshot complete_snapshot;
+    uint64_t snapshot_revision = 0U;
+    uint64_t empty_revision = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item->initialize());
+    item->set_item_id(41);
+    item->set_max_stack(16);
+    item->set_stack_size(7);
+    item->set_rarity(3);
+    item->set_width(1);
+    item->set_height(1);
+    item->set_modifier2_id(8);
+    item->set_modifier2_value(19);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        inventory.get_snapshot(snapshot, &snapshot_revision));
+    FT_ASSERT_EQ(static_cast<size_t>(1), snapshot.size());
+    FT_ASSERT_EQ(0, snapshot[0].slot);
+    FT_ASSERT_EQ(41, snapshot[0].item_id);
+    FT_ASSERT_EQ(7, snapshot[0].stack_size);
+    FT_ASSERT_EQ(16, snapshot[0].max_stack);
+    FT_ASSERT_EQ(3, snapshot[0].rarity);
+    FT_ASSERT_EQ(1, snapshot[0].width);
+    FT_ASSERT_EQ(1, snapshot[0].height);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_snapshot(complete_snapshot));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(4), complete_snapshot.capacity);
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), complete_snapshot.used_slots);
+    FT_ASSERT_EQ(0, complete_snapshot.weight_limit);
+    FT_ASSERT_EQ(7, complete_snapshot.current_weight);
+    FT_ASSERT_EQ(snapshot_revision, complete_snapshot.revision);
+    FT_ASSERT_EQ(8, complete_snapshot.items[0].modifier2_id);
+    FT_ASSERT_EQ(19, complete_snapshot.items[0].modifier2_value);
+
+    inventory.remove_item(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        inventory.get_snapshot(empty_snapshot, &empty_revision));
+    FT_ASSERT_EQ(static_cast<size_t>(0), empty_snapshot.size());
+    FT_ASSERT_EQ(true, empty_revision > snapshot_revision);
+    FT_ASSERT_EQ(static_cast<size_t>(1), snapshot.size());
+    FT_ASSERT_EQ(7, snapshot[0].stack_size);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item->get_error());
+    return (1);
+}
+
+FT_TEST(test_game_item_instance_identity_survives_copy_and_transfer)
+{
+    game_inventory source;
+    game_inventory destination;
+    ft_sharedptr<game_item> unique_item(new game_item());
+    ft_sharedptr<game_item> duplicate_item(new game_item());
+    game_item copied_item;
+    std::vector<game_inventory_item_snapshot> snapshot;
+    uint64_t source_revision = 0U;
+    uint64_t destination_revision = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(2, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, unique_item->initialize());
+    unique_item->set_item_id(90);
+    unique_item->set_instance_id(0x1122334455667788ULL);
+    unique_item->set_max_stack(1);
+    unique_item->set_stack_size(1);
+    unique_item->set_width(1);
+    unique_item->set_height(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied_item.initialize(*unique_item));
+    FT_ASSERT_EQ(0x1122334455667788ULL, copied_item.get_instance_id());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(unique_item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision));
+    FT_ASSERT_EQ(0, source.count_item(90));
+    FT_ASSERT_EQ(1, destination.count_item(90));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.get_snapshot(snapshot, &destination_revision));
+    FT_ASSERT_EQ(static_cast<size_t>(1), snapshot.size());
+    FT_ASSERT_EQ(0x1122334455667788ULL, snapshot[0].instance_id);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate_item->initialize());
+    duplicate_item->set_item_id(90);
+    duplicate_item->set_instance_id(0x1122334455667788ULL);
+    duplicate_item->set_max_stack(1);
+    duplicate_item->set_stack_size(1);
+    duplicate_item->set_width(1);
+    duplicate_item->set_height(1);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS,
+        destination.add_item(duplicate_item));
+    FT_ASSERT_EQ(1, destination.count_item(90));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied_item.get_error());
+    return (1);
+}
+
 FT_TEST(test_game_inventory_merges_into_existing_stack)
 {
     game_inventory inventory;
@@ -297,5 +397,35 @@ FT_TEST(test_game_inventory_remove_missing_slot_noops)
     FT_ASSERT_EQ(2, slot->value->get_stack_size());
     FT_ASSERT_EQ(2, inventory.get_current_weight());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, potion->get_error());
+    return (1);
+}
+
+FT_TEST(test_game_inventory_clear_items_advances_revision)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item(new game_item());
+    game_inventory_snapshot snapshot = {};
+    uint64_t revision_before;
+    uint64_t revision_after;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(3, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item->initialize());
+    item->set_item_id(12);
+    item->set_max_stack(4);
+    item->set_stack_size(3);
+    item->set_width(1);
+    item->set_height(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_before));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.clear_items());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_after));
+    FT_ASSERT(revision_after > revision_before);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_snapshot(snapshot));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), snapshot.capacity);
+    FT_ASSERT_EQ(static_cast<ft_size_t>(0), snapshot.used_slots);
+    FT_ASSERT_EQ(0, snapshot.current_weight);
+    FT_ASSERT_EQ(static_cast<size_t>(0), snapshot.items.size());
+    FT_ASSERT_EQ(0, inventory.count_item(12));
     return (1);
 }

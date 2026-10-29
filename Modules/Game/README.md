@@ -26,7 +26,9 @@ General rules for these orchestration classes:
 - `game_character` - Character record with identity, stats, inventory/equipment integration, save/load helpers, getters/setters, add/remove operations, metrics, lifecycle, error accessors, and optional thread safety.
 - `game_item_modifier` - Item modifier id/value pair with lifecycle, getters/setters, error accessors, and optional thread safety.
 - `game_item` - Stackable item with id, size, rarity, dimensions, four modifiers, stack operations, modifier accessors, lifecycle, error accessors, and optional thread safety.
-- `game_inventory` - Inventory container for item stacks with add/remove/query behavior, lifecycle, error accessors, and optional thread safety.
+- `game_inventory` - Inventory container for item stacks with add/remove/query behavior, revision-checked unique-instance add/remove, transfers, exact stackable-quantity removal, and value-only snapshots. Revisioned unique-item add returns the committed slot. `restore_snapshot(...)` rebuilds staged contents from a value snapshot, then replaces the map in place while preserving the inventory object and its process-local request caches; callers must exclude concurrent access and use it for compensating rollback, not ordinary save loading. Quantity removal preflights all matching untracked stacks, commits under one inventory lock and retains a bounded 4,096-entry scoped request cache for exact success/failure retry; the cache is process-local and is cleared on reinitialization/destruction. `game_item` has a separate 64-bit physical instance ID (zero for stackable/untracked items); identified instances are single-unit items and duplicate IDs are rejected within the destination inventory. The ID is a host-supplied identity token, not a global minting or persistence service.
+- `game_character::get_inventory()` - Server-side access to the character-owned inventory. `game_inventory::get_snapshot(...)` returns value-only slot/item records and inventory metadata with the captured revision; inventory persistence consumes this locked snapshot and now preserves the revision through save/load. Older snapshots without the optional revision remain readable. Production builds do not expose the mutable item map. Use `clear_items()` for reset/load paths; it advances the inventory revision. Test builds retain `get_items()` for legacy fixture setup. Persistence does not yet include a recovery journal.
+- Minecraft's `WorldItemStore` uses Libft `game_inventory::transfer_to` for revision-checked pickup transfers; the Minecraft store owns world entity identity, chunk indexing, reach/owner-lock checks, and request deduplication. Minecraft's single-player interaction creates configured built-in block drops with compensating cleanup on an edit failure. The store is in-memory and lacks durable atomic block/drop transactions, rendering, replication, and persistence.
 - `game_equipment_slot` - Equipment slot enum.
 - `game_equipment` - Equipment loadout by slot with equip/unequip/query behavior, lifecycle, error accessors, and optional thread safety.
 - `game_item_definition`, `game_loadout_entry`, `game_loadout_blueprint`, and `game_recipe_blueprint` - Catalog records used to define items, starting loadouts, and crafting recipes.
@@ -45,8 +47,10 @@ General rules for these orchestration classes:
 
 ## Crafting, Dialogue, Quests, and Events
 
-- `game_crafting_ingredient` - Recipe ingredient struct.
-- `game_crafting` - Crafting system that validates ingredients and produces recipe outputs.
+- `game_crafting_ingredient` - Recipe ingredient with one exact item ID, up to eight unique explicit alternatives, or a stable tag ID, plus count and rarity matching. Tagged ingredients are expanded to the registered immutable alternatives when a recipe is registered.
+- `game_crafting::query_recipe_at_station_snapshot(...)` - Evaluates recipe availability and ingredient deficits for a requested batch against one caller-captured `game_inventory_snapshot`, without reading or mutating a live inventory. The compatibility overload queries one batch. Hosts aggregating multiple recipes should capture once and reuse that immutable snapshot so every result row observes the same inventory revision; malformed snapshot aggregates and ingredient-count overflow are rejected.
+- `game_crafting` - Recipe unlocks, non-mutating `query_recipe(...)` status/ingredient-deficit queries, recipe-owned output definitions, and two-phase `prepare_craft`/`commit_craft` transactions. Queries allocate inventory units across cumulative rarity-aware requirements and explicit alternatives without reusing stack units; rarity-specific groups are allocated before wildcard groups. Missing groups include their accepted alternative IDs. Tags are registered before recipes (maximum 64 tags, eight members each); Minecraft resolves its content tags and registers their members through this API. A prepared craft checks batch ingredients, primary and byproduct capacity, and the exact inventory revision; commit rejects stale inventory and advances the revision on success. Recipes support up to 16 immutable, value-copied byproducts, committed with their primary output and ingredient consumption. Output templates must have physical instance ID 0; the host may use `commit_craft(..., output_instance_id)` to assign a freshly minted ID to a unique one-item primary output. The commit rejects an ID already present in the source inventory. Host-side global ID uniqueness and use of this overload for unique Minecraft outputs remain host responsibilities. Existing caller-supplied-output `craft_item(...)` is compatibility-only and cannot execute recipes with authoritative bound outputs or station-constrained recipes. `set_recipe_station(...)` assigns one immutable positive station ID to a registered, still-locked recipe; register it locked, assign its station, then unlock it. Queries and preparation must use that station through `query_recipe_at_station(...)` and `prepare_craft_at_station(...)`; legacy calls use station 0 and fail closed for constrained recipes. Station assignment requires a locked recipe and is immutable before unlock. The query reports `station_available`. Minecraft still validates the real station, reach, and station revision. `prepare_processing_at_station(...)` now stages ingredient consumption without requiring output capacity and returns a value-only primary/byproduct snapshot; `commit_processing_inputs(...)` consumes the inputs while leaving products for a host-owned timed job. This is a processing transaction foundation, not a job scheduler: fuel policy, elapsed ticks, output retry, and job persistence remain host responsibilities.
+- `game_recipe_book` - Stable-ID recipe catalogue and unlock state, with caller-configured initial grants, idempotent source-event grants, and transactional sparse persistence. `unlock_recipe_with_result(...)` separately reports whether the event receipt was newly recorded and whether it made the recipe newly known, so hosts can durably checkpoint a new receipt even when the recipe was already unlocked; the legacy `unlock_recipe(..., newly_unlocked)` API remains available. Unknown imported IDs remain quarantined and round-trip for future catalogues; `game_crafting` remains responsible for recipe definitions and executing crafts. `game_crafting::lock_recipe()` lets a host restore runtime access consistently when importing a prior recipe-book snapshot.
 - `game_dialogue_line` - One dialogue line with id, speaker/text, conditions, and lifecycle/error handling.
 - `game_dialogue_script` - Ordered dialogue script.
 - `game_dialogue_table` - Dialogue repository/table with register/fetch behavior.
@@ -138,20 +142,24 @@ General rules for these orchestration classes:
 - `game_script_context` - Script execution context with game state, world,
   variables, and an opaque extension pointer for module-specific bindings.
 - `game_script_bridge` - Bridge for registering and invoking script callbacks.
-  `execute_with_user_data(...)` lets another module expose a typed API without
-  adding that module as a dependency of `Game`. `execute_lua(...)` and
-  `execute_lua_with_user_data(...)` run real Lua 5.4 source through the
-  statically embedded runtime. Registered callbacks are exposed as Lua global
-  functions. `get_lua_global_string(...)`,
-  `get_lua_global_integer(...)`, and `get_lua_global_boolean(...)` allow a
-  host to read explicitly exported primitive values from the Lua state.
-- Registered Lua callbacks may return one integer through
-  `game_script_context::set_result_integer(...)`; the Lua wrapper returns that
-  integer to the script. This is used by the Voxel bridge for runtime block ids.
-- `set_lua_instruction_limit(...)` and `set_lua_memory_limit(...)` bound Lua
-  execution. The default limits are 100,000 VM instructions and 16 MiB.
+  It defaults to Libft's custom `Scripting` runtime. New code should use
+  `execute_with_user_data(...)` or `execute_custom_with_user_data(...)`; typed
+  callbacks are resolved through stable native IDs. A temporary line-command
+  adapter preserves existing `set`, `unset`, and `call` scripts while they are
+  migrated to the custom language.
+- The old interpreter-specific entry points have been removed. Script sources
+  are executed by Libft's bounded custom runtime; the line-command adapter is
+  retained only as a temporary source-compatibility layer for existing assets.
+- Registered callbacks may return one integer through
+  `game_script_context::set_result_integer(...)`; the custom adapter exposes
+  that result to the script. This is used by the Voxel bridge for runtime block
+  ids.
+- Custom-runtime execution is bounded by its configured deterministic
+  operation and resource limits.
   Filesystem, operating-system, package-loading, debug, and dynamic-code
   libraries are not exposed to scripts.
+- Registered callback failures are raised immediately inside Lua, so later
+  callbacks in the same script do not run after a failed host operation.
 - `game_data_catalog` - Registry for item definitions, recipes, loadouts, and other static catalog records.
 
 ## Serialization and Persistence
@@ -174,3 +182,5 @@ Across this module, public lifecycle classes consistently expose some or all of:
 - `lock(...)` / `unlock(...)` on classes that expose explicit lock helpers.
 - Domain getters/setters for ids, names, values, tables, children, records, counters, and timestamps.
 - `get_error()` and `get_error_str()` on classes with object-local error reporting.
+
+Minecraft recipe-policy runtime coverage (2026-10-13): A focused direct MinGW executable compiled the current MinecraftItemCatalog.cpp and MinecraftRecipeCatalog.cpp plus current Libft game_crafting.cpp, game_inventory.cpp, and game_recipe_book.cpp, linked against the existing support archive, initialized both catalogs, and ran validate_recipe_coverage successfully (recipe-coverage=0 outputs=93 missing=0). This verifies that every current content item whose acquisition policy is recipe-backed has a catalogued recipe output, and every tracked card output satisfies its unique recipe/discovery policy checks. It does not prove all proposed recipes/features in Sections 10-12 exist or that the application-wide validators pass. The regression test enforcing deck-wide copy limits also passes a direct runtime harness (cross-zone-copy-cap=ok).

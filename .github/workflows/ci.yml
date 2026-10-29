@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake gdb pkg-config python3 python3-pip libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang cmake gdb pkg-config python3 python3-pip libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -63,7 +63,37 @@ jobs:
 
       - name: Build test suite
         shell: bash
-        run: sh mk/ci_run_with_timeout.sh 1800 make -j4 tests
+        run: |
+          build_timeout=1800
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            build_timeout=3600
+          fi
+          sh mk/ci_run_with_timeout.sh "$build_timeout" make -j4 tests
+
+      - name: Run terrain persistence focused suite
+        shell: bash
+        run: make -j4 terrain-persistence-tests
+
+      - name: Run focused Crypto suite
+        shell: bash
+        run: make -j4 crypto-tests
+
+      - name: Run focused Networking suite
+        shell: bash
+        run: make -j4 networking-message-tests
+
+      - name: Run reliability impairment matrix
+        shell: bash
+        run: |
+          for seed in 1 2 3 4; do
+            (cd Test && LIBFT_NETWORKING_SOAK_SEED="$seed" \
+              FT_TEST_NAME_FILTER="test_networking_reliable_delivery_seeded_impairment_trace" \
+              ./libft_tests)
+          done
+
+      - name: Run adversarial incremental build suite
+        shell: bash
+        run: sh mk/ci_run_with_timeout.sh 3600 make incremental-build-tests
 
       - name: Validate stale build progress
         shell: bash
@@ -72,6 +102,22 @@ jobs:
       - name: Validate AGENTS policy for hardened modules
         shell: bash
         run: make agents-policy-scan
+
+      - name: Run Crypto constant-time source checks
+        shell: bash
+        run: make crypto-review
+
+      - name: Upload Crypto compiler inspection output
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-compiler-inspection-${{ github.run_id }}
+          path: build/crypto-review/
+          if-no-files-found: warn
+
+      - name: Validate tester coverage manifest
+        shell: bash
+        run: make test-coverage-manifest
 
       - name: Validate release archives
         shell: bash
@@ -273,6 +319,10 @@ jobs:
           }
           exit $test_status # CI_DIAGNOSTIC: Keep the Windows test result authoritative.
 
+      - name: Build release and analytics production archives
+        shell: bash
+        run: sh mk/ci_run_with_timeout.sh 3600 make -j4 all
+
       - name: Build performance benchmarks
         if: always()
         shell: bash
@@ -302,13 +352,15 @@ jobs:
             Test/performance_benchmarks_failed.json
           if-no-files-found: warn
 
-      # CI_DIAGNOSTIC: Re-run each known Ubuntu failure separately with full output and preserved assertion logs.
+      # CI_DIAGNOSTIC: Re-run every reported Ubuntu failure separately with full output and preserved assertion logs.
       - name: Diagnose Ubuntu test failures
         if: failure() && runner.os == 'Linux' # CI_DIAGNOSTIC: Run diagnostics only after the Ubuntu suite fails.
         shell: bash # CI_DIAGNOSTIC: Use the same shell as the Ubuntu test runner.
         run: |
           set +e # CI_DIAGNOSTIC: Continue collecting all failure evidence after an individual test fails.
-          for test_name in test_cma_scma_secure_wipe_runtime_compilation_and_cleanup test_terrain_generate_chunk_clears_previous_voxel_data test_thread_pool_cancellation_allows_execution; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
+          failed_test_names=$(grep 'FAIL' Test/ci_unix_full_output.log \
+            | grep -o 'test_[A-Za-z0-9_]*' | sort -u) # CI_DIAGNOSTIC: Derive the rerun set from the actual failed tests.
+          for test_name in $failed_test_names; do # CI_DIAGNOSTIC: Re-run each currently failing test independently.
             (cd Test && FT_TEST_NAME_FILTER="$test_name" FT_TEST_HIDE_SUCCESSFUL=0 FT_TEST_PRESERVE_FAILURE_LOG=1 ./libft_tests) > "Test/ci_ubuntu_${test_name}_output.log" 2>&1 # CI_DIAGNOSTIC: Capture complete targeted test output.
             if [ -f Test/test_failures.log ]; then cp Test/test_failures.log "Test/ci_ubuntu_${test_name}_failures.log"; fi # CI_DIAGNOSTIC: Preserve assertion file when the targeted test reaches the runner.
             if [ -f Test/secure_wipe_runtime.log ]; then cp Test/secure_wipe_runtime.log "Test/ci_ubuntu_${test_name}_secure_wipe_runtime.log"; fi # CI_DIAGNOSTIC: Preserve runtime compilation status.
@@ -391,7 +443,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake gdb pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang cmake gdb pkg-config python3 libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build and run AddressSanitizer plus UBSan suite
         shell: bash
@@ -425,6 +477,7 @@ jobs:
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+              cp Test/test_failures.log Test/asan_original_failures.log
             fi
             if [ -f Test/test_current.log ]; then
               printf '%s\n' 'Last started test:'
@@ -452,6 +505,13 @@ jobs:
               printf '%s\n' "Sanitizer report: $report"
               cat "$report"
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -468,8 +528,12 @@ jobs:
             Test/asan_report.*
             Test/ubsan_report.*
             Test/test_failures.log
+            Test/asan_original_failures.log
             Test/test_current.log
             Test/asan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
             Test/ci_unix_full_output.log
           if-no-files-found: warn
 
@@ -486,11 +550,11 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang llvm libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang llvm libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build networking libFuzzer target
         shell: bash
-        run: make -j4 networking-fuzz networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz FUZZ_CXX=clang++
+        run: make -j4 networking-fuzz networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz networking-reassembly-fuzz networking-codec-fuzz networking-ack-state-fuzz networking-encrypted-fuzz networking-state-machine-fuzz FUZZ_CXX=clang++
 
       - name: Run bounded networking fuzzing
         shell: bash
@@ -504,10 +568,25 @@ jobs:
           third_status=${PIPESTATUS[0]}
           ./Test/networking_handshake_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_handshake 2>&1 | tee networking_handshake_fuzz.log
           fourth_status=${PIPESTATUS[0]}
+          ./Test/networking_reassembly_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_reassembly 2>&1 | tee networking_reassembly_fuzz.log
+          fifth_status=${PIPESTATUS[0]}
+          ./Test/networking_codec_fuzz -max_total_time=30 -dict=Test/Fuzz/networking_codec.dict Test/Fuzz/corpus/networking_codec 2>&1 | tee networking_codec_fuzz.log
+          sixth_status=${PIPESTATUS[0]}
+          ./Test/networking_ack_state_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_ack_state 2>&1 | tee networking_ack_state_fuzz.log
+          seventh_status=${PIPESTATUS[0]}
+          ./Test/networking_encrypted_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_encrypted 2>&1 | tee networking_encrypted_fuzz.log
+          eighth_status=${PIPESTATUS[0]}
+          ./Test/networking_state_machine_fuzz -max_total_time=30 Test/Fuzz/corpus/networking_state_machine 2>&1 | tee networking_state_machine_fuzz.log
+          ninth_status=${PIPESTATUS[0]}
           if [ "$first_status" -ne 0 ]; then exit "$first_status"; fi
           if [ "$second_status" -ne 0 ]; then exit "$second_status"; fi
           if [ "$third_status" -ne 0 ]; then exit "$third_status"; fi
-          exit "$fourth_status"
+          if [ "$fourth_status" -ne 0 ]; then exit "$fourth_status"; fi
+          if [ "$fifth_status" -ne 0 ]; then exit "$fifth_status"; fi
+          if [ "$sixth_status" -ne 0 ]; then exit "$sixth_status"; fi
+          if [ "$seventh_status" -ne 0 ]; then exit "$seventh_status"; fi
+          if [ "$eighth_status" -ne 0 ]; then exit "$eighth_status"; fi
+          exit "$ninth_status"
 
       - name: Upload networking fuzz evidence
         if: always()
@@ -519,10 +598,21 @@ jobs:
             networking_simulator_fuzz.log
             networking_nat_fuzz.log
             networking_handshake_fuzz.log
+            networking_reassembly_fuzz.log
+            networking_codec_fuzz.log
+            networking_ack_state_fuzz.log
+            networking_encrypted_fuzz.log
+            networking_state_machine_fuzz.log
             Test/Fuzz/corpus/networking/**
             Test/Fuzz/corpus/networking_simulator/**
             Test/Fuzz/corpus/networking_nat/**
             Test/Fuzz/corpus/networking_handshake/**
+            Test/Fuzz/corpus/networking_reassembly/**
+            Test/Fuzz/corpus/networking_codec/**
+            Test/Fuzz/corpus/networking_ack_state/**
+            Test/Fuzz/corpus/networking_encrypted/**
+            Test/Fuzz/corpus/networking_state_machine/**
+            Test/Fuzz/networking_codec.dict
           if-no-files-found: warn
 
   thread-sanitizer-tests:
@@ -538,7 +628,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build ThreadSanitizer suite
         shell: bash
@@ -584,6 +674,7 @@ jobs:
             if [ -f Test/test_failures.log ]; then
               printf '%s\n' 'Test failure details:'
               cat Test/test_failures.log
+              cp Test/test_failures.log Test/tsan_original_failures.log
             fi
             if [ -f Test/test_current.log ]; then
               printf '%s\n' 'Last started test:'
@@ -619,6 +710,13 @@ jobs:
                 >"tsan_core_backtrace.log" 2>&1 || true
               cat tsan_core_backtrace.log
             done
+            for runtime_log in Test/secure_wipe_runtime.log \
+              Test/secure_wipe_runtime.err Test/secure_wipe_runtime.cmd; do
+              if [ -f "$runtime_log" ]; then
+                printf '%s\n' "Secure-wipe runtime diagnostic: $runtime_log"
+                cat "$runtime_log"
+              fi
+            done
           fi
           exit "$test_status"
 
@@ -638,8 +736,12 @@ jobs:
             Test/core.*
             Test/tsan_report.*
             Test/test_failures.log
+            Test/tsan_original_failures.log
             Test/test_current.log
             Test/tsan_last_test_output.log
+            Test/secure_wipe_runtime.log
+            Test/secure_wipe_runtime.err
+            Test/secure_wipe_runtime.cmd
           if-no-files-found: warn
 
   crypto-fuzz:
@@ -655,11 +757,11 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang llvm libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang llvm libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Build Crypto libFuzzer target
         shell: bash
-        run: make -j4 crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz FUZZ_CXX=clang++
+        run: make -j4 crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-session-fuzz FUZZ_CXX=clang++
 
       - name: Run bounded Crypto fuzzing
         shell: bash
@@ -675,11 +777,14 @@ jobs:
           fourth_status=${PIPESTATUS[0]}
           ./Test/crypto_hmac_hkdf_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_hmac_hkdf 2>&1 | tee crypto_hmac_hkdf_fuzz.log
           fifth_status=${PIPESTATUS[0]}
+          ./Test/crypto_session_fuzz -max_total_time=30 Test/Fuzz/corpus/crypto_session 2>&1 | tee crypto_session_fuzz.log
+          sixth_status=${PIPESTATUS[0]}
           if [ "$first_status" -ne 0 ]; then exit "$first_status"; fi
           if [ "$second_status" -ne 0 ]; then exit "$second_status"; fi
           if [ "$third_status" -ne 0 ]; then exit "$third_status"; fi
           if [ "$fourth_status" -ne 0 ]; then exit "$fourth_status"; fi
-          exit "$fifth_status"
+          if [ "$fifth_status" -ne 0 ]; then exit "$fifth_status"; fi
+          exit "$sixth_status"
 
       - name: Upload Crypto fuzz evidence
         if: always()
@@ -692,11 +797,13 @@ jobs:
             crypto_aead_fuzz.log
             crypto_x25519_fuzz.log
             crypto_hmac_hkdf_fuzz.log
+            crypto_session_fuzz.log
             Test/Fuzz/corpus/crypto/**
             Test/Fuzz/corpus/crypto_sha/**
             Test/Fuzz/corpus/crypto_aead/**
             Test/Fuzz/corpus/crypto_x25519/**
             Test/Fuzz/corpus/crypto_hmac_hkdf/**
+            Test/Fuzz/corpus/crypto_session/**
           if-no-files-found: warn
 
   crypto-slow-vectors:
@@ -731,6 +838,35 @@ jobs:
           path: crypto_x25519_million.log
           if-no-files-found: warn
 
+  crypto-timing-review:
+    name: crypto-constant-time-statistical-review
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install compiler dependencies
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install --yes build-essential clang
+
+      - name: Run statistical timing review
+        shell: bash
+        run: |
+          set +e
+          make crypto-timing-review 2>&1 | tee crypto_timing_review.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload timing review evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: crypto-timing-review-${{ github.run_id }}
+          path: crypto_timing_review.log
+          if-no-files-found: warn
+
   networking-scheduled-stress:
     name: networking-scheduled-stress
     if: github.event_name == 'schedule'
@@ -745,7 +881,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev iproute2
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev iproute2 iptables
 
       - name: Run seeded networking netem matrix
         shell: bash
@@ -754,7 +890,23 @@ jobs:
           make -j4 networking-netem-tests 2>&1 | tee networking_netem.log
           exit "${PIPESTATUS[0]}"
 
-      - name: Run Linux namespace and netem smoke test
+      - name: Run 2000 seeded reliable-delivery traces
+        shell: bash
+        run: |
+          set -o pipefail
+          (cd Test && LIBFT_NETWORKING_SOAK_SEED=1 \
+            LIBFT_NETWORKING_TRACE_COUNT=2000 \
+            FT_TEST_NAME_FILTER="test_networking_reliable_delivery_seeded_impairment_trace_matrix" \
+            ./libft_tests) 2>&1 | tee networking_reliability_trace_matrix.log
+
+      - name: Run networking throughput and latency baseline
+        shell: bash
+        run: |
+          set +e
+          make -j4 networking-performance-baseline 2>&1 | tee networking_performance_baseline.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Run Linux direct, restricted-NAT, symmetric-NAT, and blocked-UDP tests
         shell: bash
         run: |
           set +e
@@ -782,6 +934,8 @@ jobs:
           name: networking-stress-evidence-${{ github.run_id }}
           path: |
             networking_netem.log
+            networking_reliability_trace_matrix.log
+            networking_performance_baseline.log
             networking_namespace_netem.log
             networking_soak.log
             incremental_build_stress.log
@@ -853,7 +1007,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
+          sudo apt-get install --yes build-essential clang cmake pkg-config python3 libssl-dev libsodium-dev libsqlite3-dev libx11-dev libxext-dev libxi-dev libgl-dev libasound2-dev
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -870,6 +1024,17 @@ jobs:
 
       - name: Run adversarial incremental-build graph suite
         shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+          LIBFT_INCREMENTAL_REQUIRE_SANITIZERS: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: >-
           LIBFT_INCREMENTAL_TIMEOUT_SECONDS=1800
           sh mk/ci_run_with_timeout.sh 13800 make JOBS=16 incremental-build-tests
+
+      - name: Upload incremental-build evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: incremental-build-evidence-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/libft-incremental-build.*/logs/**
+          if-no-files-found: warn
