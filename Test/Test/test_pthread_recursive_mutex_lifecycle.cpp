@@ -86,9 +86,13 @@ FT_TEST(test_pt_recursive_mutex_recursive_lock_then_destroy_busy)
     current_thread_id = pt_thread_self();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.lock());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.lock());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.try_lock(current_thread_id));
     FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.destroy());
     return (1);

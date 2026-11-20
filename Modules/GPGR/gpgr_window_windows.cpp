@@ -17,7 +17,7 @@ class ft_gpu_window_windows : public ft_gpu_window
     int32_t _height;
     int32_t _mouse_x;
     int32_t _mouse_y;
-    ft_bool _mouse_clicked;
+    uint32_t _primary_presses;
     ft_bool _settings_key_pressed;
     ft_bool _cursor_visible;
 
@@ -26,7 +26,7 @@ class ft_gpu_window_windows : public ft_gpu_window
             : _hwnd(nullptr), _dc(nullptr), _ctx(nullptr),
               _initialised_state(FT_CLASS_STATE_UNINITIALISED),
               _close_flag(FT_FALSE), _width(0), _height(0), _mouse_x(0),
-              _mouse_y(0), _mouse_clicked(FT_FALSE),
+              _mouse_y(0), _primary_presses(0U),
               _settings_key_pressed(FT_FALSE), _cursor_visible(FT_TRUE) {}
         ft_gpu_window_windows(const ft_gpu_window_windows &other) = delete;
         ft_gpu_window_windows(ft_gpu_window_windows &&other) = delete;
@@ -71,11 +71,12 @@ class ft_gpu_window_windows : public ft_gpu_window
                 "ft_gpu_window_windows::get_mouse_y");
             return (this->_mouse_y);
         }
+        uint32_t primary_press_count() const noexcept override;
         ft_bool was_mouse_clicked() const noexcept override
         {
             errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
                 "ft_gpu_window_windows::was_mouse_clicked");
-            return (this->_mouse_clicked);
+            return (this->_primary_presses != 0U);
         }
         void set_cursor_visible(ft_bool visible) noexcept override
         {
@@ -115,9 +116,10 @@ class ft_gpu_window_windows : public ft_gpu_window
             this->_mouse_x = x;
             this->_mouse_y = y;
         }
-        void set_mouse_clicked(ft_bool clicked) noexcept
+        void record_primary_press() noexcept
         {
-            this->_mouse_clicked = clicked;
+            if (this->_primary_presses < UINT32_MAX)
+                this->_primary_presses += 1U;
         }
         void set_settings_key_pressed(ft_bool pressed) noexcept
         {
@@ -171,7 +173,7 @@ static LRESULT CALLBACK gpgr_window_proc(HWND hwnd, UINT msg, WPARAM wparam,
             return (0);
         case WM_LBUTTONDOWN:
             if (window != nullptr)
-                window->set_mouse_clicked(FT_TRUE);
+                window->record_primary_press();
             return (0);
         case WM_MOUSEMOVE:
             if (window != nullptr)
@@ -234,7 +236,7 @@ ft_bool ft_gpu_window_windows::initialize(const char *title, int32_t width,
     this->_close_flag = FT_FALSE;
     this->_mouse_x = 0;
     this->_mouse_y = 0;
-    this->_mouse_clicked = FT_FALSE;
+    this->_primary_presses = 0U;
     this->_settings_key_pressed = FT_FALSE;
     this->_cursor_visible = FT_TRUE;
     window_x = CW_USEDEFAULT;
@@ -349,7 +351,7 @@ int32_t ft_gpu_window_windows::move(ft_gpu_window &other) noexcept
         this->_height = 0;
         this->_mouse_x = 0;
         this->_mouse_y = 0;
-        this->_mouse_clicked = FT_FALSE;
+        this->_primary_presses = 0U;
         this->_settings_key_pressed = FT_FALSE;
         this->_cursor_visible = FT_TRUE;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -363,7 +365,7 @@ int32_t ft_gpu_window_windows::move(ft_gpu_window &other) noexcept
     this->_height = other_window._height;
     this->_mouse_x = other_window._mouse_x;
     this->_mouse_y = other_window._mouse_y;
-    this->_mouse_clicked = other_window._mouse_clicked;
+    this->_primary_presses = other_window._primary_presses;
     this->_settings_key_pressed = other_window._settings_key_pressed;
     this->_cursor_visible = other_window._cursor_visible;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -375,18 +377,25 @@ int32_t ft_gpu_window_windows::move(ft_gpu_window &other) noexcept
     other_window._height = 0;
     other_window._mouse_x = 0;
     other_window._mouse_y = 0;
-    other_window._mouse_clicked = FT_FALSE;
+    other_window._primary_presses = 0U;
     other_window._settings_key_pressed = FT_FALSE;
     other_window._cursor_visible = FT_TRUE;
     other_window._initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
 
+uint32_t ft_gpu_window_windows::primary_press_count() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_gpu_window_windows::primary_press_count");
+    return (this->_primary_presses);
+}
+
 void ft_gpu_window_windows::poll_events() noexcept
 {
     MSG msg;
 
-    this->_mouse_clicked = FT_FALSE;
+    this->_primary_presses = 0U;
     this->_settings_key_pressed = FT_FALSE;
     while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
     {

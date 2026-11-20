@@ -306,18 +306,25 @@ struct voxel_light_build_operation::implementation
     int32_t final_y;
     int32_t final_z;
     uint8_t phase;
+    uint32_t last_block_id;
+    uint8_t last_block_cost;
+    uint8_t last_block_emission;
+    ft_bool last_block_passes_sky;
+    ft_bool has_last_block;
     voxel_light_block_lookup_fn lookup;
     void *user_data;
     voxel_light_build_stats stats;
     std::vector<uint8_t> sky;
     std::vector<uint8_t> block;
-    std::vector<uint8_t> sky_queued;
-    std::vector<uint8_t> block_queued;
-    std::vector<uint32_t> block_ids;
-    std::vector<light_node> queue;
+    std::vector<uint8_t> step_costs;
+    std::vector<light_node> queues[16];
+    uint32_t highest_queued_level;
+    size_t queued_count;
 
+    int32_t enqueue(const light_node &node) noexcept;
     int32_t seed_sky_neighbor(int32_t destination_x,
         int32_t destination_y, int32_t destination_z) noexcept;
+    int32_t propagate_next() noexcept;
 };
 
 static const uint8_t VOXEL_LIGHT_OPERATION_SCAN = 0U;
@@ -325,15 +332,31 @@ static const uint8_t VOXEL_LIGHT_OPERATION_PROPAGATE = 1U;
 static const uint8_t VOXEL_LIGHT_OPERATION_FINALIZE = 2U;
 static const uint8_t VOXEL_LIGHT_OPERATION_COMPLETE = 3U;
 
+int32_t voxel_light_build_operation::implementation::enqueue(
+    const light_node &node) noexcept
+{
+    int32_t error_code;
+
+    if (node.level <= 1U)
+        return (FT_ERR_SUCCESS);
+    error_code = light_queue_push(this->queues[node.level], node);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (node.level > this->highest_queued_level)
+        this->highest_queued_level = node.level;
+    this->queued_count += 1U;
+    if (this->queued_count > this->stats.queue_peak)
+        this->stats.queue_peak = this->queued_count;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t voxel_light_build_operation::implementation::seed_sky_neighbor(
     int32_t destination_x, int32_t destination_y,
     int32_t destination_z) noexcept
 {
     uint32_t destination_index;
-    const voxel_block_metadata *metadata;
     uint8_t cost;
     uint8_t candidate;
-    int32_t error_code;
 
     if (destination_x < this->region_min
         || destination_x >= this->region_max
@@ -343,31 +366,68 @@ int32_t voxel_light_build_operation::implementation::seed_sky_neighbor(
         return (FT_ERR_SUCCESS);
     destination_index = light_index(destination_x + VOXEL_LIGHT_HALO,
         destination_y, destination_z + VOXEL_LIGHT_HALO);
-    metadata = &voxel_get_block_metadata(
-        this->block_ids[destination_index]);
-    if (metadata->light_attenuation >= 15U
-        || metadata->occludes_faces != FT_FALSE)
-        return (FT_ERR_SUCCESS);
-    cost = metadata->light_attenuation;
-    if (cost < 1U)
-        cost = 1U;
-    if (15U <= cost)
+    cost = this->step_costs[destination_index];
+    if (cost >= 15U)
         return (FT_ERR_SUCCESS);
     candidate = static_cast<uint8_t>(15U - cost);
     if (candidate <= this->sky[destination_index])
         return (FT_ERR_SUCCESS);
     this->sky[destination_index] = candidate;
-    if (this->sky_queued[destination_index] != 0U)
-        return (FT_ERR_SUCCESS);
-    error_code = light_queue_push(this->queue, {
+    return (this->enqueue({
         static_cast<int16_t>(destination_x),
         static_cast<int16_t>(destination_y),
-        static_cast<int16_t>(destination_z), 0U, candidate});
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    this->sky_queued[destination_index] = 1U;
-    if (this->queue.size() > this->stats.queue_peak)
-        this->stats.queue_peak = this->queue.size();
+        static_cast<int16_t>(destination_z), 0U, candidate}));
+}
+
+int32_t voxel_light_build_operation::implementation::propagate_next() noexcept
+{
+    static const int8_t DELTA_X[6] = {1, -1, 0, 0, 0, 0};
+    static const int8_t DELTA_Y[6] = {0, 0, 1, -1, 0, 0};
+    static const int8_t DELTA_Z[6] = {0, 0, 0, 0, 1, -1};
+    uint8_t direction;
+
+    /* Every step loses light. Process stronger sources first so a settled
+     * cell never needs to spread again. Earlier, weaker entries can be stale. */
+    while (this->queues[this->highest_queued_level].empty())
+        this->highest_queued_level -= 1U;
+    std::vector<light_node> &queue = this->queues[this->highest_queued_level];
+    const light_node node = queue.back();
+    queue.pop_back();
+    this->queued_count -= 1U;
+    std::vector<uint8_t> *channel = &this->sky;
+    if (node.channel != 0U)
+        channel = &this->block;
+    if ((*channel)[light_index(node.x + VOXEL_LIGHT_HALO, node.y,
+            node.z + VOXEL_LIGHT_HALO)] != node.level)
+        return (FT_ERR_SUCCESS);
+    this->stats.propagated_cells += 1U;
+    direction = 0U;
+    while (direction < 6U)
+    {
+        const int32_t coordinate_x = node.x + DELTA_X[direction];
+        const int32_t coordinate_y = node.y + DELTA_Y[direction];
+        const int32_t coordinate_z = node.z + DELTA_Z[direction];
+        direction += 1U;
+        if (coordinate_x < this->region_min || coordinate_x >= this->region_max
+            || coordinate_y < 0 || coordinate_y >= 256
+            || coordinate_z < this->region_min || coordinate_z >= this->region_max)
+            continue ;
+        const uint32_t index = light_index(coordinate_x + VOXEL_LIGHT_HALO,
+            coordinate_y, coordinate_z + VOXEL_LIGHT_HALO);
+        const uint8_t cost = this->step_costs[index];
+        if (node.level <= cost)
+            continue ;
+        const uint8_t candidate = static_cast<uint8_t>(node.level - cost);
+        if (candidate <= (*channel)[index])
+            continue ;
+        (*channel)[index] = candidate;
+        const int32_t error_code = this->enqueue({
+            static_cast<int16_t>(coordinate_x),
+            static_cast<int16_t>(coordinate_y),
+            static_cast<int16_t>(coordinate_z), node.channel, candidate});
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -426,10 +486,7 @@ int32_t voxel_light_build_operation::initialize(
     {
         operation->sky.assign(grid_size, 0U);
         operation->block.assign(grid_size, 0U);
-        operation->sky_queued.assign(grid_size, 0U);
-        operation->block_queued.assign(grid_size, 0U);
-        operation->block_ids.assign(grid_size, GAME_VOXEL_AIR_BLOCK);
-        operation->queue.reserve(65536U);
+        operation->step_costs.assign(grid_size, 15U);
     }
     catch (const std::bad_alloc &)
     {
@@ -487,7 +544,6 @@ int32_t voxel_light_build_operation::step(
     uint32_t target_nodes;
     uint32_t maximum_nodes;
     uint64_t start_nanoseconds;
-    uint64_t now_nanoseconds;
     int32_t error_code;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
@@ -517,7 +573,6 @@ int32_t voxel_light_build_operation::step(
         {
             uint32_t block_id;
             uint32_t index;
-            const voxel_block_metadata *metadata;
 
             block_id = GAME_VOXEL_AIR_BLOCK;
             if (operation->lookup(operation->user_data,
@@ -528,12 +583,30 @@ int32_t voxel_light_build_operation::step(
                 return (FT_ERR_INVALID_OPERATION);
             index = light_index(operation->scan_x + VOXEL_LIGHT_HALO,
                 operation->scan_y, operation->scan_z + VOXEL_LIGHT_HALO);
-            operation->block_ids[index] = block_id;
             operation->stats.scanned_cells += 1U;
-            metadata = &voxel_get_block_metadata(block_id);
+            if (operation->has_last_block == FT_FALSE
+                || operation->last_block_id != block_id)
+            {
+                const voxel_block_metadata &metadata =
+                    voxel_get_block_metadata(block_id);
+                operation->has_last_block = FT_TRUE;
+                operation->last_block_id = block_id;
+                operation->last_block_cost = metadata.light_attenuation;
+                if (metadata.occludes_faces != FT_FALSE
+                    || operation->last_block_cost >= 15U)
+                    operation->last_block_cost = 15U;
+                else if (operation->last_block_cost == 0U)
+                    operation->last_block_cost = 1U;
+                operation->last_block_passes_sky = FT_FALSE;
+                if (metadata.light_attenuation < 15U
+                    && metadata.transparent != FT_FALSE)
+                    operation->last_block_passes_sky = FT_TRUE;
+                operation->last_block_emission =
+                    voxel_block_emitted_light_level(block_id);
+            }
+            operation->step_costs[index] = operation->last_block_cost;
             if (operation->direct_sky != FT_FALSE
-                && metadata->light_attenuation < 15U
-                && metadata->transparent != FT_FALSE)
+                && operation->last_block_passes_sky != FT_FALSE)
             {
                 operation->sky[index] = 15U;
                 if (operation->scan_x > operation->region_min)
@@ -570,8 +643,7 @@ int32_t voxel_light_build_operation::step(
             else
             {
                 operation->direct_sky = FT_FALSE;
-                if (metadata->light_attenuation < 15U
-                    && metadata->occludes_faces == FT_FALSE)
+                if (operation->last_block_cost < 15U)
                 {
                     if (operation->scan_x > operation->region_min)
                     {
@@ -605,23 +677,16 @@ int32_t voxel_light_build_operation::step(
                     }
                 }
             }
-            if (voxel_block_emitted_light_level(block_id) != 0U
-                && voxel_block_emitted_light_level(block_id)
-                    > operation->block[index])
+            if (operation->last_block_emission > 0U)
             {
-                operation->block[index] =
-                    voxel_block_emitted_light_level(block_id);
-                if (operation->block_queued[index] == 0U)
-                {
-                    error_code = light_queue_push(operation->queue, {
-                        static_cast<int16_t>(operation->scan_x),
-                        static_cast<int16_t>(operation->scan_y),
-                        static_cast<int16_t>(operation->scan_z), 1U,
-                        voxel_block_emitted_light_level(block_id)});
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
-                    operation->block_queued[index] = 1U;
-                }
+                operation->block[index] = operation->last_block_emission;
+                error_code = operation->enqueue({
+                    static_cast<int16_t>(operation->scan_x),
+                    static_cast<int16_t>(operation->scan_y),
+                    static_cast<int16_t>(operation->scan_z), 1U,
+                    operation->last_block_emission});
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
             }
             operation->scan_y -= 1;
             if (operation->scan_y < 0)
@@ -640,100 +705,14 @@ int32_t voxel_light_build_operation::step(
         }
         else if (operation->phase == VOXEL_LIGHT_OPERATION_PROPAGATE)
         {
-            light_node node;
-            static const int8_t delta_x[6] = {1, -1, 0, 0, 0, 0};
-            static const int8_t delta_y[6] = {0, 0, 1, -1, 0, 0};
-            static const int8_t delta_z[6] = {0, 0, 0, 0, 1, -1};
-            uint8_t direction;
-
-            if (operation->queue.empty())
+            if (operation->queued_count == 0U)
             {
                 operation->phase = VOXEL_LIGHT_OPERATION_FINALIZE;
-                continue;
+                continue ;
             }
-            node = operation->queue.back();
-            operation->queue.pop_back();
-            uint32_t node_index = light_index(node.x + VOXEL_LIGHT_HALO,
-                node.y,
-                node.z + VOXEL_LIGHT_HALO);
-            if (node.channel == 0U)
-            {
-                operation->sky_queued[node_index] = 0U;
-                node.level = operation->sky[node_index];
-            }
-            else
-            {
-                operation->block_queued[node_index] = 0U;
-                node.level = operation->block[node_index];
-            }
-            operation->stats.propagated_cells += 1U;
-            if (operation->queue.size() > operation->stats.queue_peak)
-                operation->stats.queue_peak = operation->queue.size();
-            direction = 0U;
-            while (direction < 6U)
-            {
-                int32_t coordinate_x = node.x + delta_x[direction];
-                int32_t coordinate_y = node.y + delta_y[direction];
-                int32_t coordinate_z = node.z + delta_z[direction];
-                uint32_t index;
-                uint32_t block_id;
-                const voxel_block_metadata *metadata;
-                uint8_t cost;
-                uint8_t candidate;
-                uint8_t *destination;
-
-                if (coordinate_x >= operation->region_min
-                    && coordinate_x < operation->region_max
-                    && coordinate_y >= 0 && coordinate_y < 256
-                    && coordinate_z >= operation->region_min
-                    && coordinate_z < operation->region_max)
-                {
-                    index = light_index(coordinate_x + VOXEL_LIGHT_HALO,
-                        coordinate_y, coordinate_z + VOXEL_LIGHT_HALO);
-                    block_id = operation->block_ids[index];
-                    metadata = &voxel_get_block_metadata(block_id);
-                    if (metadata->light_attenuation < 15U
-                        && metadata->occludes_faces == FT_FALSE)
-                    {
-                        cost = metadata->light_attenuation > 1U
-                            ? metadata->light_attenuation : 1U;
-                        if (node.level > cost)
-                        {
-                            candidate = static_cast<uint8_t>(node.level
-                                - cost);
-                            destination = node.channel == 0U
-                                ? &operation->sky[index]
-                                : &operation->block[index];
-                            if (candidate > *destination)
-                            {
-                                *destination = candidate;
-                                uint8_t *queued;
-                                if (node.channel == 0U)
-                                    queued = &operation->sky_queued[index];
-                                else
-                                    queued = &operation->block_queued[index];
-                                if (*queued == 0U)
-                                {
-                                    error_code = light_queue_push(
-                                        operation->queue, {
-                                        static_cast<int16_t>(coordinate_x),
-                                        static_cast<int16_t>(coordinate_y),
-                                        static_cast<int16_t>(coordinate_z),
-                                        node.channel, candidate});
-                                    if (error_code != FT_ERR_SUCCESS)
-                                        return (error_code);
-                                    *queued = 1U;
-                                    if (operation->queue.size()
-                                        > operation->stats.queue_peak)
-                                        operation->stats.queue_peak =
-                                            operation->queue.size();
-                                }
-                            }
-                        }
-                    }
-                }
-                direction += 1U;
-            }
+            error_code = operation->propagate_next();
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
         }
         else if (operation->phase == VOXEL_LIGHT_OPERATION_FINALIZE)
         {
@@ -760,14 +739,18 @@ int32_t voxel_light_build_operation::step(
             }
         }
         processed += 1U;
-        now_nanoseconds = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (processed >= target_nodes)
+            break ;
         if (processed >= minimum_nodes
-            && (processed >= target_nodes
-                || now_nanoseconds - start_nanoseconds
-                    >= config.time_budget_microseconds * 1000U))
-            break;
+            && (processed == minimum_nodes || (processed & 31U) == 0U))
+        {
+            const uint64_t now_nanoseconds = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (now_nanoseconds - start_nanoseconds
+                >= config.time_budget_microseconds * 1000U)
+                break ;
+        }
     }
     *complete = operation->phase == VOXEL_LIGHT_OPERATION_COMPLETE
         ? FT_TRUE : FT_FALSE;

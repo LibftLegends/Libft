@@ -531,6 +531,10 @@ static ft_bool scma_free_span_overlaps_live(const scma_block *free_block)
     if (free_block->offset > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
             - free_block->size)
         return (FT_TRUE);
+    /* used_size is the maximum end of any live block. A free span beyond
+     * this boundary cannot overlap a handle. */
+    if (free_block->offset >= scma_used_size_ref())
+        return (FT_FALSE);
     free_end = free_block->offset + free_block->size;
     index = 0;
     while (index < scma_block_count_ref())

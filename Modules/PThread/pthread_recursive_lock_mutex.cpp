@@ -33,7 +33,8 @@ int pt_recursive_mutex::lock_uninstrumented() const
 #endif
 
     pt_thread_id_type thread_id = pt_thread_self();
-    if (this->_lock.load(std::memory_order_acquire))
+    const ft_bool was_locked = this->_lock.load(std::memory_order_acquire);
+    if (was_locked == FT_TRUE)
     {
         pt_thread_id_type owner = this->_owner.load(std::memory_order_relaxed);
         if (pt_thread_equal(owner, thread_id))
@@ -46,7 +47,7 @@ int pt_recursive_mutex::lock_uninstrumented() const
     const void *mutex_handle = static_cast<const void *>(this);
     acquired_without_wait = false;
     mutex_error = FT_ERR_SUCCESS;
-    if (!this->_lock.load(std::memory_order_acquire))
+    if (was_locked == FT_FALSE)
     {
         try
         {

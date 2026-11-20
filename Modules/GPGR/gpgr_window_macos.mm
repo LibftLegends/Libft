@@ -48,7 +48,7 @@ struct ft_gpu_window_macos_state
     int32_t           height;
     int32_t           mouse_x;
     int32_t           mouse_y;
-    ft_bool           mouse_clicked;
+    uint32_t          primary_presses;
     ft_bool           settings_key_pressed;
     ft_bool           cursor_visible;
 };
@@ -78,6 +78,7 @@ class ft_gpu_window_macos : public ft_gpu_window
         int32_t get_height() const noexcept override;
         int32_t get_mouse_x() const noexcept override;
         int32_t get_mouse_y() const noexcept override;
+        uint32_t primary_press_count() const noexcept override;
         ft_bool was_mouse_clicked() const noexcept override;
         void set_cursor_visible(ft_bool visible) noexcept override;
         ft_bool was_settings_key_pressed() const noexcept override;
@@ -110,7 +111,7 @@ ft_bool ft_gpu_window_macos::initialize(const char *title, int32_t width,
     this->_state->close_flag           = FT_FALSE;
     this->_state->mouse_x              = 0;
     this->_state->mouse_y              = 0;
-    this->_state->mouse_clicked        = FT_FALSE;
+    this->_state->primary_presses     = 0U;
     this->_state->settings_key_pressed = FT_FALSE;
     this->_state->cursor_visible       = FT_TRUE;
 
@@ -240,7 +241,7 @@ void ft_gpu_window_macos::poll_events() noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_gpu_window_macos::poll_events");
-    this->_state->mouse_clicked        = FT_FALSE;
+    this->_state->primary_presses     = 0U;
     this->_state->settings_key_pressed = FT_FALSE;
     @autoreleasepool
     {
@@ -260,8 +261,9 @@ void ft_gpu_window_macos::poll_events() noexcept
             }
             if (t == NSEventTypeKeyUp || t == NSEventTypeFlagsChanged)
                 continue;
-            if (t == NSEventTypeLeftMouseDown)
-                this->_state->mouse_clicked = FT_TRUE;
+            if (t == NSEventTypeLeftMouseDown
+                && this->_state->primary_presses < UINT32_MAX)
+                this->_state->primary_presses += 1U;
             if (t == NSEventTypeMouseMoved || t == NSEventTypeLeftMouseDragged
                 || t == NSEventTypeRightMouseDragged
                 || t == NSEventTypeLeftMouseDown || t == NSEventTypeLeftMouseUp)
@@ -332,11 +334,20 @@ int32_t ft_gpu_window_macos::get_mouse_y() const noexcept
     return (0);
 }
 
+uint32_t ft_gpu_window_macos::primary_press_count() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_gpu_window_macos::primary_press_count");
+    if (this->_state == nullptr)
+        return (0U);
+    return (this->_state->primary_presses);
+}
+
 ft_bool ft_gpu_window_macos::was_mouse_clicked() const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_gpu_window_macos::was_mouse_clicked");
-    return (this->_state != nullptr && this->_state->mouse_clicked);
+    return (this->_state != nullptr && this->_state->primary_presses != 0U);
 }
 
 void ft_gpu_window_macos::set_cursor_visible(ft_bool visible) noexcept

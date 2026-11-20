@@ -19,7 +19,7 @@ class ft_gpu_window_linux : public ft_gpu_window
     int32_t     _height;
     int32_t     _mouse_x;
     int32_t     _mouse_y;
-    ft_bool     _mouse_clicked;
+    uint32_t    _primary_presses;
     ft_bool     _settings_key;
     ft_bool     _cursor_visible;
     ft_bool     _grab_active;
@@ -30,7 +30,7 @@ class ft_gpu_window_linux : public ft_gpu_window
             : _display(nullptr), _window(0), _ctx(nullptr), _wm_delete(0),
               _initialised_state(FT_CLASS_STATE_UNINITIALISED),
               _close_flag(FT_FALSE), _width(0), _height(0), _mouse_x(0),
-              _mouse_y(0), _mouse_clicked(FT_FALSE),
+              _mouse_y(0), _primary_presses(0U),
               _settings_key(FT_FALSE), _cursor_visible(FT_TRUE),
               _grab_active(FT_FALSE), _invisible_cursor(0) {}
         ft_gpu_window_linux(const ft_gpu_window_linux &other) = delete;
@@ -75,11 +75,12 @@ class ft_gpu_window_linux : public ft_gpu_window
                 "ft_gpu_window_linux::get_mouse_y");
             return (this->_mouse_y);
         }
+        uint32_t primary_press_count() const noexcept override;
         ft_bool was_mouse_clicked() const noexcept override
         {
             errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
                 "ft_gpu_window_linux::was_mouse_clicked");
-            return (this->_mouse_clicked);
+            return (this->_primary_presses != 0U);
         }
         void set_cursor_visible(ft_bool visible) noexcept override;
         ft_bool was_settings_key_pressed() const noexcept override
@@ -315,7 +316,7 @@ int32_t ft_gpu_window_linux::move(ft_gpu_window &other) noexcept
         this->_height = 0;
         this->_mouse_x = 0;
         this->_mouse_y = 0;
-        this->_mouse_clicked = FT_FALSE;
+        this->_primary_presses = 0U;
         this->_settings_key = FT_FALSE;
         this->_cursor_visible = FT_TRUE;
         this->_grab_active = FT_FALSE;
@@ -332,7 +333,7 @@ int32_t ft_gpu_window_linux::move(ft_gpu_window &other) noexcept
     this->_height = other_window._height;
     this->_mouse_x = other_window._mouse_x;
     this->_mouse_y = other_window._mouse_y;
-    this->_mouse_clicked = other_window._mouse_clicked;
+    this->_primary_presses = other_window._primary_presses;
     this->_settings_key = other_window._settings_key;
     this->_cursor_visible = other_window._cursor_visible;
     this->_grab_active = other_window._grab_active;
@@ -347,7 +348,7 @@ int32_t ft_gpu_window_linux::move(ft_gpu_window &other) noexcept
     other_window._height = 0;
     other_window._mouse_x = 0;
     other_window._mouse_y = 0;
-    other_window._mouse_clicked = FT_FALSE;
+    other_window._primary_presses = 0U;
     other_window._settings_key = FT_FALSE;
     other_window._cursor_visible = FT_TRUE;
     other_window._grab_active = FT_FALSE;
@@ -356,9 +357,16 @@ int32_t ft_gpu_window_linux::move(ft_gpu_window &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
+uint32_t ft_gpu_window_linux::primary_press_count() const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_gpu_window_linux::primary_press_count");
+    return (this->_primary_presses);
+}
+
 void ft_gpu_window_linux::poll_events() noexcept
 {
-    this->_mouse_clicked = FT_FALSE;
+    this->_primary_presses = 0U;
     this->_settings_key  = FT_FALSE;
     while (XPending(this->_display) > 0)
     {
@@ -371,7 +379,8 @@ void ft_gpu_window_linux::poll_events() noexcept
         }
         else if (ev.type == ButtonPress && ev.xbutton.button == Button1)
         {
-            this->_mouse_clicked = FT_TRUE;
+            if (this->_primary_presses < UINT32_MAX)
+                this->_primary_presses += 1U;
         }
         else if (ev.type == MotionNotify)
         {

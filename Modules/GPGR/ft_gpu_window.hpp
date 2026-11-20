@@ -30,6 +30,9 @@ class ft_gpu_window
         virtual void set_cursor_visible(ft_bool visible) noexcept = 0;
         virtual ft_bool was_settings_key_pressed() const noexcept = 0;
 
+        /* Primary button presses collected by the most recent event poll. */
+        virtual uint32_t primary_press_count() const noexcept;
+
         static ft_gpu_window *create() noexcept;
 };
 

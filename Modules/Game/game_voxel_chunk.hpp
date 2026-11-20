@@ -54,6 +54,9 @@ class game_voxel_chunk_section
         int32_t find_or_add_palette_index(uint32_t block_id,
             uint8_t *palette_index) noexcept;
         void collapse_if_uniform() noexcept;
+        int32_t copy_payload(const game_voxel_chunk_section &other) noexcept;
+
+        friend class game_voxel_chunk;
 
     public:
         game_voxel_chunk_section() noexcept;
@@ -155,6 +158,7 @@ class game_voxel_chunk
         game_voxel_chunk &operator=(game_voxel_chunk &&other) noexcept = delete;
 
         int32_t initialize() noexcept;
+        int32_t initialize(const game_voxel_chunk &other) noexcept;
         int32_t destroy() noexcept;
         int32_t move(game_voxel_chunk &other) noexcept;
         int32_t read_block(int32_t local_x, int32_t local_y, int32_t local_z,

@@ -805,7 +805,6 @@ int pt_lock_tracking::notify_acquired(pt_thread_id_type thread_identifier,
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
-    pt_lock_tracking_arm_thread_exit_cleanup();
 #ifdef LIBFT_TEST_BUILD
     result_code = pt_lock_tracking_notify_acquired_override_error_code.load();
     if (result_code != FT_ERR_SUCCESS)
@@ -960,7 +959,6 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
     int error_code = FT_ERR_SUCCESS;
     int result_code = FT_ERR_SUCCESS;
 
-    pt_lock_tracking_arm_thread_exit_cleanup();
     if (thread_identifier == THREAD_ID)
     {
         s_pt_local_lock_tracking_state *local_state;
@@ -986,6 +984,8 @@ int pt_lock_tracking::notify_released(pt_thread_id_type thread_identifier,
         if (local_state->registry_published == FT_FALSE)
             return (FT_ERR_SUCCESS);
     }
+    else
+        pt_lock_tracking_arm_thread_exit_cleanup();
     if (!pt_lock_tracking::ensure_registry_mutex_initialised(&error_code))
         return (error_code);
     if (!g_registry_mutex_owned)

@@ -81,6 +81,7 @@ struct analytics_session_config
     uint32_t reserved_trace_events;
     uint32_t trace_frame_interval;
     uint32_t frame_export_interval;
+    uint64_t slow_frame_export_threshold_nanoseconds;
     uint32_t buffer_count;
     analytics_overflow_policy overflow_policy;
     analytics_clock_callback clock_callback;
@@ -205,6 +206,7 @@ class analytics_session
         uint32_t _trace_capacity;
         uint32_t _trace_frame_interval;
         uint32_t _frame_export_interval;
+        uint64_t _slow_frame_export_threshold_nanoseconds;
         analytics_overflow_policy _overflow_policy;
         uint32_t _completed_buffer_indices[
             FT_ANALYTICS_MAX_EXPORT_BUFFER_COUNT];

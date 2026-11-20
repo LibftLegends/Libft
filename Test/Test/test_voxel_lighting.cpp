@@ -648,6 +648,13 @@ FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
     context.has_side_opening = FT_TRUE;
     context.opening_x = -1;
     context.opening_z = 8;
+    context.has_emitter = FT_TRUE;
+    context.emitter_x = -2;
+    context.emitter_y = 124;
+    context.emitter_z = 8;
+    context.second_emitter_x = 9;
+    context.second_emitter_y = 120;
+    context.second_emitter_z = 8;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(expected_light,
         0, 0, voxel_lighting_lookup_block, &context, &expected_stats));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.initialize(actual_light, 0, 0,
@@ -667,11 +674,12 @@ FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
     FT_ASSERT_EQ(FT_TRUE, complete);
     FT_ASSERT(step_count > 1U);
     FT_ASSERT_EQ(expected_stats.scanned_cells, actual_stats.scanned_cells);
-    /* Queue coalescing intentionally reduces repeated propagation entries;
-     * the completed light values remain the compatibility contract. */
+    FT_ASSERT(voxel_light_block(actual_light.get(0, 124, 8)) > 0U);
+    FT_ASSERT(voxel_light_sky(actual_light.get(0, 124, 8)) > 0U);
+    /* Strongest-first propagation settles fewer cells than the unsorted build. */
     FT_ASSERT(actual_stats.propagated_cells > 0U);
     FT_ASSERT(actual_stats.propagated_cells
-        <= expected_stats.propagated_cells);
+        < expected_stats.propagated_cells);
     local_y = 0;
     while (local_y < 256)
     {

@@ -32,8 +32,14 @@ exporter and trace formatting changing the workload being measured.
   aggregates, but only every Nth frame is serialized and written. Use `1` for
   complete output; a live game should normally use a larger value such as
   `120`.
+- `slow_frame_export_threshold_nanoseconds` exports a frame summary when
+  its duration reaches the threshold, including between periodic samples.
+  Zero disables this extra sampling. Detailed trace capture retains its
+  own interval.
 - JSONL output is newline-delimited: every frame summary and trace record ends
   with a newline so files can be streamed and parsed one record at a time.
+  Frame summaries include the session-wide dropped scope count and the frame's
+  dropped breakdown count.
 - `analytics_session::initialize()` creates an in-memory session.
 - `analytics_session::initialize(const analytics_session_config&)` creates a
   configured session and opens its output file when requested.
@@ -48,6 +54,9 @@ exporter and trace formatting changing the workload being measured.
   instrumented CMA and mutex operations do not acquire the lifecycle mutex on
   the measured hot path. Shutdown closes admission first and waits for every
   admitted scope to release its reference before the session is destroyed.
+  Runtime sampling runs only during an active frame on the calling thread and
+  uses at most half of that frame's event slots to leave room for application
+  scopes.
 - `analytics_session::set_world_active()` changes the classification for
   subsequently captured records. Frame, scope, and flow state is captured at
   start time, so transitions cannot reclassify already-recorded work. The

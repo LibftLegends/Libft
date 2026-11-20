@@ -228,7 +228,7 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
 
             if (maximum_read_size != 0U
                 && read_size > maximum_read_size)
-                read_size = static_cast<ft_size_t>(maximum_read_size);
+                read_size = maximum_read_size;
 #endif
             bytes_read = read(file_descriptor, buffer + offset, read_size);
         }

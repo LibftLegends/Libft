@@ -33,13 +33,13 @@ int pt_mutex::lock_uninstrumented() const
         return (override_error);
 #endif
 
-    pthread_t owner = this->_owner.load(std::memory_order_relaxed);
-    if (this->_lock.load(std::memory_order_acquire)
-            && pt_thread_equal(owner, thread_id))
+    const ft_bool was_locked = this->_lock.load(std::memory_order_acquire);
+    if (was_locked == FT_TRUE && pt_thread_equal(
+            this->_owner.load(std::memory_order_relaxed), thread_id))
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
     acquired_without_wait = false;
     mutex_error = FT_ERR_SUCCESS;
-    if (!this->_lock.load(std::memory_order_acquire))
+    if (was_locked == FT_FALSE)
     {
         try
         {

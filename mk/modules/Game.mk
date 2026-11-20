@@ -8,6 +8,7 @@ Game_SOURCES := game_map3d.cpp \
         game_character_misc.cpp \
         game_character_metrics.cpp \
         game_character_save_load.cpp \
+        game_character_snapshot.cpp \
 	game_quest.cpp \
 	game_achievement.cpp \
 	game_reputation.cpp \

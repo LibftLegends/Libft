@@ -121,6 +121,9 @@ int32_t cma_disable_thread_safety_timed(uint64_t timeout_ms);
 int32_t cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms);
 int32_t cma_try_set_thread_safety(ft_bool enable);
 ft_bool cma_is_thread_safe_enabled(void);
+#ifdef LIBFT_TEST_BUILD
+ft_bool cma_allocator_transition_pending_for_test(void);
+#endif
 void cma_set_alloc_logging(ft_bool enable);
 ft_bool cma_get_alloc_logging(void);
 void cma_record_allocation_log(const char *format_string, ...)

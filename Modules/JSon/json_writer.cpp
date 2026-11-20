@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <initializer_list>
 #include <unistd.h>
 #include <new>
 #include "json.hpp"
@@ -29,13 +30,6 @@ static void json_writer_set_error(int32_t error_code)
 
 #define JSON_WRITER_SUCCESS_RETURN(value) \
     do { json_writer_set_error(FT_ERR_SUCCESS); return (value); } while (0)
-
-static char *json_writer_return_failure(void)
-{
-    if (g_json_writer_last_error == FT_ERR_SUCCESS)
-        json_writer_set_error(FT_ERR_NO_MEMORY);
-    return (ft_nullptr);
-}
 
 int32_t json_write_to_file(const char *file_path, json_group *groups)
 {
@@ -113,93 +107,98 @@ int32_t json_write_to_backend(ft_document_sink &sink, json_group *groups)
     JSON_WRITER_SUCCESS_RETURN(0);
 }
 
+static int32_t json_writer_append(char *output, ft_size_t capacity,
+    ft_size_t &size, std::initializer_list<const char *> parts)
+{
+    const char *const *part;
+    ft_size_t length;
+
+    part = parts.begin();
+    while (part != parts.end())
+    {
+        length = ft_strlen_size_t(*part);
+        if (length > capacity - size)
+            return (FT_ERR_OUT_OF_RANGE);
+        if (output != ft_nullptr && length != 0U)
+            ft_memcpy(output + size, *part, length);
+        size += length;
+        part += 1;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t json_writer_emit_groups(const json_group *group, char *output,
+    ft_size_t capacity, ft_size_t &size)
+{
+    const json_item *item;
+    ft_bool is_big_number;
+    const char *value_text;
+    const char *quote;
+    const char *line_end;
+    int32_t error_code;
+
+    size = 0;
+    error_code = json_writer_append(output, capacity, size, {"{\n"});
+    while (error_code == FT_ERR_SUCCESS && group != ft_nullptr)
+    {
+        error_code = json_writer_append(output, capacity, size,
+            {"  \"", group->name, "\": {\n"});
+        item = group->items;
+        while (error_code == FT_ERR_SUCCESS && item != ft_nullptr)
+        {
+            is_big_number = FT_FALSE;
+            value_text = item->value;
+            if (item->is_big_number == FT_TRUE && item->big_number != ft_nullptr)
+            {
+                is_big_number = FT_TRUE;
+                value_text = item->big_number->c_str();
+            }
+            quote = "\"";
+            if (is_big_number == FT_TRUE)
+                quote = "";
+            line_end = "\n";
+            if (item->next != ft_nullptr)
+                line_end = ",\n";
+            error_code = json_writer_append(output, capacity, size,
+                {"    \"", item->key, "\": ", quote, value_text, quote, line_end});
+            item = item->next;
+        }
+        line_end = "  }\n";
+        if (group->next != ft_nullptr)
+            line_end = "  },\n";
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = json_writer_append(output, capacity, size, {line_end});
+        group = group->next;
+    }
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = json_writer_append(output, capacity, size, {"}\n"});
+    return (error_code);
+}
+
 char *json_write_to_string(json_group *groups)
 {
-    char *result = adv_strdup("{\n");
-    if (!result)
-        return (json_writer_return_failure());
-    json_group *group_iterator = groups;
-    while (group_iterator)
+    ft_size_t required_size;
+    ft_size_t written_size;
+    int32_t error_code;
+    char *output;
+
+    /* Count before allocating so each line is copied just once. */
+    error_code = json_writer_emit_groups(groups, ft_nullptr,
+        FT_SYSTEM_SIZE_MAX - 1U, required_size);
+    if (error_code != FT_ERR_SUCCESS)
+        JSON_WRITER_ERROR_RETURN(error_code, ft_nullptr);
+    output = static_cast<char *>(cma_malloc(required_size + 1U));
+    if (output == ft_nullptr)
+        JSON_WRITER_ERROR_RETURN(FT_ERR_NO_MEMORY, ft_nullptr);
+    error_code = json_writer_emit_groups(groups, output, required_size,
+        written_size);
+    if (error_code != FT_ERR_SUCCESS)
     {
-        char *line = adv_strjoin_multiple(3, "  \"", group_iterator->name, "\": {\n");
-        if (!line)
-        {
-            cma_free(result);
-            return (json_writer_return_failure());
-        }
-        char *temporary = adv_strjoin(result, line);
-        cma_free(result);
-        cma_free(line);
-        if (!temporary)
-            return (json_writer_return_failure());
-        result = temporary;
-        json_item *item_iterator = group_iterator->items;
-        while (item_iterator)
-        {
-            const char *value_text = item_iterator->value;
-            ft_bool is_big_number_value = FT_FALSE;
-            if (item_iterator->is_big_number == FT_TRUE && item_iterator->big_number)
-            {
-                value_text = item_iterator->big_number->c_str();
-                is_big_number_value = FT_TRUE;
-            }
-            if (item_iterator->next)
-            {
-                if (is_big_number_value == FT_TRUE)
-                    line = adv_strjoin_multiple(5, "    \"", item_iterator->key, "\": ", value_text, ",\n");
-                else
-                    line = adv_strjoin_multiple(5, "    \"", item_iterator->key, "\": \"", value_text, "\",\n");
-            }
-            else
-            {
-                if (is_big_number_value == FT_TRUE)
-                    line = adv_strjoin_multiple(5, "    \"", item_iterator->key, "\": ", value_text, "\n");
-                else
-                    line = adv_strjoin_multiple(5, "    \"", item_iterator->key, "\": \"", value_text, "\"\n");
-            }
-            if (!line)
-            {
-                cma_free(result);
-                return (json_writer_return_failure());
-            }
-            temporary = adv_strjoin(result, line);
-            cma_free(result);
-            cma_free(line);
-            if (!temporary)
-                return (json_writer_return_failure());
-            result = temporary;
-            item_iterator = item_iterator->next;
-        }
-        if (group_iterator->next)
-            line = adv_strdup("  },\n");
-        else
-            line = adv_strdup("  }\n");
-        if (!line)
-        {
-            cma_free(result);
-            return (json_writer_return_failure());
-        }
-        temporary = adv_strjoin(result, line);
-        cma_free(result);
-        cma_free(line);
-        if (!temporary)
-            return (json_writer_return_failure());
-        result = temporary;
-        group_iterator = group_iterator->next;
+        cma_free(output);
+        JSON_WRITER_ERROR_RETURN(error_code, ft_nullptr);
     }
-    char *end_line = adv_strdup("}\n");
-    if (!end_line)
-    {
-        cma_free(result);
-        return (json_writer_return_failure());
-    }
-    char *temporary = adv_strjoin(result, end_line);
-    cma_free(result);
-    cma_free(end_line);
-    if (!temporary)
-        return (json_writer_return_failure());
-    result = temporary;
-    JSON_WRITER_SUCCESS_RETURN(result);
+    output[written_size] = '\0';
+    JSON_WRITER_SUCCESS_RETURN(output);
 }
 
 int32_t json_document_write_to_file(const char *file_path, const json_document &document)

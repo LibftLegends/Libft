@@ -135,6 +135,40 @@ FT_TEST(test_scma_allocation_unsigned_char_payload)
     return (1);
 }
 
+FT_TEST(test_scma_tail_free_after_reusing_interior_span)
+{
+    static const ft_size_t BLOCK_SIZE = 8U;
+    const unsigned char payload[BLOCK_SIZE] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
+    unsigned char readback[BLOCK_SIZE] = {};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64U));
+    const scma_handle first = scma_allocate(BLOCK_SIZE);
+    const scma_handle interior = scma_allocate(BLOCK_SIZE);
+    const scma_handle survivor = scma_allocate(BLOCK_SIZE);
+    const scma_handle tail = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(first));
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(interior));
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(survivor));
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(tail));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(survivor, 0, payload, BLOCK_SIZE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(interior));
+    FT_ASSERT_EQ(BLOCK_SIZE * 4U, scma_used_size_ref());
+    const scma_handle reused = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(interior.index, reused.index);
+    FT_ASSERT_EQ(reused.index, scma_live_tail_ref());
+    FT_ASSERT_EQ(FT_FALSE, scma_handle_is_valid(interior));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(tail));
+    FT_ASSERT_EQ(BLOCK_SIZE * 3U, scma_used_size_ref());
+    const scma_handle replacement = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(replacement));
+    FT_ASSERT_EQ(BLOCK_SIZE * 3U,
+        scma_blocks_data_ref()[replacement.index].offset);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(survivor, 0, readback, BLOCK_SIZE));
+    FT_ASSERT_EQ(0, std::memcmp(payload, readback, BLOCK_SIZE));
+    scma_shutdown();
+    return (1);
+}
+
 FT_TEST(test_scma_compaction_preserves_live_blocks)
 {
     scma_handle first_handle;

@@ -3498,7 +3498,7 @@ int32_t networking_message_transport::send_handshake_retry(
     if (cookie == ft_nullptr || remote.length == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     amplification_limit = networking_message_saturating_multiply_divide(
-        static_cast<uint64_t>(received_size),
+        received_size,
         NETWORKING_HANDSHAKE_AMPLIFICATION_FACTOR, 1U);
     result = packet.initialize();
     if (result == FT_ERR_SUCCESS

@@ -79,7 +79,8 @@ json_group *serialize_character(const game_character &character)
         return (ft_nullptr);
     }
     json_add_item_to_group(group, item);
-    item = json_create_item("damage_rule", character.get_damage_rule());
+    item = json_create_item("damage_rule",
+        static_cast<int32_t>(character.get_damage_rule()));
     if (!item)
     {
         json_free_groups(group);
@@ -391,6 +392,9 @@ int32_t deserialize_character(game_character &character, json_group *group)
                 return (FT_ERR_GAME_GENERAL_ERROR);
             }
             game_skill skill;
+            add_skill_error = skill.initialize();
+            if (add_skill_error != FT_ERR_SUCCESS)
+                return (add_skill_error);
             skill.set_id(ft_atoi(id_item->value));
             skill.set_level(ft_atoi(level_item->value));
             skill.set_cooldown(ft_atoi(cool_item->value));

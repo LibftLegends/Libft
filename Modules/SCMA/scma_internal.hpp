@@ -74,6 +74,7 @@ void    *scma_unlock_and_return_pointer(void *value);
 void    scma_unlock_and_return_void(void);
 
 #ifdef LIBFT_TEST_BUILD
+ft_bool scma_allocator_transition_pending_for_test(void);
 void    scma_capture_leak_stack(scma_block *block, ft_size_t skip_count);
 void    scma_test_secure_wipe_runtime(void);
 #endif

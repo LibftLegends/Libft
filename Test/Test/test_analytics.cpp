@@ -399,6 +399,42 @@ FT_TEST(test_analytics_frame_export_interval_samples_file_output)
     return (1);
 }
 
+FT_TEST(test_analytics_exports_slow_frames_between_periodic_samples)
+{
+    analytics_session session;
+    analytics_session_config configuration;
+    analytics_frame_statistics frame = {};
+    char buffer[1024];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_default_session_config(
+        &configuration));
+    configuration.output_path = "analytics_slow_frame_test.jsonl";
+    configuration.output_format = analytics_output_format::JSONL;
+    configuration.frame_export_interval = 2U;
+    configuration.slow_frame_export_threshold_nanoseconds = 200U;
+    configuration.start_exporter = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize(configuration));
+    frame.frame_number = 1U;
+    frame.duration_nanoseconds = 200U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    frame.frame_number = 2U;
+    frame.duration_nanoseconds = 199U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    frame.frame_number = 3U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.publish_frame(frame));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    std::FILE *file = std::fopen(configuration.output_path, "rb");
+    FT_ASSERT(file != ft_nullptr);
+    const ft_size_t bytes_read = std::fread(buffer, 1U, sizeof(buffer) - 1U, file);
+    buffer[bytes_read] = '\0';
+    FT_ASSERT(ft_str_contains(buffer, "\"frame\":1"));
+    FT_ASSERT(ft_str_contains(buffer, "\"frame\":2"));
+    FT_ASSERT(!ft_str_contains(buffer, "\"frame\":3"));
+    FT_ASSERT_EQ(0, std::fclose(file));
+    FT_ASSERT_EQ(0, std::remove(configuration.output_path));
+    return (1);
+}
+
 FT_TEST(test_analytics_oldest_export_queue_age_uses_handoff_time)
 {
     analytics_session session;
@@ -925,16 +961,23 @@ FT_TEST(test_analytics_runtime_shutdown_waits_for_active_scope)
     scope_finished.store(FT_FALSE, std::memory_order_release);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_register_regions(&session));
-    worker = std::thread([&scope_started, &scope_finished]() -> void
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_set_sample_rate(1U));
+    worker = std::thread([&session, &scope_started, &scope_finished]() -> void
     {
         analytics_runtime_scope_token worker_token;
+        int32_t frame_error;
+        int32_t scope_error;
 
-        if (analytics_runtime_scope_begin(analytics_runtime_region::CMA_MALLOC,
-                &worker_token) != FT_ERR_SUCCESS)
-            return ;
+        frame_error = analytics_begin_frame(&session, 1U);
+        scope_error = analytics_runtime_scope_begin(
+            analytics_runtime_region::CMA_MALLOC, &worker_token);
         scope_started.store(FT_TRUE, std::memory_order_release);
+        if (scope_error != FT_ERR_SUCCESS || worker_token.active == FT_FALSE)
+            return ;
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
-        if (analytics_runtime_scope_end(&worker_token) == FT_ERR_SUCCESS)
+        if (analytics_runtime_scope_end(&worker_token) == FT_ERR_SUCCESS
+            && frame_error == FT_ERR_SUCCESS
+            && analytics_end_frame(&session) == FT_ERR_SUCCESS)
             scope_finished.store(FT_TRUE, std::memory_order_release);
         return ;
     });
@@ -943,6 +986,50 @@ FT_TEST(test_analytics_runtime_shutdown_waits_for_active_scope)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_shutdown());
     worker.join();
     FT_ASSERT_EQ(FT_TRUE, scope_finished.load(std::memory_order_acquire));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
+    return (1);
+}
+
+FT_TEST(test_analytics_runtime_burst_preserves_enclosing_application_scope)
+{
+    analytics_session session;
+    analytics_frame_statistics frame;
+    analytics_runtime_scope_token token;
+    uint32_t application_region;
+    uint32_t index;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.register_region("application",
+        "test", &application_region));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_register_regions(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_set_sample_rate(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_scope(&session,
+        application_region));
+    index = 0U;
+    while (index < FT_ANALYTICS_MAX_THREAD_EVENTS * 2U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_begin(
+            analytics_runtime_region::CMA_MALLOC, &token));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_end(&token));
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_scope(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.get_latest_frame(&frame));
+    FT_ASSERT_EQ(2U, frame.breakdown_count);
+    FT_ASSERT_EQ(FT_ANALYTICS_MAX_THREAD_EVENTS / 2U,
+        frame.breakdown[0].invocation_count);
+    FT_ASSERT_EQ(application_region, frame.breakdown[1].region_id);
+    FT_ASSERT_EQ(1U, frame.breakdown[1].invocation_count);
+    FT_ASSERT_EQ(0U, frame.dropped_scope_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_begin_frame(&session, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_MALLOC, &token));
+    FT_ASSERT_EQ(FT_TRUE, token.active);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_scope_end(&token));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_end_frame(&session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, analytics_runtime_shutdown());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, session.destroy());
     return (1);
 }

@@ -54,6 +54,12 @@ static void gpgr_window_was_mouse_clicked_uninitialised(void)
     return ;
 }
 
+static void gpgr_window_primary_press_count_uninitialised(void)
+{
+    (void)g_gpgr_test_window_pointer->primary_press_count();
+    return ;
+}
+
 static void gpgr_window_was_settings_key_pressed_uninitialised(void)
 {
     (void)g_gpgr_test_window_pointer->was_settings_key_pressed();
@@ -131,6 +137,8 @@ FT_TEST(test_gpgr_window_uninitialised_mouse_getters_abort)
         gpgr_window_get_mouse_y_uninitialised));
     FT_ASSERT_EQ(1, gpgr_window_expect_uninitialised_abort(
         gpgr_window_was_mouse_clicked_uninitialised));
+    FT_ASSERT_EQ(1, gpgr_window_expect_uninitialised_abort(
+        gpgr_window_primary_press_count_uninitialised));
     return (1);
 }
 

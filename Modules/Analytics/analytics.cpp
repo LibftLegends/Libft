@@ -164,10 +164,13 @@ struct analytics_thread_state
     uint32_t scope_depth;
     analytics_scope_frame scopes[FT_ANALYTICS_MAX_SCOPE_DEPTH];
     uint32_t pending_event_count;
+    uint32_t runtime_scope_count;
     analytics_pending_event pending_events[FT_ANALYTICS_MAX_THREAD_EVENTS];
 };
 
 static const uint32_t FT_ANALYTICS_MAX_THREAD_SESSIONS = 4U;
+static const uint32_t FT_ANALYTICS_MAX_RUNTIME_SCOPES_PER_FRAME =
+    FT_ANALYTICS_MAX_THREAD_EVENTS / 2U;
 static thread_local analytics_thread_state g_analytics_thread_states[
     FT_ANALYTICS_MAX_THREAD_SESSIONS] = {};
 static thread_local analytics_thread_state *g_analytics_current_thread_state
@@ -186,6 +189,20 @@ static const uint64_t FT_ANALYTICS_RUNTIME_GATE_ACTIVE_MASK =
     ~FT_ANALYTICS_RUNTIME_GATE_CLOSED;
 static std::atomic<uint64_t> g_analytics_runtime_gate(0U);
 static thread_local uint32_t g_analytics_runtime_sample_counter = 0U;
+
+static void analytics_release_runtime_scope() noexcept
+{
+    uint64_t previous_gate;
+
+    previous_gate = g_analytics_runtime_gate.fetch_sub(1U,
+        std::memory_order_acq_rel);
+    if (previous_gate == (FT_ANALYTICS_RUNTIME_GATE_CLOSED | 1U))
+    {
+        std::lock_guard<std::mutex> lock(g_analytics_runtime_lifecycle_mutex);
+        g_analytics_runtime_lifecycle_condition.notify_all();
+    }
+    return ;
+}
 
 static const char *analytics_runtime_region_name(
     analytics_runtime_region region) noexcept
@@ -336,7 +353,7 @@ analytics_session::analytics_session() noexcept
       _frame_capacity(
           FT_ANALYTICS_MAX_QUEUED_FRAME_EXPORTS), _trace_capacity(
           FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS), _trace_frame_interval(1U),
-      _frame_export_interval(1U),
+      _frame_export_interval(1U), _slow_frame_export_threshold_nanoseconds(0U),
       _overflow_policy(
           analytics_overflow_policy::DROP_NEW_WITH_COUNTER),
       _completed_buffer_indices(),
@@ -365,6 +382,7 @@ analytics_session_config::analytics_session_config() noexcept
       reserved_trace_events(FT_ANALYTICS_MAX_QUEUED_TRACE_EVENTS),
       trace_frame_interval(1U),
       frame_export_interval(1U),
+      slow_frame_export_threshold_nanoseconds(0U),
       buffer_count(FT_ANALYTICS_EXPORT_BUFFER_COUNT),
       overflow_policy(analytics_overflow_policy::DROP_NEW_WITH_COUNTER),
       clock_callback(ft_nullptr), clock_user_data(ft_nullptr),
@@ -420,12 +438,12 @@ int32_t analytics_runtime_shutdown() noexcept
 
     g_analytics_runtime_gate.fetch_or(FT_ANALYTICS_RUNTIME_GATE_CLOSED,
         std::memory_order_acq_rel);
-    g_analytics_runtime_session.store(ft_nullptr, std::memory_order_release);
     g_analytics_runtime_lifecycle_condition.wait(lock, []() noexcept
     {
         return ((g_analytics_runtime_gate.load(std::memory_order_acquire)
             & FT_ANALYTICS_RUNTIME_GATE_ACTIVE_MASK) == 0U);
     });
+    g_analytics_runtime_session.store(ft_nullptr, std::memory_order_release);
     return (FT_ERR_SUCCESS);
 }
 
@@ -442,6 +460,7 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
     analytics_runtime_scope_token *token) noexcept
 {
     analytics_session *session;
+    analytics_thread_state *thread_state;
     uint64_t gate_state;
     uint32_t sample_rate;
     uint32_t region_index;
@@ -458,6 +477,23 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
     if (region_index >= static_cast<uint32_t>(
             analytics_runtime_region::COUNT))
         return (FT_ERR_INVALID_ARGUMENT);
+    session = g_analytics_runtime_session.load(std::memory_order_acquire);
+    if (session == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    thread_state = analytics_thread_state_for(session, FT_FALSE);
+    /* Allocation and lock events can arrive in bursts. Keep room for the
+     * explicit scopes of the application, which usually finish last. */
+    if (thread_state == ft_nullptr || thread_state->runtime_scope_count
+            >= FT_ANALYTICS_MAX_RUNTIME_SCOPES_PER_FRAME
+        || thread_state->pending_event_count >= FT_ANALYTICS_MAX_THREAD_EVENTS
+        || thread_state->scope_depth >= FT_ANALYTICS_MAX_SCOPE_DEPTH)
+        return (FT_ERR_SUCCESS);
+    sample_rate = g_analytics_runtime_sample_rate.load(
+        std::memory_order_relaxed);
+    g_analytics_runtime_sample_counter += 1U;
+    if (sample_rate > 1U
+        && (g_analytics_runtime_sample_counter % sample_rate) != 0U)
+        return (FT_ERR_SUCCESS);
     while (true)
     {
         gate_state = g_analytics_runtime_gate.load(
@@ -472,21 +508,9 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
             std::memory_order_acquire))
             break ;
     }
-    session = g_analytics_runtime_session.load(std::memory_order_acquire);
-    if (session == ft_nullptr || session->is_enabled() == FT_FALSE)
+    if (session != g_analytics_runtime_session.load(std::memory_order_acquire))
     {
-        g_analytics_runtime_gate.fetch_sub(1U, std::memory_order_acq_rel);
-        g_analytics_runtime_lifecycle_condition.notify_all();
-        return (FT_ERR_SUCCESS);
-    }
-    sample_rate = g_analytics_runtime_sample_rate.load(
-        std::memory_order_relaxed);
-    g_analytics_runtime_sample_counter += 1U;
-    if (sample_rate > 1U
-        && (g_analytics_runtime_sample_counter % sample_rate) != 0U)
-    {
-        g_analytics_runtime_gate.fetch_sub(1U, std::memory_order_acq_rel);
-        g_analytics_runtime_lifecycle_condition.notify_all();
+        analytics_release_runtime_scope();
         return (FT_ERR_SUCCESS);
     }
     token->session = session;
@@ -497,10 +521,10 @@ int32_t analytics_runtime_scope_begin(analytics_runtime_region region,
     if (error_code != FT_ERR_SUCCESS)
     {
         token->session = ft_nullptr;
-        g_analytics_runtime_gate.fetch_sub(1U, std::memory_order_acq_rel);
-        g_analytics_runtime_lifecycle_condition.notify_all();
+        analytics_release_runtime_scope();
         return (FT_ERR_SUCCESS);
     }
+    thread_state->runtime_scope_count += 1U;
     token->active = FT_TRUE;
     token->runtime_scope_registered = FT_TRUE;
     return (FT_ERR_SUCCESS);
@@ -521,9 +545,8 @@ int32_t analytics_runtime_scope_end(
     token->active = FT_FALSE;
     if (token->runtime_scope_registered != FT_FALSE)
     {
-        g_analytics_runtime_gate.fetch_sub(1U, std::memory_order_acq_rel);
         token->runtime_scope_registered = FT_FALSE;
-        g_analytics_runtime_lifecycle_condition.notify_all();
+        analytics_release_runtime_scope();
     }
     return (error_code);
 }
@@ -593,6 +616,8 @@ int32_t analytics_session::initialize(
     this->_trace_capacity = configuration.reserved_trace_events;
     this->_trace_frame_interval = configuration.trace_frame_interval;
     this->_frame_export_interval = configuration.frame_export_interval;
+    this->_slow_frame_export_threshold_nanoseconds =
+        configuration.slow_frame_export_threshold_nanoseconds;
     this->_overflow_policy = configuration.overflow_policy;
     this->_clock_callback = configuration.clock_callback;
     this->_clock_user_data = configuration.clock_user_data;
@@ -1245,7 +1270,10 @@ int32_t analytics_session::publish_frame(
             || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
             return (FT_ERR_NOT_INITIALISED);
         if (frame.frame_number
-            % static_cast<uint64_t>(this->_frame_export_interval) == 0U)
+            % static_cast<uint64_t>(this->_frame_export_interval) == 0U
+            || (this->_slow_frame_export_threshold_nanoseconds != 0U
+                && frame.duration_nanoseconds
+                    >= this->_slow_frame_export_threshold_nanoseconds))
             export_frame = FT_TRUE;
         else
             export_frame = FT_FALSE;
@@ -1613,6 +1641,7 @@ int32_t analytics_begin_frame(analytics_session *session,
     thread_state->world_active = session->is_world_active();
     thread_state->scope_depth = 0U;
     thread_state->pending_event_count = 0U;
+    thread_state->runtime_scope_count = 0U;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1966,6 +1995,14 @@ int32_t analytics_export_frame_json(const analytics_session &session,
     if (error_code == FT_ERR_SUCCESS)
         error_code = analytics_append_u64(temporary,
             frame.uninstrumented_nanoseconds);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, ",\"dropped_scopes_total\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary, frame.dropped_scope_count);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_text(temporary, ",\"dropped_breakdown_count\":");
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = analytics_append_u64(temporary, frame.dropped_breakdown_count);
     if (error_code == FT_ERR_SUCCESS)
         error_code = analytics_append_text(temporary, ",\"breakdown\":[");
     index = 0U;
