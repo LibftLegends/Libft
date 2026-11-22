@@ -41,6 +41,18 @@ int32_t main()
     }
     const double ready_us = std::chrono::duration<double, std::micro>(
         std::chrono::steady_clock::now() - start).count() / ITERATIONS;
+    constexpr uint32_t POLL_ITERATIONS = 2000;
+    const auto poll_start = std::chrono::steady_clock::now();
+    index = 0;
+    while (index < POLL_ITERATIONS)
+    {
+        int32_t readable = peer.get();
+        if (nw_poll(&readable, 1, ft_nullptr, 0, 0) != 1 || readable != peer.get())
+            return (1);
+        ++index;
+    }
+    const double poll_us = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - poll_start).count() / POLL_ITERATIONS;
     char byte;
     if (nw_recv(peer.get(), &byte, 1, 0) != 1 || byte != 'x')
         return (1);
@@ -51,6 +63,7 @@ int32_t main()
         std::chrono::steady_clock::now() - idle_start).count();
     if (!client.close() || networking_check_socket_after_send(peer.get()) != 1)
         return (1);
-    std::printf("%.2f us per ready check; %.2f ms idle check\n", ready_us, idle_ms);
+    std::printf("%.2f us per ready poll; %.2f us per ready check; %.2f ms idle check\n",
+        poll_us, ready_us, idle_ms);
     return (0);
 }

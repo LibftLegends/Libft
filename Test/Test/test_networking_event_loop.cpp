@@ -296,6 +296,100 @@ FT_TEST(test_networking_event_loop_merges_read_write_interest)
     return (1);
 }
 
+FT_TEST(test_networking_event_loop_updates_existing_interests_without_heap)
+{
+    int32_t descriptors[2];
+    FT_ASSERT_EQ(0, make_socket_pair(descriptors));
+    event_loop loop;
+    const int32_t init_result = event_loop_initialize(&loop);
+    if (init_result != FT_ERR_SUCCESS)
+    {
+        close_socket_pair(descriptors);
+        return (0);
+    }
+    const int32_t first = event_loop_add_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_WRITE);
+    const int32_t second = event_loop_add_interest(&loop, descriptors[1],
+        EVENT_LOOP_INTEREST_READ);
+    cma_set_alloc_limit(1);
+    const int32_t merged = event_loop_add_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_READ);
+    const ft_bool in_order = (loop.read_count == 2
+        && loop.read_file_descriptors[0] == descriptors[0]
+        && loop.read_file_descriptors[1] == descriptors[1]);
+    const int32_t removed = event_loop_remove_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_READ | EVENT_LOOP_INTEREST_WRITE);
+    const ft_bool retained = (loop.registration_count == 1
+        && loop.read_count == 1 && loop.write_count == 0
+        && loop.read_file_descriptors[0] == descriptors[1]);
+    cma_set_alloc_limit(0);
+    event_loop_clear(&loop);
+    close_socket_pair(descriptors);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, merged);
+    FT_ASSERT(in_order);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, removed);
+    FT_ASSERT(retained);
+    return (1);
+}
+
+#ifdef _WIN32
+FT_TEST(test_networking_event_loop_runs_small_ready_set_without_heap)
+{
+    int32_t descriptors[2];
+    FT_ASSERT_EQ(0, make_socket_pair(descriptors));
+    event_loop loop;
+    event_loop_init(&loop);
+    const int32_t add_result = event_loop_add_interest(&loop, descriptors[1],
+        EVENT_LOOP_INTEREST_WRITE);
+    cma_set_alloc_limit(1);
+    const int32_t ready = event_loop_run(&loop, 0);
+    cma_set_alloc_limit(0);
+    event_loop_clear(&loop);
+    close_socket_pair(descriptors);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(1, ready);
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_recovers_after_large_snapshot_allocation_failure)
+{
+    constexpr uint32_t SOCKET_COUNT = 33;
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t descriptors[SOCKET_COUNT];
+    uint32_t count = 0U;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (count < SOCKET_COUNT)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        descriptors[count++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_WRITE);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    event_loop_ready_event ready[SOCKET_COUNT];
+    uint32_t ready_count = 0U;
+    cma_set_alloc_limit(1);
+    const int32_t limited = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
+    cma_set_alloc_limit(0);
+    const int32_t recovered = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
+    event_loop_clear(&loop);
+    const uint32_t opened = count;
+    while (count > 0)
+        nw_close(descriptors[--count]);
+    FT_ASSERT_EQ(SOCKET_COUNT, opened);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, limited);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recovered);
+    FT_ASSERT_EQ(SOCKET_COUNT, ready_count);
+    return (1);
+}
+#endif
+
 FT_TEST(test_networking_event_loop_interrupt_wakes_waiter)
 {
     event_loop loop;
@@ -324,6 +418,113 @@ FT_TEST(test_networking_event_loop_interrupt_wakes_waiter)
         return (0);
     return (1);
 }
+
+#ifdef _WIN32
+static int32_t test_event_loop_interrupt_wait(int32_t timeout)
+{
+    event_loop loop;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, event_loop_initialize(&loop));
+    constexpr int32_t STILL_WAITING = -1;
+    std::atomic<int32_t> result(STILL_WAITING);
+    uint32_t event_count = 0;
+    std::thread waiter([&]()
+    {
+        event_loop_ready_event event;
+        result.store(event_loop_wait(&loop, &event, 1, &event_count, timeout));
+        return ;
+    });
+    // Make the observation longer than the previous Windows 50 ms polling interval.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const int32_t prior_result = result.load();
+    const auto interrupt_time = std::chrono::steady_clock::now();
+    const int32_t interrupt_result = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto elapsed = std::chrono::steady_clock::now() - interrupt_time;
+    event_loop_destroy(&loop);
+
+    FT_ASSERT_EQ(STILL_WAITING, prior_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupt_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result.load());
+    FT_ASSERT_EQ(0, event_count);
+    FT_ASSERT(elapsed < std::chrono::milliseconds(500));
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_windows_interrupt_breaks_finite_wait)
+{
+    return (test_event_loop_interrupt_wait(1500));
+}
+
+FT_TEST(test_networking_event_loop_windows_interrupt_breaks_indefinite_wait)
+{
+    return (test_event_loop_interrupt_wait(-1));
+}
+
+FT_TEST(test_networking_event_loop_windows_full_read_set_keeps_tail_and_wake_socket)
+{
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t idle_sockets[FD_SETSIZE];
+    int32_t opened = 0;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (opened < FD_SETSIZE)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        idle_sockets[opened++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_READ);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    const int32_t tail_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ);
+    const ssize_t sent = nw_send(connection[1], "x", 1, 0);
+    event_loop_ready_event event{};
+    uint32_t ready_count = 0;
+    const int32_t read_result = event_loop_wait(&loop, &event, 1, &ready_count, 500);
+    if (ready_count == 1 && event.file_descriptor == connection[0])
+        consume_one_byte(connection[0]);
+
+    std::atomic<int32_t> result(-1);
+    uint32_t wake_count = 0;
+    std::thread waiter([&]()
+    {
+        event_loop_ready_event wake_event;
+        result.store(event_loop_wait(&loop, &wake_event, 1, &wake_count, 1500));
+        return ;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const int32_t prior_result = result.load();
+    const auto interrupt_time = std::chrono::steady_clock::now();
+    const int32_t interrupted = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto elapsed = std::chrono::steady_clock::now() - interrupt_time;
+
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    const int32_t socket_count = opened;
+    while (opened > 0)
+        nw_close(idle_sockets[--opened]);
+
+    FT_ASSERT_EQ(FD_SETSIZE, socket_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tail_result);
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_result);
+    FT_ASSERT_EQ(1, ready_count);
+    FT_ASSERT_EQ(connection[0], event.file_descriptor);
+    FT_ASSERT((event.ready_mask & EVENT_LOOP_READY_READ) != 0);
+    FT_ASSERT_EQ(-1, prior_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupted);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result.load());
+    FT_ASSERT_EQ(0, wake_count);
+    FT_ASSERT(elapsed < std::chrono::milliseconds(500));
+    return (1);
+}
+#endif
 
 FT_TEST(test_networking_event_loop_add_while_waiting_wakes_and_reports)
 {
