@@ -36,6 +36,7 @@ int32_t nw_shutdown(int32_t sockfd, int32_t how);
 #ifdef LIBFT_TEST_BUILD
 void nw_set_socket_hook(t_nw_socket_hook hook);
 #endif
+// On Windows, these single-call I/O wrappers report WSAEMSGSIZE for len > FT_INT32_MAX.
 ssize_t nw_send(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_recv(int32_t sockfd, void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_sendto(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags,

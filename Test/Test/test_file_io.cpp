@@ -22,7 +22,7 @@
 
 static void create_test_file(void)
 {
-    FILE *file = ft_fopen("test_file_io.txt", "w");
+    FILE *file = ft_fopen("build_logs/test_file_io.txt", "w");
     if (file != ft_nullptr)
     {
         std::fputs("Line1\nLine2\n", file);
@@ -54,7 +54,7 @@ FT_TEST(test_file_fopen_valid)
     FILE *file;
 
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     FT_ASSERT(file != ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_fclose(file));
     return (1);
@@ -72,7 +72,7 @@ FT_TEST(test_file_fopen_invalid_mode_sets_errno)
 
     create_test_file();
     errno = 0;
-    file = ft_fopen("test_file_io.txt", "invalid");
+    file = ft_fopen("build_logs/test_file_io.txt", "invalid");
     FT_ASSERT_EQ(ft_nullptr, file);
     return (1);
 }
@@ -80,7 +80,7 @@ FT_TEST(test_file_fopen_invalid_mode_sets_errno)
 FT_TEST(test_file_fopen_null)
 {
     FT_ASSERT_EQ(ft_nullptr, ft_fopen(ft_nullptr, "r"));
-    FT_ASSERT_EQ(ft_nullptr, ft_fopen("test_file_io.txt", ft_nullptr));
+    FT_ASSERT_EQ(ft_nullptr, ft_fopen("build_logs/test_file_io.txt", ft_nullptr));
     return (1);
 }
 
@@ -95,7 +95,7 @@ FT_TEST(test_file_fclose_failure_sets_errno)
     FILE *file;
 
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     if (file == ft_nullptr)
         return (0);
     force_file_descriptor_failure(file);
@@ -109,7 +109,7 @@ FT_TEST(test_file_fgets_basic)
     FILE *file;
 
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     if (file == ft_nullptr)
         return (0);
     FT_ASSERT_EQ(buffer, ft_fgets(buffer, 16, file));
@@ -127,7 +127,7 @@ FT_TEST(test_file_fgets_edge_cases)
     FILE *file;
 
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     if (file == ft_nullptr)
         return (0);
     FT_ASSERT_EQ(buffer, ft_fgets(buffer, 5, file));
@@ -147,7 +147,7 @@ FT_TEST(test_file_fgets_negative_size_sets_errno)
     buffer[0] = 'X';
     buffer[1] = '\0';
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     if (file == ft_nullptr)
         return (0);
     FT_ASSERT_EQ(ft_nullptr, ft_fgets(buffer, -1, file));
@@ -165,7 +165,7 @@ FT_TEST(test_file_fgets_stream_error_sets_errno)
     FILE *file;
 
     create_test_file();
-    file = ft_fopen("test_file_io.txt", "r");
+    file = ft_fopen("build_logs/test_file_io.txt", "r");
     if (file == ft_nullptr)
         return (0);
     force_file_descriptor_failure(file);

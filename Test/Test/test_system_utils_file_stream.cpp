@@ -19,7 +19,7 @@ static void create_test_file_stream_file(void)
 {
     FILE *file_handle;
 
-    file_handle = std::fopen("test_su_file_stream.txt", "w");
+    file_handle = std::fopen("build_logs/test_su_file_stream.txt", "w");
     if (file_handle != ft_nullptr)
     {
         std::fputs("data", file_handle);
@@ -76,7 +76,7 @@ FT_TEST(test_su_fopen_allocation_failure_sets_ft_ealloc)
 
     create_test_file_stream_file();
     su_force_file_stream_allocation_failure(true);
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     su_force_file_stream_allocation_failure(false);
     FT_ASSERT_EQ(ft_nullptr, file_stream);
     return (1);
@@ -87,7 +87,7 @@ FT_TEST(test_su_fopen_success_clears_errno)
     su_file *file_stream;
 
     create_test_file_stream_file();
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     if (file_stream == ft_nullptr)
         return (0);
     FT_ASSERT_EQ(0, su_fclose(file_stream));
@@ -174,7 +174,7 @@ FT_TEST(test_su_fread_success_clears_errno)
     size_t read_count;
 
     create_test_file_stream_file();
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     if (file_stream == ft_nullptr)
         return (0);
     read_count = su_fread(buffer, 1, 4, file_stream);

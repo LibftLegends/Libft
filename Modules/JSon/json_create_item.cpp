@@ -1,128 +1,63 @@
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <fcntl.h>
-#include <unistd.h>
-#include <cstdarg>
-#include <new>
-#include "json.hpp"
-#include "../Errno/errno.hpp"
+#include "json_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../CPP_class/class_big_number.hpp"
 #include "../CMA/CMA.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include "../Errno/errno.hpp"
+#include <new>
 
-json_item* json_create_item(const char *key, const char *value)
+json_item *json_create_item_owned(char *key, char *value)
 {
-    json_item *item = new(std::nothrow) json_item;
-    if (!item)
-    {
+    json_item *item = new (std::nothrow) json_item{};
+    if (item == ft_nullptr)
         return (ft_nullptr);
-    }
-    item->key = ft_nullptr;
-    item->value = ft_nullptr;
-    item->is_big_number = FT_FALSE;
-    item->big_number = ft_nullptr;
-    item->next = ft_nullptr;
-    item->_mutex = ft_nullptr;
     if (json_item_enable_thread_safety(item) != FT_ERR_SUCCESS)
     {
         delete item;
         return (ft_nullptr);
     }
-    item->key = adv_strdup(key);
-    if (!item->key)
-    {
-        delete item;
-        return (ft_nullptr);
-    }
-    item->value = adv_strdup(value);
-    if (!item->value)
-    {
-        cma_free(item->key);
-        delete item;
-        return (ft_nullptr);
-    }
+    item->key = key;
+    item->value = value;
     json_item_refresh_numeric_state(item);
     return (item);
 }
 
-json_item* json_create_item(const char *key, const ft_bool value)
+static json_item *json_create_item_with_value(const char *key, char *value)
 {
-    json_item *item = new(std::nothrow) json_item;
-    if (!item)
+    if (value == ft_nullptr)
+        return (ft_nullptr);
+    char *owned_key = adv_strdup(key);
+    if (owned_key == ft_nullptr)
     {
+        cma_free(value);
         return (ft_nullptr);
     }
-    item->key = ft_nullptr;
-    item->value = ft_nullptr;
-    item->is_big_number = FT_FALSE;
-    item->big_number = ft_nullptr;
-    item->next = ft_nullptr;
-    item->_mutex = ft_nullptr;
-    if (json_item_enable_thread_safety(item) != FT_ERR_SUCCESS)
+    json_item *item = json_create_item_owned(owned_key, value);
+    if (item == ft_nullptr)
     {
-        delete item;
-        return (ft_nullptr);
+        cma_free(owned_key);
+        cma_free(value);
     }
-    item->key = adv_strdup(key);
-    if (!item->key)
-    {
-        delete item;
-        return (ft_nullptr);
-    }
+    return (item);
+}
+
+json_item *json_create_item(const char *key, const char *value)
+{
+    return (json_create_item_with_value(key, adv_strdup(value)));
+}
+
+json_item *json_create_item(const char *key, const ft_bool value)
+{
     if (value == FT_TRUE)
-        item->value = adv_strdup("true");
-    else
-        item->value = adv_strdup("false");
-    if (!item->value)
-    {
-        cma_free(item->key);
-        delete item;
-        return (ft_nullptr);
-    }
-    json_item_refresh_numeric_state(item);
-    return (item);
+        return (json_create_item_with_value(key, adv_strdup("true")));
+    return (json_create_item_with_value(key, adv_strdup("false")));
 }
 
-json_item* json_create_item(const char *key, const int32_t value)
+json_item *json_create_item(const char *key, const int32_t value)
 {
-    json_item *item = new(std::nothrow) json_item;
-    if (!item)
-    {
-        return (ft_nullptr);
-    }
-    item->key = ft_nullptr;
-    item->value = ft_nullptr;
-    item->is_big_number = FT_FALSE;
-    item->big_number = ft_nullptr;
-    item->next = ft_nullptr;
-    item->_mutex = ft_nullptr;
-    if (json_item_enable_thread_safety(item) != FT_ERR_SUCCESS)
-    {
-        delete item;
-        return (ft_nullptr);
-    }
-    item->key = adv_strdup(key);
-    if (!item->key)
-    {
-        delete item;
-        return (ft_nullptr);
-    }
-    item->value = adv_itoa(value);
-    if (!item->value)
-    {
-        cma_free(item->key);
-        delete item;
-        return (ft_nullptr);
-    }
-    json_item_refresh_numeric_state(item);
-    return (item);
+    return (json_create_item_with_value(key, adv_itoa(value)));
 }
 
-json_item* json_create_item(const char *key, const ft_big_number &value)
+json_item *json_create_item(const char *key, const ft_big_number &value)
 {
     return (json_create_item(key, value.c_str()));
 }

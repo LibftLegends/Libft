@@ -37,6 +37,6 @@ The `Filesystem` module provides path manipulation, safety checks, glob matching
 
 ## File Operations
 
-- `filesystem_temp_path(const char *prefix, const char *extension, ft_string *output)` - Creates a temporary path string in `output`, using the compatibility temp-directory helper and portable separators in the returned path.
-- `filesystem_atomic_write(const char *path, const void *data, ft_size_t size)` - Writes data through a unique temporary file in the target directory and replaces the target atomically where supported. It guarantees atomic visibility, not crash durability.
+- `filesystem_temp_path(const char *prefix, const char *extension, ft_string *output)` - Generates a candidate path with portable separators and a suffix that distinguishes concurrent requests. Use `file_secure_temp_file(...)` to create a temporary file exclusively.
+- `filesystem_atomic_write(const char *path, const void *data, ft_size_t size)` - Writes through a unique temporary file in the target directory and requires an atomic rename. Use `file_replace_safe(...)` when the write must also be synced for crash durability.
 - `filesystem_walk_recursive(const char *root_path, filesystem_walk_callback callback, void *user_context)` - Visits files and directories under a root and calls the callback for each entry.

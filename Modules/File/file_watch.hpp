@@ -9,6 +9,7 @@
 #include "../Threading/thread.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "file_watch_event.hpp"
+#include <atomic>
 
 typedef void (*file_watch_callback)(const char *path, file_watch_event_type event_type, void *user_data);
 typedef void (*file_watch_legacy_callback)(const char *path, int32_t event_type, void *user_data);
@@ -25,18 +26,17 @@ class ft_file_watch
         file_watch_callback _typed_callback;
         void *_user_data;
         ft_thread _thread;
-        ft_bool _running;
-        ft_bool _stopped;
-        uint32_t _debounce_milliseconds;
+        std::atomic<ft_bool> _running;
+        std::atomic<ft_bool> _stopped;
+        std::atomic<uint32_t> _debounce_milliseconds;
         mutable pt_recursive_mutex *_mutex;
         void event_loop();
-        void close_handles_locked();
         int32_t watch_directory_internal(const char *path,
             file_watch_legacy_callback legacy_callback,
             file_watch_callback typed_callback, void *user_data);
         ft_bool snapshot_callback(file_watch_legacy_callback *legacy_callback,
             file_watch_callback *typed_callback, void *&user_data,
-            ft_string &path_snapshot, uint32_t *debounce_milliseconds) const;
+            ft_string *path_snapshot, uint32_t *debounce_milliseconds) const;
         cmp_file_watch_context *_state;
         uint8_t _initialised_state;
 

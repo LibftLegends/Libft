@@ -43,6 +43,24 @@ static int32_t file_test_create_directory_tree(const char *root_path)
     return (error_code);
 }
 
+FT_TEST(test_file_move_directory_filtered_removes_empty_source_directories)
+{
+    const char *source = "test_file_directory_filters_move_all_source";
+    const char *destination = "test_file_directory_filters_move_all_destination";
+    (void)file_delete_recursive(source);
+    (void)file_delete_recursive(destination);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_test_create_directory_tree(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(
+        "test_file_directory_filters_move_all_source/nested/keep.txt", "kept", 4));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_move_directory_filtered(
+        source, destination, file_test_copy_filter, ft_nullptr));
+    FT_ASSERT_EQ(FILE_TYPE_MISSING, file_get_type(source));
+    FT_ASSERT_EQ(FILE_TYPE_REGULAR, file_get_type(
+        "test_file_directory_filters_move_all_destination/nested/keep.txt"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete_recursive(destination));
+    return (1);
+}
+
 static int32_t file_test_assert_file_contents(const char *path,
     const char *expected_contents)
 {

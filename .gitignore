@@ -69,6 +69,7 @@ Test/*.err
 /debug_test_*.log
 /full_run_*.log
 /performance_run.log
+build_logs/
 /ubsan_dry_run.log
 /tmp/
 performance_benchmarks.json

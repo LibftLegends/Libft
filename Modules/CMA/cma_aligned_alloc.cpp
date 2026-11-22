@@ -208,7 +208,7 @@ static void *cma_aligned_alloc_uninstrumented(ft_size_t alignment,
     if (OFFSWITCH == 1)
         return (aligned_alloc_offswitch(alignment, request_size, nullptr));
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = cma_lock_allocator(&lock_acquired);
+    int32_t lock_error = cma_lock_allocator_arena(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (nullptr);
     void *arena_pointer = cma_small_arena_aligned_allocate_locked(alignment,
@@ -227,6 +227,11 @@ static void *cma_aligned_alloc_uninstrumented(ft_size_t alignment,
                 static_cast<unsigned long long>(request_size),
                 static_cast<unsigned long long>(alignment), arena_pointer);
         return (arena_pointer);
+    }
+    if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
+        return (nullptr);
     }
     ft_size_t padding = 0;
     Block *block = find_aligned_free_block(aligned_size, alignment, &padding);

@@ -57,33 +57,52 @@ void ft_thread_pool::worker()
         work_lock_error = pt_recursive_mutex_lock_if_not_null(this->_work_mutex);
         if (work_lock_error != FT_ERR_SUCCESS)
             return ;
-        if (this->_stop && this->_tasks.empty())
-        {
-            (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
-            return ;
-        }
         if (this->_tasks.empty())
         {
+            const uint32_t epoch = this->_work_epoch.load(std::memory_order_acquire);
+            const ft_bool stopping = this->_stop.load(std::memory_order_acquire);
             (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
-            (void)pt_thread_sleep(1);
+            if (stopping == FT_TRUE)
+                return ;
+            if (pt_thread_wait_uint32(&this->_work_epoch, epoch) != FT_ERR_SUCCESS)
+                return ;
             continue ;
         }
         task = this->_tasks.dequeue();
         this->_active += 1;
         (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
         task();
+        // A task is complete only after releasing its callable and captures.
+        task = ft_function<void()>();
         work_lock_error = pt_recursive_mutex_lock_if_not_null(this->_work_mutex);
         if (work_lock_error != FT_ERR_SUCCESS)
             return ;
         this->_active -= 1;
+        const ft_bool idle = this->_active == 0 && this->_tasks.empty();
+        if (idle == FT_TRUE)
+            this->_idle_epoch.fetch_add(1U, std::memory_order_release);
         (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
+        if (idle == FT_TRUE)
+            (void)pt_thread_wake_all_uint32(&this->_idle_epoch);
     }
     return ;
 }
 
+int32_t ft_thread_pool::stop_workers()
+{
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_work_mutex);
+    this->_stop.store(FT_TRUE, std::memory_order_release);
+    this->_work_epoch.fetch_add(1U, std::memory_order_release);
+    if (lock_error == FT_ERR_SUCCESS)
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
+    (void)pt_thread_wake_all_uint32(&this->_work_epoch);
+    return (lock_error);
+}
+
 ft_thread_pool::ft_thread_pool(ft_size_t thread_count, ft_size_t max_tasks)
     : _workers(), _tasks(), _configured_thread_count(thread_count),
-      _max_tasks(max_tasks), _stop(FT_FALSE), _active(0), _work_mutex(ft_nullptr),
+      _max_tasks(max_tasks), _stop(FT_FALSE), _active(0), _work_epoch(0U),
+      _idle_epoch(0U), _work_mutex(ft_nullptr),
       _thread_safe_mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
@@ -150,25 +169,35 @@ int32_t ft_thread_pool::initialize()
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (set_error(queue_result));
     }
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    this->_workers.reserve(this->_configured_thread_count);
+    const int32_t reserve_error = this->_workers.get_error();
+    if (reserve_error != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (set_error(reserve_error));
+    }
     worker_index = 0;
     while (worker_index < this->_configured_thread_count)
     {
         ft_thread worker(&ft_thread_pool::worker_entry, this);
 
-        this->_workers.push_back(ft_move(worker));
-        if (this->_workers.get_error() != FT_ERR_SUCCESS)
+        if (!worker.joinable())
         {
-            (void)this->_tasks.destroy();
-            (void)this->_workers.destroy();
-            (void)this->_work_mutex->destroy();
-            delete this->_work_mutex;
-            this->_work_mutex = ft_nullptr;
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (set_error(this->_workers.get_error()));
+            (void)this->destroy();
+            return (set_error(FT_ERR_SYSTEM));
+        }
+        this->_workers.push_back(ft_move(worker));
+        const int32_t worker_error = this->_workers.get_error();
+        if (worker_error != FT_ERR_SUCCESS)
+        {
+            (void)this->stop_workers();
+            worker.join();
+            (void)this->destroy();
+            return (set_error(worker_error));
         }
         ++worker_index;
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
 }
 
@@ -184,21 +213,12 @@ int32_t ft_thread_pool::destroy()
     ft_size_t worker_index;
     ft_size_t worker_count;
     int32_t first_error;
-    int32_t work_lock_error;
     int32_t work_destroy_error;
     pt_recursive_mutex *work_mutex_pointer;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (set_error(FT_ERR_SUCCESS));
-    first_error = FT_ERR_SUCCESS;
-    work_lock_error = pt_recursive_mutex_lock_if_not_null(this->_work_mutex);
-    if (work_lock_error != FT_ERR_SUCCESS)
-        first_error = work_lock_error;
-    else
-    {
-        this->_stop = FT_TRUE;
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
-    }
+    first_error = this->stop_workers();
     worker_index = 0;
     worker_count = this->_workers.size();
     while (worker_index < worker_count)
@@ -281,7 +301,6 @@ void ft_thread_pool::wait()
     ft_bool lock_acquired;
     int32_t lock_error;
     int32_t work_lock_error;
-    ft_bool done;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_thread_pool::wait");
     lock_acquired = FT_FALSE;
@@ -291,23 +310,27 @@ void ft_thread_pool::wait()
         set_error(lock_error);
         return ;
     }
-    done = FT_FALSE;
-    while (done == FT_FALSE)
+    this->unlock_internal(lock_acquired);
+    while (FT_TRUE)
     {
         work_lock_error = pt_recursive_mutex_lock_if_not_null(this->_work_mutex);
         if (work_lock_error != FT_ERR_SUCCESS)
         {
-            this->unlock_internal(lock_acquired);
             set_error(work_lock_error);
             return ;
         }
-        if (this->_tasks.empty() == FT_TRUE && this->_active == 0)
-            done = FT_TRUE;
+        const ft_bool done = this->_tasks.empty() == FT_TRUE && this->_active == 0;
+        const uint32_t epoch = this->_idle_epoch.load(std::memory_order_relaxed);
         (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
-        if (done == FT_FALSE)
-            (void)pt_thread_sleep(1);
+        if (done == FT_TRUE)
+            break ;
+        const int32_t wait_error = pt_thread_wait_uint32(&this->_idle_epoch, epoch);
+        if (wait_error != FT_ERR_SUCCESS)
+        {
+            set_error(wait_error);
+            return ;
+        }
     }
-    this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
     return ;
 }

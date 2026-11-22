@@ -35,3 +35,15 @@ FT_TEST(test_api_append_content_length_successful_append)
     FT_ASSERT(request.find("Content-Length: 7") != ft_string::npos);
     return (1);
 }
+
+FT_TEST(test_api_append_content_length_keeps_prefix_and_full_width_digits)
+{
+    ft_string request;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, request.initialize("POST / HTTP/1.1"));
+    FT_ASSERT_EQ(FT_TRUE, api_append_content_length_header(request, FT_SYSTEM_SIZE_MAX));
+    FT_ASSERT_EQ(FT_TRUE, request == "POST / HTTP/1.1\r\nContent-Length: 18446744073709551615");
+    FT_ASSERT_EQ(FT_TRUE, api_append_content_length_header(request, 0U));
+    FT_ASSERT_EQ(FT_TRUE, request ==
+        "POST / HTTP/1.1\r\nContent-Length: 18446744073709551615\r\nContent-Length: 0");
+    return (1);
+}

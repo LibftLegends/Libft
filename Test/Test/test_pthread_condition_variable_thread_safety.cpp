@@ -8,11 +8,24 @@
 #include <chrono>
 #include <thread>
 #include <cerrno>
+#include <limits>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_pthread_condition_variable_rejects_overflowing_relative_deadline)
+{
+    pt_condition_variable condition;
+    pt_mutex mutex;
+    struct timespec duration{};
+    duration.tv_sec = std::numeric_limits<decltype(duration.tv_sec)>::max();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex.initialize());
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, condition.wait_for(mutex, duration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex.destroy());
+    return (1);
+}
 
 FT_TEST(test_pt_condition_variable_state_guard_controls)
 {

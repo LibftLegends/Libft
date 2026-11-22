@@ -29,13 +29,20 @@ static bool compute_wait_deadline(const struct timespec &relative_time, struct t
         *error_code = cmp_map_system_error_to_ft(errno);
         return (false);
     }
-    absolute_time->tv_sec = current_time.tv_sec + relative_time.tv_sec;
-    absolute_time->tv_nsec = current_time.tv_nsec + relative_time.tv_nsec;
-    while (absolute_time->tv_nsec >= 1000000000L)
+    constexpr long NANOSECONDS_PER_SECOND = 1000000000L;
+    long nanoseconds = current_time.tv_nsec
+        + relative_time.tv_nsec % NANOSECONDS_PER_SECOND;
+    const auto extra_seconds = relative_time.tv_nsec / NANOSECONDS_PER_SECOND
+        + nanoseconds / NANOSECONDS_PER_SECOND;
+    if (__builtin_add_overflow(current_time.tv_sec, relative_time.tv_sec,
+            &absolute_time->tv_sec)
+        || __builtin_add_overflow(absolute_time->tv_sec, extra_seconds,
+            &absolute_time->tv_sec))
     {
-        absolute_time->tv_nsec -= 1000000000L;
-        absolute_time->tv_sec += 1;
+        *error_code = FT_ERR_OUT_OF_RANGE;
+        return (false);
     }
+    absolute_time->tv_nsec = nanoseconds % NANOSECONDS_PER_SECOND;
     *error_code = FT_ERR_SUCCESS;
     return (true);
 }
@@ -49,7 +56,7 @@ pt_condition_variable::pt_condition_variable()
 
 pt_condition_variable::~pt_condition_variable()
 {
-    if (this->_condition_initialised)
+    if (this->_condition_initialised.load(std::memory_order_relaxed))
         pt_cond_destroy(&this->_condition);
     if (this->_mutex_initialised)
         pthread_mutex_destroy(&this->_mutex);
@@ -62,8 +69,10 @@ int pt_condition_variable::ensure_native_sync_objects()
     int native_error;
     bool mutex_created;
 
+    if (this->_condition_initialised.load(std::memory_order_acquire))
+        return (FT_ERR_SUCCESS);
     this->_initialization_mutex.lock();
-    if (this->_mutex_initialised && this->_condition_initialised)
+    if (this->_condition_initialised.load(std::memory_order_relaxed))
     {
         this->_initialization_mutex.unlock();
         return (FT_ERR_SUCCESS);
@@ -91,7 +100,7 @@ int pt_condition_variable::ensure_native_sync_objects()
         this->_initialization_mutex.unlock();
         return (cmp_map_system_error_to_ft(native_error));
     }
-    this->_condition_initialised = true;
+    this->_condition_initialised.store(true, std::memory_order_release);
     this->_initialization_mutex.unlock();
     return (FT_ERR_SUCCESS);
 }

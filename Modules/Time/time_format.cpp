@@ -1,422 +1,178 @@
-#include "time.hpp"
-#include "../Basic/class_nullptr.hpp"
-#include "../CPP_class/class_string.hpp"
-#include "../Errno/errno.hpp"
+#include "time_format_internal.hpp"
 #include "../Basic/basic.hpp"
-#include "../CMA/CMA.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/pthread_internal.hpp"
-#include "../PThread/pthread.hpp"
+#include "../Basic/class_nullptr.hpp"
+#include "../Compatebility/compatebility_internal.hpp"
+#include <charconv>
 #include <ctime>
-#include <cstdio>
 #include <limits>
-#include "../Basic/limits.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <new>
 
-static ft_string *time_format_failure(int32_t error_code) noexcept
+static ft_string *time_format_make_string(const char *buffer)
 {
-    (void)(error_code);
-    return (ft_nullptr);
-}
-
-static void time_format_delete_string(ft_string *string) noexcept
-{
-    if (string == ft_nullptr)
-        return ;
-    (void)string->destroy();
-    delete string;
-    return ;
-}
-
-static pt_mutex *g_time_format_gmtime_mutex = ft_nullptr;
-
-static ft_bool time_format_append_literal(ft_string *string, const char *literal)
-{
-    if (!string || !literal)
-        return (FT_FALSE);
-    if (string->append(literal) != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    return (FT_TRUE);
-}
-
-static ft_bool time_format_append_unsigned_decimal(ft_string *string, uint64_t value)
-{
-    char reversed_digits[32];
-    ft_size_t digit_count;
-
-    if (!string)
-        return (FT_FALSE);
-    digit_count = 0;
-    if (value == 0)
-        reversed_digits[digit_count++] = '0';
-    while (value > 0)
+    ft_string *formatted = new (std::nothrow) ft_string();
+    if (formatted == ft_nullptr)
+        return (ft_nullptr);
+    if (formatted->initialize(buffer) != FT_ERR_SUCCESS)
     {
-        if (digit_count >= sizeof(reversed_digits))
-            return (FT_FALSE);
-        reversed_digits[digit_count] = static_cast<char>('0' + (value % UINT64_C(10)));
-        value /= UINT64_C(10);
-        digit_count++;
+        delete formatted;
+        return (ft_nullptr);
     }
-    while (digit_count > 0)
+    return (formatted);
+}
+
+ft_size_t time_format_timezone_offset(char *buffer, ft_size_t size,
+    int32_t offset_minutes)
+{
+    if (buffer == ft_nullptr || size == 0U)
+        return (0U);
+    int64_t magnitude = offset_minutes;
+    char formatted[16];
+    formatted[0] = '+';
+    if (magnitude < 0)
     {
-        digit_count--;
-        if (string->append(reversed_digits[digit_count]) != FT_ERR_SUCCESS)
-            return (FT_FALSE);
+        formatted[0] = '-';
+        magnitude = -magnitude;
     }
-    return (FT_TRUE);
+    const uint32_t hours = static_cast<uint32_t>(magnitude / 60);
+    const uint32_t minutes = static_cast<uint32_t>(magnitude % 60);
+    char *cursor = formatted + 1U;
+    if (hours < 10U)
+        *cursor++ = '0';
+    cursor = std::to_chars(cursor, formatted + sizeof(formatted), hours).ptr;
+    *cursor++ = ':';
+    *cursor++ = static_cast<char>('0' + minutes / 10U);
+    *cursor++ = static_cast<char>('0' + minutes % 10U);
+    const ft_size_t length = static_cast<ft_size_t>(cursor - formatted);
+    ft_size_t copied = length;
+    if (copied >= size)
+        copied = size - 1U;
+    ft_memcpy(buffer, formatted, copied);
+    buffer[copied] = '\0';
+    if (copied != length)
+        return (0U);
+    return (length);
 }
 
-ft_size_t  time_format_timezone_offset(char *buffer, ft_size_t size, int32_t offset_minutes)
+static ft_size_t time_format_calendar(char *buffer, ft_size_t size,
+    t_time time_value, const char *format)
 {
-    char sign_character;
-    int64_t absolute_offset;
-    int32_t offset_hours;
-    int32_t offset_minutes_part;
-    int32_t snprintf_result;
-
-    if (!buffer || size == 0)
-    {
-        (void)(FT_ERR_INVALID_ARGUMENT);
-        return (0);
-    }
-    if (offset_minutes >= 0)
-        sign_character = '+';
-    else
-        sign_character = '-';
-    absolute_offset = static_cast<int64_t>(offset_minutes);
-    if (absolute_offset < 0)
-        absolute_offset = -absolute_offset;
-    offset_hours = static_cast<int32_t>(absolute_offset / 60LL);
-    offset_minutes_part = static_cast<int32_t>(absolute_offset % 60LL);
-    snprintf_result = std::snprintf(buffer, size, "%c%02d:%02d",
-            sign_character, offset_hours, offset_minutes_part);
-    if (snprintf_result < 0 || snprintf_result >= static_cast<int32_t>(size))
-    {
-        (void)(FT_ERR_OUT_OF_RANGE);
-        return (0);
-    }
-    (void)(FT_ERR_SUCCESS);
-    return (static_cast<ft_size_t>(snprintf_result));
+    if (time_value < std::numeric_limits<std::time_t>::min()
+        || time_value > std::numeric_limits<std::time_t>::max())
+        return (0U);
+    const std::time_t standard_time = static_cast<std::time_t>(time_value);
+    std::tm date;
+    if (cmp_gmtime(&standard_time, &date) != FT_ERR_SUCCESS)
+        return (0U);
+    return (std::strftime(buffer, size, format, &date));
 }
 
-#ifdef LIBFT_TEST_BUILD
-static void time_format_untrack_runtime_leaks(void)
+ft_size_t time_format_rfc3339_buffer(t_time time_value, char (&buffer)[21])
 {
-    if (g_time_format_gmtime_mutex != ft_nullptr)
-        (void)cma_untrack_leak(g_time_format_gmtime_mutex);
-    if (g_time_format_gmtime_mutex != ft_nullptr
-        && g_time_format_gmtime_mutex->_native_mutex != ft_nullptr)
-        (void)cma_untrack_leak(g_time_format_gmtime_mutex->_native_mutex);
-    return ;
-}
-#endif
-
-static int32_t time_format_lock_gmtime_mutex(ft_bool *lock_acquired)
-{
-    pt_mutex *mutex_pointer;
-    int32_t initialise_error;
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = FT_FALSE;
-    if (g_time_format_gmtime_mutex == ft_nullptr)
-    {
-        mutex_pointer = new (std::nothrow) pt_mutex();
-        if (mutex_pointer == ft_nullptr)
-            return (FT_ERR_NO_MEMORY);
-        initialise_error = mutex_pointer->initialize();
-        if (initialise_error != FT_ERR_SUCCESS)
-        {
-            delete mutex_pointer;
-            return (initialise_error);
-        }
-        g_time_format_gmtime_mutex = mutex_pointer;
-#ifdef LIBFT_TEST_BUILD
-        time_format_untrack_runtime_leaks();
-#endif
-    }
-    lock_error = pt_mutex_lock_if_not_null(g_time_format_gmtime_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = FT_TRUE;
-    return (FT_ERR_SUCCESS);
+    return (time_format_calendar(buffer, sizeof(buffer), time_value,
+            "%Y-%m-%dT%H:%M:%SZ"));
 }
 
-static void time_format_unlock_gmtime_mutex(ft_bool lock_acquired)
+ft_string *time_format_iso8601(t_time time_value)
 {
-    if (lock_acquired == FT_FALSE)
-        return ;
-    (void)pt_mutex_unlock_if_not_null(g_time_format_gmtime_mutex);
-    return ;
-}
-
-ft_string    *time_format_iso8601(t_time time_value)
-{
-    std::time_t standard_time;
-    std::tm time_storage;
-    std::tm *time_pointer;
     char buffer[21];
-    ft_string *formatted;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t strftime_result;
-
-    standard_time = time_value;
-    lock_acquired = FT_FALSE;
-    lock_error = time_format_lock_gmtime_mutex(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (time_format_failure(lock_error));
-    time_pointer = std::gmtime(&standard_time);
-    if (!time_pointer)
-    {
-        time_format_unlock_gmtime_mutex(lock_acquired);
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    }
-    time_storage = *time_pointer;
-    time_format_unlock_gmtime_mutex(lock_acquired);
-    strftime_result = std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &time_storage);
-    if (strftime_result == 0)
-    {
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    }
-    formatted = new (std::nothrow) ft_string();
-    if (formatted == ft_nullptr)
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    if (formatted->initialize(buffer) != FT_ERR_SUCCESS)
-    {
-        time_format_delete_string(formatted);
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    }
-    (void)(FT_ERR_SUCCESS);
-    return (formatted);
+    if (time_format_rfc3339_buffer(time_value, buffer) == 0U)
+        return (ft_nullptr);
+    return (time_format_make_string(buffer));
 }
 
-ft_string    *time_format_iso8601_with_offset(t_time time_value, int32_t offset_minutes)
+ft_string *time_format_iso8601_with_offset(t_time time_value,
+    int32_t offset_minutes)
 {
-    std::tm *time_pointer;
-    std::tm time_storage;
-    char buffer[20];
-    char offset_buffer[7];
-    ft_string *formatted;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t strftime_result;
-    int64_t offset_seconds;
-    int64_t adjusted_epoch;
-    std::time_t adjusted_time;
-
-    offset_seconds = static_cast<int64_t>(offset_minutes) * 60LL;
-    adjusted_epoch = time_value + offset_seconds;
-    if (adjusted_epoch > std::numeric_limits<std::time_t>::max())
-        return (time_format_failure(FT_ERR_OUT_OF_RANGE));
-    if (adjusted_epoch < std::numeric_limits<std::time_t>::min())
-        return (time_format_failure(FT_ERR_OUT_OF_RANGE));
-    adjusted_time = adjusted_epoch;
-    lock_acquired = FT_FALSE;
-    lock_error = time_format_lock_gmtime_mutex(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (time_format_failure(lock_error));
-    time_pointer = std::gmtime(&adjusted_time);
-    if (!time_pointer)
-    {
-        time_format_unlock_gmtime_mutex(lock_acquired);
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    }
-    time_storage = *time_pointer;
-    time_format_unlock_gmtime_mutex(lock_acquired);
-    strftime_result = std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &time_storage);
-    if (strftime_result == 0)
-    {
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    }
-    if (time_format_timezone_offset(offset_buffer, sizeof(offset_buffer), offset_minutes) == 0)
-        return (time_format_failure(FT_ERR_INTERNAL));
-    formatted = new (std::nothrow) ft_string();
-    if (formatted == ft_nullptr)
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    if (formatted->initialize(buffer) != FT_ERR_SUCCESS)
-    {
-        time_format_delete_string(formatted);
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    }
-    *formatted += offset_buffer;
-    if (formatted->get_error() != FT_ERR_SUCCESS)
-    {
-        time_format_delete_string(formatted);
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    }
-    (void)(FT_ERR_SUCCESS);
-    return (formatted);
+    const int64_t offset_seconds = static_cast<int64_t>(offset_minutes) * 60;
+    if ((offset_seconds > 0 && time_value > INT64_MAX - offset_seconds)
+        || (offset_seconds < 0 && time_value < INT64_MIN - offset_seconds))
+        return (ft_nullptr);
+    char buffer[26];
+    const ft_size_t date_length = time_format_calendar(buffer, 20U,
+            time_value + offset_seconds, "%Y-%m-%dT%H:%M:%S");
+    if (date_length == 0U
+        || time_format_timezone_offset(buffer + date_length, 7U,
+            offset_minutes) == 0U)
+        return (ft_nullptr);
+    return (time_format_make_string(buffer));
 }
 
-ft_string    *time_format_rfc3339(t_time time_value)
+ft_string *time_format_rfc3339(t_time time_value)
 {
-    std::time_t standard_time;
-    std::tm time_storage;
-    std::tm *time_pointer;
-    char buffer[21];
-    ft_string *formatted;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t strftime_result;
-    ft_size_t buffer_length;
-
-    standard_time = time_value;
-    lock_acquired = FT_FALSE;
-    lock_error = time_format_lock_gmtime_mutex(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (time_format_failure(lock_error));
-    time_pointer = std::gmtime(&standard_time);
-    if (!time_pointer)
-    {
-        time_format_unlock_gmtime_mutex(lock_acquired);
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    }
-    time_storage = *time_pointer;
-    time_format_unlock_gmtime_mutex(lock_acquired);
-    strftime_result = std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &time_storage);
-    if (strftime_result == 0)
-        return (time_format_failure(FT_ERR_INVALID_ARGUMENT));
-    buffer_length = ft_strlen(buffer);
-    if (buffer_length + 2 > sizeof(buffer))
-        return (time_format_failure(FT_ERR_OUT_OF_RANGE));
-    buffer[buffer_length] = 'Z';
-    buffer[buffer_length + 1] = '\0';
-    formatted = new (std::nothrow) ft_string();
-    if (formatted == ft_nullptr)
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    if (formatted->initialize(buffer) != FT_ERR_SUCCESS)
-    {
-        time_format_delete_string(formatted);
-        return (time_format_failure(FT_ERR_NO_MEMORY));
-    }
-    (void)(FT_ERR_SUCCESS);
-    return (formatted);
+    return (time_format_iso8601(time_value));
 }
 
-ft_string    *time_format_rfc3339_with_offset(t_time time_value, int32_t offset_minutes)
+ft_string *time_format_rfc3339_with_offset(t_time time_value, int32_t offset_minutes)
 {
     if (offset_minutes == 0)
         return (time_format_rfc3339(time_value));
     return (time_format_iso8601_with_offset(time_value, offset_minutes));
 }
 
-ft_string    *time_format_duration(t_duration_milliseconds duration_value)
+static char *time_format_duration_component(char *cursor, char *end,
+    uint64_t value, char suffix)
 {
-    ft_string *formatted;
-    uint64_t magnitude;
-    uint64_t days;
-    uint64_t hours;
-    uint64_t minutes;
-    uint64_t seconds;
-    uint64_t milliseconds;
-    ft_bool is_negative;
+    cursor = std::to_chars(cursor, end, value).ptr;
+    *cursor++ = suffix;
+    return (cursor);
+}
 
-    is_negative = FT_FALSE;
-    if (duration_value.milliseconds < 0)
-        is_negative = FT_TRUE;
-    if (duration_value.milliseconds == std::numeric_limits<int64_t>::min())
-        magnitude = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + UINT64_C(1);
-    else if (is_negative)
-        magnitude = static_cast<uint64_t>(-duration_value.milliseconds);
-    else
-        magnitude = static_cast<uint64_t>(duration_value.milliseconds);
-    days = magnitude / (UINT64_C(24) * UINT64_C(60) * UINT64_C(60) * UINT64_C(1000));
-    magnitude %= (UINT64_C(24) * UINT64_C(60) * UINT64_C(60) * UINT64_C(1000));
-    hours = magnitude / (UINT64_C(60) * UINT64_C(60) * UINT64_C(1000));
-    magnitude %= (UINT64_C(60) * UINT64_C(60) * UINT64_C(1000));
-    minutes = magnitude / (UINT64_C(60) * UINT64_C(1000));
-    magnitude %= (UINT64_C(60) * UINT64_C(1000));
-    seconds = magnitude / UINT64_C(1000);
-    milliseconds = magnitude % UINT64_C(1000);
-    formatted = new (std::nothrow) ft_string();
-    if (formatted == ft_nullptr)
-        return (ft_nullptr);
-    if (formatted->initialize() != FT_ERR_SUCCESS)
+ft_string *time_format_duration_string(t_duration_milliseconds duration_value,
+    ft_bool relative)
+{
+    constexpr uint64_t MILLISECONDS_PER_SECOND = 1000U;
+    constexpr uint64_t MILLISECONDS_PER_MINUTE = 60U * MILLISECONDS_PER_SECOND;
+    constexpr uint64_t MILLISECONDS_PER_HOUR = 60U * MILLISECONDS_PER_MINUTE;
+    constexpr uint64_t MILLISECONDS_PER_DAY = 24U * MILLISECONDS_PER_HOUR;
+    // Even an int64_t magnitude has at most twelve day digits.
+    char buffer[40];
+    char *cursor = buffer;
+    char *end = buffer + sizeof(buffer) - 1U;
+    const int64_t milliseconds = duration_value.milliseconds;
+    uint64_t magnitude = static_cast<uint64_t>(milliseconds);
+    if (milliseconds < 0)
     {
-        delete formatted;
-        return (ft_nullptr);
+        *cursor++ = '-';
+        magnitude = 0U - magnitude;
     }
-    if (is_negative && !time_format_append_literal(formatted, "-"))
+    else if (relative == FT_TRUE)
     {
-        delete formatted;
-        return (ft_nullptr);
+        ft_memcpy(cursor, "in ", 3U);
+        cursor += 3U;
     }
-    if (!time_format_append_literal(formatted, "P"))
+    *cursor++ = 'P';
+    const uint64_t days = magnitude / MILLISECONDS_PER_DAY;
+    const uint64_t hours = (magnitude / MILLISECONDS_PER_HOUR) % 24U;
+    const uint64_t minutes = (magnitude / MILLISECONDS_PER_MINUTE) % 60U;
+    const uint64_t seconds = (magnitude / MILLISECONDS_PER_SECOND) % 60U;
+    const uint64_t fraction = magnitude % MILLISECONDS_PER_SECOND;
+    if (days != 0U)
+        cursor = time_format_duration_component(cursor, end, days, 'D');
+    if (hours != 0U || minutes != 0U || seconds != 0U || fraction != 0U || days == 0U)
     {
-        delete formatted;
-        return (ft_nullptr);
-    }
-    if (days > 0 && (!time_format_append_unsigned_decimal(formatted, days)
-            || !time_format_append_literal(formatted, "D")))
-    {
-        delete formatted;
-        return (ft_nullptr);
-    }
-    if (hours > 0 || minutes > 0 || seconds > 0 || milliseconds > 0 || days == 0)
-    {
-        if (!time_format_append_literal(formatted, "T"))
+        *cursor++ = 'T';
+        if (hours != 0U)
+            cursor = time_format_duration_component(cursor, end, hours, 'H');
+        if (minutes != 0U)
+            cursor = time_format_duration_component(cursor, end, minutes, 'M');
+        if (seconds != 0U || fraction != 0U || (days == 0U && hours == 0U && minutes == 0U))
         {
-            delete formatted;
-            return (ft_nullptr);
-        }
-        if (hours > 0)
-        {
-            if (!time_format_append_unsigned_decimal(formatted, hours)
-                || !time_format_append_literal(formatted, "H"))
+            cursor = std::to_chars(cursor, end, seconds).ptr;
+            if (fraction != 0U)
             {
-                delete formatted;
-                return (ft_nullptr);
+                *cursor++ = '.';
+                *cursor++ = static_cast<char>('0' + fraction / 100U);
+                *cursor++ = static_cast<char>('0' + (fraction / 10U) % 10U);
+                *cursor++ = static_cast<char>('0' + fraction % 10U);
             }
-        }
-        if (minutes > 0)
-        {
-            if (!time_format_append_unsigned_decimal(formatted, minutes)
-                || !time_format_append_literal(formatted, "M"))
-            {
-                delete formatted;
-                return (ft_nullptr);
-            }
-        }
-        if (seconds > 0 || milliseconds > 0 || (days == 0 && hours == 0 && minutes == 0))
-        {
-            if (!time_format_append_unsigned_decimal(formatted, seconds))
-            {
-                delete formatted;
-                return (ft_nullptr);
-            }
-            if (milliseconds > 0)
-            {
-                if (!time_format_append_literal(formatted, "."))
-                {
-                    delete formatted;
-                    return (ft_nullptr);
-                }
-        if (milliseconds < UINT64_C(100) && !time_format_append_literal(formatted, "0"))
-                {
-                    delete formatted;
-                    return (ft_nullptr);
-                }
-                if (milliseconds < UINT64_C(10) && !time_format_append_literal(formatted, "0"))
-                {
-                    delete formatted;
-                    return (ft_nullptr);
-                }
-                if (!time_format_append_unsigned_decimal(formatted, milliseconds)
-                    || !time_format_append_literal(formatted, "S"))
-                {
-                    delete formatted;
-                    return (ft_nullptr);
-                }
-            }
-            else if (!time_format_append_literal(formatted, "S"))
-            {
-                delete formatted;
-                return (ft_nullptr);
-            }
+            *cursor++ = 'S';
         }
     }
-    (void)(FT_ERR_SUCCESS);
-    return (formatted);
+    *cursor = '\0';
+    return (time_format_make_string(buffer));
+}
+
+ft_string *time_format_duration(t_duration_milliseconds duration_value)
+{
+    return (time_format_duration_string(duration_value, FT_FALSE));
 }

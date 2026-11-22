@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #if !defined(_WIN32) && !defined(_WIN64)
@@ -131,5 +132,33 @@ FT_TEST(test_ft_perror_prefixes_custom_message_resets_errno)
     FT_ASSERT(std::strstr(buffer, "custom context: ") != ft_nullptr);
     FT_ASSERT(std::strstr(buffer, expected_message) != ft_nullptr);
     FT_ASSERT_EQ(0, close(pipe_fds[0]));
+    return (1);
+}
+
+FT_TEST(test_errno_perror_preserves_long_prefix_and_final_newline)
+{
+    const std::string prefix(700U, 'p');
+    const std::string expected = prefix + ": I/O error";
+    int32_t pipe_descriptors[2];
+    FT_ASSERT_EQ(0, pipe(pipe_descriptors));
+    const int32_t saved_stderr = dup(2);
+    FT_ASSERT(saved_stderr >= 0);
+    FT_ASSERT(dup2(pipe_descriptors[1], 2) >= 0);
+    FT_ASSERT_EQ(0, close(pipe_descriptors[1]));
+    const int32_t write_status = ft_perror(prefix.c_str(), FT_ERR_IO);
+    FT_ASSERT(dup2(saved_stderr, 2) >= 0);
+    FT_ASSERT_EQ(0, close(saved_stderr));
+    std::string output;
+    char chunk[256];
+    ssize_t count = read(pipe_descriptors[0], chunk, sizeof(chunk));
+    while (count > 0)
+    {
+        output.append(chunk, static_cast<std::size_t>(count));
+        count = read(pipe_descriptors[0], chunk, sizeof(chunk));
+    }
+    FT_ASSERT_EQ(0, close(pipe_descriptors[0]));
+    FT_ASSERT_EQ(0, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, write_status);
+    FT_ASSERT(output == expected + "\n" || output == expected + "\r\n");
     return (1);
 }

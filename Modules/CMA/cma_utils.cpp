@@ -646,7 +646,7 @@ int32_t cma_get_extended_stats(ft_size_t *allocation_count,
         ft_size_t *peak_bytes)
 {
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = cma_lock_allocator(&lock_acquired);
+    int32_t lock_error = cma_lock_allocator_arena(&lock_acquired);
 
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);

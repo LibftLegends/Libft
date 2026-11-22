@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/JSon/json_stream_reader.hpp"
 #include "../../Modules/JSon/json_stream_writer.hpp"
+#include <string>
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/Template/vector.hpp"
@@ -195,5 +196,103 @@ FT_TEST(test_json_stream_writer_round_trip)
     FT_ASSERT_EQ(0, json_stream_writer_finish(&writer));
     json_stream_writer_destroy(&writer);
     FT_ASSERT_EQ(0, ft_strcmp(encoded.c_str(), "{\"numbers\":[1,2,3],\"nested\":{\"flag\":true,\"text\":\"hello\"}}"));
+    return (1);
+}
+
+struct json_partial_sink
+{
+    std::string output;
+    ft_size_t largest_offer;
+};
+
+static ft_size_t json_partial_sink_write(void *user_data, const char *buffer, ft_size_t size)
+{
+    json_partial_sink *sink = static_cast<json_partial_sink *>(user_data);
+    if (size > sink->largest_offer)
+        sink->largest_offer = size;
+    if (size > 17U)
+        size = 17U;
+    sink->output.append(buffer, size);
+    return (size);
+}
+
+FT_TEST(test_json_stream_writer_batches_plain_spans_and_retries_partial_writes)
+{
+    const std::string prefix(4096U, 'a');
+    const std::string suffix(2050U, 'b');
+    const std::string value = prefix + std::string("\0\n\"\\", 4U) + suffix;
+    const std::string expected = "\"" + prefix + "\\u0000\\n\\\"\\\\" + suffix + "\"";
+    json_partial_sink sink{};
+    json_stream_writer writer{};
+    json_stream_event event{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_init(&writer, json_partial_sink_write, &sink));
+    event.type = JSON_STREAM_EVENT_BEGIN_DOCUMENT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &event));
+    event.type = JSON_STREAM_EVENT_STRING;
+    event.value = {value.data(), value.size()};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &event));
+    event.type = JSON_STREAM_EVENT_END_DOCUMENT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &event));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_finish(&writer));
+    json_stream_writer_destroy(&writer);
+    FT_ASSERT_EQ(expected, sink.output);
+    FT_ASSERT_EQ(prefix.size(), sink.largest_offer);
+    return (1);
+}
+
+static ft_size_t json_overreporting_sink(void *, const char *, ft_size_t size)
+{
+    return (size + 1U);
+}
+
+FT_TEST(test_json_stream_writer_rejects_a_callback_that_overreports)
+{
+    json_stream_writer writer{};
+    json_stream_event event{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_init(&writer, json_overreporting_sink, ft_nullptr));
+    event.type = JSON_STREAM_EVENT_BEGIN_DOCUMENT;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &event));
+    event.type = JSON_STREAM_EVENT_STRING;
+    event.value = {"content", 7U};
+    FT_ASSERT(json_stream_writer_process(&writer, &event) != FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(FT_ERR_IO, writer.error_code);
+    json_stream_writer_destroy(&writer);
+    return (1);
+}
+
+FT_TEST(test_json_stream_reader_keeps_decoded_nul_and_numeric_spans_in_events)
+{
+    const std::string prefix(4097U, 'p');
+    const std::string suffix(1030U, 's');
+    const std::string digits(240U, '7');
+    const std::string number = "-" + digits + ".125e+12";
+    const std::string document = "[\"" + prefix + "\\u0000" + suffix + "\"," + number + "]";
+    const std::string decoded = prefix + '\0' + suffix;
+    ft_vector<captured_event> events;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, events.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, gather_events(document.c_str(), events));
+    FT_ASSERT_EQ(6U, events.size());
+    FT_ASSERT_EQ(JSON_STREAM_EVENT_STRING, events[2].type);
+    FT_ASSERT_EQ(decoded, std::string(events[2].value.c_str(), events[2].value.size()));
+    FT_ASSERT_EQ(JSON_STREAM_EVENT_NUMBER, events[3].type);
+    FT_ASSERT_EQ(number, std::string(events[3].value.c_str(), events[3].value.size()));
+    return (1);
+}
+
+static ft_size_t json_overreporting_source(void *, char *, ft_size_t capacity)
+{
+    return (capacity + 1U);
+}
+
+FT_TEST(test_json_stream_reader_rejects_a_callback_that_overreports)
+{
+    json_stream_reader reader{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_reader_init_callback(&reader,
+        json_overreporting_source, ft_nullptr, 32U));
+    const int32_t result = json_stream_reader_traverse(&reader, ft_nullptr, ft_nullptr);
+    const int32_t error = reader.error_code;
+    json_stream_reader_destroy(&reader);
+    FT_ASSERT(result != FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(FT_ERR_IO, error);
     return (1);
 }

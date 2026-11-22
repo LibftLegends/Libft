@@ -9,6 +9,7 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstddef>
+#include <utility>
 #include "move.hpp"
 
 template <typename ElementType>
@@ -22,6 +23,7 @@ class ft_stack
         };
 
         StackNode* _top;
+        StackNode* _spare_node;
         ft_size_t _size;
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
@@ -29,6 +31,8 @@ class ft_stack
 
         static int32_t set_error(int32_t error_code);
         void destroy_all_unlocked();
+        template <typename ValueType>
+        void push_impl(ValueType &&value, const char *operation);
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
 
@@ -84,8 +88,13 @@ void ft_stack<ElementType>::destroy_all_unlocked()
     {
         node = this->_top;
         this->_top = node->_next;
-        destroy_at(&node->_data);
+        ::destroy_at(&node->_data);
         cma_free(node);
+    }
+    if (this->_spare_node != ft_nullptr)
+    {
+        cma_free(this->_spare_node);
+        this->_spare_node = ft_nullptr;
     }
     this->_size = 0;
     return ;
@@ -116,7 +125,7 @@ int32_t ft_stack<ElementType>::unlock_internal(ft_bool lock_acquired) const
 
 template <typename ElementType>
 ft_stack<ElementType>::ft_stack()
-    : _top(ft_nullptr), _size(0), _mutex(ft_nullptr),
+    : _top(ft_nullptr), _spare_node(ft_nullptr), _size(0), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     return ;
@@ -146,6 +155,7 @@ int32_t ft_stack<ElementType>::initialize()
         return (set_error(FT_ERR_INVALID_STATE));
     }
     this->_top = ft_nullptr;
+    this->_spare_node = ft_nullptr;
     this->_size = 0;
     this->_mutex = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -193,10 +203,12 @@ int32_t ft_stack<ElementType>::move(ft_stack<ElementType> &other)
         return (set_error(other._last_error));
     }
     this->_top = other._top;
+    this->_spare_node = other._spare_node;
     this->_size = other._size;
     this->_mutex = other._mutex;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._top = ft_nullptr;
+    other._spare_node = ft_nullptr;
     other._size = 0;
     other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -277,51 +289,42 @@ void ft_stack<ElementType>::unlock(ft_bool lock_acquired) const
 template <typename ElementType>
 void ft_stack<ElementType>::push(const ElementType& value)
 {
-    StackNode *new_node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_stack::push");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    new_node = static_cast<StackNode *>(cma_malloc(sizeof(StackNode)));
-    if (new_node == ft_nullptr)
-    {
-        set_error(FT_ERR_NO_MEMORY);
-        (void)this->unlock_internal(lock_acquired);
-        return ;
-    }
-    construct_at(&new_node->_data, value);
-    new_node->_next = this->_top;
-    this->_top = new_node;
-    this->_size += 1;
-    set_error(FT_ERR_SUCCESS);
-    (void)this->unlock_internal(lock_acquired);
+    this->push_impl(value, "ft_stack::push");
     return ;
 }
 
 template <typename ElementType>
 void ft_stack<ElementType>::push(ElementType&& value)
 {
+    this->push_impl(ft_move(value), "ft_stack::push(move)");
+    return ;
+}
+
+template <typename ElementType>
+template <typename ValueType>
+void ft_stack<ElementType>::push_impl(ValueType &&value, const char *operation)
+{
     StackNode *new_node;
     ft_bool lock_acquired;
     int32_t lock_error;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_stack::push(move)");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, operation);
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return ;
-    new_node = static_cast<StackNode *>(cma_malloc(sizeof(StackNode)));
+    new_node = this->_spare_node;
+    if (new_node != ft_nullptr)
+        this->_spare_node = ft_nullptr;
+    else
+        new_node = static_cast<StackNode *>(cma_malloc(sizeof(StackNode)));
     if (new_node == ft_nullptr)
     {
         set_error(FT_ERR_NO_MEMORY);
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    construct_at(&new_node->_data, ft_move(value));
+    ::construct_at(&new_node->_data, std::forward<ValueType>(value));
     new_node->_next = this->_top;
     this->_top = new_node;
     this->_size += 1;
@@ -352,8 +355,11 @@ ElementType ft_stack<ElementType>::pop()
     node = this->_top;
     this->_top = node->_next;
     value = ft_move(node->_data);
-    destroy_at(&node->_data);
-    cma_free(node);
+    ::destroy_at(&node->_data);
+    if (this->_spare_node == ft_nullptr)
+        this->_spare_node = node;
+    else
+        cma_free(node);
     this->_size -= 1;
     set_error(FT_ERR_SUCCESS);
     (void)this->unlock_internal(lock_acquired);

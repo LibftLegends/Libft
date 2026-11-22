@@ -30,7 +30,7 @@ int32_t cma_checked_block_size(const void *memory_pointer, ft_size_t *block_size
     if (cma_backend_is_enabled() && cma_backend_owns_pointer(memory_pointer))
         return (cma_backend_checked_block_size(memory_pointer, block_size));
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = cma_lock_allocator(&lock_acquired);
+    int32_t lock_error = cma_lock_allocator_arena(&lock_acquired);
 
     if (lock_error != FT_ERR_SUCCESS)
     {
@@ -38,11 +38,17 @@ int32_t cma_checked_block_size(const void *memory_pointer, ft_size_t *block_size
             cma_unlock_allocator(lock_acquired);
         return (lock_error);
     }
-    if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_TRUE)
+    *block_size = cma_small_arena_block_size_locked(memory_pointer);
+    if (*block_size != 0U)
     {
-        *block_size = cma_small_arena_block_size_locked(memory_pointer);
         cma_unlock_allocator(lock_acquired);
         return (FT_ERR_SUCCESS);
+    }
+    lock_error = cma_require_metadata_locked();
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
+        return (lock_error);
     }
     Block *block = cma_find_block_for_pointer(memory_pointer);
     if (block == nullptr

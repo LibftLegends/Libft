@@ -28,6 +28,17 @@ FT_TEST(test_time_high_resolution_now_reports_success)
     return (1);
 }
 
+FT_TEST(test_time_monotonic_scalar_and_point_share_the_same_clock)
+{
+    const int64_t before = time_monotonic();
+    const t_monotonic_time_point point = time_monotonic_point_now();
+    const int64_t after = time_monotonic();
+    FT_ASSERT(before <= point.milliseconds && point.milliseconds <= after);
+    FT_ASSERT(point.mutex == ft_nullptr);
+    FT_ASSERT_EQ(FT_FALSE, point.thread_safe_enabled);
+    return (1);
+}
+
 FT_TEST(test_time_high_resolution_diff_seconds_tracks_elapsed_time)
 {
     t_high_resolution_time_point start_point;

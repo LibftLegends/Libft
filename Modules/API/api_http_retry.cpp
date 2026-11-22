@@ -90,16 +90,11 @@ int32_t api_retry_get_half_open_successes(const api_retry_policy *retry_policy)
 
 int32_t api_retry_prepare_delay(int32_t delay, int32_t max_delay)
 {
-    int64_t prepared_delay;
-
     if (delay <= 0)
         return (0);
-    prepared_delay = static_cast<int64_t>(delay);
-    if (max_delay > 0 && prepared_delay > max_delay)
-        prepared_delay = max_delay;
-    if (prepared_delay > INT_MAX)
-        prepared_delay = INT_MAX;
-    return (static_cast<int32_t>(prepared_delay));
+    if (max_delay > 0 && delay > max_delay)
+        return (max_delay);
+    return (delay);
 }
 
 int32_t api_retry_next_delay(int32_t current_delay, int32_t max_delay,
@@ -114,7 +109,7 @@ int32_t api_retry_next_delay(int32_t current_delay, int32_t max_delay,
         next_delay *= static_cast<int64_t>(multiplier);
     if (max_delay > 0 && next_delay > max_delay)
         next_delay = max_delay;
-    if (next_delay > INT_MAX)
-        next_delay = INT_MAX;
+    if (next_delay > INT32_MAX)
+        next_delay = INT32_MAX;
     return (static_cast<int32_t>(next_delay));
 }

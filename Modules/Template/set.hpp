@@ -2,6 +2,7 @@
 #define FT_SET_HPP
 
 #include "constructor.hpp"
+#include "../Basic/basic.hpp"
 #include "../Basic/limits.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Errno/errno.hpp"
@@ -11,6 +12,8 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "move.hpp"
+#include <memory>
+#include <type_traits>
 
 template <typename ElementType>
 class ft_set
@@ -23,9 +26,13 @@ class ft_set
         mutable pt_recursive_mutex*   _mutex;
         uint8_t                       _initialised_state;
         static thread_local int32_t   _last_error;
+        static constexpr ft_bool CAN_SHIFT_BYTES = std::is_trivially_copyable_v<ElementType>
+            && std::is_trivially_move_constructible_v<ElementType>
+            && std::is_trivially_move_assignable_v<ElementType>;
 
         static int32_t set_error(int32_t error_code);
         ft_bool ensure_capacity(ft_size_t desired_capacity);
+        void make_room(ft_size_t position);
         ft_size_t find_index(const ElementType& value) const;
         ft_size_t lower_bound(const ElementType& value) const;
         int32_t lock_internal(ft_bool *lock_acquired) const;
@@ -80,34 +87,72 @@ ft_bool ft_set<ElementType>::ensure_capacity(ft_size_t desired_capacity)
 {
     ft_size_t new_capacity;
     ElementType* new_data;
-    ft_size_t index;
-
     if (desired_capacity <= this->_capacity)
         return (FT_TRUE);
-    if (this->_capacity == 0)
-        new_capacity = 1;
-    else
-        new_capacity = this->_capacity * 2;
-    while (new_capacity < desired_capacity)
-        new_capacity *= 2;
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    if (desired_capacity > MAXIMUM_CAPACITY)
+    {
+        this->set_error(FT_ERR_NO_MEMORY);
+        return (FT_FALSE);
+    }
+    new_capacity = desired_capacity;
+    if (this->_capacity <= MAXIMUM_CAPACITY / 2U
+        && this->_capacity * 2U > desired_capacity)
+        new_capacity = this->_capacity * 2U;
     new_data = static_cast<ElementType*>(cma_malloc(sizeof(ElementType) * new_capacity));
     if (new_data == ft_nullptr)
     {
         set_error(FT_ERR_NO_MEMORY);
         return (FT_FALSE);
     }
-    index = 0;
-    while (index < this->_size)
+    if constexpr (std::is_trivially_move_constructible_v<ElementType>
+        && std::is_trivially_destructible_v<ElementType>)
     {
-        ::construct_at(&new_data[index], ft_move(this->_data[index]));
-        ::destroy_at(&this->_data[index]);
-        index += 1;
+        if (this->_size != 0U)
+            std::uninitialized_move_n(this->_data, this->_size, new_data);
+    }
+    else
+    {
+        ft_size_t index = 0U;
+        while (index < this->_size)
+        {
+            ::construct_at(&new_data[index], ft_move(this->_data[index]));
+            ::destroy_at(&this->_data[index]);
+            ++index;
+        }
     }
     if (this->_data != ft_nullptr)
         cma_free(this->_data);
     this->_data = new_data;
     this->_capacity = new_capacity;
     return (FT_TRUE);
+}
+
+template <typename ElementType>
+void ft_set<ElementType>::make_room(ft_size_t position)
+{
+    if (position == this->_size)
+        return ;
+    if constexpr (CAN_SHIFT_BYTES)
+    {
+        const ft_size_t last_index = this->_size - 1U;
+        // The extra slot has no live object until it is constructed here.
+        ::construct_at(this->_data + this->_size, ft_move(this->_data[last_index]));
+        if (position < last_index)
+            ft_memmove(this->_data + position + 1U, this->_data + position,
+                (last_index - position) * sizeof(ElementType));
+    }
+    else
+    {
+        ft_size_t index = this->_size;
+        while (index > position)
+        {
+            ::construct_at(&this->_data[index], ft_move(this->_data[index - 1U]));
+            ::destroy_at(&this->_data[index - 1U]);
+            --index;
+        }
+    }
+    return ;
 }
 
 template <typename ElementType>
@@ -211,6 +256,11 @@ int32_t ft_set<ElementType>::initialize()
     this->_capacity = 0;
     this->_size = 0;
     this->_mutex = ft_nullptr;
+    if (this->_configured_initial_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ElementType))
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    }
     if (this->_configured_initial_capacity > 0)
     {
         this->_data = static_cast<ElementType*>(cma_malloc(sizeof(ElementType)
@@ -373,7 +423,6 @@ void ft_set<ElementType>::insert(const ElementType& value)
     ft_bool lock_acquired;
     int32_t lock_result;
     ft_size_t position;
-    ft_size_t index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_set::insert");
     lock_acquired = FT_FALSE;
@@ -393,13 +442,7 @@ void ft_set<ElementType>::insert(const ElementType& value)
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    index = this->_size;
-    while (index > position)
-    {
-        ::construct_at(&this->_data[index], ft_move(this->_data[index - 1]));
-        ::destroy_at(&this->_data[index - 1]);
-        index -= 1;
-    }
+    this->make_room(position);
     ::construct_at(&this->_data[position], value);
     this->_size += 1;
     set_error(FT_ERR_SUCCESS);
@@ -413,7 +456,6 @@ void ft_set<ElementType>::insert(ElementType&& value)
     ft_bool lock_acquired;
     int32_t lock_result;
     ft_size_t position;
-    ft_size_t index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_set::insert(move)");
     lock_acquired = FT_FALSE;
@@ -433,13 +475,7 @@ void ft_set<ElementType>::insert(ElementType&& value)
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    index = this->_size;
-    while (index > position)
-    {
-        ::construct_at(&this->_data[index], ft_move(this->_data[index - 1]));
-        ::destroy_at(&this->_data[index - 1]);
-        index -= 1;
-    }
+    this->make_room(position);
     ::construct_at(&this->_data[position], ft_move(value));
     this->_size += 1;
     set_error(FT_ERR_SUCCESS);
@@ -505,7 +541,6 @@ void ft_set<ElementType>::remove(const ElementType& value)
     ft_bool lock_acquired;
     int32_t lock_result;
     ft_size_t index;
-    ft_size_t current_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_set::remove");
     lock_acquired = FT_FALSE;
@@ -519,13 +554,21 @@ void ft_set<ElementType>::remove(const ElementType& value)
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    ::destroy_at(&this->_data[index]);
-    current_index = index;
-    while (current_index + 1 < this->_size)
+    if constexpr (CAN_SHIFT_BYTES)
     {
-        ::construct_at(&this->_data[current_index], ft_move(this->_data[current_index + 1]));
-        ::destroy_at(&this->_data[current_index + 1]);
-        current_index += 1;
+        if (index + 1U < this->_size)
+            ft_memmove(this->_data + index, this->_data + index + 1U,
+                (this->_size - index - 1U) * sizeof(ElementType));
+    }
+    else
+    {
+        ::destroy_at(&this->_data[index]);
+        while (index + 1U < this->_size)
+        {
+            ::construct_at(&this->_data[index], ft_move(this->_data[index + 1U]));
+            ::destroy_at(&this->_data[index + 1U]);
+            ++index;
+        }
     }
     this->_size -= 1;
     set_error(FT_ERR_SUCCESS);

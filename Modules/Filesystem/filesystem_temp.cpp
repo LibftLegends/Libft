@@ -1,166 +1,85 @@
-#include "filesystem.hpp"
+#include "filesystem_internal.hpp"
 #include "../Compatebility/compatebility_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
-#include "../File/file_utils.hpp"
+#include "../File/file_internal.hpp"
 #include "../Time/time.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <atomic>
+#include <cstring>
 
-static thread_local uint64_t g_filesystem_temp_counter = 0U;
-
-static int32_t filesystem_append_uint64(ft_string *string_value, uint64_t value)
+static char *filesystem_write_temp_number(char *end, uint64_t value) noexcept
 {
-    char digits[21];
-    ft_size_t digit_count;
-    ft_size_t index;
+    constexpr char DIGITS[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    do
+    {
+        *--end = DIGITS[value % 36U];
+        value /= 36U;
+    }
+    while (value != 0);
+    return (end);
+}
 
-    if (string_value == ft_nullptr)
+static int32_t filesystem_append_temp_suffix(ft_string &name)
+{
+    static std::atomic<uint64_t> counter{0};
+    static const uint64_t timestamp = static_cast<uint64_t>(time_now_ms());
+    const uint64_t ordinal = counter.fetch_add(1, std::memory_order_relaxed);
+    constexpr ft_size_t MAX_DIGITS = 13;
+    char suffix[3 * MAX_DIGITS + 3];
+    char *end = suffix + sizeof(suffix);
+    char *cursor = filesystem_write_temp_number(end, ordinal);
+    *--cursor = '-';
+    cursor = filesystem_write_temp_number(cursor, cmp_get_process_id());
+    *--cursor = '-';
+    cursor = filesystem_write_temp_number(cursor, timestamp);
+    *--cursor = '_';
+    return (name.append(cursor, static_cast<ft_size_t>(end - cursor)));
+}
+
+static ft_string *filesystem_join_temp_name(const char *directory, ft_string &name)
+{
+    if (std::strpbrk(name.c_str(), "/\\:") != ft_nullptr)
+        return (file_path_join(directory, name.c_str()));
+    ft_string *path = file_path_normalize(directory);
+    if (path != ft_nullptr && file_path_append_normalized_relative(*path, name) != FT_ERR_SUCCESS)
     {
-        return (FT_ERR_INVALID_POINTER);
+        delete path;
+        return (ft_nullptr);
     }
-    digit_count = 0;
-    if (value == 0U)
-    {
-        digits[digit_count] = '0';
-        digit_count++;
-    }
-    while (value > 0U)
-    {
-        digits[digit_count] = static_cast<char>('0' + (value % 10U));
-        value = value / 10U;
-        digit_count++;
-    }
-    index = digit_count;
-    while (index > 0)
-    {
-        index--;
-        if (string_value->append(digits[index]) != FT_ERR_SUCCESS)
-        {
-            return (string_value->get_error());
-        }
-    }
-    return (FT_ERR_SUCCESS);
+    return (path);
 }
 
 int32_t filesystem_temp_path(const char *prefix, const char *extension,
     ft_string *output)
 {
-    ft_string name;
-    ft_string *joined_path;
-    char *native_directory_path;
-    char *portable_path;
-    int32_t error_code;
-
     if (output == ft_nullptr)
-    {
         return (FT_ERR_INVALID_POINTER);
-    }
-    if (output->is_initialised() == FT_TRUE)
-    {
-        error_code = output->destroy();
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            return (error_code);
-        }
-    }
-    error_code = output->initialize();
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        return (error_code);
-    }
-    error_code = name.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)output->destroy();
-        return (error_code);
-    }
-    if (prefix != ft_nullptr && prefix[0] != '\0')
-    {
-        error_code = name.append(prefix);
-    }
-    else
-    {
-        error_code = name.append("libft");
-    }
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)output->destroy();
-        return (name.get_error());
-    }
-    if (name.append("_") != FT_ERR_SUCCESS)
-    {
-        (void)output->destroy();
-        return (name.get_error());
-    }
-    g_filesystem_temp_counter++;
-    error_code = filesystem_append_uint64(&name,
-            static_cast<uint64_t>(time_now_ms()) + g_filesystem_temp_counter);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)output->destroy();
-        return (error_code);
-    }
-    if (extension != ft_nullptr && extension[0] != '\0')
+    if (prefix == ft_nullptr || prefix[0] == '\0')
+        prefix = "libft";
+    ft_string name;
+    int32_t error_code = name.initialize(prefix);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = filesystem_append_temp_suffix(name);
+    if (error_code == FT_ERR_SUCCESS && extension != ft_nullptr && extension[0] != '\0')
     {
         if (extension[0] != '.')
-        {
             error_code = name.append('.');
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)output->destroy();
-                return (name.get_error());
-            }
-        }
-        error_code = name.append(extension);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)output->destroy();
-            return (name.get_error());
-        }
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = name.append(extension);
     }
-    native_directory_path = ft_nullptr;
-    error_code = cmp_get_temp_directory(&native_directory_path);
     if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)output->destroy();
         return (error_code);
-    }
-    joined_path = file_path_join(native_directory_path, name.c_str());
-    cma_free(native_directory_path);
-    if (joined_path == ft_nullptr)
-    {
-        (void)output->destroy();
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (joined_path->get_error() != FT_ERR_SUCCESS)
-    {
-        error_code = joined_path->get_error();
-        (void)joined_path->destroy();
-        delete joined_path;
-        (void)output->destroy();
-        return (error_code);
-    }
-    portable_path = ft_nullptr;
-    error_code = cmp_translate_path_to_portable(joined_path->c_str(), &portable_path);
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        ft_size_t index;
 
-        index = 0;
-        while (portable_path[index] != '\0')
-        {
-            if (portable_path[index] == '\\')
-                portable_path[index] = '/';
-            index++;
-        }
-        error_code = output->assign(portable_path, ft_strlen_size_t(portable_path));
-    }
-    cma_free(portable_path);
-    (void)joined_path->destroy();
-    delete joined_path;
+    char *native_directory = ft_nullptr;
+    error_code = cmp_get_temp_directory(&native_directory);
     if (error_code != FT_ERR_SUCCESS)
-        (void)output->destroy();
+        return (error_code);
+    ft_string *path = filesystem_join_temp_name(native_directory, name);
+    cma_free(native_directory);
+    if (path == ft_nullptr)
+        return (FT_ERR_INVALID_STATE);
+    filesystem_normalize_portable_slashes(path);
+    error_code = output->move(*path);
+    delete path;
     return (error_code);
 }

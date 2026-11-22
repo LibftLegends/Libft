@@ -6,7 +6,7 @@ Each module below has a short purpose statement to clarify its role in the tree.
 ## GNU Make build and validation
 
 The canonical build is one GNU Make dependency graph. It schedules individual
-objects across modules, then creates module archives and `Full_Libft.a`.
+objects across modules, then creates module archives and `build/archives/Full_Libft.a`.
 Module Makefiles remain compatibility wrappers; the repository root is the
 canonical build entry point.
 GNU Make 3.81 or newer is supported. GNU Make 4.0 and newer may optionally
@@ -53,6 +53,10 @@ compiling the full graph. `make -n`, `make -pn`, and `make --trace` can be used 
 inspect scheduling and prerequisites without changing source files. For
 build-system diagnostics that intentionally bypass the summary wrapper, use
 `make internal-all` or `make internal-tests`.
+
+Release and debug archives are stored in `build/archives/`. Test diagnostics
+are written to `build_logs/` under the test working directory, normally
+`Test/build_logs/` when started with `make run-tests`.
 
 ## Modules
 

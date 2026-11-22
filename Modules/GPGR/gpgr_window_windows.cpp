@@ -159,17 +159,8 @@ static LRESULT CALLBACK gpgr_window_proc(HWND hwnd, UINT msg, WPARAM wparam,
                 ft_dumb_controls_win32_register_capture_window(hwnd);
             return (0);
         case WM_KEYDOWN:
-            if (window != nullptr)
-            {
-                if (wparam == VK_ESCAPE)
-                {
-                    window->request_close();
-                    DestroyWindow(hwnd);
-                    return (0);
-                }
-                if (wparam == VK_F1)
-                    window->set_settings_key_pressed(FT_TRUE);
-            }
+            if (window != nullptr && wparam == VK_F1)
+                window->set_settings_key_pressed(FT_TRUE);
             return (0);
         case WM_LBUTTONDOWN:
             if (window != nullptr)

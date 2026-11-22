@@ -1,288 +1,161 @@
 #include "compression.hpp"
 #include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
 
-static int base64_char_value(unsigned char character)
+static constexpr char BASE64_ALPHABET[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static constexpr uint8_t BASE64_PADDING = 64U;
+static constexpr uint8_t BASE64_WHITESPACE = 65U;
+static constexpr uint8_t BASE64_INVALID = 255U;
+
+struct compression_base64_decode_table
 {
-    if (character >= 'A' && character <= 'Z')
-        return (character - 'A');
-    if (character >= 'a' && character <= 'z')
-        return (character - 'a' + 26);
-    if (character >= '0' && character <= '9')
-        return (character - '0' + 52);
-    if (character == '+')
-        return (62);
-    if (character == '/')
-        return (63);
-    return (-1);
+    uint8_t values[256];
+};
+
+static constexpr compression_base64_decode_table compression_make_base64_decode_table()
+{
+    compression_base64_decode_table table{};
+    ft_size_t index = 0U;
+    while (index < sizeof(table.values))
+        table.values[index++] = BASE64_INVALID;
+    index = 0U;
+    while (index < 64U)
+    {
+        table.values[static_cast<uint8_t>(BASE64_ALPHABET[index])] =
+            static_cast<uint8_t>(index);
+        ++index;
+    }
+    table.values['='] = BASE64_PADDING;
+    table.values[' '] = BASE64_WHITESPACE;
+    table.values['\n'] = BASE64_WHITESPACE;
+    table.values['\r'] = BASE64_WHITESPACE;
+    table.values['\t'] = BASE64_WHITESPACE;
+    table.values['\f'] = BASE64_WHITESPACE;
+    table.values['\v'] = BASE64_WHITESPACE;
+    return (table);
 }
 
-static int  is_base64_whitespace(unsigned char character)
-{
-    if (character == ' ')
-        return (1);
-    if (character == '\n')
-        return (1);
-    if (character == '\r')
-        return (1);
-    if (character == '\t')
-        return (1);
-    if (character == '\f')
-        return (1);
-    if (character == '\v')
-        return (1);
-    return (0);
-}
+static constexpr compression_base64_decode_table BASE64_VALUES =
+    compression_make_base64_decode_table();
 
-unsigned char    *ft_base64_encode(const unsigned char *input_buffer, std::size_t input_size, std::size_t *encoded_size)
+uint8_t *ft_base64_encode(const uint8_t *input_buffer, std::size_t input_size,
+    std::size_t *encoded_size)
 {
-    const char      *base64_table;
-    unsigned char   *output_buffer;
-    std::size_t     output_length;
-    std::size_t     input_index;
-    std::size_t     output_index;
-    unsigned char   byte_one;
-    unsigned char   byte_two;
-    unsigned char   byte_three;
-    int             has_byte_two;
-    int             has_byte_three;
-
     if (encoded_size == ft_nullptr)
-    {
         return (ft_nullptr);
-    }
-    if (input_buffer == ft_nullptr)
-    {
-        *encoded_size = 0;
+    *encoded_size = 0U;
+    if (input_buffer == ft_nullptr || input_size > (FT_SYSTEM_SIZE_MAX / 4U) * 3U)
         return (ft_nullptr);
-    }
-    base64_table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    output_length = ((input_size + 2) / 3) * 4;
-    output_buffer = static_cast<unsigned char *>(cma_malloc(output_length + 1));
-    if (!output_buffer)
-    {
-        *encoded_size = 0;
+    const ft_size_t output_length = ((input_size + 2U) / 3U) * 4U;
+    char *output = static_cast<char *>(cma_malloc(output_length + 1U));
+    if (output == ft_nullptr)
         return (ft_nullptr);
-    }
-    input_index = 0;
-    output_index = 0;
-    while (input_index < input_size)
+    ft_size_t input_index = 0U;
+    ft_size_t output_index = 0U;
+    while (input_size - input_index >= 3U)
     {
-        byte_one = input_buffer[input_index];
-        input_index++;
-        byte_two = 0;
-        byte_three = 0;
-        has_byte_two = 0;
-        has_byte_three = 0;
+        const uint32_t first = input_buffer[input_index];
+        const uint32_t second = input_buffer[input_index + 1U];
+        const uint32_t third = input_buffer[input_index + 2U];
+        output[output_index] = BASE64_ALPHABET[first >> 2U];
+        output[output_index + 1U] = BASE64_ALPHABET[((first & 3U) << 4U) | (second >> 4U)];
+        output[output_index + 2U] = BASE64_ALPHABET[((second & 15U) << 2U) | (third >> 6U)];
+        output[output_index + 3U] = BASE64_ALPHABET[third & 63U];
+        input_index += 3U;
+        output_index += 4U;
+    }
+    if (input_index < input_size)
+    {
+        const uint32_t first = input_buffer[input_index++];
+        uint32_t second = 0U;
         if (input_index < input_size)
-        {
-            byte_two = input_buffer[input_index];
-            input_index++;
-            has_byte_two = 1;
-        }
+            second = input_buffer[input_index];
+        output[output_index++] = BASE64_ALPHABET[first >> 2U];
+        output[output_index++] = BASE64_ALPHABET[((first & 3U) << 4U) | (second >> 4U)];
+        output[output_index] = '=';
         if (input_index < input_size)
-        {
-            byte_three = input_buffer[input_index];
-            input_index++;
-            has_byte_three = 1;
-        }
-        output_buffer[output_index] = static_cast<unsigned char>(base64_table[byte_one >> 2]);
-        output_index++;
-        output_buffer[output_index] = static_cast<unsigned char>(base64_table[((byte_one & 0x03) << 4) | (byte_two >> 4)]);
-        output_index++;
-        if (has_byte_two)
-        {
-            output_buffer[output_index] = static_cast<unsigned char>(base64_table[((byte_two & 0x0F) << 2) | (byte_three >> 6)]);
-            output_index++;
-        }
-        else
-        {
-            output_buffer[output_index] = '=';
-            output_index++;
-        }
-        if (has_byte_three)
-        {
-            output_buffer[output_index] = static_cast<unsigned char>(base64_table[byte_three & 0x3F]);
-            output_index++;
-        }
-        else
-        {
-            output_buffer[output_index] = '=';
-            output_index++;
-        }
+            output[output_index] = BASE64_ALPHABET[(second & 15U) << 2U];
+        output[output_index + 1U] = '=';
     }
-    output_buffer[output_index] = '\0';
-    *encoded_size = output_index;
-    return (output_buffer);
+    output[output_length] = '\0';
+    *encoded_size = output_length;
+    return (reinterpret_cast<uint8_t *>(output));
 }
 
-unsigned char    *ft_base64_decode(const unsigned char *input_buffer, std::size_t input_size, std::size_t *decoded_size)
+uint8_t *ft_base64_decode(const uint8_t *input_buffer, std::size_t input_size,
+    std::size_t *decoded_size)
 {
-    unsigned char   *output_buffer;
-    std::size_t     output_length;
-    std::size_t     sanitized_length;
-    std::size_t     input_index;
-    std::size_t     sanitized_index;
-    std::size_t     output_index;
-    int             value_one;
-    int             value_two;
-    int             value_three;
-    int             value_four;
-    unsigned char   char_three;
-    unsigned char   char_four;
-    unsigned char   current_character;
-    unsigned char   chunk[4];
-    int             chunk_count;
-    int             has_char_three;
-    int             has_char_four;
-
-    if (!input_buffer || !decoded_size)
-    {
+    if (input_buffer == ft_nullptr || decoded_size == ft_nullptr)
         return (ft_nullptr);
-    }
-    *decoded_size = 0;
-    sanitized_length = 0;
-    input_index = 0;
+    *decoded_size = 0U;
+    ft_size_t remaining_symbols = 0U;
+    ft_size_t input_index = 0U;
     while (input_index < input_size)
     {
-        if (!is_base64_whitespace(input_buffer[input_index]))
-            sanitized_length++;
-        input_index++;
+        remaining_symbols += (BASE64_VALUES.values[input_buffer[input_index]]
+            != BASE64_WHITESPACE);
+        ++input_index;
     }
-    if (sanitized_length == 0)
+    if (remaining_symbols == 0U)
     {
-        output_buffer = static_cast<unsigned char *>(cma_malloc(1));
-        if (!output_buffer)
-        {
-            *decoded_size = 0;
-            return (ft_nullptr);
-        }
-        output_buffer[0] = '\0';
-        return (output_buffer);
+        uint8_t *output = static_cast<uint8_t *>(cma_malloc(1U));
+        if (output != ft_nullptr)
+            output[0] = 0U;
+        return (output);
     }
-    if (sanitized_length % 4 == 1)
-    {
+    if (remaining_symbols % 4U == 1U)
         return (ft_nullptr);
-    }
-    output_length = ((sanitized_length + 3) / 4) * 3;
-    output_buffer = static_cast<unsigned char *>(cma_malloc(output_length));
-    if (!output_buffer)
-    {
-        *decoded_size = 0;
+    ft_size_t output_capacity = (remaining_symbols / 4U) * 3U;
+    if (remaining_symbols % 4U != 0U)
+        output_capacity += 3U;
+    uint8_t *output = static_cast<uint8_t *>(cma_malloc(output_capacity));
+    if (output == ft_nullptr)
         return (ft_nullptr);
-    }
-    input_index = 0;
-    sanitized_index = 0;
-    output_index = 0;
-    while (sanitized_index < sanitized_length)
+    input_index = 0U;
+    ft_size_t output_index = 0U;
+    while (remaining_symbols != 0U)
     {
-        chunk_count = 0;
-        while (chunk_count < 4 && input_index < input_size)
+        if (input_size - input_index >= 4U)
         {
-            current_character = input_buffer[input_index];
-            input_index++;
-            if (is_base64_whitespace(current_character))
-                continue;
-            chunk[chunk_count] = current_character;
-            chunk_count++;
-        }
-        if (chunk_count == 0)
-            break ;
-        sanitized_index += chunk_count;
-        if (chunk_count < 2)
-        {
-            cma_free(output_buffer);
-            *decoded_size = 0;
-            return (ft_nullptr);
-        }
-        value_one = base64_char_value(chunk[0]);
-        if (value_one == -1)
-        {
-            cma_free(output_buffer);
-            *decoded_size = 0;
-            return (ft_nullptr);
-        }
-        value_two = base64_char_value(chunk[1]);
-        if (value_two == -1)
-        {
-            cma_free(output_buffer);
-            *decoded_size = 0;
-            return (ft_nullptr);
-        }
-        has_char_three = 0;
-        value_three = 0;
-        if (chunk_count > 2)
-        {
-            char_three = chunk[2];
-            has_char_three = 1;
-        }
-        else
-        {
-            char_three = '=';
-        }
-        has_char_four = 0;
-        value_four = 0;
-        if (chunk_count > 3)
-        {
-            char_four = chunk[3];
-            has_char_four = 1;
-        }
-        else
-        {
-            char_four = '=';
-        }
-        if (has_char_three && char_three != '=')
-        {
-            value_three = base64_char_value(char_three);
-            if (value_three == -1)
+            const uint32_t first = BASE64_VALUES.values[input_buffer[input_index]];
+            const uint32_t second = BASE64_VALUES.values[input_buffer[input_index + 1U]];
+            const uint32_t third = BASE64_VALUES.values[input_buffer[input_index + 2U]];
+            const uint32_t fourth = BASE64_VALUES.values[input_buffer[input_index + 3U]];
+            if ((first | second | third | fourth) < 64U)
             {
-                cma_free(output_buffer);
-                *decoded_size = 0;
-                return (ft_nullptr);
+                output[output_index] = static_cast<uint8_t>((first << 2U) | (second >> 4U));
+                output[output_index + 1U] = static_cast<uint8_t>((second << 4U) | (third >> 2U));
+                output[output_index + 2U] = static_cast<uint8_t>((third << 6U) | fourth);
+                input_index += 4U;
+                output_index += 3U;
+                remaining_symbols -= 4U;
+                continue ;
             }
         }
-        else
-            value_three = 0;
-        if (has_char_four && char_four != '=')
+        uint32_t values[4] = {BASE64_PADDING, BASE64_PADDING, BASE64_PADDING, BASE64_PADDING};
+        ft_size_t count = 0U;
+        while (count < 4U && input_index < input_size)
         {
-            value_four = base64_char_value(char_four);
-            if (value_four == -1)
-            {
-                cma_free(output_buffer);
-                *decoded_size = 0;
-                return (ft_nullptr);
-            }
+            const uint8_t value = BASE64_VALUES.values[input_buffer[input_index++]];
+            if (value != BASE64_WHITESPACE)
+                values[count++] = value;
         }
-        if (has_char_three && char_three == '=' && has_char_four && char_four != '=')
+        remaining_symbols -= count;
+        if (values[0] >= BASE64_PADDING || values[1] >= BASE64_PADDING
+            || values[2] > BASE64_PADDING || values[3] > BASE64_PADDING
+            || (values[2] == BASE64_PADDING && values[3] != BASE64_PADDING)
+            || ((values[2] == BASE64_PADDING || values[3] == BASE64_PADDING)
+                && remaining_symbols != 0U))
         {
-            cma_free(output_buffer);
-            *decoded_size = 0;
+            cma_free(output);
             return (ft_nullptr);
         }
-        if ((has_char_three && char_three == '=') || (has_char_four && char_four == '='))
-        {
-            if (sanitized_index < sanitized_length)
-            {
-                cma_free(output_buffer);
-                *decoded_size = 0;
-                return (ft_nullptr);
-            }
-        }
-        output_buffer[output_index] = static_cast<unsigned char>((value_one << 2) | (value_two >> 4));
-        output_index++;
-        if (has_char_three && char_three != '=')
-        {
-            output_buffer[output_index] = static_cast<unsigned char>(((value_two & 0x0F) << 4) | (value_three >> 2));
-            output_index++;
-        }
-        if (has_char_four && char_four != '=')
-        {
-            output_buffer[output_index] = static_cast<unsigned char>(((value_three & 0x03) << 6) | value_four);
-            output_index++;
-        }
+        output[output_index++] = static_cast<uint8_t>((values[0] << 2U) | (values[1] >> 4U));
+        if (values[2] != BASE64_PADDING)
+            output[output_index++] = static_cast<uint8_t>((values[1] << 4U) | (values[2] >> 2U));
+        if (values[3] != BASE64_PADDING)
+            output[output_index++] = static_cast<uint8_t>((values[2] << 6U) | values[3]);
     }
     *decoded_size = output_index;
-    return (output_buffer);
+    return (output);
 }

@@ -13,6 +13,8 @@
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno_internal.hpp"
 
+struct json_group;
+
 struct api_request_metrics_guard
 {
     uint8_t _initialised_state;
@@ -28,6 +30,7 @@ struct api_request_metrics_guard
 
     void abort_lifecycle_error(const char *method_name,
         const char *reason) const noexcept;
+    void copy_sample_context(const api_request_metrics_guard &other) noexcept;
     api_request_metrics_guard() noexcept;
     api_request_metrics_guard(const api_request_metrics_guard &other) noexcept = delete;
     api_request_metrics_guard(api_request_metrics_guard &&other) noexcept = delete;
@@ -36,8 +39,12 @@ struct api_request_metrics_guard
     int32_t initialize(const char *host, uint16_t port,
         const char *method, const char *resource, ft_size_t request_bytes,
         char **result_body, int32_t *status_pointer, int32_t *error_pointer) noexcept;
+    int32_t initialize_for_request(const char *host, uint16_t port,
+        const char *method, const char *resource, const char *headers, json_group *payload,
+        char **result_body, int32_t *status_pointer, int32_t *error_pointer) noexcept;
     int32_t initialize(const api_request_metrics_guard &other) noexcept;
     int32_t initialize(api_request_metrics_guard &&other) noexcept;
+    int32_t move(api_request_metrics_guard &other) noexcept;
     int32_t destroy() noexcept;
     ~api_request_metrics_guard() noexcept;
 };

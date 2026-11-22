@@ -44,6 +44,9 @@ exporter and trace formatting changing the workload being measured.
 - `analytics_session::initialize(const analytics_session_config&)` creates a
   configured session and opens its output file when requested.
 - `analytics_session::start_exporter()` starts Libft's persistent exporter.
+- `flush_exports()` waits for any active drain before taking over the queue. A
+  callback that calls `flush_exports()` on its own session leaves the remaining
+  work to the drain that is already running.
 - `analytics_session::destroy()` drains the exporter, flushes the file, and
   releases the session resources.
 - `analytics_session::get_export_error()` reports asynchronous file errors.

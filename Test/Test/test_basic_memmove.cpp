@@ -2,6 +2,7 @@
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include <cstring>
 
 #ifndef LIBFT_TEST_BUILD
 #endif
@@ -138,5 +139,68 @@ FT_TEST(test_basic_memmove_single_byte_overlap)
     FT_ASSERT_EQ('y', buffer[2]);
     FT_ASSERT_EQ('z', buffer[3]);
     FT_ASSERT_EQ('\0', buffer[4]);
+    return (1);
+}
+
+FT_TEST(test_basic_memmove_forward_overlap_across_copy_blocks)
+{
+    uint8_t actual[20017];
+    uint8_t expected[20017];
+    ft_size_t index;
+
+    index = 0U;
+    while (index < sizeof(actual))
+    {
+        actual[index] = static_cast<uint8_t>(index % 251U);
+        expected[index] = actual[index];
+        ++index;
+    }
+    (void)std::memmove(expected, expected + 11U, sizeof(expected) - 11U);
+    FT_ASSERT_EQ(actual + 0U, ft_memmove(actual, actual + 11U, sizeof(actual) - 11U));
+    FT_ASSERT_EQ(0, std::memcmp(expected, actual, sizeof(actual)));
+    return (1);
+}
+
+template <ft_size_t Size>
+static int32_t check_fixed_memmove()
+{
+    constexpr ft_size_t OFFSET_COUNT = 36;
+    uint8_t actual[80];
+    uint8_t expected[80];
+    ft_size_t source = 0;
+    while (source < OFFSET_COUNT)
+    {
+        ft_size_t destination = 0;
+        while (destination < OFFSET_COUNT)
+        {
+            ft_size_t index = 0;
+            while (index < sizeof(actual))
+            {
+                actual[index] = static_cast<uint8_t>(index);
+                expected[index] = actual[index];
+                ++index;
+            }
+            std::memmove(expected + destination, expected + source, Size);
+            FT_ASSERT_EQ(actual + destination,
+                ft_memmove_fixed<Size>(actual + destination, actual + source));
+            FT_ASSERT_EQ(0, std::memcmp(expected, actual, sizeof(actual)));
+            ++destination;
+        }
+        ++source;
+    }
+    return (1);
+}
+
+FT_TEST(test_basic_fixed_memmove_matches_standard_for_overlaps)
+{
+    uint8_t byte = 0;
+    FT_ASSERT_EQ(&byte, ft_memmove_fixed<0>(&byte, ft_nullptr));
+    FT_ASSERT_EQ(ft_nullptr, ft_memmove_fixed<1>(&byte, ft_nullptr));
+    FT_ASSERT_EQ(ft_nullptr, ft_memmove_fixed<1>(ft_nullptr, &byte));
+    FT_ASSERT_EQ(1, check_fixed_memmove<1>());
+    FT_ASSERT_EQ(1, check_fixed_memmove<7>());
+    FT_ASSERT_EQ(1, check_fixed_memmove<16>());
+    FT_ASSERT_EQ(1, check_fixed_memmove<32>());
+    FT_ASSERT_EQ(1, check_fixed_memmove<33>());
     return (1);
 }

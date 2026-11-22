@@ -24,6 +24,34 @@ FT_TEST(test_filesystem_split_path_returns_directory_and_basename)
     return (1);
 }
 
+FT_TEST(test_filesystem_split_path_preserves_drive_root_when_input_aliases_output)
+{
+    ft_string directory;
+    ft_string basename;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, directory.initialize("C:/save.bin"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, basename.initialize("previous"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_split_path(directory.c_str(), &directory, &basename));
+    FT_ASSERT_EQ(FT_TRUE, directory == "C:/");
+    FT_ASSERT_EQ(FT_TRUE, basename == "save.bin");
+    return (1);
+}
+
+FT_TEST(test_filesystem_split_path_handles_roots_and_normalized_leaf_paths)
+{
+    ft_string directory;
+    ft_string basename;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_split_path("/", &directory, &basename));
+    FT_ASSERT_EQ(FT_TRUE, directory == "/");
+    FT_ASSERT_EQ(FT_TRUE, basename == "/");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_split_path("world/region/..", &directory, &basename));
+    FT_ASSERT_EQ(FT_TRUE, directory == ".");
+    FT_ASSERT_EQ(FT_TRUE, basename == "world");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_split_path("", &directory, &basename));
+    FT_ASSERT_EQ(FT_TRUE, directory.empty());
+    FT_ASSERT_EQ(FT_TRUE, basename.empty());
+    return (1);
+}
+
 FT_TEST(test_filesystem_hidden_and_rooted_checks)
 {
     FT_ASSERT_EQ(FT_TRUE, filesystem_is_hidden(".env"));

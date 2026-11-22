@@ -1,313 +1,181 @@
 #include "file_utils.hpp"
-#include "../Basic/class_nullptr.hpp"
-#include "../CPP_class/class_string.hpp"
-#include "../Template/vector.hpp"
-#include <new>
-#include <stdint.h>
+#include <string_view>
 
-static ft_bool file_path_is_drive_letter(char character)
+enum class file_relative_root_kind : uint8_t
 {
-    if ((character >= 'A' && character <= 'Z')
-        || (character >= 'a' && character <= 'z'))
-        return (FT_TRUE);
-    return (FT_FALSE);
+    relative,
+    system_root,
+    drive_absolute,
+    drive_relative,
+    unc
+};
+
+struct file_relative_root
+{
+    file_relative_root_kind kind = file_relative_root_kind::relative;
+    std::string_view first;
+    std::string_view second;
+};
+
+static constexpr ft_bool file_relative_is_separator(char character) noexcept
+{
+    return (character == '/' || character == '\\');
 }
 
-static char file_path_lower_character(char character)
+static constexpr char file_relative_ascii_lower(char character) noexcept
 {
     if (character >= 'A' && character <= 'Z')
         return (static_cast<char>(character - 'A' + 'a'));
     return (character);
 }
 
-static ft_size_t file_path_length(const char *path)
+static std::string_view file_relative_take_component(std::string_view &path) noexcept
 {
-    ft_size_t length;
-
-    length = 0;
-    while (path[length] != '\0')
-        length++;
-    return (length);
+    while (!path.empty() && file_relative_is_separator(path.front()) == FT_TRUE)
+        path.remove_prefix(1);
+    ft_size_t length = 0;
+    while (length < path.size() && file_relative_is_separator(path[length]) == FT_FALSE)
+        ++length;
+    const std::string_view component = path.substr(0, length);
+    path.remove_prefix(length);
+    return (component);
 }
 
-static ft_bool file_path_range_equal_case_insensitive(const char *left,
-    ft_size_t left_start, const char *right, ft_size_t right_start,
-    ft_size_t length)
+static file_relative_root file_relative_parse_root(std::string_view &path) noexcept
 {
-    ft_size_t index;
-
-    index = 0;
-    while (index < length)
+    file_relative_root root;
+    if (path.size() >= 2 && path[1] == ':')
     {
-        if (file_path_lower_character(left[left_start + index])
-            != file_path_lower_character(right[right_start + index]))
-            return (FT_FALSE);
-        index++;
-    }
-    return (FT_TRUE);
-}
-
-static uint8_t file_path_root_kind(const char *path)
-{
-    ft_size_t length;
-
-    length = file_path_length(path);
-    if (length >= 2 && file_path_is_drive_letter(path[0]) == FT_TRUE
-        && path[1] == ':')
-    {
-        if (length >= 3 && path[2] == '/')
-            return (2U);
-        return (3U);
-    }
-    if (length >= 2 && path[0] == '/' && path[1] == '/')
-        return (4U);
-    if (length >= 1 && path[0] == '/')
-        return (1U);
-    return (0U);
-}
-
-static ft_bool file_path_roots_are_compatible(const char *from_path,
-    const char *to_path)
-{
-    uint8_t from_kind;
-    uint8_t to_kind;
-    ft_size_t from_length;
-    ft_size_t to_length;
-    ft_size_t from_server_end;
-    ft_size_t to_server_end;
-    ft_size_t from_share_end;
-    ft_size_t to_share_end;
-
-    from_kind = file_path_root_kind(from_path);
-    to_kind = file_path_root_kind(to_path);
-    if (from_kind != to_kind)
-        return (FT_FALSE);
-    if (from_kind == 2U || from_kind == 3U)
-    {
-        if (file_path_lower_character(from_path[0])
-            == file_path_lower_character(to_path[0]))
-            return (FT_TRUE);
-        return (FT_FALSE);
-    }
-    if (from_kind != 4U)
-        return (FT_TRUE);
-    from_length = file_path_length(from_path);
-    to_length = file_path_length(to_path);
-    from_server_end = 2;
-    while (from_server_end < from_length && from_path[from_server_end] != '/')
-        from_server_end++;
-    to_server_end = 2;
-    while (to_server_end < to_length && to_path[to_server_end] != '/')
-        to_server_end++;
-    if (from_server_end == 2 || to_server_end == 2
-        || from_server_end == from_length || to_server_end == to_length)
-        return (FT_FALSE);
-    from_share_end = from_server_end + 1;
-    while (from_share_end < from_length && from_path[from_share_end] != '/')
-        from_share_end++;
-    to_share_end = to_server_end + 1;
-    while (to_share_end < to_length && to_path[to_share_end] != '/')
-        to_share_end++;
-    if (from_share_end == from_server_end + 1
-        || to_share_end == to_server_end + 1)
-        return (FT_FALSE);
-    if (from_server_end - 2 != to_server_end - 2
-        || from_share_end - from_server_end != to_share_end - to_server_end)
-        return (FT_FALSE);
-    if (file_path_range_equal_case_insensitive(from_path, 2, to_path, 2,
-            from_server_end - 2) == FT_FALSE)
-        return (FT_FALSE);
-    if (file_path_range_equal_case_insensitive(from_path, from_server_end + 1,
-            to_path, to_server_end + 1, from_share_end - from_server_end - 1)
-        == FT_FALSE)
-        return (FT_FALSE);
-    return (FT_TRUE);
-}
-
-static int32_t file_path_collect_components(const ft_string &path,
-    ft_vector<ft_string> &components, ft_size_t component_index_to_skip)
-{
-    const char *data;
-    ft_size_t data_length;
-    ft_size_t index;
-    ft_size_t segment_start;
-    ft_size_t component_index;
-    ft_string component;
-    int32_t error_code;
-
-    data = path.c_str();
-    data_length = path.size();
-    index = 0;
-    component_index = 0;
-    while (index < data_length)
-    {
-        while (index < data_length && data[index] == '/')
-            index++;
-        segment_start = index;
-        while (index < data_length && data[index] != '/')
-            index++;
-        if (index == segment_start)
-            break ;
-        if (component_index >= component_index_to_skip)
+        const char drive = file_relative_ascii_lower(path[0]);
+        if (drive >= 'a' && drive <= 'z')
         {
-            error_code = component.initialize();
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
-            error_code = component.append(data + segment_start,
-                index - segment_start);
-            if (error_code == FT_ERR_SUCCESS)
-                error_code = components.push_back(component);
-            (void)component.destroy();
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
+            root.kind = file_relative_root_kind::drive_relative;
+            if (path.size() >= 3 && file_relative_is_separator(path[2]) == FT_TRUE)
+                root.kind = file_relative_root_kind::drive_absolute;
+            root.first = path.substr(0, 1);
+            (void)file_relative_take_component(path);
+            return (root);
         }
-        component_index++;
     }
-    return (FT_ERR_SUCCESS);
+    if (!path.empty() && file_relative_is_separator(path.front()) == FT_TRUE)
+        root.kind = file_relative_root_kind::system_root;
+    if (path.size() >= 2 && file_relative_is_separator(path[0]) == FT_TRUE
+        && file_relative_is_separator(path[1]) == FT_TRUE)
+    {
+        root.kind = file_relative_root_kind::unc;
+        path.remove_prefix(2);
+        if (!path.empty() && file_relative_is_separator(path.front()) == FT_FALSE)
+        {
+            root.first = file_relative_take_component(path);
+            if (path.size() > 1 && file_relative_is_separator(path[1]) == FT_FALSE)
+                root.second = file_relative_take_component(path);
+        }
+    }
+    return (root);
 }
 
-static ft_bool file_path_components_equal(const ft_string &left,
-    const ft_string &right, ft_bool case_insensitive)
+static ft_bool file_relative_equal(std::string_view left, std::string_view right,
+    ft_bool case_insensitive) noexcept
 {
-    ft_size_t index;
-
+    if (case_insensitive == FT_FALSE)
+        return (left == right);
     if (left.size() != right.size())
         return (FT_FALSE);
-    index = 0;
+    ft_size_t index = 0;
     while (index < left.size())
     {
-        if (case_insensitive == FT_TRUE)
-        {
-            if (file_path_lower_character(left.c_str()[index])
-                != file_path_lower_character(right.c_str()[index]))
-                return (FT_FALSE);
-        }
-        else if (left.c_str()[index] != right.c_str()[index])
+        if (file_relative_ascii_lower(left[index]) != file_relative_ascii_lower(right[index]))
             return (FT_FALSE);
-        index++;
+        ++index;
     }
     return (FT_TRUE);
 }
 
-static void file_path_convert_backslashes(ft_string &path)
+static ft_bool file_relative_roots_match(const file_relative_root &from_root,
+    const file_relative_root &to_root) noexcept
 {
-    char *data;
-    ft_size_t index;
+    if (from_root.kind != to_root.kind)
+        return (FT_FALSE);
+    if (from_root.kind == file_relative_root_kind::unc
+        && (from_root.first.empty() || from_root.second.empty()
+            || to_root.first.empty() || to_root.second.empty()))
+        return (FT_FALSE);
+    return (file_relative_equal(from_root.first, to_root.first, FT_TRUE)
+        && file_relative_equal(from_root.second, to_root.second, FT_TRUE));
+}
 
-    data = path.print();
-    if (data == ft_nullptr)
-        return ;
-    index = 0;
-    while (index < path.size())
+static int32_t file_relative_append_tail(ft_string &result, std::string_view tail,
+    ft_size_t parent_count)
+{
+    int32_t error_code = result.clear();
+    while (error_code == FT_ERR_SUCCESS && parent_count > 0)
     {
-        if (data[index] == '\\')
-            data[index] = '/';
-        index++;
+        error_code = result.append("../", 3);
+        --parent_count;
     }
-    return ;
+    std::string_view component = file_relative_take_component(tail);
+    while (error_code == FT_ERR_SUCCESS && !component.empty())
+    {
+        if (!result.empty() && result.back() != '/')
+            error_code = result.append('/');
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = result.append(component.data(), component.size());
+        component = file_relative_take_component(tail);
+    }
+    if (error_code == FT_ERR_SUCCESS && result.empty())
+        error_code = result.append('.');
+    return (error_code);
+}
+
+static int32_t file_relative_compute(ft_string &from, const ft_string &to)
+{
+    std::string_view from_tail(from.c_str(), from.size());
+    std::string_view to_tail(to.c_str(), to.size());
+    const file_relative_root from_root = file_relative_parse_root(from_tail);
+    const file_relative_root to_root = file_relative_parse_root(to_tail);
+    if (file_relative_roots_match(from_root, to_root) == FT_FALSE)
+        return (FT_ERR_INVALID_PATH);
+    const ft_bool case_insensitive = from_root.kind == file_relative_root_kind::drive_absolute
+        || from_root.kind == file_relative_root_kind::drive_relative
+        || from_root.kind == file_relative_root_kind::unc;
+    ft_size_t parent_count = 0;
+    while (FT_TRUE)
+    {
+        std::string_view next_to = to_tail;
+        const std::string_view from_component = file_relative_take_component(from_tail);
+        const std::string_view to_component = file_relative_take_component(next_to);
+        if (from_component.empty())
+            break ;
+        if (file_relative_equal(from_component, to_component, case_insensitive) == FT_FALSE)
+        {
+            parent_count = 1;
+            while (!file_relative_take_component(from_tail).empty())
+                ++parent_count;
+            break ;
+        }
+        to_tail = next_to;
+    }
+    return (file_relative_append_tail(from, to_tail, parent_count));
 }
 
 ft_string *file_path_relative(const char *from_path, const char *to_path)
 {
-    ft_string *from_normalized;
-    ft_string *to_normalized;
-    ft_string *result;
-    ft_string relative_text;
-    ft_vector<ft_string> from_components;
-    ft_vector<ft_string> to_components;
-    ft_size_t common_component_count;
-    ft_size_t index;
-    uint8_t root_kind;
-    ft_bool case_insensitive;
-    int32_t error_code;
-
     if (from_path == ft_nullptr || to_path == ft_nullptr)
         return (ft_nullptr);
-    from_normalized = file_path_normalize(from_path);
-    to_normalized = file_path_normalize(to_path);
-    if (from_normalized == ft_nullptr || to_normalized == ft_nullptr)
-    {
-        if (from_normalized != ft_nullptr)
-            delete from_normalized;
-        if (to_normalized != ft_nullptr)
-            delete to_normalized;
+    ft_string *from = file_path_normalize(from_path);
+    if (from == ft_nullptr)
         return (ft_nullptr);
-    }
-    file_path_convert_backslashes(*from_normalized);
-    file_path_convert_backslashes(*to_normalized);
-    if (file_path_roots_are_compatible(from_normalized->c_str(),
-            to_normalized->c_str()) == FT_FALSE)
+    ft_string *to = file_path_normalize(to_path);
+    int32_t error_code = FT_ERR_NO_MEMORY;
+    if (to != ft_nullptr)
     {
-        delete from_normalized;
-        delete to_normalized;
-        return (ft_nullptr);
+        error_code = file_relative_compute(*from, *to);
+        delete to;
     }
-    error_code = from_components.initialize();
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = to_components.initialize();
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        root_kind = file_path_root_kind(from_normalized->c_str());
-        error_code = file_path_collect_components(*from_normalized,
-            from_components, root_kind == 4U ? 2 :
-            ((root_kind == 2U || root_kind == 3U) ? 1 : 0));
-    }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = file_path_collect_components(*to_normalized,
-            to_components, root_kind == 4U ? 2 :
-            ((root_kind == 2U || root_kind == 3U) ? 1 : 0));
     if (error_code != FT_ERR_SUCCESS)
     {
-        (void)from_components.destroy();
-        (void)to_components.destroy();
-        delete from_normalized;
-        delete to_normalized;
+        delete from;
         return (ft_nullptr);
     }
-    case_insensitive = root_kind >= 2U ? FT_TRUE : FT_FALSE;
-    common_component_count = 0;
-    while (common_component_count < from_components.size()
-        && common_component_count < to_components.size())
-    {
-        if (file_path_components_equal(from_components[common_component_count],
-                to_components[common_component_count], case_insensitive)
-            == FT_FALSE)
-            break ;
-        common_component_count++;
-    }
-    error_code = relative_text.initialize();
-    index = common_component_count;
-    while (error_code == FT_ERR_SUCCESS && index < from_components.size())
-    {
-        error_code = relative_text.append("../");
-        index++;
-    }
-    index = common_component_count;
-    while (error_code == FT_ERR_SUCCESS && index < to_components.size())
-    {
-        if (relative_text.size() > 0 && relative_text.c_str()[relative_text.size() - 1] != '/')
-            error_code = relative_text.append('/');
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = relative_text.append(to_components[index].c_str());
-        index++;
-    }
-    if (error_code == FT_ERR_SUCCESS && relative_text.size() == 0)
-        error_code = relative_text.append('.');
-    result = ft_nullptr;
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        result = new (std::nothrow) ft_string();
-        if (result != ft_nullptr && result->initialize(relative_text.c_str())
-            != FT_ERR_SUCCESS)
-        {
-            delete result;
-            result = ft_nullptr;
-        }
-    }
-    (void)relative_text.destroy();
-    (void)from_components.destroy();
-    (void)to_components.destroy();
-    delete from_normalized;
-    delete to_normalized;
-    return (result);
+    return (from);
 }

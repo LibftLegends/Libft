@@ -15,14 +15,9 @@
 # include "../Analytics/analytics.hpp"
 #endif
 
-static ft_bool reallocate_block(void *memory_pointer, ft_size_t aligned_size, ft_size_t user_size)
+static ft_bool reallocate_block(Block *block, void *memory_pointer,
+    ft_size_t aligned_size, ft_size_t user_size)
 {
-    if (!memory_pointer)
-        return (FT_FALSE);
-    Block *block = cma_find_block_for_pointer(memory_pointer);
-    if (!block)
-        return (FT_FALSE);
-    cma_validate_block(block, "cma_realloc resize", memory_pointer);
     if (block->size >= aligned_size)
     {
         split_block(block, aligned_size);
@@ -142,7 +137,7 @@ static void *cma_realloc_uninstrumented(void *memory_pointer,
         return (result);
     }
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = cma_lock_allocator(&lock_acquired);
+    int32_t lock_error = cma_lock_allocator_arena(&lock_acquired);
 
     if (lock_error != FT_ERR_SUCCESS)
         return (nullptr);
@@ -159,30 +154,31 @@ static void *cma_realloc_uninstrumented(void *memory_pointer,
         cma_free(memory_pointer);
         return (nullptr);
     }
-    if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_TRUE)
+    const ft_size_t arena_size = cma_small_arena_block_size_locked(memory_pointer);
+    if (arena_size != 0U)
     {
-        ft_size_t previous_size = cma_small_arena_block_size_locked(
-                memory_pointer);
+        if (arena_size == new_size)
+        {
+            cma_unlock_allocator(lock_acquired);
+            return (memory_pointer);
+        }
         void *arena_pointer = cma_small_arena_reallocate_locked(memory_pointer,
-                new_size);
+                arena_size, new_size);
 
         if (arena_pointer != nullptr)
         {
-            ft_size_t resized_size = cma_small_arena_block_size_locked(
-                    arena_pointer);
-
-            if (g_cma_current_bytes >= previous_size)
-                g_cma_current_bytes -= previous_size;
+            if (g_cma_current_bytes >= arena_size)
+                g_cma_current_bytes -= arena_size;
             else
                 g_cma_current_bytes = 0;
-            g_cma_current_bytes += resized_size;
+            g_cma_current_bytes += new_size;
             if (g_cma_current_bytes > g_cma_peak_bytes)
                 g_cma_peak_bytes = g_cma_current_bytes;
             if (lock_acquired)
                 cma_unlock_allocator(lock_acquired);
             return (arena_pointer);
         }
-        ft_size_t copy_size = previous_size;
+        ft_size_t copy_size = arena_size;
         if (copy_size > new_size)
             copy_size = new_size;
         ft_size_t instrumented_arena_size = cma_debug_allocation_size(new_size);
@@ -197,6 +193,11 @@ static void *cma_realloc_uninstrumented(void *memory_pointer,
         {
             if (lock_acquired)
                 cma_unlock_allocator(lock_acquired);
+            return (nullptr);
+        }
+        if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+        {
+            (void)cma_unlock_allocator(lock_acquired);
             return (nullptr);
         }
         void *new_ptr = allocate_block_locked(aligned_arena_size, new_size);
@@ -220,6 +221,11 @@ static void *cma_realloc_uninstrumented(void *memory_pointer,
         return (nullptr);
     }
     ft_size_t aligned_size = align16(instrumented_size);
+    if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
+        return (nullptr);
+    }
     Block *block = cma_find_block_for_pointer(memory_pointer);
     if (!block)
     {
@@ -229,7 +235,8 @@ static void *cma_realloc_uninstrumented(void *memory_pointer,
     }
     cma_validate_block(block, "cma_realloc header", memory_pointer);
     ft_size_t previous_size = block->size;
-    ft_bool resize_succeeded = reallocate_block(memory_pointer, aligned_size, new_size);
+    ft_bool resize_succeeded = reallocate_block(block, memory_pointer,
+            aligned_size, new_size);
     if (resize_succeeded == FT_TRUE)
     {
 #ifdef LIBFT_TEST_BUILD

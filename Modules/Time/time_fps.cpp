@@ -193,9 +193,12 @@ void time_fps::sleep_to_next_frame(void) noexcept
         now = std::chrono::steady_clock::now();
         elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - this->_last_frame_time).count();
         remaining_ms = this->_frame_duration_ms - static_cast<double>(elapsed);
-        if (remaining_ms > 0.0)
+        if (remaining_ms >= 1.0)
+        {
             time_sleep_ms(static_cast<uint32_t>(remaining_ms));
-        this->_last_frame_time = std::chrono::steady_clock::now();
+            now = std::chrono::steady_clock::now();
+        }
+        this->_last_frame_time = now;
     }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return ;

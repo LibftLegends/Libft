@@ -2,6 +2,8 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include <cstring>
+#include <limits>
 
 #ifndef LIBFT_TEST_BUILD
 #endif
@@ -77,5 +79,23 @@ FT_TEST(test_ft_strerror_covers_documented_codes)
         FT_ASSERT(error_message != ft_nullptr);
         code_index++;
     }
+    return (1);
+}
+
+FT_TEST(test_errno_lookup_handles_dense_edges_gaps_and_sparse_codes)
+{
+    FT_ASSERT_EQ(0, std::strcmp("SSL system call error",
+            ft_strerror(FT_ERR_SSL_SYSCALL_ERROR)));
+    FT_ASSERT_EQ(0, std::strcmp("RW-lock reader ownership capacity reached",
+            ft_strerror(FT_ERR_RWLOCK_READER_CAPACITY)));
+    FT_ASSERT_EQ(0, std::strcmp("HTTP protocol mismatch",
+            ft_strerror(FT_ERR_HTTP_PROTOCOL_MISMATCH)));
+    FT_ASSERT_EQ(0, std::strcmp("API circuit breaker is open",
+            ft_strerror(FT_ERR_API_CIRCUIT_OPEN)));
+    FT_ASSERT_EQ(0, std::strcmp("Unrecognized error code", ft_strerror(1)));
+    FT_ASSERT_EQ(0, std::strcmp("Unrecognized error code",
+            ft_strerror(std::numeric_limits<int32_t>::min())));
+    FT_ASSERT(ft_strerror(ERRNO_OFFSET + 2) != ft_nullptr);
+    FT_ASSERT(std::strcmp("Unrecognized error code", ft_strerror(ERRNO_OFFSET + 2)) != 0);
     return (1);
 }

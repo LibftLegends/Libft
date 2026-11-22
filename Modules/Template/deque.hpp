@@ -13,6 +13,7 @@
 #include "../PThread/pthread_internal.hpp"
 #include <cstdint>
 #include <new>
+#include <utility>
 
 template <typename ElementType>
 class ft_deque
@@ -27,6 +28,7 @@ class ft_deque
 
         deque_node                 *_front;
         deque_node                 *_back;
+        deque_node                 *_spare_node;
         ft_size_t                  _size;
         mutable pt_recursive_mutex *_mutex;
         uint8_t                    _initialised_state;
@@ -37,6 +39,10 @@ class ft_deque
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
         void destroy_all_unlocked();
+        template <ft_bool AT_FRONT, typename ValueType>
+        void push_impl(ValueType &&value, const char *operation);
+        template <ft_bool AT_FRONT>
+        ElementType pop_impl(const char *operation);
 
     public:
         ft_deque();
@@ -122,8 +128,13 @@ void ft_deque<ElementType>::destroy_all_unlocked()
     {
         node = this->_front;
         this->_front = this->_front->_next;
-        destroy_at(&node->_data);
+        ::destroy_at(&node->_data);
         cma_free(node);
+    }
+    if (this->_spare_node != ft_nullptr)
+    {
+        cma_free(this->_spare_node);
+        this->_spare_node = ft_nullptr;
     }
     this->_back = ft_nullptr;
     this->_size = 0;
@@ -132,7 +143,7 @@ void ft_deque<ElementType>::destroy_all_unlocked()
 
 template <typename ElementType>
 ft_deque<ElementType>::ft_deque()
-    : _front(ft_nullptr), _back(ft_nullptr), _size(0), _mutex(ft_nullptr),
+    : _front(ft_nullptr), _back(ft_nullptr), _spare_node(ft_nullptr), _size(0), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     return ;
@@ -162,6 +173,7 @@ int32_t ft_deque<ElementType>::initialize()
     }
     this->_front = ft_nullptr;
     this->_back = ft_nullptr;
+    this->_spare_node = ft_nullptr;
     this->_size = 0;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
@@ -207,6 +219,7 @@ int32_t ft_deque<ElementType>::move(ft_deque<ElementType> &other)
     {
         this->_front = ft_nullptr;
         this->_back = ft_nullptr;
+        this->_spare_node = ft_nullptr;
         this->_size = 0;
         this->_mutex = ft_nullptr;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -214,11 +227,13 @@ int32_t ft_deque<ElementType>::move(ft_deque<ElementType> &other)
     }
     this->_front = other._front;
     this->_back = other._back;
+    this->_spare_node = other._spare_node;
     this->_size = other._size;
     this->_mutex = other._mutex;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._front = ft_nullptr;
     other._back = ft_nullptr;
+    other._spare_node = ft_nullptr;
     other._size = 0;
     other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -292,220 +307,144 @@ void ft_deque<ElementType>::unlock(ft_bool lock_acquired) const
 }
 
 template <typename ElementType>
-void ft_deque<ElementType>::push_front(const ElementType& value)
+void ft_deque<ElementType>::push_front(const ElementType &value)
 {
-    deque_node *new_node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::push_front");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(lock_error);
-        return ;
-    }
-    new_node = static_cast<deque_node*>(cma_malloc(sizeof(deque_node)));
-    if (new_node == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    construct_at(&new_node->_data, value);
-    new_node->_prev = ft_nullptr;
-    new_node->_next = this->_front;
-    if (this->_front == ft_nullptr)
-        this->_back = new_node;
-    else
-        this->_front->_prev = new_node;
-    this->_front = new_node;
-    this->_size += 1;
-    (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    this->template push_impl<FT_TRUE>(value, "ft_deque::push_front");
     return ;
 }
 
 template <typename ElementType>
-void ft_deque<ElementType>::push_front(ElementType&& value)
+void ft_deque<ElementType>::push_front(ElementType &&value)
 {
-    deque_node *new_node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::push_front(move)");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(lock_error);
-        return ;
-    }
-    new_node = static_cast<deque_node*>(cma_malloc(sizeof(deque_node)));
-    if (new_node == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    construct_at(&new_node->_data, ft_move(value));
-    new_node->_prev = ft_nullptr;
-    new_node->_next = this->_front;
-    if (this->_front == ft_nullptr)
-        this->_back = new_node;
-    else
-        this->_front->_prev = new_node;
-    this->_front = new_node;
-    this->_size += 1;
-    (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    this->template push_impl<FT_TRUE>(ft_move(value), "ft_deque::push_front(move)");
     return ;
 }
 
 template <typename ElementType>
-void ft_deque<ElementType>::push_back(const ElementType& value)
+void ft_deque<ElementType>::push_back(const ElementType &value)
 {
-    deque_node *new_node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::push_back");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(lock_error);
-        return ;
-    }
-    new_node = static_cast<deque_node*>(cma_malloc(sizeof(deque_node)));
-    if (new_node == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    construct_at(&new_node->_data, value);
-    new_node->_next = ft_nullptr;
-    new_node->_prev = this->_back;
-    if (this->_back == ft_nullptr)
-        this->_front = new_node;
-    else
-        this->_back->_next = new_node;
-    this->_back = new_node;
-    this->_size += 1;
-    (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    this->template push_impl<FT_FALSE>(value, "ft_deque::push_back");
     return ;
 }
 
 template <typename ElementType>
-void ft_deque<ElementType>::push_back(ElementType&& value)
+void ft_deque<ElementType>::push_back(ElementType &&value)
 {
-    deque_node *new_node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
+    this->template push_impl<FT_FALSE>(ft_move(value), "ft_deque::push_back(move)");
+    return ;
+}
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::push_back(move)");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+template <typename ElementType>
+template <ft_bool AT_FRONT, typename ValueType>
+void ft_deque<ElementType>::push_impl(ValueType &&value, const char *operation)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, operation);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        set_error(lock_error);
+        this->set_error(lock_error);
         return ;
     }
-    new_node = static_cast<deque_node*>(cma_malloc(sizeof(deque_node)));
-    if (new_node == ft_nullptr)
+    deque_node *node = this->_spare_node;
+    if (node != ft_nullptr)
+        this->_spare_node = ft_nullptr;
+    else
+        node = static_cast<deque_node *>(cma_malloc(sizeof(deque_node)));
+    if (node == ft_nullptr)
     {
         (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
+        this->set_error(FT_ERR_NO_MEMORY);
         return ;
     }
-    construct_at(&new_node->_data, ft_move(value));
-    new_node->_next = ft_nullptr;
-    new_node->_prev = this->_back;
-    if (this->_back == ft_nullptr)
-        this->_front = new_node;
+    ::construct_at(&node->_data, std::forward<ValueType>(value));
+    if constexpr (AT_FRONT)
+    {
+        node->_prev = ft_nullptr;
+        node->_next = this->_front;
+        if (this->_front == ft_nullptr)
+            this->_back = node;
+        else
+            this->_front->_prev = node;
+        this->_front = node;
+    }
     else
-        this->_back->_next = new_node;
-    this->_back = new_node;
-    this->_size += 1;
+    {
+        node->_next = ft_nullptr;
+        node->_prev = this->_back;
+        if (this->_back == ft_nullptr)
+            this->_front = node;
+        else
+            this->_back->_next = node;
+        this->_back = node;
+    }
+    ++this->_size;
     (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    this->set_error(FT_ERR_SUCCESS);
     return ;
 }
 
 template <typename ElementType>
 ElementType ft_deque<ElementType>::pop_front()
 {
-    deque_node *node;
-    ElementType value;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::pop_front");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(lock_error);
-        return (ElementType());
-    }
-    if (this->_front == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_EMPTY);
-        return (ElementType());
-    }
-    node = this->_front;
-    this->_front = node->_next;
-    if (this->_front == ft_nullptr)
-        this->_back = ft_nullptr;
-    else
-        this->_front->_prev = ft_nullptr;
-    value = ft_move(node->_data);
-    destroy_at(&node->_data);
-    cma_free(node);
-    this->_size -= 1;
-    (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
-    return (value);
+    return (this->template pop_impl<FT_TRUE>("ft_deque::pop_front"));
 }
 
 template <typename ElementType>
 ElementType ft_deque<ElementType>::pop_back()
 {
-    deque_node *node;
-    ElementType value;
-    ft_bool lock_acquired;
-    int32_t lock_error;
+    return (this->template pop_impl<FT_FALSE>("ft_deque::pop_back"));
+}
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_deque::pop_back");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+template <typename ElementType>
+template <ft_bool AT_FRONT>
+ElementType ft_deque<ElementType>::pop_impl(const char *operation)
+{
+    ElementType value;
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, operation);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        set_error(lock_error);
+        this->set_error(lock_error);
         return (ElementType());
     }
-    if (this->_back == ft_nullptr)
+    deque_node *node;
+    if constexpr (AT_FRONT)
+        node = this->_front;
+    else
+        node = this->_back;
+    if (node == ft_nullptr)
     {
         (void)this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_EMPTY);
+        this->set_error(FT_ERR_EMPTY);
         return (ElementType());
     }
-    node = this->_back;
-    this->_back = node->_prev;
-    if (this->_back == ft_nullptr)
-        this->_front = ft_nullptr;
+    if constexpr (AT_FRONT)
+    {
+        this->_front = node->_next;
+        if (this->_front == ft_nullptr)
+            this->_back = ft_nullptr;
+        else
+            this->_front->_prev = ft_nullptr;
+    }
     else
-        this->_back->_next = ft_nullptr;
+    {
+        this->_back = node->_prev;
+        if (this->_back == ft_nullptr)
+            this->_front = ft_nullptr;
+        else
+            this->_back->_next = ft_nullptr;
+    }
     value = ft_move(node->_data);
-    destroy_at(&node->_data);
-    cma_free(node);
-    this->_size -= 1;
+    ::destroy_at(&node->_data);
+    if (this->_spare_node == ft_nullptr)
+        this->_spare_node = node;
+    else
+        cma_free(node);
+    --this->_size;
     (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    this->set_error(FT_ERR_SUCCESS);
     return (value);
 }
 

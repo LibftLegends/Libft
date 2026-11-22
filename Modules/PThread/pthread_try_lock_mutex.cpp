@@ -16,7 +16,7 @@
 # include <cstdio>
 #endif
 
-static const uint32_t PT_MUTEX_TRY_LOCK_ATTEMPTS = 2U;
+static constexpr uint32_t PT_MUTEX_TRY_LOCK_ATTEMPTS = 2U;
 
 int pt_mutex::try_lock_uninstrumented() const
 {
@@ -30,9 +30,9 @@ int pt_mutex::try_lock_uninstrumented() const
     if (ensure_error != FT_ERR_SUCCESS)
         return (ensure_error);
 
-    pthread_t owner = this->_owner.load(std::memory_order_relaxed);
     if (this->_lock.load(std::memory_order_acquire)
-            && pt_thread_equal(owner, thread_id))
+            && pt_thread_equal(this->_owner.load(std::memory_order_relaxed),
+                thread_id))
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
 
     mutex_error = FT_ERR_SUCCESS;

@@ -18,12 +18,7 @@ ft_size_t ft_strlcpy(char *destination, const char *source, ft_size_t buffer_siz
             copy_length = buffer_size - 1;
         else
             copy_length = source_length;
-        ft_size_t index = 0;
-        while (index < copy_length)
-        {
-            destination[index] = source[index];
-            ++index;
-        }
+        (void)ft_memcpy(destination, source, copy_length);
         destination[copy_length] = '\0';
     }
 

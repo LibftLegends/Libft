@@ -97,6 +97,7 @@ void cmp_initialize_standard_file_descriptors();
 
 file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out);
 file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out);
+file_type cmp_dir_entry_type(const file_dirent &entry) noexcept;
 int32_t cmp_dir_close(file_dir *directory_stream, int32_t *error_code_out);
 int32_t cmp_directory_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out);
@@ -110,10 +111,20 @@ int32_t cmp_file_error_to_errno(int32_t system_error) noexcept;
 int32_t cmp_file_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out);
 int32_t cmp_file_delete(const char *path, int32_t *error_code_out);
+int32_t cmp_file_replace_atomic(const char *source_path, const char *destination_path);
 int32_t cmp_file_move(const char *source_path, const char *destination_path, int32_t *error_code_out);
 int32_t cmp_file_copy(const char *source_path, const char *destination_path, int32_t *error_code_out);
 int32_t cmp_file_create_directory(const char *path, mode_t mode, int32_t *error_code_out);
+int32_t cmp_file_remove_directory(const char *path) noexcept;
 int32_t cmp_file_get_type(const char *path, file_type *type_out, int32_t *error_code_out);
+struct cmp_file_metadata
+{
+    file_type type;
+    ft_size_t size;
+    mode_t permissions;
+    int32_t details_error;
+};
+int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata);
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out, int32_t *error_code_out);
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out);
@@ -128,10 +139,12 @@ void cmp_test_set_directory_sync_failure(int32_t error_code);
 void cmp_test_clear_sync_failures(void);
 #endif
 int32_t cmp_path_canonical(const char *path, char **output_path);
-int32_t cmp_storage_write_memory_mapped_file(const char *location,
+int32_t cmp_storage_write_memory_mapped_descriptor(int32_t descriptor,
     const char *buffer, ft_size_t length);
+typedef int32_t (*cmp_storage_read_mapped_callback)(const char *data,
+    ft_size_t length, void *context);
 int32_t cmp_storage_read_memory_mapped_file(const char *location,
-    char **buffer_out, ft_size_t *length_out);
+    cmp_storage_read_mapped_callback read_mapping, void *context);
 
 int32_t cmp_thread_equal(pthread_t thread1, pthread_t thread2);
 int32_t cmp_thread_cancel(pthread_t thread);
@@ -171,6 +184,7 @@ int32_t cmp_high_resolution_time(int64_t *nanoseconds_out);
 int32_t cmp_active_clock_now_microseconds(uint64_t *microseconds_out);
 const char *cmp_service_null_device_path(void);
 int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size, ft_size_t *length_out);
+uint64_t cmp_get_process_id(void) noexcept;
 typedef void (*t_cmp_service_signal_handler)(int32_t signal_number,
     void *user_context);
 int32_t cmp_service_set_working_directory(const char *working_directory);

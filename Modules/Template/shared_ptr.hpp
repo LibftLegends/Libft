@@ -160,7 +160,7 @@ void ft_sharedptr<ManagedType>::destroy_storage() noexcept
         return ;
     }
     reference_count = this->_reference_count->fetch_sub(1,
-        std::memory_order_acq_rel);
+        std::memory_order_release);
     if (reference_count > 1)
     {
         this->_managed_pointer = ft_nullptr;
@@ -169,6 +169,8 @@ void ft_sharedptr<ManagedType>::destroy_storage() noexcept
         this->_is_array_type = FT_FALSE;
         return ;
     }
+    // Only the last owner needs to acquire the preceding releases before deletion.
+    std::atomic_thread_fence(std::memory_order_acquire);
     if (this->_is_array_type)
         delete[] this->_managed_pointer;
     else
@@ -197,10 +199,11 @@ ft_sharedptr<ManagedType>::reference_proxy::~reference_proxy()
 template <typename ManagedType>
 ft_sharedptr<ManagedType>::reference_proxy::operator ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -232,10 +235,11 @@ ft_sharedptr<ManagedType>::const_reference_proxy::~const_reference_proxy()
 template <typename ManagedType>
 ft_sharedptr<ManagedType>::const_reference_proxy::operator const ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -297,6 +301,13 @@ ft_sharedptr<ManagedType> &ft_sharedptr<ManagedType>::operator=(
         return (*this);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         (void)this->initialize();
+    if (this->_reference_count != ft_nullptr
+        && this->_reference_count == other._reference_count
+        && other._initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        this->set_error(FT_ERR_SUCCESS);
+        return (*this);
+    }
     this->destroy_storage();
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (*this);
@@ -511,7 +522,8 @@ int32_t ft_sharedptr<ManagedType>::move(ft_sharedptr<ManagedType> &other) noexce
             "source object is uninitialised");
         return (set_error(FT_ERR_INVALID_STATE));
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        && (this->_managed_pointer != ft_nullptr || this->_mutex != ft_nullptr))
     {
         destroy_result = this->destroy();
         if (destroy_result != FT_ERR_SUCCESS)

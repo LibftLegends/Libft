@@ -172,6 +172,34 @@ static int32_t cmp_timespec_to_nanoseconds(const struct timespec *time_value, in
 }
 #endif
 
+#if defined(_WIN32) || defined(_WIN64)
+struct cmp_performance_counter_scale
+{
+    int64_t frequency;
+    int64_t nanoseconds_per_tick;
+    int64_t max_exact_ticks;
+    int32_t error_code;
+};
+
+static cmp_performance_counter_scale cmp_read_performance_counter_scale()
+{
+    constexpr int64_t NANOSECONDS_PER_SECOND = 1000000000;
+    LARGE_INTEGER frequency;
+    if (!QueryPerformanceFrequency(&frequency))
+        return (cmp_performance_counter_scale{0, 0, -1,
+            cmp_map_system_error_to_ft(static_cast<int32_t>(GetLastError()))});
+    if (frequency.QuadPart <= 0)
+        return (cmp_performance_counter_scale{0, 0, -1, FT_ERR_INVALID_OPERATION});
+    if (NANOSECONDS_PER_SECOND % frequency.QuadPart == 0)
+    {
+        const int64_t nanoseconds_per_tick = NANOSECONDS_PER_SECOND / frequency.QuadPart;
+        return (cmp_performance_counter_scale{frequency.QuadPart,
+            nanoseconds_per_tick, (INT64_MAX - 1) / nanoseconds_per_tick, FT_ERR_SUCCESS});
+    }
+    return (cmp_performance_counter_scale{frequency.QuadPart, 0, -1, FT_ERR_SUCCESS});
+}
+#endif
+
 int32_t cmp_high_resolution_time(int64_t *nanoseconds_out)
 {
     if (nanoseconds_out == ft_nullptr)
@@ -180,24 +208,23 @@ int32_t cmp_high_resolution_time(int64_t *nanoseconds_out)
     }
 #if defined(_WIN32) || defined(_WIN64)
     LARGE_INTEGER performance_counter;
-    LARGE_INTEGER performance_frequency;
-    long double scaled_value;
-
     if (!QueryPerformanceCounter(&performance_counter))
     {
         return (cmp_map_system_error_to_ft(static_cast<int32_t>(GetLastError())));
     }
-    if (!QueryPerformanceFrequency(&performance_frequency))
+    // Windows keeps the frequency fixed until the next system boot.
+    static const cmp_performance_counter_scale scale = cmp_read_performance_counter_scale();
+    if (scale.error_code != FT_ERR_SUCCESS)
+        return (scale.error_code);
+    const int64_t ticks = performance_counter.QuadPart;
+    if (ticks >= 0 && ticks <= scale.max_exact_ticks)
     {
-        return (cmp_map_system_error_to_ft(static_cast<int32_t>(GetLastError())));
+        *nanoseconds_out = ticks * scale.nanoseconds_per_tick;
+        return (FT_ERR_SUCCESS);
     }
-    if (performance_frequency.QuadPart <= 0)
-    {
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    scaled_value = static_cast<long double>(performance_counter.QuadPart);
+    long double scaled_value = static_cast<long double>(ticks);
     scaled_value *= 1000000000.0L;
-    scaled_value /= static_cast<long double>(performance_frequency.QuadPart);
+    scaled_value /= static_cast<long double>(scale.frequency);
     if (scaled_value >= static_cast<long double>(LLONG_MAX))
     {
         return (FT_ERR_OUT_OF_RANGE);

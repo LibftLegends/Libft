@@ -190,11 +190,11 @@ int32_t kv_store_entry::initialize() noexcept
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state,
             "kv_store_entry::initialize", "initialize called on initialised instance");
-    this->_value = "";
-    if (this->_value.c_str() == ft_nullptr)
+    const int32_t error_code = this->_value.initialize();
+    if (error_code != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (error_code);
     }
     this->_has_expiration = FT_FALSE;
     this->_expiration_timestamp = 0;
@@ -223,17 +223,24 @@ int32_t kv_store_entry::initialize(const kv_store_entry &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    init_error = this->initialize();
+    init_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
     if (init_error != FT_ERR_SUCCESS)
-        return (init_error);
-    this->_value = other._value;
-    if (this->_value.c_str() == ft_nullptr)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (init_error);
     }
-    this->_has_expiration = other._has_expiration;
-    this->_expiration_timestamp = other._expiration_timestamp;
+    init_error = this->_value.initialize(other._value);
+    if (init_error == FT_ERR_SUCCESS)
+    {
+        this->_has_expiration = other._has_expiration;
+        this->_expiration_timestamp = other._expiration_timestamp;
+        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    }
+    else
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
+    if (init_error != FT_ERR_SUCCESS)
+        return (init_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -258,18 +265,18 @@ int32_t kv_store_entry::initialize(kv_store_entry &&other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    init_error = this->initialize();
+    init_error = this->_value.initialize(ft_move(other._value));
     if (init_error != FT_ERR_SUCCESS)
-        return (init_error);
-    this->_value = other._value;
-    if (this->_value.c_str() == ft_nullptr)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (init_error);
     }
     this->_has_expiration = other._has_expiration;
     this->_expiration_timestamp = other._expiration_timestamp;
-    other._value.clear();
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    this->_mutex = other._mutex;
+    other._mutex = ft_nullptr;
+    (void)other._value.destroy();
     other._has_expiration = FT_FALSE;
     other._expiration_timestamp = 0;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -284,44 +291,53 @@ int32_t kv_store_entry::destroy() noexcept
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
     destroy_error = this->disable_thread_safety();
-    this->_value.clear();
+    const int32_t value_error = this->_value.destroy();
     this->_has_expiration = FT_FALSE;
     this->_expiration_timestamp = 0;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (destroy_error);
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    return (value_error);
+}
+
+int32_t kv_store_entry::commit_value(ft_string &value, ft_bool update_expiration,
+    ft_bool has_expiration, int64_t expiration_timestamp) noexcept
+{
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t error_code = this->_value.move(value);
+    if (error_code == FT_ERR_SUCCESS && update_expiration == FT_TRUE)
+    {
+        this->_has_expiration = has_expiration;
+        this->_expiration_timestamp = expiration_timestamp;
+    }
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (error_code);
 }
 
 int32_t kv_store_entry::set_value(const ft_string &value) noexcept
 {
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "kv_store_entry::set_value(const ft_string &)");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    this->_value = value;
-    if (this->_value.c_str() == ft_nullptr)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_NO_MEMORY);
-    }
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
+    ft_string replacement;
+    const int32_t error_code = replacement.initialize(value);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (this->commit_value(replacement, FT_FALSE, FT_FALSE, 0));
 }
 
 int32_t kv_store_entry::set_value(const char *value_string) noexcept
 {
-    ft_string temporary_value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "kv_store_entry::set_value(const char *)");
     if (value_string == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    temporary_value = value_string;
-    if (temporary_value.c_str() == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    return (this->set_value(temporary_value));
+    ft_string replacement;
+    const int32_t error_code = replacement.initialize(value_string);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (this->commit_value(replacement, FT_FALSE, FT_FALSE, 0));
 }
 
 int32_t kv_store_entry::copy_value(ft_string &destination) const noexcept
@@ -334,13 +350,9 @@ int32_t kv_store_entry::copy_value(ft_string &destination) const noexcept
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
     destination = this->_value;
-    if (destination.c_str() == ft_nullptr)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_NO_MEMORY);
-    }
+    const int32_t error_code = destination.get_error();
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
+    return (error_code);
 }
 
 int32_t kv_store_entry::get_value_pointer(const char **value_pointer) const noexcept

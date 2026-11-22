@@ -1,15 +1,14 @@
-#include "file_utils.hpp"
+#include "file_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Compatebility/compatebility_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
-#include "../Observability/observability.hpp"
 #include <cstdio>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static void file_observability_emit(const char *operation, const char *path,
+void file_observability_emit(const char *operation, const char *path,
     ft_observability_trace_phase phase, int32_t error_code,
     ft_size_t bytes_read, ft_size_t bytes_written)
 {
@@ -111,12 +110,19 @@ int32_t file_read_all(const char *path, ft_string &output)
     if (ft_fclose(file_stream) != FT_ERR_SUCCESS && error_code == FT_ERR_SUCCESS)
         error_code = FT_ERR_IO;
     if (error_code == FT_ERR_SUCCESS)
-        error_code = output.assign(content_pointer, file_size);
-    cma_free(content_pointer);
+    {
+        char *previous_buffer;
+
+        error_code = ft_string_take_owned_buffer(output, content_pointer, file_size, &previous_buffer);
+        if (error_code == FT_ERR_SUCCESS)
+            content_pointer = previous_buffer;
+    }
     if (error_code != FT_ERR_SUCCESS)
         file_size = 0;
     file_observability_emit("read_all", path, FT_OBSERVABILITY_TRACE_FINISH,
         error_code, file_size, 0);
+    // The trace resource may point into the output's previous contents.
+    cma_free(content_pointer);
     return (error_code);
 }
 
@@ -154,15 +160,34 @@ int32_t file_write_all(const char *path, const char *data, ft_size_t size)
     return (error_code);
 }
 
+int32_t file_write_all_to_descriptor(int32_t file_descriptor,
+    const char *data, ft_size_t size)
+{
+    ft_size_t total_written;
+    int64_t bytes_written;
+    int32_t error_code;
+
+    if (file_descriptor < 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (data == ft_nullptr && size > 0)
+        return (FT_ERR_INVALID_POINTER);
+    total_written = 0;
+    while (total_written < size)
+    {
+        bytes_written = 0;
+        error_code = cmp_write(file_descriptor, data + total_written,
+                size - total_written, &bytes_written);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        if (bytes_written <= 0)
+            return (FT_ERR_IO);
+        total_written += static_cast<ft_size_t>(bytes_written);
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t file_write_all_atomic(const char *path, const char *data, ft_size_t size)
 {
-    ft_string temporary_path;
-    ft_string *directory_name;
-    int32_t file_descriptor;
-    int32_t error_code;
-    int32_t close_error;
-    ft_size_t bytes_written;
-
     if (path == ft_nullptr || (data == ft_nullptr && size > 0))
     {
         file_observability_emit("write_all_atomic", path,
@@ -171,64 +196,8 @@ int32_t file_write_all_atomic(const char *path, const char *data, ft_size_t size
     }
     file_observability_emit("write_all_atomic", path,
         FT_OBSERVABILITY_TRACE_START, FT_ERR_SUCCESS, 0, 0);
-    error_code = temporary_path.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        file_observability_emit("write_all_atomic", path,
-            FT_OBSERVABILITY_TRACE_FINISH, error_code, 0, 0);
-        return (error_code);
-    }
-    directory_name = file_path_dirname_string(path);
-    if (directory_name == ft_nullptr)
-    {
-        (void)temporary_path.destroy();
-        file_observability_emit("write_all_atomic", path,
-            FT_OBSERVABILITY_TRACE_FINISH, FT_ERR_NO_MEMORY, 0, 0);
-        return (FT_ERR_NO_MEMORY);
-    }
-    file_descriptor = -1;
-    error_code = file_secure_temp_file(directory_name->c_str(), "atomic",
-        &temporary_path, &file_descriptor);
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data);
-        ft_size_t written_total = 0;
-        while (written_total < size)
-        {
-            int64_t written_now = 0;
-            error_code = cmp_write(file_descriptor, bytes + written_total,
-                size - written_total, &written_now);
-            if (error_code != FT_ERR_SUCCESS || written_now <= 0)
-            {
-                if (error_code == FT_ERR_SUCCESS)
-                    error_code = FT_ERR_IO;
-                break;
-            }
-            written_total += static_cast<ft_size_t>(written_now);
-        }
-    }
-    close_error = FT_ERR_SUCCESS;
-    if (file_descriptor >= 0)
-        close_error = cmp_close(file_descriptor);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = close_error;
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)file_delete(temporary_path.c_str());
-        (void)directory_name->destroy();
-        delete directory_name;
-        (void)temporary_path.destroy();
-        file_observability_emit("write_all_atomic", path,
-            FT_OBSERVABILITY_TRACE_FINISH, error_code, 0, 0);
-        return (error_code);
-    }
-    error_code = file_move(temporary_path.c_str(), path);
-    if (error_code != FT_ERR_SUCCESS)
-        (void)file_delete(temporary_path.c_str());
-    (void)directory_name->destroy();
-    delete directory_name;
-    (void)temporary_path.destroy();
-    bytes_written = 0;
+    const int32_t error_code = file_replace_contents(path, data, size, FT_FALSE);
+    ft_size_t bytes_written = 0;
     if (error_code == FT_ERR_SUCCESS)
         bytes_written = size;
     file_observability_emit("write_all_atomic", path,

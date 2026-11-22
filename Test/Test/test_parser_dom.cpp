@@ -268,6 +268,7 @@ FT_TEST(test_json_dom_bridge_rejects_non_object_root)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dom_document.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.read_from_string("{\"old\":{\"item\":\"kept\"}}"));
     root_node = new(std::nothrow) ft_dom_node();
     if (!root_node)
         return (0);
@@ -285,6 +286,45 @@ FT_TEST(test_json_dom_bridge_rejects_non_object_root)
     }
     dom_document.set_root(root_node);
     FT_ASSERT_EQ(FT_ERR_INVALID_STATE, json_document_from_dom(dom_document, document));
+    FT_ASSERT_EQ(0, ft_strcmp(document.get_value_by_pointer("/old/item"), "kept"));
+    return (1);
+}
+
+FT_TEST(test_json_dom_bridge_keeps_negative_numbers_and_failed_conversion_destinations)
+{
+    json_document source;
+    json_document destination;
+    ft_dom_document dom;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, dom.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.read_from_string(
+        "{\"sample\":{\"first\":\"value\",\"number\":-18446744073709551617},\"empty\":{}}"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.read_from_string("{\"old\":{\"item\":\"kept\"}}"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_document_to_dom(source, dom));
+    const ft_dom_node *previous_root = dom.get_root();
+    FT_ASSERT(previous_root != ft_nullptr);
+    const ft_dom_node *first_group = previous_root->get_children()[0];
+    const ft_dom_node *number = first_group->get_children()[1];
+    FT_ASSERT_EQ(0, ft_strcmp(number->get_value().c_str(), "-18446744073709551617"));
+    cma_set_alloc_limit(1U);
+    const int32_t export_error = json_document_to_dom(source, dom);
+    const int32_t import_error = json_document_from_dom(dom, destination);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(export_error != FT_ERR_SUCCESS);
+    FT_ASSERT(import_error != FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(previous_root, dom.get_root());
+    FT_ASSERT_EQ(0, ft_strcmp(destination.get_value_by_pointer("/old/item"), "kept"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_document_from_dom(dom, destination));
+    const json_group *group = destination.get_groups();
+    FT_ASSERT(group != ft_nullptr && group->next != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp(group->items->key, "first"));
+    FT_ASSERT_EQ(0, ft_strcmp(group->next->name, "empty"));
+    FT_ASSERT(group->next->items == ft_nullptr);
+    const json_item *copied = destination.find_item_by_pointer("/sample/number");
+    FT_ASSERT(copied != ft_nullptr && copied->is_big_number);
+    FT_ASSERT_EQ(FT_TRUE, copied->big_number->is_negative());
+    FT_ASSERT_EQ(0, ft_strcmp(copied->value, "-18446744073709551617"));
     return (1);
 }
 

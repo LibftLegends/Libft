@@ -81,11 +81,8 @@ ft_bool api_retry_policy::is_thread_safe() const noexcept
     return (this->_mutex != ft_nullptr);
 }
 
-int32_t api_retry_policy::initialize() noexcept
+void api_retry_policy::clear_values() noexcept
 {
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        this->abort_lifecycle_error("api_retry_policy::initialize",
-            "initialize called on initialised instance");
     this->_max_attempts = 0;
     this->_initial_delay_ms = 0;
     this->_max_delay_ms = 0;
@@ -93,30 +90,35 @@ int32_t api_retry_policy::initialize() noexcept
     this->_circuit_breaker_threshold = 0;
     this->_circuit_breaker_cooldown_ms = 0;
     this->_circuit_breaker_half_open_successes = 0;
+    return ;
+}
+
+int32_t api_retry_policy::initialize() noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        this->abort_lifecycle_error("api_retry_policy::initialize",
+            "initialize called on initialised instance");
+    this->clear_values();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
 int32_t api_retry_policy::initialize(const api_retry_policy &other) noexcept
 {
-    int32_t destroy_result;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        this->abort_lifecycle_error("api_retry_policy::initialize(copy)",
+        other.abort_lifecycle_error("api_retry_policy::initialize(copy)",
             "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_result = this->destroy();
-        if (destroy_result != FT_ERR_SUCCESS)
-            return (destroy_result);
-    }
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
-    }
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
     this->_max_attempts = other._max_attempts;
     this->_initial_delay_ms = other._initial_delay_ms;
     this->_max_delay_ms = other._max_delay_ms;
@@ -124,63 +126,33 @@ int32_t api_retry_policy::initialize(const api_retry_policy &other) noexcept
     this->_circuit_breaker_threshold = other._circuit_breaker_threshold;
     this->_circuit_breaker_cooldown_ms = other._circuit_breaker_cooldown_ms;
     this->_circuit_breaker_half_open_successes = other._circuit_breaker_half_open_successes;
+    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
 int32_t api_retry_policy::initialize(api_retry_policy &&other) noexcept
 {
-    int32_t destroy_result;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        this->abort_lifecycle_error("api_retry_policy::initialize(move)",
-            "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_result = this->destroy();
-        if (destroy_result != FT_ERR_SUCCESS)
-            return (destroy_result);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_SUCCESS);
-    }
-    this->_max_attempts = other._max_attempts;
-    this->_initial_delay_ms = other._initial_delay_ms;
-    this->_max_delay_ms = other._max_delay_ms;
-    this->_backoff_multiplier = other._backoff_multiplier;
-    this->_circuit_breaker_threshold = other._circuit_breaker_threshold;
-    this->_circuit_breaker_cooldown_ms = other._circuit_breaker_cooldown_ms;
-    this->_circuit_breaker_half_open_successes = other._circuit_breaker_half_open_successes;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    other._max_attempts = 0;
-    other._initial_delay_ms = 0;
-    other._max_delay_ms = 0;
-    other._backoff_multiplier = 0;
-    other._circuit_breaker_threshold = 0;
-    other._circuit_breaker_cooldown_ms = 0;
-    other._circuit_breaker_half_open_successes = 0;
-    other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    const int32_t initialize_error = this->initialize(
+        static_cast<const api_retry_policy &>(other));
+    if (initialize_error != FT_ERR_SUCCESS)
+        return (initialize_error);
+    const int32_t destroy_error = other.destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (destroy_error);
 }
 
 int32_t api_retry_policy::destroy() noexcept
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    (void)this->disable_thread_safety();
-    this->_max_attempts = 0;
-    this->_initial_delay_ms = 0;
-    this->_max_delay_ms = 0;
-    this->_backoff_multiplier = 0;
-    this->_circuit_breaker_threshold = 0;
-    this->_circuit_breaker_cooldown_ms = 0;
-    this->_circuit_breaker_half_open_successes = 0;
+    const int32_t destroy_error = this->disable_thread_safety();
+    this->clear_values();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (destroy_error);
 }
 
 uint32_t api_retry_policy::move(api_retry_policy &other) noexcept
@@ -190,164 +162,118 @@ uint32_t api_retry_policy::move(api_retry_policy &other) noexcept
 
 void api_retry_policy::reset() noexcept
 {
+    if (this->_mutex == ft_nullptr)
+    {
+        this->clear_values();
+        return ;
+    }
     if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return ;
-    this->_max_attempts = 0;
-    this->_initial_delay_ms = 0;
-    this->_max_delay_ms = 0;
-    this->_backoff_multiplier = 0;
-    this->_circuit_breaker_threshold = 0;
-    this->_circuit_breaker_cooldown_ms = 0;
-    this->_circuit_breaker_half_open_successes = 0;
+    this->clear_values();
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return ;
 }
 
-void api_retry_policy::set_max_attempts(int32_t value) noexcept
+void api_retry_policy::write_value(int32_t &field, int32_t value) noexcept
 {
+    if (this->_mutex == ft_nullptr)
+    {
+        field = value;
+        return ;
+    }
     if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return ;
-    this->_max_attempts = value;
+    field = value;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return ;
+}
+
+int32_t api_retry_policy::read_value(const int32_t &field) const noexcept
+{
+    if (this->_mutex == ft_nullptr)
+        return (field);
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (0);
+    const int32_t value = field;
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (value);
+}
+
+void api_retry_policy::set_max_attempts(int32_t value) noexcept
+{
+    this->write_value(this->_max_attempts, value);
     return ;
 }
 
 void api_retry_policy::set_initial_delay_ms(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_initial_delay_ms = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_initial_delay_ms, value);
     return ;
 }
 
 void api_retry_policy::set_max_delay_ms(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_max_delay_ms = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_max_delay_ms, value);
     return ;
 }
 
 void api_retry_policy::set_backoff_multiplier(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_backoff_multiplier = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_backoff_multiplier, value);
     return ;
 }
 
 void api_retry_policy::set_circuit_breaker_threshold(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_circuit_breaker_threshold = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_circuit_breaker_threshold, value);
     return ;
 }
 
 void api_retry_policy::set_circuit_breaker_cooldown_ms(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_circuit_breaker_cooldown_ms = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_circuit_breaker_cooldown_ms, value);
     return ;
 }
 
 void api_retry_policy::set_circuit_breaker_half_open_successes(int32_t value) noexcept
 {
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return ;
-    this->_circuit_breaker_half_open_successes = value;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    this->write_value(this->_circuit_breaker_half_open_successes, value);
     return ;
 }
 
 int32_t api_retry_policy::get_max_attempts() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_max_attempts;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_max_attempts));
 }
 
 int32_t api_retry_policy::get_initial_delay_ms() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_initial_delay_ms;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_initial_delay_ms));
 }
 
 int32_t api_retry_policy::get_max_delay_ms() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_max_delay_ms;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_max_delay_ms));
 }
 
 int32_t api_retry_policy::get_backoff_multiplier() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_backoff_multiplier;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_backoff_multiplier));
 }
 
 int32_t api_retry_policy::get_circuit_breaker_threshold() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_circuit_breaker_threshold;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_circuit_breaker_threshold));
 }
 
 int32_t api_retry_policy::get_circuit_breaker_cooldown_ms() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_circuit_breaker_cooldown_ms;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_circuit_breaker_cooldown_ms));
 }
 
 int32_t api_retry_policy::get_circuit_breaker_half_open_successes() const noexcept
 {
-    int32_t value;
-
-    value = 0;
-    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
-        return (0);
-    value = this->_circuit_breaker_half_open_successes;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (value);
+    return (this->read_value(this->_circuit_breaker_half_open_successes));
 }
 
 #ifdef LIBFT_TEST_BUILD

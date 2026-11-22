@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Encoding/encoding.hpp"
+#include "../../Modules/Compression/compression.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
@@ -28,6 +29,48 @@ FT_TEST(test_encoding_base64_roundtrip)
     FT_ASSERT_EQ(0, ft_memcmp(input, decoded, decoded_size));
     cma_free(encoded);
     cma_free(decoded);
+    return (1);
+}
+
+FT_TEST(test_encoding_and_compression_base64_agree_on_binary_payloads)
+{
+    uint8_t input[260];
+    uint32_t random_state = 63231U;
+    ft_size_t index = 0;
+    while (index < sizeof(input))
+    {
+        random_state = random_state * 1664525U + 1013904223U;
+        input[index] = static_cast<uint8_t>(random_state >> 24U);
+        ++index;
+    }
+    ft_size_t input_size = 1;
+    while (input_size <= sizeof(input))
+    {
+        std::size_t compression_size = 0;
+        unsigned char *compression_encoded = ft_base64_encode(input, input_size, &compression_size);
+        char *encoding_encoded = encoding_base64_encode(input, input_size);
+        FT_ASSERT(compression_encoded != ft_nullptr);
+        FT_ASSERT(encoding_encoded != ft_nullptr);
+        FT_ASSERT_EQ(compression_size, ft_strlen_size_t(encoding_encoded));
+        FT_ASSERT_EQ(0, ft_memcmp(compression_encoded, encoding_encoded, compression_size));
+        ft_size_t encoding_decoded_size = 0;
+        std::size_t compression_decoded_size = 0;
+        uint8_t *encoding_decoded = encoding_base64_decode(
+            reinterpret_cast<const char *>(compression_encoded), compression_size, &encoding_decoded_size);
+        unsigned char *compression_decoded = ft_base64_decode(
+            reinterpret_cast<const unsigned char *>(encoding_encoded), compression_size, &compression_decoded_size);
+        FT_ASSERT(encoding_decoded != ft_nullptr);
+        FT_ASSERT(compression_decoded != ft_nullptr);
+        FT_ASSERT_EQ(input_size, encoding_decoded_size);
+        FT_ASSERT_EQ(input_size, compression_decoded_size);
+        FT_ASSERT_EQ(0, ft_memcmp(input, encoding_decoded, input_size));
+        FT_ASSERT_EQ(0, ft_memcmp(input, compression_decoded, input_size));
+        cma_free(compression_decoded);
+        cma_free(encoding_decoded);
+        cma_free(encoding_encoded);
+        cma_free(compression_encoded);
+        ++input_size;
+    }
     return (1);
 }
 
@@ -62,6 +105,47 @@ FT_TEST(test_encoding_base64url_decode_rejects_standard_alphabet)
     FT_ASSERT(decoded == ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, encoding_get_error());
     FT_ASSERT_EQ(0, decoded_size);
+    return (1);
+}
+
+FT_TEST(test_encoding_base64url_mixed_full_groups_and_short_tails)
+{
+    const uint8_t input[] = {0x00U, 0xFFU, 0xFBU, 0xFFU, 0xFFU};
+    const char *const unpadded[] = {"AP_7", "AP_7_w", "AP_7__8"};
+    const char *const padded[] = {"AP_7", "AP_7_w==", "AP_7__8="};
+    ft_size_t length = 3U;
+    while (length <= sizeof(input))
+    {
+        char *short_text = encoding_base64url_encode(input, length, FT_FALSE);
+        char *padded_text = encoding_base64url_encode(input, length, FT_TRUE);
+        FT_ASSERT(short_text != ft_nullptr);
+        FT_ASSERT(padded_text != ft_nullptr);
+        FT_ASSERT_EQ(0, ft_strcmp(short_text, unpadded[length - 3U]));
+        FT_ASSERT_EQ(0, ft_strcmp(padded_text, padded[length - 3U]));
+        ft_size_t decoded_size = 0U;
+        uint8_t *decoded = encoding_base64url_decode(short_text,
+                ft_strlen_size_t(short_text), &decoded_size);
+        FT_ASSERT(decoded != ft_nullptr);
+        FT_ASSERT_EQ(length, decoded_size);
+        FT_ASSERT_EQ(0, ft_memcmp(input, decoded, decoded_size));
+        cma_free(decoded);
+        cma_free(padded_text);
+        cma_free(short_text);
+        ++length;
+    }
+    return (1);
+}
+
+FT_TEST(test_encoding_base64_rejects_non_ascii_and_excess_padding)
+{
+    const char non_ascii[] = {'A', 'A', static_cast<char>(0xFF), '='};
+    ft_size_t decoded_size = 10U;
+    FT_ASSERT(encoding_base64_decode(non_ascii, sizeof(non_ascii), &decoded_size)
+        == ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, encoding_get_error());
+    FT_ASSERT_EQ(0U, decoded_size);
+    FT_ASSERT(encoding_base64_decode("AAAAA===", 8U, &decoded_size) == ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, encoding_get_error());
     return (1);
 }
 
@@ -133,6 +217,19 @@ FT_TEST(test_encoding_percent_decode_rejects_short_escape)
     return (1);
 }
 
+FT_TEST(test_encoding_percent_decode_preserves_literal_and_escaped_binary_bytes)
+{
+    const char input[] = {'a', '+', '\0', '%', '0', '0', '%', 'f', 'F', '~'};
+    const uint8_t expected[] = {'a', '+', 0U, 0U, 0xFFU, '~'};
+    ft_size_t decoded_size = 0U;
+    uint8_t *decoded = encoding_percent_decode(input, sizeof(input), &decoded_size);
+    FT_ASSERT(decoded != ft_nullptr);
+    FT_ASSERT_EQ(sizeof(expected), decoded_size);
+    FT_ASSERT_EQ(0, ft_memcmp(decoded, expected, decoded_size));
+    cma_free(decoded);
+    return (1);
+}
+
 FT_TEST(test_encoding_utf8_validate_accepts_valid_text)
 {
     const char *input;
@@ -150,6 +247,17 @@ FT_TEST(test_encoding_utf8_validate_rejects_invalid_text)
 
     FT_ASSERT(encoding_utf8_validate(invalid_input, 3) != FT_ERR_SUCCESS);
     FT_ASSERT(encoding_get_error() != FT_ERR_SUCCESS);
+    return (1);
+}
+
+FT_TEST(test_encoding_utf8_validate_keeps_span_and_error_contract)
+{
+    const char input[] = {'A', '\0', static_cast<char>(0xC3), static_cast<char>(0xA9)};
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, encoding_utf8_validate(ft_nullptr, 1U));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, encoding_utf8_validate(input, 3U));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, encoding_get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoding_utf8_validate(input, sizeof(input)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoding_utf8_validate(ft_nullptr, 0U));
     return (1);
 }
 

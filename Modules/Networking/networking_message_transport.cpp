@@ -1020,7 +1020,6 @@ static ft_bool networking_message_record_packet(
     uint64_t packet_number) noexcept
 {
     uint32_t index;
-    uint32_t insert_index;
 
     index = 0U;
     while (index < connection.received_range_count)
@@ -1028,8 +1027,7 @@ static ft_bool networking_message_record_packet(
         networking_ack_range &range = connection.received_ranges[index];
         if (packet_number >= range.start && packet_number <= range.end)
             return (FT_FALSE);
-        if (packet_number != static_cast<uint64_t>(-1)
-            && packet_number == range.end + 1U)
+        if (packet_number > range.end && packet_number - range.end == 1U)
         {
             range.end = packet_number;
             if (index != 0U
@@ -1064,12 +1062,12 @@ static ft_bool networking_message_record_packet(
             }
             return (FT_TRUE);
         }
+        if (packet_number > range.end)
+            break ;
         index += 1U;
     }
-    insert_index = 0U;
-    while (insert_index < connection.received_range_count
-        && connection.received_ranges[insert_index].start > packet_number)
-        insert_index += 1U;
+    // Ranges are ordered newest first, so index is also the insertion point.
+    const uint32_t insert_index = index;
     if (connection.received_range_count < NETWORKING_MESSAGE_ACK_RANGE_LIMIT)
     {
         if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_ACK_RANGE_GROWTH)
@@ -1110,8 +1108,9 @@ static ft_bool networking_message_packet_is_recorded(
     index = 0U;
     while (index < connection.received_range_count)
     {
-        if (packet_number >= connection.received_ranges[index].start
-            && packet_number <= connection.received_ranges[index].end)
+        if (packet_number > connection.received_ranges[index].end)
+            return (FT_FALSE);
+        if (packet_number >= connection.received_ranges[index].start)
             return (FT_TRUE);
         index += 1U;
     }

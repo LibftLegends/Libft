@@ -90,14 +90,14 @@ normal:
 
 analytics:
 	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
-		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
-		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=build/archives/Full_Libft_analytics.a \
+		DEBUG_TARGET=build/archives/Full_Libft_analytics_debug.a \
 		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-all
 
 analytics-debug:
 	@$(MAKE) --no-print-directory FT_VOX_ANALYTICS=1 BUILD_OUTPUT_SUFFIX=_analytics \
-		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=Full_Libft_analytics.a \
-		DEBUG_TARGET=Full_Libft_analytics_debug.a \
+		LIBFT_ARCHIVE_SUFFIX=_analytics TARGET=build/archives/Full_Libft_analytics.a \
+		DEBUG_TARGET=build/archives/Full_Libft_analytics_debug.a \
 		COMPILE_FLAGS="$(COMPILE_FLAGS) -DLIBFT_ENABLE_ANALYTICS=1" internal-debug
 
 plan:
@@ -469,9 +469,9 @@ clean:
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
 		Test/libft_test_objects.a Test/libft_test_debug_objects.a \
-		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
-		Full_Libft_analytics_debug.a \
-		$(wildcard Modules/*/*.a.config* Test/*.a.config* Full_Libft*.a.config*)
+		$(LIBFT_GLOBAL_Template_TARGET) build/archives/Full_Libft_analytics.a \
+		build/archives/Full_Libft_analytics_debug.a \
+		$(wildcard Modules/*/*.a.config* Test/*.a.config* build/archives/Full_Libft*.a.config*)
 
 fclean:
 	@$(RMDIR) build/libft
@@ -480,9 +480,9 @@ fclean:
 		$(LIBFT_GLOBAL_TEST_ARCHIVES) $(LIBFT_GLOBAL_TARGET) \
 		$(LIBFT_GLOBAL_DEBUG_TARGET) $(LIBFT_GLOBAL_TEST_TARGET) \
 		$(LIBFT_GLOBAL_TEST_EXECUTABLE) $(LIBFT_GLOBAL_TEST_DEBUG_EXECUTABLE) \
-		$(LIBFT_GLOBAL_Template_TARGET) Full_Libft_analytics.a \
-		Full_Libft_analytics_debug.a \
-		$(wildcard Modules/*/*.a.config* Test/*.a.config* Full_Libft*.a.config*)
+		$(LIBFT_GLOBAL_Template_TARGET) build/archives/Full_Libft_analytics.a \
+		build/archives/Full_Libft_analytics_debug.a \
+		$(wildcard Modules/*/*.a.config* Test/*.a.config* build/archives/Full_Libft*.a.config*)
 
 .PHONY: all normal analytics analytics-debug plan internal-all internal-debug global-all global-debug global-tests debug both template demo re re-tests tests internal-tests test-executable run-tests debug-tests performance_benchmarks Efficiency internal-performance run_performance_benchmarks run_Efficiency archive-integrity archive-members-check crypto-review crypto-assembly-review crypto-timing-review incremental-build-tests agents-policy-scan test-coverage-manifest print-build-mode format sanitize-clean networking-fuzz crypto-fuzz crypto-sha-fuzz crypto-aead-fuzz crypto-x25519-fuzz crypto-hmac-hkdf-fuzz crypto-session-fuzz crypto-x25519-million networking-simulator-fuzz networking-nat-fuzz networking-handshake-fuzz networking-reassembly-fuzz networking-codec-fuzz networking-ack-state-fuzz networking-encrypted-fuzz networking-state-machine-fuzz terrain-persistence-tests crypto-tests networking-message-tests networking-netem-tests networking-performance-baseline networking-namespace-netem-tests networking-soak \
           run-debug-tests run-asan-tests run-ubsan-tests run-asan-ubsan-tests \

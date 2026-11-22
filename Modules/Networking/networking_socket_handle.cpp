@@ -8,13 +8,51 @@
 #include "../PThread/recursive_mutex.hpp"
 #ifdef _WIN32
 # include <winsock2.h>
-# include <ws2tcpip.h>
-# include <io.h>
+# include <windows.h>
 #else
+# include <fcntl.h>
 # include <unistd.h>
-# include <sys/socket.h>
-# include <errno.h>
+# include <cerrno>
 #endif
+
+static int32_t socket_handle_duplicate(int32_t source_descriptor, int32_t &descriptor)
+{
+#ifdef _WIN32
+    const int32_t startup_error = ft_socket_runtime_acquire();
+    if (startup_error != FT_ERR_SUCCESS)
+        return (startup_error);
+    WSAPROTOCOL_INFOW protocol_info;
+    if (WSADuplicateSocketW(static_cast<SOCKET>(source_descriptor),
+            GetCurrentProcessId(), &protocol_info) != 0)
+    {
+        ft_socket_runtime_release();
+        return (FT_ERR_SOCKET_CREATION_FAILED);
+    }
+    const SOCKET duplicate = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
+        FROM_PROTOCOL_INFO, &protocol_info, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (duplicate == INVALID_SOCKET)
+    {
+        ft_socket_runtime_release();
+        return (FT_ERR_SOCKET_CREATION_FAILED);
+    }
+    if (duplicate > static_cast<SOCKET>(FT_INT32_MAX))
+    {
+        closesocket(duplicate);
+        ft_socket_runtime_release();
+        return (FT_ERR_OUT_OF_RANGE);
+    }
+    descriptor = static_cast<int32_t>(duplicate);
+#else
+    do
+    {
+        descriptor = fcntl(source_descriptor, F_DUPFD_CLOEXEC, 0);
+    }
+    while (descriptor < 0 && errno == EINTR);
+    if (descriptor < 0)
+        return (FT_ERR_SOCKET_CREATION_FAILED);
+#endif
+    return (FT_ERR_SUCCESS);
+}
 
 #ifdef _WIN32
 static std::mutex &ft_socket_runtime_mutex()
@@ -62,24 +100,46 @@ int32_t ft_socket_handle::initialize(const ft_socket_handle &other) noexcept
             "ft_socket_handle::initialize(const ft_socket_handle &)",
             "source is uninitialised");
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)this->destroy();
+    {
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
+    }
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    this->_socket_fd = other._socket_fd;
+    if (other._socket_fd >= 0)
+    {
+        const int32_t duplicate_error = socket_handle_duplicate(other._socket_fd,
+            this->_socket_fd);
+        if (duplicate_error != FT_ERR_SUCCESS)
+        {
+            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            return (duplicate_error);
+        }
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
 int32_t ft_socket_handle::initialize(ft_socket_handle &&other) noexcept
 {
-    int32_t initialize_error;
-
-    initialize_error = this->initialize(other);
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+        errno_abort_lifecycle(other._initialised_state,
+            "ft_socket_handle::initialize(ft_socket_handle &&)",
+            "source is uninitialised");
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
+    }
+    this->_socket_fd = other._socket_fd;
+    this->_initialised_state = other._initialised_state;
     other._socket_fd = -1;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
@@ -99,28 +159,23 @@ int32_t ft_socket_handle::destroy() noexcept
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
-    (void)this->close();
+    const ft_bool closed = this->close();
+    this->_socket_fd = -1;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (!closed)
+        return (FT_ERR_SOCKET_CLOSE_FAILED);
     return (FT_ERR_SUCCESS);
 }
 
 ft_bool ft_socket_handle::reset(int32_t socket_fd)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_socket_handle::reset");
-    if (socket_fd < 0)
-    {
-        if (!this->close())
-            return (FT_FALSE);
+    if (socket_fd == this->_socket_fd)
         return (FT_TRUE);
-    }
-    if (this->_socket_fd >= 0)
-    {
-        if (!this->close())
-        {
-            return (FT_FALSE);
-        }
-    }
-    this->_socket_fd = socket_fd;
+    if (!this->close())
+        return (FT_FALSE);
+    if (socket_fd >= 0)
+        this->_socket_fd = socket_fd;
     return (FT_TRUE);
 }
 

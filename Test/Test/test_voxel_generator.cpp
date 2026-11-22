@@ -4,11 +4,21 @@
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
 #include "../../Modules/Voxel/voxel_api.hpp"
+#include "../../Modules/Voxel/voxel_internal.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Compatebility/compatebility_internal.hpp"
 #include <stdio.h>
 #include <cerrno>
+
+static_assert(voxel_floor_div(-17, 16) == -2);
+static_assert(voxel_floor_div(-16, 16) == -1);
+static_assert(voxel_floor_div(17, 16) == 1);
+static_assert(voxel_mix_u64(1U) == UINT64_C(0x5692161D100B05E5));
+static_assert(voxel_lerp(2.0, 6.0, 0.5) > 3.99
+    && voxel_lerp(2.0, 6.0, 0.5) < 4.01);
+static_assert(voxel_smooth_factor(0.25) > 0.156
+    && voxel_smooth_factor(0.25) < 0.157);
 
 static int32_t test_voxel_surface_height(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept

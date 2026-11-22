@@ -13,6 +13,8 @@ int64_t su_write(int32_t file_descriptor, const void *buffer,
             ft_size_t count);
 
 int32_t errno_write_stderr(const char *string) noexcept;
+int32_t errno_write_stderr_fragments(const char *const *fragments,
+            ft_size_t fragment_count) noexcept;
 
 void    errno_abort_if_uninitialised_or_destroyed(uint8_t initialised_state,
             const char *method_name);

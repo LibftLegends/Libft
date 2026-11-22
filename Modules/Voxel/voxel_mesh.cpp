@@ -395,10 +395,27 @@ static void chunk_mesh_make_rectangle_vertices(chunk_mesh_vertex vertices[4],
     return ;
 }
 
-static int32_t chunk_mesh_push_index(chunk_mesh &mesh,
-    uint32_t index_value) noexcept
+static int32_t chunk_mesh_append_quad_indices(chunk_mesh &mesh,
+    uint32_t base_vertex, uint32_t block_id) noexcept
 {
-    return (mesh.indices.push_back(index_value));
+    static constexpr uint32_t OFFSETS[] = {0U, 1U, 2U, 0U, 2U, 3U};
+    ft_vector<uint32_t> *partition = &mesh.solid_indices;
+    ft_size_t index = 0U;
+
+    if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+        partition = &mesh.water_indices;
+    while (index < sizeof(OFFSETS) / sizeof(OFFSETS[0]))
+    {
+        const uint32_t vertex_index = base_vertex + OFFSETS[index];
+        int32_t error_code = mesh.indices.push_back(vertex_index);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = partition->push_back(vertex_index);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t chunk_mesh_emit_rectangle(chunk_mesh &mesh, int32_t axis_value,
@@ -430,22 +447,7 @@ static int32_t chunk_mesh_emit_rectangle(chunk_mesh &mesh, int32_t axis_value,
     error_code = mesh.vertices.push_back(vertices[3]);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = chunk_mesh_push_index(mesh, base_vertex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = chunk_mesh_push_index(mesh, base_vertex + 1U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = chunk_mesh_push_index(mesh, base_vertex + 2U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = chunk_mesh_push_index(mesh, base_vertex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = chunk_mesh_push_index(mesh, base_vertex + 2U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_push_index(mesh, base_vertex + 3U));
+    return (chunk_mesh_append_quad_indices(mesh, base_vertex, block_id));
 }
 
 static void chunk_mesh_plane_dimensions(chunk_mesh_face face,
@@ -1024,44 +1026,6 @@ static int32_t chunk_mesh_emit_visible_faces(chunk_mesh &mesh,
         light_lookup, light_user_data, chunk_x, chunk_z, bounds));
 }
 
-static int32_t chunk_mesh_partition_indices(chunk_mesh &mesh) noexcept
-{
-    ft_vector<uint32_t> *destination;
-    uint32_t vertex_index;
-    ft_size_t index;
-    int32_t error_code;
-
-    mesh.solid_indices.clear();
-    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.solid_indices.get_error());
-    mesh.water_indices.clear();
-    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.water_indices.get_error());
-    mesh.solid_indices.reserve(mesh.indices.size());
-    if (mesh.solid_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.solid_indices.get_error());
-    mesh.water_indices.reserve(mesh.indices.size());
-    if (mesh.water_indices.get_error() != FT_ERR_SUCCESS)
-        return (mesh.water_indices.get_error());
-    index = 0U;
-    while (index < mesh.indices.size())
-    {
-        vertex_index = mesh.indices[index];
-        if (vertex_index >= mesh.vertices.size())
-            return (FT_ERR_INVALID_ARGUMENT);
-        if (mesh.vertices[vertex_index].block_id
-            == VOXEL_GENERATOR_WATER_BLOCK)
-            destination = &mesh.water_indices;
-        else
-            destination = &mesh.solid_indices;
-        error_code = destination->push_back(vertex_index);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        index += 1U;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
 struct chunk_mesh_primitive
 {
     uint32_t base_vertex;
@@ -1305,22 +1269,8 @@ static int32_t chunk_mesh_append_primitive(chunk_mesh &destination,
         vertex_offset += 1U;
     }
     chunk_mesh_update_occupied_bounds(destination, vertices);
-    error_code = destination.indices.push_back(destination_base);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = destination.indices.push_back(destination_base + 1U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = destination.indices.push_back(destination_base + 2U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = destination.indices.push_back(destination_base);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = destination.indices.push_back(destination_base + 2U);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (destination.indices.push_back(destination_base + 3U));
+    return (chunk_mesh_append_quad_indices(destination, destination_base,
+        primitive.block_id));
 }
 
 int32_t chunk_mesh_replace_in_bounds(chunk_mesh &mesh,
@@ -1404,8 +1354,6 @@ int32_t chunk_mesh_replace_in_bounds(chunk_mesh &mesh,
                 primitive);
         primitive_offset += 6U;
     }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = chunk_mesh_partition_indices(merged);
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)chunk_mesh_destroy(merged);
@@ -1454,9 +1402,7 @@ int32_t chunk_mesh_generate_from_chunk(chunk_mesh &mesh,
     chunk_mesh_reset_occupied_bounds(mesh);
     error_code = chunk_mesh_emit_visible_faces(mesh, chunk, nullptr, nullptr,
         nullptr, 0, 0, nullptr);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    return (error_code);
 }
 
 int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
@@ -1475,9 +1421,7 @@ int32_t chunk_mesh_generate_from_chunk_with_light(chunk_mesh &mesh,
     chunk_mesh_reset_occupied_bounds(mesh);
     error_code = chunk_mesh_emit_visible_faces(mesh, chunk, &light, nullptr,
         nullptr, 0, 0, nullptr);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    return (error_code);
 }
 
 int32_t chunk_mesh_generate_from_chunk_in_bounds(chunk_mesh &mesh,
@@ -1499,9 +1443,7 @@ int32_t chunk_mesh_generate_from_chunk_in_bounds(chunk_mesh &mesh,
     chunk_mesh_reset_occupied_bounds(mesh);
     error_code = chunk_mesh_emit_visible_faces(mesh, chunk, nullptr, nullptr,
         nullptr, 0, 0, &bounds);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    return (error_code);
 }
 
 int32_t chunk_mesh_generate_from_chunk_with_light_in_bounds(
@@ -1524,9 +1466,7 @@ int32_t chunk_mesh_generate_from_chunk_with_light_in_bounds(
     chunk_mesh_reset_occupied_bounds(mesh);
     error_code = chunk_mesh_emit_visible_faces(mesh, chunk, &light, nullptr,
         nullptr, 0, 0, &bounds);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    return (error_code);
 }
 
 int32_t chunk_mesh_apply_light(chunk_mesh &mesh,
@@ -1810,9 +1750,7 @@ static int32_t chunk_mesh_generate_from_chunk_with_neighbors_and_light_lookup_in
     ctx.light_user_data = light_user_data;
     ctx.bounds = bounds;
     error_code = chunk_mesh_emit_visible_faces_nb(mesh, ctx);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (chunk_mesh_partition_indices(mesh));
+    return (error_code);
 }
 
 int32_t chunk_mesh_generate_from_chunk_with_neighbors_and_light_lookup(

@@ -36,12 +36,7 @@ int32_t ft_strncpy_s(char *destination, ft_size_t destination_size,
         zero_buffer(destination, destination_size);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    ft_size_t index = 0;
-    while (index < source_length)
-    {
-        destination[index] = source[index];
-        ++index;
-    }
-    destination[index] = '\0';
+    (void)ft_memcpy(destination, source, source_length);
+    destination[source_length] = '\0';
     return (FT_ERR_SUCCESS);
 }

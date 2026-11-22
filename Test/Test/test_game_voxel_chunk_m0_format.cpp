@@ -114,6 +114,54 @@ FT_TEST(test_game_voxel_chunk_revision_changes_only_for_player_changes)
     return (1);
 }
 
+FT_TEST(test_game_voxel_chunk_override_batches_preserve_format)
+{
+    game_voxel_chunk source;
+    game_voxel_chunk restored;
+    ft_byte_buffer buffer;
+    ft_byte_buffer duplicate;
+    uint32_t index;
+    uint32_t block_id;
+    ft_size_t tail_offset;
+    constexpr uint32_t OVERRIDE_COUNT = 70U;
+    constexpr uint32_t RECORD_BYTES = 10U;
+    const uint8_t first_record[RECORD_BYTES] = {
+        0U, 0U, 0U, 0U, 0U, 0U, 0x04U, 0x03U, 0x02U, 0x01U};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize());
+    index = 0U;
+    while (index < OVERRIDE_COUNT)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.write_block(
+            static_cast<int32_t>(index % GAME_VOXEL_CHUNK_WIDTH), 0,
+            static_cast<int32_t>(index / GAME_VOXEL_CHUNK_WIDTH), 0x01020304U));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize(buffer));
+    tail_offset = buffer.size() - OVERRIDE_COUNT * RECORD_BYTES;
+    index = 0U;
+    while (index < RECORD_BYTES)
+    {
+        FT_ASSERT_EQ(first_record[index], buffer.data()[tail_offset + index]);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(buffer));
+    FT_ASSERT_EQ(OVERRIDE_COUNT, restored.get_player_override_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.read_block(5, 0, 4, &block_id));
+    FT_ASSERT_EQ(0x01020304U, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate.append(buffer.data(),
+        buffer.size() - RECORD_BYTES));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate.append(first_record, RECORD_BYTES));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, restored.deserialize(duplicate));
+    FT_ASSERT_EQ(OVERRIDE_COUNT, restored.get_player_override_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.read_block(5, 0, 4, &block_id));
+    FT_ASSERT_EQ(0x01020304U, block_id);
+    return (1);
+}
+
 FT_TEST(test_game_voxel_chunk_migrates_version_four_history)
 {
     game_voxel_chunk source_chunk;

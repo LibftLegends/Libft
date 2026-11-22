@@ -6,6 +6,18 @@
 #ifndef LIBFT_TEST_BUILD
 #endif
 
+FT_TEST(test_basic_memchr_large_unaligned_slice)
+{
+    uint8_t bytes[65] = {};
+
+    bytes[32U] = 0xFEU;
+    bytes[63U] = 0xFEU;
+    FT_ASSERT_EQ(bytes + 32U, ft_memchr(bytes + 1U, 0x1FE, 63U));
+    FT_ASSERT_EQ(bytes + 63U, ft_memchr(bytes + 33U, 0x1FE, 31U));
+    FT_ASSERT_EQ(ft_nullptr, ft_memchr(bytes + 33U, 0x1FE, 30U));
+    return (1);
+}
+
 FT_TEST(test_basic_memchr_found)
 {
     char buffer[4];

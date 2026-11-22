@@ -27,6 +27,7 @@ typedef void (*ft_networking_observability_exporter)(const ft_networking_observa
 
 int32_t observability_networking_metrics_initialize(ft_networking_observability_exporter exporter);
 int32_t observability_networking_metrics_shutdown(void);
+ft_bool observability_networking_metrics_is_active(void);
 int32_t observability_networking_metrics_record(const ft_networking_observability_sample &sample);
 int32_t observability_networking_metrics_enable_thread_safety(void);
 int32_t observability_networking_metrics_disable_thread_safety(void);

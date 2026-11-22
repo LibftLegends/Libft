@@ -13,7 +13,10 @@
 #include "../Threading/thread.hpp"
 #include "../PThread/pthread.hpp"
 #include "../Compatebility/sqlite_support.hpp"
+#include <atomic>
 #include <cstdint>
+
+class ft_countdown_latch;
 
 typedef enum e_kv_store_backend_type
 {
@@ -63,6 +66,9 @@ class kv_store_entry
         int64_t _expiration_timestamp;
         uint8_t _initialised_state;
         mutable pt_recursive_mutex *_mutex;
+        friend class kv_store;
+        int32_t commit_value(ft_string &value, ft_bool update_expiration,
+            ft_bool has_expiration, int64_t expiration_timestamp) noexcept;
     public:
         kv_store_entry() noexcept;
         kv_store_entry(const kv_store_entry &other) noexcept = delete;
@@ -135,9 +141,9 @@ class kv_store
         ft_string _encryption_algorithm_name;
         ft_bool _encryption_enabled;
         kv_store_backend_type _backend_type;
-        ft_bool _background_thread_active;
-        ft_bool _background_stop_requested;
-        int64_t _background_interval_seconds;
+        int64_t _next_expiration;
+        std::atomic<uint32_t> _background_interval_milliseconds;
+        ft_countdown_latch *_background_wake;
         ft_thread _background_thread;
         mutable pt_recursive_mutex *_background_mutex;
         mutable pt_recursive_mutex *_mutex;
@@ -150,13 +156,19 @@ class kv_store
         mutable int64_t _metrics_total_prune_duration_ms;
         mutable int64_t _metrics_last_prune_duration_ms;
         ft_vector<kv_store_replication_sink> _replication_sinks;
+        std::atomic<ft_size_t> _replication_operation_count;
         mutable pt_recursive_mutex *_replication_mutex;
 
         int32_t lock_store(ft_bool *lock_acquired) const noexcept;
         void unlock_store_guard(ft_bool lock_acquired, int32_t error_code) const noexcept;
         int32_t encrypt_value(const ft_string &plain_string, ft_string &encoded_string) const;
         int32_t decrypt_value(const ft_string &encoded_string, ft_string &plain_string) const;
-        int32_t prune_expired_locked();
+        int32_t prune_expired_locked(ft_size_t *lookup_index = ft_nullptr);
+        int32_t apply_set_operation_locked(ft_map<ft_string, kv_store_entry> &data,
+            const kv_store_operation &operation,
+            kv_store_entry *existing_entry);
+        int32_t apply_existing_updates_locked(const ft_vector<kv_store_operation> &operations,
+            ft_size_t operation_count);
         int32_t compute_expiration(int64_t ttl_seconds, ft_bool &has_expiration, int64_t &expiration_timestamp) const;
         int64_t current_time_seconds() const;
         int32_t parse_expiration_timestamp(const char *value_string, int64_t &expiration_timestamp) const;
@@ -165,16 +177,23 @@ class kv_store
         void record_get_hit() const noexcept;
         void record_get_miss() const noexcept;
         void record_prune_metrics(int64_t removed_entries, int64_t duration_ms) const noexcept;
-        int32_t lock_background(ft_bool *lock_acquired) const noexcept;
-        int32_t start_background_thread_locked(int64_t interval_seconds) noexcept;
-        void stop_background_thread_locked(ft_thread &thread_holder) noexcept;
-        static void background_compaction_worker(kv_store *store) noexcept;
+        int32_t start_background_thread_locked(uint32_t interval_milliseconds) noexcept;
+        static void background_compaction_worker(kv_store *store, ft_countdown_latch *wake) noexcept;
         int32_t apply_snapshot_locked(const ft_vector<kv_store_snapshot_entry> &entries);
+        int32_t apply_loaded_snapshot_locked(ft_vector<kv_store_snapshot_entry> &entries);
+        template <typename Entry>
+        int32_t apply_snapshot_entries_locked(Entry *entries, ft_size_t count);
+        int32_t export_snapshot_locked(ft_vector<kv_store_snapshot_entry> &entries) const;
         int32_t load_json_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t parse_json_groups(json_group *group_head, ft_vector<kv_store_snapshot_entry> &out_entries);
-        int32_t flush_json_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
+        int32_t build_json_entries(const ft_vector<kv_store_snapshot_entry> &entries,
+            json_group **output) const;
         int32_t load_json_lines_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t flush_json_lines_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
+        int32_t write_json_lines_descriptor(int32_t descriptor,
+            const ft_vector<kv_store_snapshot_entry> &entries) const;
+        int32_t parse_json_line_record(const char *record,
+            ft_vector<kv_store_snapshot_entry> &entries) const;
 #if SQLITE3_AVAILABLE
         int32_t load_sqlite_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t flush_sqlite_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
@@ -188,12 +207,8 @@ class kv_store
         int32_t lock_replication(ft_bool *lock_acquired) const noexcept;
         int32_t notify_replication_listeners(const ft_vector<kv_store_operation> &operations) const;
         int32_t dispatch_snapshot_to_sink(kv_store_replication_snapshot_callback snapshot_callback, void *user_data) const;
-        int32_t cleanup_partial_initialization(ft_bool data_initialised, ft_bool file_path_initialised,
-            ft_bool encryption_key_initialised, ft_bool encryption_algorithm_name_initialised,
-            ft_bool replication_sinks_initialised, int32_t error_code) noexcept;
-        int32_t cleanup_partial_initialization(ft_bool data_initialised, ft_bool file_path_initialised,
-            ft_bool encryption_key_initialised, ft_bool replication_sinks_initialised,
-            int32_t error_code) noexcept;
+        int32_t initialize_members() noexcept;
+        int32_t copy_configuration_locked(const kv_store &other) noexcept;
 
     public:
         kv_store() noexcept;

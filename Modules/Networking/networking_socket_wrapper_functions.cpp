@@ -67,10 +67,20 @@ static inline int32_t connect_platform(int32_t socket_file_descriptor, const str
     return (0);
 }
 
+static inline ft_bool winsock_length_fits(ft_size_t buffer_length)
+{
+    if (buffer_length <= static_cast<ft_size_t>(FT_INT32_MAX))
+        return (FT_TRUE);
+    WSASetLastError(WSAEMSGSIZE);
+    return (FT_FALSE);
+}
+
 static inline ssize_t send_platform(int32_t socket_file_descriptor, const void *buffer_value, ft_size_t buffer_length, int32_t send_flags)
 {
     int32_t send_result;
 
+    if (!winsock_length_fits(buffer_length))
+        return (-1);
     send_result = ::send(static_cast<SOCKET>(socket_file_descriptor), static_cast<const char *>(buffer_value), static_cast<int32_t>(buffer_length), send_flags);
     if (send_result == SOCKET_ERROR)
         return (-1);
@@ -81,6 +91,8 @@ static inline ssize_t recv_platform(int32_t socket_file_descriptor, void *buffer
 {
     int32_t receive_result;
 
+    if (!winsock_length_fits(buffer_length))
+        return (-1);
     receive_result = ::recv(static_cast<SOCKET>(socket_file_descriptor), static_cast<char *>(buffer_value), static_cast<int32_t>(buffer_length), receive_flags);
     if (receive_result == SOCKET_ERROR)
         return (-1);
@@ -99,6 +111,8 @@ static inline ssize_t sendto_platform(int32_t socket_file_descriptor, const void
 {
     int32_t send_result;
 
+    if (!winsock_length_fits(buffer_length))
+        return (-1);
     send_result = ::sendto(static_cast<SOCKET>(socket_file_descriptor), static_cast<const char *>(buffer_value),
             static_cast<int32_t>(buffer_length), send_flags, destination_address, address_length);
     if (send_result == SOCKET_ERROR)
@@ -111,6 +125,8 @@ static inline ssize_t recvfrom_platform(int32_t socket_file_descriptor, void *bu
 {
     int32_t receive_result;
 
+    if (!winsock_length_fits(buffer_length))
+        return (-1);
     receive_result = ::recvfrom(static_cast<SOCKET>(socket_file_descriptor), static_cast<char *>(buffer_value),
             static_cast<int32_t>(buffer_length), receive_flags, source_address, address_length);
     if (receive_result == SOCKET_ERROR)

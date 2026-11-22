@@ -4,6 +4,8 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
+#include <atomic>
+#include <thread>
 
 #ifndef LIBFT_TEST_BUILD
 #endif
@@ -204,5 +206,64 @@ FT_TEST(test_observability_networking_exporter_runs_outside_internal_lock)
     FT_ASSERT_EQ(1U, g_observability_reentrant_export_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         observability_networking_metrics_disable_thread_safety());
+    return (1);
+}
+
+static std::atomic<uint32_t> g_observability_concurrent_samples{0};
+
+static void observability_concurrent_exporter(const ft_networking_observability_sample &)
+{
+    g_observability_concurrent_samples.fetch_add(1U, std::memory_order_relaxed);
+    return ;
+}
+
+FT_TEST(test_observability_networking_record_can_overlap_reconfiguration)
+{
+    constexpr uint32_t ITERATIONS = 10000U;
+    const ft_networking_observability_sample sample{
+        {"api", "GET", "peer", "/"}, 0, 0, 0, 200, FT_ERR_SUCCESS, "ok", FT_TRUE
+    };
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_disable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
+        observability_networking_metrics_initialize(observability_concurrent_exporter));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, observability_networking_metrics_record(sample));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_enable_thread_safety());
+    FT_ASSERT_EQ(FT_FALSE, observability_networking_metrics_is_active());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_initialize(
+        observability_concurrent_exporter));
+    FT_ASSERT_EQ(FT_TRUE, observability_networking_metrics_is_active());
+    g_observability_concurrent_samples.store(0U, std::memory_order_relaxed);
+    std::atomic<ft_bool> started{FT_FALSE};
+    std::atomic<ft_bool> valid_results{FT_TRUE};
+    std::thread writer([&sample, &started, &valid_results]()
+    {
+        (void)observability_networking_metrics_record(sample);
+        started.store(FT_TRUE, std::memory_order_release);
+        uint32_t index = 0;
+        while (index < ITERATIONS)
+        {
+            const int32_t result = observability_networking_metrics_record(sample);
+            if (result != FT_ERR_SUCCESS && result != FT_ERR_INVALID_STATE)
+                valid_results.store(FT_FALSE, std::memory_order_relaxed);
+            ++index;
+        }
+        return ;
+    });
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    uint32_t index = 0;
+    while (index < ITERATIONS)
+    {
+        (void)observability_networking_metrics_disable_thread_safety();
+        (void)observability_networking_metrics_enable_thread_safety();
+        (void)observability_networking_metrics_initialize(observability_concurrent_exporter);
+        ++index;
+    }
+    writer.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_shutdown());
+    FT_ASSERT_EQ(FT_FALSE, observability_networking_metrics_is_active());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_networking_metrics_disable_thread_safety());
+    FT_ASSERT_EQ(FT_TRUE, valid_results.load(std::memory_order_relaxed));
+    FT_ASSERT(g_observability_concurrent_samples.load(std::memory_order_relaxed) > 0);
     return (1);
 }

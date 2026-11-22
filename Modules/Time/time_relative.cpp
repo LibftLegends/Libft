@@ -18,20 +18,13 @@ static t_time time_relative_clamp_int128(__int128 value)
 
 static t_time time_relative_floor_seconds(t_time time_value, int64_t unit_seconds)
 {
-    __int128 quotient;
-    __int128 floor_value;
-    t_time floored_time;
-    int64_t remainder;
-
-    if (unit_seconds <= 0)
-        return (time_value);
-    quotient = static_cast<__int128>(time_value) / static_cast<__int128>(unit_seconds);
-    remainder = time_value % unit_seconds;
-    if (remainder != 0 && time_value < 0)
-        quotient -= 1;
-    floor_value = quotient * static_cast<__int128>(unit_seconds);
-    floored_time = time_relative_clamp_int128(floor_value);
-    return (floored_time);
+    const int64_t remainder = time_value % unit_seconds;
+    const t_time whole_units = time_value - remainder;
+    if (remainder >= 0)
+        return (whole_units);
+    if (whole_units < INT64_MIN + unit_seconds)
+        return (INT64_MIN);
+    return (whole_units - unit_seconds);
 }
 
 t_time  time_add_seconds(t_time time_value, int64_t seconds)
@@ -106,12 +99,13 @@ t_time  time_floor_to_week(t_time time_value)
 
 static t_time time_relative_ceiling_seconds(t_time time_value, int64_t unit_seconds)
 {
-    t_time floored_time;
-
-    floored_time = time_relative_floor_seconds(time_value, unit_seconds);
-    if (floored_time == time_value)
-        return (floored_time);
-    return (time_add_seconds(floored_time, unit_seconds));
+    const int64_t remainder = time_value % unit_seconds;
+    const t_time whole_units = time_value - remainder;
+    if (remainder <= 0)
+        return (whole_units);
+    if (whole_units > INT64_MAX - unit_seconds)
+        return (INT64_MAX);
+    return (whole_units + unit_seconds);
 }
 
 static ft_bool time_relative_is_leap_year(int32_t year)

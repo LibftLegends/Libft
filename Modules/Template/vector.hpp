@@ -10,6 +10,7 @@
 #include "move.hpp"
 #include <type_traits>
 #include <cstdint>
+#include <memory>
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -68,6 +69,7 @@ class ft_vector
 
         void    destroy_elements_unlocked(ft_size_t from, ft_size_t to);
         int32_t reserve_internal_unlocked(ft_size_t new_capacity);
+        int32_t grow_internal_unlocked();
         ElementType    *small_data();
         const ElementType  *small_data() const;
         ft_bool using_small_buffer() const;
@@ -220,6 +222,9 @@ ft_vector<ElementType>::~ft_vector()
     int32_t previous_error;
 
     previous_error = ft_vector<ElementType>::_last_error;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        && this->_data != ft_nullptr && this->using_small_buffer() == FT_FALSE)
+        cma_free(this->_data);
     (void)this->destroy();
     if (this->_mutex != ft_nullptr)
         (void)this->disable_thread_safety();
@@ -236,7 +241,6 @@ int32_t ft_vector<ElementType>::initialize() noexcept
             "called while object is already initialised");
         return (ft_vector<ElementType>::set_error(FT_ERR_INVALID_STATE));
     }
-    this->reset_to_small_buffer();
     this->_size = 0;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
@@ -551,7 +555,6 @@ template <typename ElementType>
 int32_t ft_vector<ElementType>::push_back(const ElementType &value)
 {
     ft_bool lock_acquired;
-    ft_size_t new_capacity;
     int32_t lock_error;
     int32_t reserve_error;
 
@@ -565,11 +568,7 @@ int32_t ft_vector<ElementType>::push_back(const ElementType &value)
     }
     if (this->_size >= this->_capacity)
     {
-        if (this->_capacity > 0)
-            new_capacity = this->_capacity * 2;
-        else
-            new_capacity = 1;
-        reserve_error = this->reserve_internal_unlocked(new_capacity);
+        reserve_error = this->grow_internal_unlocked();
         if (reserve_error != FT_ERR_SUCCESS)
         {
             this->unlock_internal(lock_acquired);
@@ -595,7 +594,6 @@ template <typename ElementType>
 int32_t ft_vector<ElementType>::push_back(ElementType &&value)
 {
     ft_bool lock_acquired;
-    ft_size_t new_capacity;
     int32_t lock_error;
     int32_t reserve_error;
 
@@ -609,11 +607,7 @@ int32_t ft_vector<ElementType>::push_back(ElementType &&value)
     }
     if (this->_size >= this->_capacity)
     {
-        if (this->_capacity > 0)
-            new_capacity = this->_capacity * 2;
-        else
-            new_capacity = 1;
-        reserve_error = this->reserve_internal_unlocked(new_capacity);
+        reserve_error = this->grow_internal_unlocked();
         if (reserve_error != FT_ERR_SUCCESS)
         {
             this->unlock_internal(lock_acquired);
@@ -822,7 +816,6 @@ typename ft_vector<ElementType>::iterator ft_vector<ElementType>::insert(iterato
 {
     ft_bool lock_acquired;
     ft_size_t index;
-    ft_size_t new_capacity;
     ft_size_t move_index;
     iterator   end_iterator;
     iterator   result_iterator;
@@ -846,11 +839,7 @@ typename ft_vector<ElementType>::iterator ft_vector<ElementType>::insert(iterato
     }
     if (this->_size >= this->_capacity)
     {
-        if (this->_capacity > 0)
-            new_capacity = this->_capacity * 2;
-        else
-            new_capacity = 1;
-        reserve_error = this->reserve_internal_unlocked(new_capacity);
+        reserve_error = this->grow_internal_unlocked();
         if (reserve_error != FT_ERR_SUCCESS)
         {
             end_iterator = this->_data + this->_size;
@@ -1078,6 +1067,8 @@ int32_t ft_vector<ElementType>::reserve_internal_unlocked(ft_size_t new_capacity
 {
     if (new_capacity <= this->_capacity)
         return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
+    if (new_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ElementType))
+        return (ft_vector<ElementType>::set_error(FT_ERR_NO_MEMORY));
     ElementType* new_data = static_cast<ElementType*>(cma_malloc(new_capacity * sizeof(ElementType)));
     if (new_data == ft_nullptr)
     {
@@ -1086,33 +1077,56 @@ int32_t ft_vector<ElementType>::reserve_internal_unlocked(ft_size_t new_capacity
     ft_bool had_small_buffer = this->using_small_buffer();
     ElementType* old_data = this->_data;
     ft_size_t current_size = this->_size;
-    ft_size_t index = 0;
-    while (index < current_size)
+    if constexpr (std::is_trivially_move_constructible_v<ElementType>
+        && std::is_trivially_destructible_v<ElementType>)
     {
-        if (this->construct_element_unlocked(&new_data[index],
-                ft_move(old_data[index])) != FT_ERR_SUCCESS)
-        {
-            while (index > 0)
-            {
-                index -= 1;
-                ::destroy_at(&new_data[index]);
-            }
-            cma_free(new_data);
-            return (this->get_error());
-        }
-        ++index;
+        if (current_size != 0U)
+            std::uninitialized_move_n(old_data, current_size, new_data);
     }
-    ft_size_t destroy_index = 0;
-    while (destroy_index < current_size)
+    else
     {
-        ::destroy_at(&old_data[destroy_index]);
-        ++destroy_index;
+        ft_size_t index = 0U;
+        while (index < current_size)
+        {
+            const int32_t construct_error = this->construct_element_unlocked(
+                &new_data[index], ft_move(old_data[index]));
+            if (construct_error != FT_ERR_SUCCESS)
+            {
+                while (index > 0)
+                {
+                    index -= 1;
+                    ::destroy_at(&new_data[index]);
+                }
+                cma_free(new_data);
+                return (ft_vector<ElementType>::set_error(construct_error));
+            }
+            ++index;
+        }
+        ft_size_t destroy_index = 0U;
+        while (destroy_index < current_size)
+        {
+            ::destroy_at(&old_data[destroy_index]);
+            ++destroy_index;
+        }
     }
     if (had_small_buffer == FT_FALSE && old_data != ft_nullptr)
         cma_free(old_data);
     this->_data = new_data;
     this->_capacity = new_capacity;
     return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
+}
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::grow_internal_unlocked()
+{
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    if (this->_capacity >= MAXIMUM_CAPACITY)
+        return (ft_vector<ElementType>::set_error(FT_ERR_NO_MEMORY));
+    if (this->_capacity == 0U)
+        return (this->reserve_internal_unlocked(1U));
+    if (this->_capacity > MAXIMUM_CAPACITY / 2U)
+        return (this->reserve_internal_unlocked(MAXIMUM_CAPACITY));
+    return (this->reserve_internal_unlocked(this->_capacity * 2U));
 }
 
 template <typename ElementType>

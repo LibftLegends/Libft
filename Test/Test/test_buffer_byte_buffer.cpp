@@ -217,6 +217,9 @@ FT_TEST(test_buffer_byte_buffer_search_peek_skip_and_slice_helpers)
     FT_ASSERT_EQ(0, std::memcmp(output, "123", 3));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.skip(3));
     FT_ASSERT_EQ(3, buffer.read_position());
+    FT_ASSERT_EQ(6U, buffer.find("abc", 3U));
+    FT_ASSERT_EQ(3U, buffer.find(ft_nullptr, 0U));
+    FT_ASSERT_EQ(3U, buffer.read_position());
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.slice(3, 3, slice));
     FT_ASSERT_EQ(3, slice.size());
@@ -288,5 +291,65 @@ FT_TEST(test_buffer_byte_buffer_shrink_to_fit_reduces_capacity)
     FT_ASSERT_EQ(3, buffer.capacity());
     FT_ASSERT_EQ(3, buffer.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    return (1);
+}
+
+FT_TEST(test_buffer_byte_buffer_self_append_keeps_source_after_growth)
+{
+    ft_byte_buffer buffer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize(16U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append("0123456789abcdef", 16U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.consume(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append(buffer.data() + 2U, 5U));
+    FT_ASSERT_EQ(21U, buffer.size());
+    FT_ASSERT_EQ(2U, buffer.read_position());
+    FT_ASSERT_EQ(0, std::memcmp(buffer.data(), "0123456789abcdef23456", 21U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append_buffer(buffer));
+    FT_ASSERT_EQ(42U, buffer.size());
+    FT_ASSERT_EQ(0, std::memcmp(buffer.data(), buffer.data() + 21U, 21U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    return (1);
+}
+
+FT_TEST(test_buffer_byte_buffer_self_prepend_preserves_cursor_and_failure)
+{
+    ft_byte_buffer buffer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize(9U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append("abcde", 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.consume(2U));
+    FT_ASSERT_EQ(FT_ERR_FULL, buffer.prepend_buffer(buffer));
+    FT_ASSERT_EQ(5U, buffer.size());
+    FT_ASSERT_EQ(2U, buffer.read_position());
+    FT_ASSERT_EQ(0, std::memcmp(buffer.data(), "abcde", 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize(5U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append("abcde", 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.consume(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.prepend_buffer(buffer));
+    FT_ASSERT_EQ(7U, buffer.read_position());
+    FT_ASSERT_EQ(10U, buffer.size());
+    FT_ASSERT_EQ(0, std::memcmp(buffer.data(), "abcdeabcde", 10U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
+    return (1);
+}
+
+FT_TEST(test_buffer_byte_buffer_slice_owns_independent_storage)
+{
+    ft_byte_buffer source;
+    ft_byte_buffer output;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.append("abcdef", 6U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.append("old", 3U));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, source.slice(4U, 3U, output));
+    FT_ASSERT_EQ(3U, output.size());
+    FT_ASSERT_EQ(0, std::memcmp(output.data(), "old", 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.slice(1U, 4U, output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(FT_TRUE, output.is_fixed_capacity());
+    FT_ASSERT_EQ(4U, output.capacity());
+    FT_ASSERT_EQ(0U, output.read_position());
+    FT_ASSERT_EQ(0, std::memcmp(output.data(), "bcde", 4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.destroy());
     return (1);
 }

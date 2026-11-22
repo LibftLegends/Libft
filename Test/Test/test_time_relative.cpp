@@ -172,3 +172,16 @@ FT_TEST(test_time_add_days_clamps_at_bounds)
     FT_ASSERT_EQ(minimum_time, time_add_days(minimum_time, -1));
     return (1);
 }
+
+FT_TEST(test_time_rounding_to_minutes_handles_minimum_and_maximum)
+{
+    const int64_t minimum_whole_minute = INT64_MIN - (INT64_MIN % 60);
+    const int64_t maximum_whole_minute = INT64_MAX - (INT64_MAX % 60);
+    FT_ASSERT_EQ(INT64_MIN, time_floor_to_minute(INT64_MIN));
+    FT_ASSERT_EQ(minimum_whole_minute, time_ceiling_to_minute(INT64_MIN));
+    FT_ASSERT_EQ(maximum_whole_minute, time_floor_to_minute(INT64_MAX));
+    FT_ASSERT_EQ(INT64_MAX, time_ceiling_to_minute(INT64_MAX));
+    FT_ASSERT_EQ(-60, time_floor_to_minute(-1));
+    FT_ASSERT_EQ(0, time_ceiling_to_minute(-1));
+    return (1);
+}

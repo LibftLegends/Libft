@@ -71,12 +71,22 @@ FT_TEST(test_time_timer_add_time_detects_overflow)
     int64_t remaining_after_failure;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, timer.initialize());
-    timer.start(LONG_MAX - 10);
+    timer.start(INT64_MAX - 10);
     add_result = timer.add_time(100);
     FT_ASSERT_EQ(static_cast<int64_t>(-1), add_result);
 
     remaining_after_failure = timer.update();
     FT_ASSERT(remaining_after_failure > 0);
+    return (1);
+}
+
+FT_TEST(test_time_timer_add_time_preserves_full_width_duration)
+{
+    time_timer timer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, timer.initialize());
+    timer.start(3000000000);
+    const int64_t remaining = timer.add_time(6000000000);
+    FT_ASSERT(remaining > 8000000000 && remaining <= 9000000000);
     return (1);
 }
 

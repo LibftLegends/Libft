@@ -1,42 +1,66 @@
 #include "analytics.hpp"
+#include <charconv>
 #include <chrono>
+#include <limits>
+#include <type_traits>
 #include <thread>
 
 #include "../CMA/CMA.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/limits.hpp"
-#include "../Printf/printf.hpp"
+#include "../Template/algorithm.hpp"
 
-static int32_t analytics_append_text(ft_string &output,
-    const char *text) noexcept
+template <typename Part>
+static constexpr std::size_t analytics_record_part_capacity() noexcept
 {
-    if (text == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    return (output.append(text));
+    if constexpr (std::is_array<Part>::value)
+        return (std::extent<Part>::value - 1U);
+    else
+        return (std::numeric_limits<Part>::digits10 + 1U);
 }
 
-static int32_t analytics_append_u64(ft_string &output, uint64_t value) noexcept
+template <std::size_t Size>
+static char *analytics_write_record_part(char *destination, const char (&text)[Size]) noexcept
 {
-    char buffer[64];
-    int32_t length;
-
-    length = pf_snprintf(buffer, sizeof(buffer), FT_UINT64_DECIMAL_FORMAT,
-        value);
-    if (length < 0 || static_cast<ft_size_t>(length) >= sizeof(buffer))
-        return (FT_ERR_INVALID_ARGUMENT);
-    return (output.append(buffer, static_cast<ft_size_t>(length)));
+    ft_memcpy_fixed<Size - 1U>(destination, text);
+    return (destination + Size - 1U);
 }
 
-static int32_t analytics_append_u32(ft_string &output, uint32_t value) noexcept
+template <typename Number>
+static char *analytics_write_record_part(char *destination, Number value) noexcept
 {
-    char buffer[32];
-    int32_t length;
+    static_assert(std::is_unsigned<Number>::value);
+    return (std::to_chars(destination,
+        destination + analytics_record_part_capacity<Number>(), value).ptr);
+}
 
-    length = pf_snprintf(buffer, sizeof(buffer), "%u", value);
-    if (length < 0 || static_cast<ft_size_t>(length) >= sizeof(buffer))
-        return (FT_ERR_INVALID_ARGUMENT);
-    return (output.append(buffer, static_cast<ft_size_t>(length)));
+template <typename Writer, typename... Parts>
+static int32_t analytics_write_record(Writer write, const Parts &...parts) noexcept
+{
+    char record[(analytics_record_part_capacity<Parts>() + ...)];
+    char *cursor = record;
+    ((cursor = analytics_write_record_part(cursor, parts)), ...);
+    return (write(record, static_cast<ft_size_t>(cursor - record)));
+}
+
+template <typename... Parts>
+static int32_t analytics_append_record(ft_string &output, const Parts &...parts) noexcept
+{
+    return (analytics_write_record([&output](const char *record, ft_size_t length) noexcept
+    {
+        return (output.append(record, length));
+    }, parts...));
+}
+
+template <typename Writer, std::size_t PrefixSize, std::size_t SuffixSize>
+static int32_t analytics_write_trace_record(Writer write, const analytics_trace_event &event,
+    const char (&prefix)[PrefixSize], const char (&suffix)[SuffixSize]) noexcept
+{
+    return (analytics_write_record(write, prefix, "{\"name\":\"region-", event.region_id,
+        "\",\"cat\":\"analytics\",\"ph\":\"X\",\"ts\":", event.start_nanoseconds / 1000U,
+        ",\"dur\":", event.duration_nanoseconds / 1000U, ",\"pid\":1,\"tid\":",
+        event.thread_id, "}", suffix));
 }
 
 static int32_t analytics_write_file(std::FILE *output_file,
@@ -71,73 +95,21 @@ static int32_t analytics_commit_output(ft_string *output,
     return (output->move(temporary));
 }
 
-static uint64_t analytics_percentile_value(const uint64_t *samples,
-    uint32_t sample_count, uint32_t percentile) noexcept
+static void analytics_copy_samples(uint64_t *destination, const uint64_t *samples,
+    uint32_t sample_count) noexcept
 {
-    uint64_t sorted_samples[FT_ANALYTICS_MAX_SAMPLES];
-    uint32_t index;
-    uint32_t target_index;
-    uint64_t value;
-
-    index = 0U;
-    while (index < sample_count)
-    {
-        sorted_samples[index] = samples[index];
-        index += 1U;
-    }
-    index = 1U;
-    while (index < sample_count)
-    {
-        value = sorted_samples[index];
-        target_index = index;
-        while (target_index > 0U
-            && sorted_samples[target_index - 1U] > value)
-        {
-            sorted_samples[target_index] = sorted_samples[target_index - 1U];
-            target_index -= 1U;
-        }
-        sorted_samples[target_index] = value;
-        index += 1U;
-    }
-    target_index = (sample_count - 1U) * percentile / 100U;
-    return (sorted_samples[target_index]);
+    ft_memcpy(destination, samples, static_cast<ft_size_t>(sample_count) * sizeof(uint64_t));
+    return ;
 }
 
-static uint64_t analytics_frame_percentile_value(const uint64_t *samples,
+static uint64_t analytics_percentile_value(const uint64_t *sorted_samples,
     uint32_t sample_count, uint32_t percentile) noexcept
 {
-    uint64_t sorted_samples[FT_ANALYTICS_MAX_FRAME_SAMPLES];
-    uint32_t index;
-    uint32_t target_index;
-    uint64_t value;
-
-    index = 0U;
-    while (index < sample_count)
-    {
-        sorted_samples[index] = samples[index];
-        index += 1U;
-    }
-    index = 1U;
-    while (index < sample_count)
-    {
-        value = sorted_samples[index];
-        target_index = index;
-        while (target_index > 0U
-            && sorted_samples[target_index - 1U] > value)
-        {
-            sorted_samples[target_index] = sorted_samples[target_index - 1U];
-            target_index -= 1U;
-        }
-        sorted_samples[target_index] = value;
-        index += 1U;
-    }
-    target_index = (sample_count - 1U) * percentile / 100U;
-    return (sorted_samples[target_index]);
+    return (sorted_samples[(sample_count - 1U) * percentile / 100U]);
 }
 
 struct analytics_scope_frame
 {
-    analytics_session *session;
     uint32_t region_id;
     uint64_t start_nanoseconds;
     uint64_t child_nanoseconds;
@@ -266,8 +238,7 @@ static analytics_thread_state *analytics_thread_state_for(
 static void analytics_init_frame_statistics(analytics_frame_statistics *frame,
     const analytics_thread_state *thread_state, uint64_t end_nanoseconds)
 {
-    uint32_t index;
-
+    *frame = {};
     frame->frame_number = thread_state->frame_number;
     frame->duration_nanoseconds = end_nanoseconds
         - thread_state->frame_start_nanoseconds;
@@ -278,59 +249,72 @@ static void analytics_init_frame_statistics(analytics_frame_statistics *frame,
         frame->uninstrumented_nanoseconds = frame->duration_nanoseconds
             - thread_state->instrumented_top_level_nanoseconds;
     frame->completed_scope_count = thread_state->completed_scope_count;
-    frame->dropped_scope_count = 0U;
-    frame->breakdown_count = 0U;
-    frame->dropped_breakdown_count = 0U;
-    index = 0U;
-    while (index < FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
-    {
-        frame->breakdown[index].region_id = 0U;
-        frame->breakdown[index].invocation_count = 0U;
-        frame->breakdown[index].inclusive_nanoseconds = 0U;
-        frame->breakdown[index].exclusive_nanoseconds = 0U;
-        index += 1U;
-    }
     return ;
 }
 
-static void analytics_add_frame_breakdown(
-    analytics_frame_statistics *frame, const analytics_pending_event &event)
+static void analytics_add_frame_breakdown(analytics_frame_statistics &frame,
+    const analytics_pending_event &event, uint8_t *region_slots) noexcept
 {
-    uint32_t index;
-
-    index = 0U;
-    while (index < frame->breakdown_count)
+    static_assert(FT_ANALYTICS_MAX_FRAME_BREAKDOWN <= UINT8_MAX);
+    const ft_bool indexed = region_slots != ft_nullptr && event.region_id < FT_ANALYTICS_MAX_REGIONS;
+    uint32_t index = frame.breakdown_count;
+    if (indexed)
     {
-        if (frame->breakdown[index].region_id == event.region_id)
-        {
-            frame->breakdown[index].invocation_count += 1U;
-            frame->breakdown[index].inclusive_nanoseconds +=
-                event.inclusive_nanoseconds;
-            frame->breakdown[index].exclusive_nanoseconds +=
-                event.exclusive_nanoseconds;
-            return ;
-        }
-        index += 1U;
+        const uint8_t slot = region_slots[event.region_id];
+        if (slot != 0U)
+            index = slot - 1U;
     }
-    if (frame->breakdown_count >= FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    else
     {
-        frame->dropped_breakdown_count += 1U;
+        index = 0U;
+        while (index < frame.breakdown_count && frame.breakdown[index].region_id != event.region_id)
+            ++index;
+    }
+
+    if (index < frame.breakdown_count)
+    {
+        ++frame.breakdown[index].invocation_count;
+        frame.breakdown[index].inclusive_nanoseconds += event.inclusive_nanoseconds;
+        frame.breakdown[index].exclusive_nanoseconds += event.exclusive_nanoseconds;
         return ;
     }
-    frame->breakdown[index].region_id = event.region_id;
-    frame->breakdown[index].invocation_count = 1U;
-    frame->breakdown[index].inclusive_nanoseconds = event.inclusive_nanoseconds;
-    frame->breakdown[index].exclusive_nanoseconds = event.exclusive_nanoseconds;
-    frame->breakdown_count += 1U;
+    if (frame.breakdown_count >= FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    {
+        ++frame.dropped_breakdown_count;
+        return ;
+    }
+    frame.breakdown[index] = {event.region_id, 1U, event.inclusive_nanoseconds, event.exclusive_nanoseconds};
+    ++frame.breakdown_count;
+    if (indexed)
+        region_slots[event.region_id] = static_cast<uint8_t>(index + 1U);
+    return ;
+}
+
+static void analytics_build_frame_breakdown(analytics_frame_statistics &frame,
+    const analytics_thread_state &thread_state) noexcept
+{
+    constexpr uint32_t INDEX_THRESHOLD = 12U;
+    uint8_t slots[FT_ANALYTICS_MAX_REGIONS];
+    uint8_t *region_slots = ft_nullptr;
+    if (thread_state.pending_event_count >= INDEX_THRESHOLD)
+    {
+        ft_bzero(slots, sizeof(slots));
+        region_slots = slots;
+    }
+    uint32_t index = 0U;
+    while (index < thread_state.pending_event_count)
+    {
+        analytics_add_frame_breakdown(frame, thread_state.pending_events[index], region_slots);
+        ++index;
+    }
     return ;
 }
 
 static uint32_t analytics_thread_id(void) noexcept
 {
-    std::size_t value;
-
-    value = std::hash<std::thread::id>()(std::this_thread::get_id());
-    return (static_cast<uint32_t>(value));
+    static thread_local const uint32_t thread_id =
+        static_cast<uint32_t>(std::hash<std::thread::id>()(std::this_thread::get_id()));
+    return (thread_id);
 }
 
 static uint64_t analytics_clock_now(void)
@@ -367,7 +351,8 @@ analytics_session::analytics_session() noexcept
       _world_output_file(ft_nullptr),
       _output_format(analytics_output_format::NONE),
       _world_output_format(analytics_output_format::NONE), _export_condition(),
-      _export_thread(), _export_write_mutex(), _exporter_started(FT_FALSE),
+      _export_thread(), _export_drain_mutex(),
+      _exporter_started(FT_FALSE),
       _export_stop(FT_FALSE), _export_error(FT_ERR_SUCCESS),
       _world_active(FT_FALSE), _clock_callback(ft_nullptr),
       _clock_user_data(ft_nullptr)
@@ -726,14 +711,25 @@ int32_t analytics_session::destroy() noexcept
 {
     int32_t stop_error;
 
+    this->_export_drain_mutex.lock();
     if (this->_initialised_state != 2U)
+    {
+        this->_export_drain_mutex.unlock();
         return (FT_ERR_SUCCESS);
+    }
+    if (this->_exporter_buffer_index != FT_ANALYTICS_INVALID_BUFFER_INDEX)
+    {
+        this->_export_drain_mutex.unlock();
+        return (FT_ERR_INVALID_STATE);
+    }
     this->_enabled.store(FT_FALSE, std::memory_order_release);
+    this->_export_drain_mutex.unlock();
     if (this->_exporter_started != FT_FALSE)
         stop_error = this->stop_exporter_internal();
     else
         stop_error = this->flush_exports();
-    std::lock_guard<std::mutex> lock(this->_mutex);
+    this->_export_drain_mutex.lock();
+    this->_mutex.lock();
     this->_has_latest_frame = FT_FALSE;
     this->_frame_duration_total = 0U;
     if (this->_output_file != ft_nullptr)
@@ -762,6 +758,8 @@ int32_t analytics_session::destroy() noexcept
         this->_export_buffers = ft_nullptr;
     }
     this->_initialised_state = 1U;
+    this->_mutex.unlock();
+    this->_export_drain_mutex.unlock();
     if (stop_error != FT_ERR_SUCCESS)
         return (stop_error);
     return (this->_export_error.load(std::memory_order_acquire));
@@ -866,13 +864,6 @@ void analytics_session::export_worker_main() noexcept
     return ;
 }
 
-int32_t analytics_session::write_frame_to_file(
-    const analytics_frame_statistics &frame) noexcept
-{
-    return (this->write_frame_to_output(frame, this->_output_file,
-        this->_output_format));
-}
-
 int32_t analytics_session::write_frame_to_output(
     const analytics_frame_statistics &frame, std::FILE *output_file,
     analytics_output_format output_format) noexcept
@@ -880,8 +871,6 @@ int32_t analytics_session::write_frame_to_output(
     ft_string output;
     int32_t error_code;
     ft_size_t output_size;
-
-    std::lock_guard<std::mutex> write_lock(this->_export_write_mutex);
 
     error_code = output.initialize();
     if (error_code != FT_ERR_SUCCESS)
@@ -906,38 +895,17 @@ int32_t analytics_session::write_frame_to_output(
     return (error_code);
 }
 
-int32_t analytics_session::write_trace_to_file(
-    const analytics_trace_event &event) noexcept
-{
-    return (this->write_trace_to_output(event, this->_output_file));
-}
-
 int32_t analytics_session::write_trace_to_output(
     const analytics_trace_event &event, std::FILE *output_file) noexcept
 {
-    ft_string output;
-    int32_t error_code;
-    ft_size_t output_size;
-
-    std::lock_guard<std::mutex> write_lock(this->_export_write_mutex);
-
-    error_code = output.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = analytics_export_trace_json(*this, &event, 1U, &output);
-    if (error_code == FT_ERR_SUCCESS)
+    const char *region_name = ft_nullptr;
+    const int32_t result = this->get_region_name(event.region_id, &region_name);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (analytics_write_trace_record([output_file](const char *record, ft_size_t length) noexcept
     {
-        error_code = output.append("\n");
-    }
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        output_size = output.size();
-        error_code = analytics_write_file(output_file, output.c_str(),
-            output_size);
-    }
-    if (output.destroy() != FT_ERR_SUCCESS && error_code == FT_ERR_SUCCESS)
-        error_code = FT_ERR_IO;
-    return (error_code);
+        return (analytics_write_file(output_file, record, length));
+    }, event, "[", "]\n"));
 }
 
 int32_t analytics_session::register_region(const char *name,
@@ -1007,33 +975,72 @@ ft_bool analytics_session::is_enabled() const noexcept
     return (this->_enabled.load(std::memory_order_acquire));
 }
 
+void analytics_session::record_region_sample_locked(uint32_t region_id,
+    uint64_t inclusive_nanoseconds, uint64_t exclusive_nanoseconds) noexcept
+{
+    analytics_region &region = this->_regions[region_id];
+    analytics_region_statistics &statistics = region.statistics;
+    ++statistics.invocation_count;
+    statistics.inclusive_nanoseconds += inclusive_nanoseconds;
+    statistics.exclusive_nanoseconds += exclusive_nanoseconds;
+    if (statistics.invocation_count == 1U || inclusive_nanoseconds < statistics.minimum_nanoseconds)
+        statistics.minimum_nanoseconds = inclusive_nanoseconds;
+    if (inclusive_nanoseconds > statistics.maximum_nanoseconds)
+        statistics.maximum_nanoseconds = inclusive_nanoseconds;
+    region.samples[region.sample_cursor] = inclusive_nanoseconds;
+    region.sample_cursor = (region.sample_cursor + 1U) % FT_ANALYTICS_MAX_SAMPLES;
+    if (region.sample_count < FT_ANALYTICS_MAX_SAMPLES)
+        ++region.sample_count;
+    return ;
+}
+
 int32_t analytics_session::record_scope(uint32_t region_id,
     uint64_t inclusive_nanoseconds, uint64_t exclusive_nanoseconds) noexcept
 {
-    std::lock_guard<std::mutex> lock(this->_mutex);
-    analytics_region_statistics *statistics;
-
+    this->_mutex.lock();
     if (this->_initialised_state != 2U
         || this->_enabled.load(std::memory_order_acquire) == FT_FALSE
         || region_id >= this->_region_count
         || this->_regions[region_id].registered == FT_FALSE)
+    {
+        this->_mutex.unlock();
         return (FT_ERR_INVALID_ARGUMENT);
-    statistics = &this->_regions[region_id].statistics;
-    statistics->invocation_count += 1U;
-    statistics->inclusive_nanoseconds += inclusive_nanoseconds;
-    statistics->exclusive_nanoseconds += exclusive_nanoseconds;
-    if (statistics->invocation_count == 1U
-        || inclusive_nanoseconds < statistics->minimum_nanoseconds)
-        statistics->minimum_nanoseconds = inclusive_nanoseconds;
-    if (inclusive_nanoseconds > statistics->maximum_nanoseconds)
-        statistics->maximum_nanoseconds = inclusive_nanoseconds;
-    this->_regions[region_id].samples[this->_regions[region_id].sample_cursor]
-        = inclusive_nanoseconds;
-    this->_regions[region_id].sample_cursor =
-        (this->_regions[region_id].sample_cursor + 1U)
-        % FT_ANALYTICS_MAX_SAMPLES;
-    if (this->_regions[region_id].sample_count < FT_ANALYTICS_MAX_SAMPLES)
-        this->_regions[region_id].sample_count += 1U;
+    }
+    this->record_region_sample_locked(region_id, inclusive_nanoseconds, exclusive_nanoseconds);
+    this->_mutex.unlock();
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename ReadSample>
+int32_t analytics_session::record_scope_samples(uint32_t count, ReadSample read_sample) noexcept
+{
+    this->_mutex.lock();
+    if (this->_initialised_state != 2U
+        || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
+    {
+        this->_mutex.unlock();
+        return (FT_ERR_NOT_INITIALISED);
+    }
+    uint32_t index = 0U;
+    while (index < count)
+    {
+        const uint32_t region_id = read_sample(index).region_id;
+        if (region_id >= this->_region_count || this->_regions[region_id].registered == FT_FALSE)
+        {
+            this->_mutex.unlock();
+            return (FT_ERR_INVALID_ARGUMENT);
+        }
+        ++index;
+    }
+    index = 0U;
+    while (index < count)
+    {
+        const auto &sample = read_sample(index);
+        this->record_region_sample_locked(sample.region_id,
+            sample.inclusive_nanoseconds, sample.exclusive_nanoseconds);
+        ++index;
+    }
+    this->_mutex.unlock();
     return (FT_ERR_SUCCESS);
 }
 
@@ -1041,49 +1048,29 @@ int32_t analytics_session::record_scope_batch(const uint32_t *region_ids,
     const uint64_t *inclusive_nanoseconds,
     const uint64_t *exclusive_nanoseconds, uint32_t count) noexcept
 {
-    uint32_t index;
-    analytics_region_statistics *statistics;
-
     if (count > FT_ANALYTICS_MAX_THREAD_EVENTS
         || ((region_ids == ft_nullptr || inclusive_nanoseconds == ft_nullptr
             || exclusive_nanoseconds == ft_nullptr) && count != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
-    std::lock_guard<std::mutex> lock(this->_mutex);
-    if (this->_initialised_state != 2U
-        || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
-        return (FT_ERR_NOT_INITIALISED);
-    index = 0U;
-    while (index < count)
+    struct scope_sample
     {
-        if (region_ids[index] >= this->_region_count
-            || this->_regions[region_ids[index]].registered == FT_FALSE)
-            return (FT_ERR_INVALID_ARGUMENT);
-        index += 1U;
-    }
-    index = 0U;
-    while (index < count)
+        uint32_t region_id;
+        uint64_t inclusive_nanoseconds;
+        uint64_t exclusive_nanoseconds;
+    };
+    return (this->record_scope_samples(count, [=](uint32_t index) noexcept
     {
-        statistics = &this->_regions[region_ids[index]].statistics;
-        statistics->invocation_count += 1U;
-        statistics->inclusive_nanoseconds += inclusive_nanoseconds[index];
-        statistics->exclusive_nanoseconds += exclusive_nanoseconds[index];
-        if (statistics->invocation_count == 1U
-            || inclusive_nanoseconds[index] < statistics->minimum_nanoseconds)
-            statistics->minimum_nanoseconds = inclusive_nanoseconds[index];
-        if (inclusive_nanoseconds[index] > statistics->maximum_nanoseconds)
-            statistics->maximum_nanoseconds = inclusive_nanoseconds[index];
-        this->_regions[region_ids[index]].samples[
-            this->_regions[region_ids[index]].sample_cursor]
-            = inclusive_nanoseconds[index];
-        this->_regions[region_ids[index]].sample_cursor =
-            (this->_regions[region_ids[index]].sample_cursor + 1U)
-            % FT_ANALYTICS_MAX_SAMPLES;
-        if (this->_regions[region_ids[index]].sample_count
-            < FT_ANALYTICS_MAX_SAMPLES)
-            this->_regions[region_ids[index]].sample_count += 1U;
-        index += 1U;
-    }
-    return (FT_ERR_SUCCESS);
+        return (scope_sample{region_ids[index], inclusive_nanoseconds[index], exclusive_nanoseconds[index]});
+    }));
+}
+
+int32_t analytics_session::record_thread_scopes(const analytics_thread_state &thread_state) noexcept
+{
+    return (this->record_scope_samples(thread_state.pending_event_count,
+        [&thread_state](uint32_t index) noexcept -> const analytics_pending_event &
+        {
+            return (thread_state.pending_events[index]);
+        }));
 }
 
 int32_t analytics_session::note_dropped_scope() noexcept
@@ -1100,25 +1087,28 @@ int32_t analytics_session::note_dropped_scope() noexcept
 int32_t analytics_session::get_region_statistics(uint32_t region_id,
     analytics_region_statistics *statistics) const noexcept
 {
-    std::lock_guard<std::mutex> lock(this->_mutex);
-
-    if (this->_initialised_state != 2U || statistics == ft_nullptr
-        || region_id >= this->_region_count
-        || this->_regions[region_id].registered == FT_FALSE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    *statistics = this->_regions[region_id].statistics;
-    if (this->_regions[region_id].sample_count != 0U)
+    uint64_t samples[FT_ANALYTICS_MAX_SAMPLES];
+    uint32_t sample_count;
+    analytics_region_statistics result;
     {
-        statistics->percentile_50_nanoseconds = analytics_percentile_value(
-            this->_regions[region_id].samples,
-            this->_regions[region_id].sample_count, 50U);
-        statistics->percentile_95_nanoseconds = analytics_percentile_value(
-            this->_regions[region_id].samples,
-            this->_regions[region_id].sample_count, 95U);
-        statistics->percentile_99_nanoseconds = analytics_percentile_value(
-            this->_regions[region_id].samples,
-            this->_regions[region_id].sample_count, 99U);
+        std::lock_guard<std::mutex> lock(this->_mutex);
+        if (this->_initialised_state != 2U || statistics == ft_nullptr
+            || region_id >= this->_region_count
+            || this->_regions[region_id].registered == FT_FALSE)
+            return (FT_ERR_INVALID_ARGUMENT);
+        const analytics_region &region = this->_regions[region_id];
+        result = region.statistics;
+        sample_count = region.sample_count;
+        analytics_copy_samples(samples, region.samples, sample_count);
     }
+    if (sample_count != 0U)
+    {
+        ft_sort(samples, samples + sample_count);
+        result.percentile_50_nanoseconds = analytics_percentile_value(samples, sample_count, 50U);
+        result.percentile_95_nanoseconds = analytics_percentile_value(samples, sample_count, 95U);
+        result.percentile_99_nanoseconds = analytics_percentile_value(samples, sample_count, 99U);
+    }
+    *statistics = result;
     return (FT_ERR_SUCCESS);
 }
 
@@ -1138,46 +1128,50 @@ int32_t analytics_session::get_region_name(uint32_t region_id,
 int32_t analytics_session::get_region_percentile(uint32_t region_id,
     uint32_t percentile, uint64_t *nanoseconds) const noexcept
 {
-    std::lock_guard<std::mutex> lock(this->_mutex);
-
-    if (this->_initialised_state != 2U || nanoseconds == ft_nullptr
-        || (percentile != 50U && percentile != 95U && percentile != 99U)
-        || region_id >= this->_region_count
-        || this->_regions[region_id].registered == FT_FALSE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (this->_regions[region_id].sample_count == 0U)
-        return (FT_ERR_EMPTY);
-    *nanoseconds = analytics_percentile_value(this->_regions[region_id].samples,
-        this->_regions[region_id].sample_count, percentile);
+    uint64_t samples[FT_ANALYTICS_MAX_SAMPLES];
+    uint32_t sample_count;
+    {
+        std::lock_guard<std::mutex> lock(this->_mutex);
+        if (this->_initialised_state != 2U || nanoseconds == ft_nullptr
+            || (percentile != 50U && percentile != 95U && percentile != 99U)
+            || region_id >= this->_region_count
+            || this->_regions[region_id].registered == FT_FALSE)
+            return (FT_ERR_INVALID_ARGUMENT);
+        const analytics_region &region = this->_regions[region_id];
+        sample_count = region.sample_count;
+        if (sample_count == 0U)
+            return (FT_ERR_EMPTY);
+        analytics_copy_samples(samples, region.samples, sample_count);
+    }
+    ft_sort(samples, samples + sample_count);
+    *nanoseconds = analytics_percentile_value(samples, sample_count, percentile);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t analytics_session::find_free_buffer_locked(
     uint32_t *buffer_index) const noexcept
 {
-    uint32_t candidate_index;
-    uint32_t completed_index;
-
+    static_assert(FT_ANALYTICS_MAX_EXPORT_BUFFER_COUNT <= 32U);
     if (buffer_index == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    candidate_index = 0U;
+    uint32_t occupied = 1U << this->_active_buffer_index;
+    if (this->_exporter_buffer_index != FT_ANALYTICS_INVALID_BUFFER_INDEX)
+        occupied |= 1U << this->_exporter_buffer_index;
+    uint32_t completed_index = 0U;
+    while (completed_index < this->_completed_buffer_count)
+    {
+        occupied |= 1U << this->_completed_buffer_indices[completed_index];
+        ++completed_index;
+    }
+    uint32_t candidate_index = 0U;
     while (candidate_index < this->_buffer_count)
     {
-        if (candidate_index != this->_active_buffer_index
-            && candidate_index != this->_exporter_buffer_index)
+        if ((occupied & (1U << candidate_index)) == 0U)
         {
-            completed_index = 0U;
-            while (completed_index < this->_completed_buffer_count
-                && this->_completed_buffer_indices[completed_index]
-                    != candidate_index)
-                completed_index += 1U;
-            if (completed_index == this->_completed_buffer_count)
-            {
-                *buffer_index = candidate_index;
-                return (FT_ERR_SUCCESS);
-            }
+            *buffer_index = candidate_index;
+            return (FT_ERR_SUCCESS);
         }
-        candidate_index += 1U;
+        ++candidate_index;
     }
     return (FT_ERR_FULL);
 }
@@ -1231,12 +1225,8 @@ int32_t analytics_session::rotate_active_buffer_locked() noexcept
     active_buffer = &this->_export_buffers[this->_active_buffer_index];
     if (active_buffer->frame_count == 0U && active_buffer->trace_count == 0U)
         return (FT_ERR_SUCCESS);
-    if (this->find_free_buffer_locked(&free_buffer_index) != FT_ERR_SUCCESS)
-    {
-        if (this->obtain_free_buffer_locked(&free_buffer_index)
-            != FT_ERR_SUCCESS)
-            return (FT_ERR_FULL);
-    }
+    if (this->obtain_free_buffer_locked(&free_buffer_index) != FT_ERR_SUCCESS)
+        return (FT_ERR_FULL);
     this->_completed_buffer_indices[this->_completed_buffer_count]
         = this->_active_buffer_index;
     this->_completed_buffer_count += 1U;
@@ -1301,17 +1291,16 @@ int32_t analytics_session::publish_frame(
         enriched_frame = frame;
         enriched_frame.mean_duration_nanoseconds = this->_frame_duration_total
             / static_cast<uint64_t>(this->_frame_sample_count);
-        /* Percentiles are deliberately calculated only for exported samples.
-         * Sorting the rolling window here would put O(window^2) work on the
-         * instrumented thread for every frame. */
+        // Only exported frames need percentiles.
         if (export_frame != FT_FALSE)
         {
+            uint64_t samples[FT_ANALYTICS_MAX_FRAME_SAMPLES];
+            analytics_copy_samples(samples, this->_frame_samples, this->_frame_sample_count);
+            ft_sort(samples, samples + this->_frame_sample_count);
             enriched_frame.percentile_95_nanoseconds =
-                analytics_frame_percentile_value(this->_frame_samples,
-                    this->_frame_sample_count, 95U);
+                analytics_percentile_value(samples, this->_frame_sample_count, 95U);
             enriched_frame.percentile_99_nanoseconds =
-                analytics_frame_percentile_value(this->_frame_samples,
-                    this->_frame_sample_count, 99U);
+                analytics_percentile_value(samples, this->_frame_sample_count, 99U);
         }
         this->_latest_frame = enriched_frame;
         this->_has_latest_frame = FT_TRUE;
@@ -1370,47 +1359,84 @@ int32_t analytics_session::publish_trace(
     return (this->publish_trace(event, this->is_world_active()));
 }
 
+int32_t analytics_session::enqueue_trace_locked(const analytics_trace_event &event,
+    ft_bool world_active, ft_bool &rotated) noexcept
+{
+    analytics_export_buffer *active_buffer = &this->_export_buffers[this->_active_buffer_index];
+    if (active_buffer->trace_count >= this->_trace_capacity)
+    {
+        if (this->rotate_active_buffer_locked() != FT_ERR_SUCCESS)
+        {
+            ++this->_dropped_trace_count;
+            return (FT_ERR_FULL);
+        }
+        rotated = FT_TRUE;
+        active_buffer = &this->_export_buffers[this->_active_buffer_index];
+    }
+    active_buffer->traces[active_buffer->trace_count].value = event;
+    active_buffer->traces[active_buffer->trace_count].world_active = world_active != FT_FALSE;
+    ++active_buffer->trace_count;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t analytics_session::publish_trace(
     const analytics_trace_event &event, ft_bool world_active) noexcept
 {
-    analytics_export_buffer *active_buffer;
-    ft_bool rotated;
-
+    ft_bool rotated = FT_FALSE;
+    this->_mutex.lock();
+    if (this->_initialised_state != 2U
+        || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
     {
-        std::lock_guard<std::mutex> lock(this->_mutex);
-
-        if (this->_initialised_state != 2U
-            || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
-            return (FT_ERR_NOT_INITIALISED);
-        rotated = FT_FALSE;
-        active_buffer = &this->_export_buffers[this->_active_buffer_index];
-        if (active_buffer->trace_count >= this->_trace_capacity)
-        {
-            if (this->rotate_active_buffer_locked() != FT_ERR_SUCCESS)
-            {
-                this->_dropped_trace_count += 1U;
-                return (FT_ERR_FULL);
-            }
-            rotated = FT_TRUE;
-            active_buffer = &this->_export_buffers[this->_active_buffer_index];
-        }
-        if (active_buffer->trace_count >= this->_trace_capacity)
-        {
-            this->_dropped_trace_count += 1U;
-            return (FT_ERR_FULL);
-        }
-        active_buffer->traces[active_buffer->trace_count].value = event;
-        if (world_active == FT_FALSE)
-            active_buffer->traces[active_buffer->trace_count].world_active =
-                FT_FALSE;
-        else
-            active_buffer->traces[active_buffer->trace_count].world_active =
-                FT_TRUE;
-        active_buffer->trace_count += 1U;
+        this->_mutex.unlock();
+        return (FT_ERR_NOT_INITIALISED);
     }
-    if (rotated != FT_FALSE)
+    const int32_t result = this->enqueue_trace_locked(event, world_active, rotated);
+    this->_mutex.unlock();
+    if (rotated)
         this->_export_condition.notify_one();
-    return (FT_ERR_SUCCESS);
+    return (result);
+}
+
+int32_t analytics_session::publish_thread_traces(const analytics_thread_state &thread_state,
+    ft_bool count_remaining_drops) noexcept
+{
+    const uint32_t count = thread_state.pending_event_count;
+    if (count == 0U || this->should_capture_trace(thread_state.frame_number) == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    analytics_trace_event event{};
+    event.frame_number = thread_state.frame_number;
+    event.thread_id = analytics_thread_id();
+    ft_bool rotated = FT_FALSE;
+    int32_t result = FT_ERR_SUCCESS;
+    this->_mutex.lock();
+    if (this->_initialised_state != 2U
+        || this->_enabled.load(std::memory_order_acquire) == FT_FALSE)
+    {
+        this->_mutex.unlock();
+        return (FT_ERR_NOT_INITIALISED);
+    }
+    uint32_t index = 0;
+    while (index < count)
+    {
+        const analytics_pending_event &pending = thread_state.pending_events[index];
+        event.region_id = pending.region_id;
+        event.start_nanoseconds = pending.start_nanoseconds;
+        event.duration_nanoseconds = pending.inclusive_nanoseconds;
+        event.exclusive_nanoseconds = pending.exclusive_nanoseconds;
+        result = this->enqueue_trace_locked(event, pending.world_active, rotated);
+        ++index;
+        if (result != FT_ERR_SUCCESS)
+        {
+            // No buffer can become free while this producer holds the lock.
+            if (count_remaining_drops && this->_enabled.load(std::memory_order_relaxed) != FT_FALSE)
+                this->_dropped_trace_count += count - index;
+            break ;
+        }
+    }
+    this->_mutex.unlock();
+    if (rotated)
+        this->_export_condition.notify_one();
+    return (result);
 }
 
 ft_bool analytics_session::should_capture_trace(uint64_t frame_number) const
@@ -1427,6 +1453,14 @@ ft_bool analytics_session::should_capture_trace(uint64_t frame_number) const
 }
 
 int32_t analytics_session::flush_exports() noexcept
+{
+    this->_export_drain_mutex.lock();
+    const int32_t result = this->drain_export_buffers();
+    this->_export_drain_mutex.unlock();
+    return (result);
+}
+
+int32_t analytics_session::drain_export_buffers() noexcept
 {
     analytics_export_buffer *export_buffer;
     uint32_t export_buffer_index;
@@ -1447,6 +1481,9 @@ int32_t analytics_session::flush_exports() noexcept
             std::lock_guard<std::mutex> lock(this->_mutex);
             if (this->_initialised_state != 2U)
                 return (FT_ERR_NOT_INITIALISED);
+            // A callback can reenter flush_exports on the draining thread.
+            if (this->_exporter_buffer_index != FT_ANALYTICS_INVALID_BUFFER_INDEX)
+                return (FT_ERR_SUCCESS);
             if (this->_completed_buffer_count == 0U
                 && this->rotate_active_buffer_locked() != FT_ERR_SUCCESS)
                 break;
@@ -1650,11 +1687,6 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     analytics_thread_state *thread_state;
     analytics_frame_statistics frame;
     uint64_t end_nanoseconds;
-    uint32_t event_index;
-    uint32_t region_ids[FT_ANALYTICS_MAX_THREAD_EVENTS];
-    uint64_t inclusive_nanoseconds[FT_ANALYTICS_MAX_THREAD_EVENTS];
-    uint64_t exclusive_nanoseconds[FT_ANALYTICS_MAX_THREAD_EVENTS];
-    analytics_trace_event trace_event;
     int32_t first_error;
     int32_t operation_error;
 
@@ -1668,48 +1700,14 @@ int32_t analytics_end_frame(analytics_session *session) noexcept
     analytics_init_frame_statistics(&frame, thread_state,
         end_nanoseconds);
     first_error = FT_ERR_SUCCESS;
-    event_index = 0U;
-    while (event_index < thread_state->pending_event_count)
-    {
-        analytics_pending_event &pending_event =
-            thread_state->pending_events[event_index];
-        analytics_add_frame_breakdown(&frame, pending_event);
-        region_ids[event_index] = pending_event.region_id;
-        inclusive_nanoseconds[event_index] = pending_event.inclusive_nanoseconds;
-        exclusive_nanoseconds[event_index] = pending_event.exclusive_nanoseconds;
-        event_index += 1U;
-    }
-    operation_error = session->record_scope_batch(region_ids,
-        inclusive_nanoseconds, exclusive_nanoseconds,
-        thread_state->pending_event_count);
+    analytics_build_frame_breakdown(frame, *thread_state);
+    operation_error = session->record_thread_scopes(*thread_state);
     if (operation_error != FT_ERR_SUCCESS
         && first_error == FT_ERR_SUCCESS)
         first_error = operation_error;
-    event_index = 0U;
-    while (event_index < thread_state->pending_event_count)
-    {
-        analytics_pending_event &pending_event =
-            thread_state->pending_events[event_index];
-        if (session->should_capture_trace(thread_state->frame_number)
-            != FT_FALSE)
-        {
-            trace_event.frame_number = thread_state->frame_number;
-            trace_event.flow_id = 0U;
-            trace_event.region_id = pending_event.region_id;
-            trace_event.start_nanoseconds = pending_event.start_nanoseconds;
-            trace_event.duration_nanoseconds =
-                pending_event.inclusive_nanoseconds;
-            trace_event.exclusive_nanoseconds =
-                pending_event.exclusive_nanoseconds;
-            trace_event.thread_id = analytics_thread_id();
-            operation_error = session->publish_trace(trace_event,
-                pending_event.world_active);
-            if (operation_error != FT_ERR_SUCCESS
-                && first_error == FT_ERR_SUCCESS)
-                first_error = operation_error;
-        }
-        event_index += 1U;
-    }
+    operation_error = session->publish_thread_traces(*thread_state, FT_TRUE);
+    if (operation_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
+        first_error = operation_error;
     frame.dropped_scope_count = session->get_dropped_scope_count();
     thread_state->session = ft_nullptr;
     if (g_analytics_current_thread_state == thread_state)
@@ -1725,14 +1723,8 @@ int32_t analytics_end_thread_frame(analytics_session *session) noexcept
 {
     analytics_thread_state *thread_state;
     analytics_frame_statistics frame;
-    uint32_t event_index;
-    analytics_pending_event *pending_event;
-    analytics_trace_event trace_event;
     int32_t record_error;
     uint64_t end_nanoseconds;
-    uint32_t region_ids[FT_ANALYTICS_MAX_THREAD_EVENTS];
-    uint64_t inclusive_nanoseconds[FT_ANALYTICS_MAX_THREAD_EVENTS];
-    uint64_t exclusive_nanoseconds[FT_ANALYTICS_MAX_THREAD_EVENTS];
 
     thread_state = analytics_thread_state_for(session, FT_FALSE);
     if (session == ft_nullptr || thread_state == ft_nullptr
@@ -1743,19 +1735,8 @@ int32_t analytics_end_thread_frame(analytics_session *session) noexcept
         return (FT_ERR_INVALID_ARGUMENT);
     analytics_init_frame_statistics(&frame, thread_state,
         end_nanoseconds);
-    event_index = 0U;
-    while (event_index < thread_state->pending_event_count)
-    {
-        pending_event = &thread_state->pending_events[event_index];
-        analytics_add_frame_breakdown(&frame, *pending_event);
-        region_ids[event_index] = pending_event->region_id;
-        inclusive_nanoseconds[event_index] = pending_event->inclusive_nanoseconds;
-        exclusive_nanoseconds[event_index] = pending_event->exclusive_nanoseconds;
-        event_index += 1U;
-    }
-    record_error = session->record_scope_batch(region_ids,
-        inclusive_nanoseconds, exclusive_nanoseconds,
-        thread_state->pending_event_count);
+    analytics_build_frame_breakdown(frame, *thread_state);
+    record_error = session->record_thread_scopes(*thread_state);
     if (record_error != FT_ERR_SUCCESS)
     {
         thread_state->session = ft_nullptr;
@@ -1763,36 +1744,12 @@ int32_t analytics_end_thread_frame(analytics_session *session) noexcept
         thread_state->completed_scope_count = 0U;
         return (record_error);
     }
-    event_index = 0U;
-    while (event_index < thread_state->pending_event_count)
-    {
-        pending_event = &thread_state->pending_events[event_index];
-        if (session->should_capture_trace(thread_state->frame_number)
-            != FT_FALSE)
-        {
-            trace_event.frame_number = thread_state->frame_number;
-            trace_event.flow_id = 0U;
-            trace_event.region_id = pending_event->region_id;
-            trace_event.start_nanoseconds = pending_event->start_nanoseconds;
-            trace_event.duration_nanoseconds =
-                pending_event->inclusive_nanoseconds;
-            trace_event.exclusive_nanoseconds =
-                pending_event->exclusive_nanoseconds;
-            trace_event.thread_id = analytics_thread_id();
-            if (session->publish_trace(trace_event,
-                    pending_event->world_active) != FT_ERR_SUCCESS)
-            {
-                thread_state->session = ft_nullptr;
-                thread_state->pending_event_count = 0U;
-                thread_state->completed_scope_count = 0U;
-                return (FT_ERR_INVALID_STATE);
-            }
-        }
-        event_index += 1U;
-    }
+    const int32_t trace_error = session->publish_thread_traces(*thread_state, FT_FALSE);
     thread_state->session = ft_nullptr;
     thread_state->pending_event_count = 0U;
     thread_state->completed_scope_count = 0U;
+    if (trace_error != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     frame.dropped_scope_count = session->get_dropped_scope_count();
     return (session->publish_frame(frame, thread_state->world_active));
 }
@@ -1825,8 +1782,6 @@ int32_t analytics_begin_scope_at(analytics_session *session,
             < thread_state->scopes[thread_state->scope_depth - 1U]
                 .start_nanoseconds)
         return (FT_ERR_INVALID_ARGUMENT);
-    thread_state->scopes[thread_state->scope_depth].session
-        = session;
     thread_state->scopes[thread_state->scope_depth].region_id
         = region_id;
     thread_state->scopes[thread_state->scope_depth].start_nanoseconds
@@ -1951,246 +1906,94 @@ int32_t analytics_end_flow(const analytics_flow_token &token) noexcept
 int32_t analytics_export_frame_json(const analytics_session &session,
     const analytics_frame_statistics &frame, ft_string *output) noexcept
 {
-    ft_string temporary;
-    int32_t error_code;
-    uint32_t index;
-    const char *region_name;
-    int32_t destroy_error;
-
-    if (output == ft_nullptr || frame.breakdown_count
-        > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    if (output == ft_nullptr || frame.breakdown_count > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = temporary.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = analytics_append_text(temporary, "{\"frame\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary, frame.frame_number);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, ",\"duration_ns\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary,
-            frame.duration_nanoseconds);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary,
-            ",\"mean_duration_ns\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary,
-            frame.mean_duration_nanoseconds);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary,
-            ",\"p95_duration_ns\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary,
-            frame.percentile_95_nanoseconds);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary,
-            ",\"p99_duration_ns\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary,
-            frame.percentile_99_nanoseconds);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary,
-            ",\"uninstrumented_ns\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary,
-            frame.uninstrumented_nanoseconds);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, ",\"dropped_scopes_total\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary, frame.dropped_scope_count);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, ",\"dropped_breakdown_count\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_u64(temporary, frame.dropped_breakdown_count);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, ",\"breakdown\":[");
-    index = 0U;
-    while (error_code == FT_ERR_SUCCESS && index < frame.breakdown_count)
+    ft_string temporary;
+    int32_t result = temporary.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = analytics_append_record(temporary, "{\"frame\":", frame.frame_number,
+            ",\"duration_ns\":", frame.duration_nanoseconds,
+            ",\"mean_duration_ns\":", frame.mean_duration_nanoseconds,
+            ",\"p95_duration_ns\":", frame.percentile_95_nanoseconds,
+            ",\"p99_duration_ns\":", frame.percentile_99_nanoseconds,
+            ",\"uninstrumented_ns\":", frame.uninstrumented_nanoseconds,
+            ",\"dropped_scopes_total\":", frame.dropped_scope_count,
+            ",\"dropped_breakdown_count\":", frame.dropped_breakdown_count, ",\"breakdown\":[");
+    uint32_t index = 0U;
+    while (result == FT_ERR_SUCCESS && index < frame.breakdown_count)
     {
-        region_name = ft_nullptr;
-        error_code = session.get_region_name(
-            frame.breakdown[index].region_id, &region_name);
-        if (error_code == FT_ERR_SUCCESS && index != 0U)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                "{\"region_id\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u32(temporary,
-                frame.breakdown[index].region_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                ",\"invocations\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].invocation_count);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                ",\"inclusive_ns\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].inclusive_nanoseconds);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                ",\"exclusive_ns\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].exclusive_nanoseconds);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, "}");
-        index += 1U;
+        const analytics_frame_region_statistics &entry = frame.breakdown[index];
+        const char *region_name = ft_nullptr;
+        result = session.get_region_name(entry.region_id, &region_name);
+        if (result == FT_ERR_SUCCESS && index != 0U)
+            result = temporary.append(',');
+        if (result == FT_ERR_SUCCESS)
+            result = analytics_append_record(temporary, "{\"region_id\":", entry.region_id,
+                ",\"invocations\":", entry.invocation_count, ",\"inclusive_ns\":",
+                entry.inclusive_nanoseconds, ",\"exclusive_ns\":", entry.exclusive_nanoseconds, "}");
+        ++index;
     }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, "]}");
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-        return (error_code);
-    }
-    error_code = analytics_commit_output(output, temporary);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-    }
-    return (error_code);
+    if (result == FT_ERR_SUCCESS)
+        result = temporary.append("]}", 2U);
+    if (result == FT_ERR_SUCCESS)
+        result = analytics_commit_output(output, temporary);
+    return (result);
 }
 
 int32_t analytics_export_trace_json(const analytics_session &session,
     const analytics_trace_event *events, uint32_t event_count,
     ft_string *output) noexcept
 {
-    ft_string temporary;
-    int32_t error_code;
-    uint32_t index;
-    const char *region_name;
-    int32_t destroy_error;
-
-    if (events == ft_nullptr && event_count != 0U)
+    if (output == ft_nullptr || (events == ft_nullptr && event_count != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = temporary.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = analytics_append_text(temporary, "[");
-    index = 0U;
-    while (error_code == FT_ERR_SUCCESS && index < event_count)
+    ft_string temporary;
+    int32_t result = temporary.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = temporary.append('[');
+    uint32_t index = 0U;
+    while (result == FT_ERR_SUCCESS && index < event_count)
     {
-        region_name = ft_nullptr;
-        error_code = session.get_region_name(events[index].region_id,
-            &region_name);
-        if (error_code == FT_ERR_SUCCESS && index != 0U)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                "{\"name\":\"region-");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u32(temporary,
-                events[index].region_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                "\",\"cat\":\"analytics\",\"ph\":\"X\",\"ts\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                events[index].start_nanoseconds / 1000U);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, ",\"dur\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                events[index].duration_nanoseconds / 1000U);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary,
-                ",\"pid\":1,\"tid\":");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u32(temporary,
-                events[index].thread_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, "}");
-        index += 1U;
+        const analytics_trace_event &event = events[index];
+        const char *region_name = ft_nullptr;
+        result = session.get_region_name(event.region_id, &region_name);
+        if (result == FT_ERR_SUCCESS && index != 0U)
+            result = temporary.append(',');
+        if (result == FT_ERR_SUCCESS)
+            result = analytics_write_trace_record([&temporary](const char *record, ft_size_t length) noexcept
+            {
+                return (temporary.append(record, length));
+            }, event, "", "");
+        ++index;
     }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = analytics_append_text(temporary, "]");
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-        return (error_code);
-    }
-    error_code = analytics_commit_output(output, temporary);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-    }
-    return (error_code);
+    if (result == FT_ERR_SUCCESS)
+        result = temporary.append(']');
+    if (result == FT_ERR_SUCCESS)
+        result = analytics_commit_output(output, temporary);
+    return (result);
 }
 
 int32_t analytics_export_frame_csv(const analytics_session &session,
     const analytics_frame_statistics &frame, ft_string *output) noexcept
 {
-    ft_string temporary;
-    int32_t error_code;
-    uint32_t index;
-    const char *region_name;
-    int32_t destroy_error;
-
-    if (frame.breakdown_count > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
+    if (output == ft_nullptr || frame.breakdown_count > FT_ANALYTICS_MAX_FRAME_BREAKDOWN)
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = temporary.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = analytics_append_text(temporary,
-        "frame,region_id,invocations,inclusive_ns,exclusive_ns\n");
-    index = 0U;
-    while (error_code == FT_ERR_SUCCESS && index < frame.breakdown_count)
+    ft_string temporary;
+    int32_t result = temporary.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = analytics_append_record(temporary, "frame,region_id,invocations,inclusive_ns,exclusive_ns\n");
+    uint32_t index = 0U;
+    while (result == FT_ERR_SUCCESS && index < frame.breakdown_count)
     {
-        region_name = ft_nullptr;
-        error_code = session.get_region_name(
-            frame.breakdown[index].region_id, &region_name);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary, frame.frame_number);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u32(temporary,
-                frame.breakdown[index].region_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].invocation_count);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].inclusive_nanoseconds);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, ",");
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_u64(temporary,
-                frame.breakdown[index].exclusive_nanoseconds);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = analytics_append_text(temporary, "\n");
-        index += 1U;
+        const analytics_frame_region_statistics &entry = frame.breakdown[index];
+        const char *region_name = ft_nullptr;
+        result = session.get_region_name(entry.region_id, &region_name);
+        if (result == FT_ERR_SUCCESS)
+            result = analytics_append_record(temporary, frame.frame_number, ",", entry.region_id,
+                ",", entry.invocation_count, ",", entry.inclusive_nanoseconds, ",",
+                entry.exclusive_nanoseconds, "\n");
+        ++index;
     }
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-        return (error_code);
-    }
-    error_code = analytics_commit_output(output, temporary);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        destroy_error = temporary.destroy();
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = destroy_error;
-    }
-    return (error_code);
+    if (result == FT_ERR_SUCCESS)
+        result = analytics_commit_output(output, temporary);
+    return (result);
 }

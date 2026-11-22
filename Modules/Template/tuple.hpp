@@ -246,7 +246,8 @@ ft_tuple<Types...>::get()
     int32_t lock_result;
     elem_t *reference;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get");
     lock_acquired = FT_FALSE;
     lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
@@ -273,7 +274,8 @@ ft_tuple<Types...>::get() const
     int32_t lock_result;
     const elem_t *reference;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get const");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get const");
     lock_acquired = FT_FALSE;
     lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
@@ -297,7 +299,8 @@ T& ft_tuple<Types...>::get()
     int32_t lock_result;
     T *reference;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get type");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::get type");
     lock_acquired = FT_FALSE;
     lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
@@ -322,8 +325,9 @@ const T& ft_tuple<Types...>::get() const
     int32_t lock_result;
     const T *reference;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
-        "ft_tuple::get type const");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+            "ft_tuple::get type const");
     lock_acquired = FT_FALSE;
     lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
@@ -346,7 +350,8 @@ void ft_tuple<Types...>::reset()
     ft_bool lock_acquired;
     int32_t lock_result;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::reset");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_tuple::reset");
     lock_acquired = FT_FALSE;
     lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)

@@ -4,7 +4,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static int32_t compile_bitset_usage()
+[[maybe_unused]] static int32_t compile_bitset_usage()
 {
     ft_bitset bitset_value(8);
     int32_t test_value;
@@ -16,4 +16,3 @@ static int32_t compile_bitset_usage()
     return (test_value);
 }
 
-static int32_t bitset_dummy = compile_bitset_usage();

@@ -179,10 +179,13 @@ FT_TEST(test_game_voxel_chunk_bulk_copy_uses_one_read_snapshot)
         * GAME_VOXEL_CHUNK_WIDTH + 15U;
     FT_ASSERT_EQ(41U, blocks[first_index]);
     FT_ASSERT_EQ(99U, blocks[second_index]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, blocks[0U]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, blocks[first_index - 1U]);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_region(region,
         2U * 3U * GAME_VOXEL_CHUNK_HEIGHT, 1U, 2U, 2U, 3U));
     FT_ASSERT_EQ(41U, region[(1U * GAME_VOXEL_CHUNK_HEIGHT + 17U) * 2U
         + 1U]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, region[0U]);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, chunk.copy_region(region,
         2U * 3U * GAME_VOXEL_CHUNK_HEIGHT, 15U, 2U, 2U, 3U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_x_border(x_border,

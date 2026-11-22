@@ -27,6 +27,8 @@ class ft_string
 
         int32_t set_error(int32_t error_code) const noexcept;
         friend class ft_string_proxy;
+        friend int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer,
+            ft_size_t length, char **previous_buffer) noexcept;
 
 
         int32_t     resize(ft_size_t new_capacity) noexcept;
@@ -105,6 +107,13 @@ class ft_string
         const char  *get_error_str() const noexcept;
 
 };
+
+// Internal. Transfer a CMA buffer with length bytes followed by a terminator.
+// The caller retains ownership if the function fails.
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length) noexcept;
+// On success, writes the displaced buffer to previous_buffer for the caller to free.
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length,
+    char **previous_buffer) noexcept;
 
 class ft_string_proxy
 {

@@ -23,20 +23,22 @@ const char *cmp_service_null_device_path(void)
 #endif
 }
 
+uint64_t cmp_get_process_id(void) noexcept
+{
+#if defined(_WIN32) || defined(_WIN64)
+    return (static_cast<uint64_t>(_getpid()));
+#else
+    return (static_cast<uint64_t>(getpid()));
+#endif
+}
+
 int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size,
     ft_size_t *length_out)
 {
     if (!buffer || buffer_size == 0)
         return (FT_ERR_INVALID_ARGUMENT);
-#if defined(_WIN32) || defined(_WIN64)
-    uint64_t pid_value = static_cast<uint64_t>(_getpid());
     int32_t formatted = std::snprintf(buffer, buffer_size, "%" PRIu64 "\n",
-        pid_value);
-#else
-    pid_t pid_value = getpid();
-    int32_t formatted = std::snprintf(buffer, buffer_size, "%" PRId64 "\n",
-        static_cast<int64_t>(pid_value));
-#endif
+        cmp_get_process_id());
     if (formatted < 0 || static_cast<ft_size_t>(formatted) >= buffer_size)
         return (FT_ERR_IO);
     if (length_out != ft_nullptr)

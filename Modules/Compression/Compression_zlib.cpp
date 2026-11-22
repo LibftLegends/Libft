@@ -76,7 +76,8 @@ static int  compression_assign_string(ft_string &destination, const unsigned cha
     return (0);
 }
 
-unsigned char    *compress_buffer(const unsigned char *input_buffer, std::size_t input_size, std::size_t *compressed_size)
+uint8_t *compress_buffer(const uint8_t *input_buffer, std::size_t input_size,
+    std::size_t *compressed_size)
 {
     uLongf          zlib_bound;
     uLongf          actual_size;
@@ -103,6 +104,9 @@ unsigned char    *compress_buffer(const unsigned char *input_buffer, std::size_t
         return (ft_nullptr);
     zlib_input_size = FT_ZLIB_ULONG_CAST(input_size);
     zlib_bound = compressBound(zlib_input_size);
+    if (zlib_bound < zlib_input_size
+        || zlib_bound > FT_SYSTEM_SIZE_MAX - sizeof(uint32_t))
+        return (ft_nullptr);
     result_buffer = static_cast<unsigned char *>(cma_malloc(zlib_bound + sizeof(uint32_t)));
     if (!result_buffer)
     {
@@ -119,9 +123,12 @@ unsigned char    *compress_buffer(const unsigned char *input_buffer, std::size_t
     original_size = static_cast<uint32_t>(input_size);
     ft_memcpy(result_buffer, &original_size, sizeof(uint32_t));
     *compressed_size = actual_size + sizeof(uint32_t);
-    resized_buffer = static_cast<unsigned char *>(cma_realloc(result_buffer, *compressed_size));
-    if (resized_buffer)
-        result_buffer = resized_buffer;
+    if (actual_size != zlib_bound)
+    {
+        resized_buffer = static_cast<uint8_t *>(cma_realloc(result_buffer, *compressed_size));
+        if (resized_buffer != ft_nullptr)
+            result_buffer = resized_buffer;
+    }
     return (result_buffer);
 }
 

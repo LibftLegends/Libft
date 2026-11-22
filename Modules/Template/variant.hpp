@@ -388,7 +388,8 @@ void ft_variant<Types...>::emplace(TypeToStore&& value)
     ft_bool lock_acquired;
     int32_t lock_error;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::emplace");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::emplace");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -423,7 +424,8 @@ ft_bool ft_variant<Types...>::holds_alternative() const
     int32_t lock_error;
     ft_bool has_type;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::holds_alternative");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::holds_alternative");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -450,10 +452,11 @@ template <typename... Types>
 template <typename TypeToGet>
 ft_variant<Types...>::value_proxy<TypeToGet>::operator TypeToGet&() const
 {
-    static TypeToGet fallback = TypeToGet();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static TypeToGet fallback = TypeToGet();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -480,7 +483,8 @@ ft_variant<Types...>::get()
     int32_t lock_error;
     TypeToGet *value_pointer;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::get");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::get");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -507,7 +511,8 @@ ft_variant<Types...>::get() const
     int32_t lock_error;
     const TypeToGet *value_pointer;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::get const");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::get const");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -532,7 +537,8 @@ void ft_variant<Types...>::visit(VisitorType&& visitor)
     ft_bool lock_acquired;
     int32_t lock_error;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::visit");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::visit");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -559,7 +565,8 @@ void ft_variant<Types...>::reset()
     ft_bool lock_acquired;
     int32_t lock_error;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::reset");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_variant::reset");
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)

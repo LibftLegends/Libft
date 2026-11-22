@@ -1,106 +1,73 @@
-#include <pthread.h>
-#include <errno.h>
-#include <time.h>
-#include "../Errno/errno.hpp"
 #include "pthread.hpp"
 #include "pthread_lock_tracking.hpp"
+#include <cerrno>
+#include <ctime>
+
+static pt_thread_id_type pt_join_thread_identifier(pthread_t thread)
+{
+#if defined(_WIN32)
+    const HANDLE handle = pthread_gethandle(thread);
+    if (handle == ft_nullptr || handle == INVALID_HANDLE_VALUE)
+        return (0U);
+    return (GetThreadId(handle));
+#else
+    return (thread);
+#endif
+}
+
+static int pt_finish_join(int result, pt_thread_id_type thread_identifier)
+{
+    if (result != 0 || thread_identifier == 0)
+        return (result);
+    return (pt_lock_tracking::notify_thread_exit(thread_identifier));
+}
 
 int pt_thread_join(pthread_t thread, void **retval)
 {
-    pt_thread_id_type thread_identifier;
-    int return_value;
-    int tracking_error;
-
     if (!thread)
-    {
-        return_value = ESRCH;
-        return (return_value);
-    }
-    return_value = pthread_join(thread, retval);
-    if (return_value != 0)
-        return (return_value);
-    thread_identifier = FT_THREAD_ID_FROM_PTHREAD(thread);
-    tracking_error = pt_lock_tracking::notify_thread_exit(thread_identifier);
-    if (tracking_error != FT_ERR_SUCCESS)
-        return (tracking_error);
-    return (return_value);
+        return (ESRCH);
+    const pt_thread_id_type thread_identifier = pt_join_thread_identifier(thread);
+    return (pt_finish_join(pthread_join(thread, retval), thread_identifier));
 }
 
 int pt_thread_timed_join(pthread_t thread, void **retval, long timeout_ms)
 {
-    pt_thread_id_type thread_identifier;
-    int return_value;
-    int tracking_error;
-
     if (!thread)
-    {
-        return_value = ESRCH;
-        return (return_value);
-    }
+        return (ESRCH);
     if (timeout_ms < 0)
-    {
-        return_value = EINVAL;
-        return (return_value);
-    }
-#ifdef __linux__
+        return (EINVAL);
+#if defined(__linux__)
     struct timespec absolute_timeout;
-    long additional_nanoseconds;
-
-    return_value = clock_gettime(CLOCK_REALTIME, &absolute_timeout);
-    if (return_value != 0)
-    {
-        return_value = errno;
-        return (return_value);
-    }
-    absolute_timeout.tv_sec += timeout_ms / 1000;
-    additional_nanoseconds = (timeout_ms % 1000) * 1000000;
-    absolute_timeout.tv_nsec += additional_nanoseconds;
-    while (absolute_timeout.tv_nsec >= 1000000000)
-    {
-        absolute_timeout.tv_nsec -= 1000000000;
-        absolute_timeout.tv_sec += 1;
-    }
-    return_value = pthread_timedjoin_np(thread, retval, &absolute_timeout);
-    if (return_value != 0)
-        return (return_value);
-    thread_identifier = FT_THREAD_ID_FROM_PTHREAD(thread);
-    tracking_error = pt_lock_tracking::notify_thread_exit(thread_identifier);
-    if (tracking_error != FT_ERR_SUCCESS)
-        return (tracking_error);
-    return (return_value);
+    if (clock_gettime(CLOCK_REALTIME, &absolute_timeout) != 0)
+        return (errno);
+    constexpr long NANOSECONDS_PER_SECOND = 1000000000L;
+    const long nanoseconds = absolute_timeout.tv_nsec + (timeout_ms % 1000) * 1000000L;
+    const long seconds = timeout_ms / 1000 + nanoseconds / NANOSECONDS_PER_SECOND;
+    if (__builtin_add_overflow(absolute_timeout.tv_sec, seconds, &absolute_timeout.tv_sec))
+        return (EINVAL);
+    absolute_timeout.tv_nsec = nanoseconds % NANOSECONDS_PER_SECOND;
+    return (pt_finish_join(pthread_timedjoin_np(thread, retval, &absolute_timeout),
+            pt_join_thread_identifier(thread)));
 #elif defined(_WIN32)
-    long elapsed_timeout_ms;
-
-    elapsed_timeout_ms = 0;
-    while (elapsed_timeout_ms <= timeout_ms)
-    {
-        return_value = _pthread_tryjoin(thread, retval);
-        if (return_value == 0)
-        {
-            thread_identifier = FT_THREAD_ID_FROM_PTHREAD(thread);
-            tracking_error = pt_lock_tracking::notify_thread_exit(
-                    thread_identifier);
-            if (tracking_error != FT_ERR_SUCCESS)
-                return (tracking_error);
-            return (return_value);
-        }
-        if (return_value != EBUSY)
-            return (return_value);
-        if (elapsed_timeout_ms == timeout_ms)
-            break ;
-        (void)pt_thread_sleep(1);
-        elapsed_timeout_ms += 1;
-    }
-    return (ETIMEDOUT);
+    const HANDLE handle = pthread_gethandle(thread);
+    pt_thread_id_type thread_identifier = 0U;
+    if (handle != ft_nullptr && handle != INVALID_HANDLE_VALUE)
+        thread_identifier = GetThreadId(handle);
+    const int first_attempt = _pthread_tryjoin(thread, retval);
+    if (first_attempt != EBUSY)
+        return (pt_finish_join(first_attempt, thread_identifier));
+    if (timeout_ms == 0)
+        return (ETIMEDOUT);
+    if (handle == ft_nullptr || handle == INVALID_HANDLE_VALUE)
+        return (ESRCH);
+    const DWORD wait_result = WaitForSingleObject(handle, static_cast<DWORD>(timeout_ms));
+    if (wait_result == WAIT_TIMEOUT)
+        return (ETIMEDOUT);
+    if (wait_result != WAIT_OBJECT_0)
+        return (ESRCH);
+    return (pt_finish_join(_pthread_tryjoin(thread, retval), thread_identifier));
 #else
     (void)timeout_ms;
-    return_value = pthread_join(thread, retval);
-    if (return_value != 0)
-        return (return_value);
-    thread_identifier = FT_THREAD_ID_FROM_PTHREAD(thread);
-    tracking_error = pt_lock_tracking::notify_thread_exit(thread_identifier);
-    if (tracking_error != FT_ERR_SUCCESS)
-        return (tracking_error);
-    return (return_value);
+    return (pt_thread_join(thread, retval));
 #endif
 }

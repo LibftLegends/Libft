@@ -39,7 +39,9 @@ int pt_recursive_mutex::lock_uninstrumented() const
         pt_thread_id_type owner = this->_owner.load(std::memory_order_relaxed);
         if (pt_thread_equal(owner, thread_id))
         {
-            this->_lock_depth.fetch_add(1, std::memory_order_relaxed);
+            // The owning thread is the only writer until the native lock is released.
+            const std::size_t depth = this->_lock_depth.load(std::memory_order_relaxed);
+            this->_lock_depth.store(depth + 1U, std::memory_order_relaxed);
             return (FT_ERR_SUCCESS);
         }
     }

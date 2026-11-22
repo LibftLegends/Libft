@@ -157,17 +157,21 @@ int ft_task_scheduler::scheduled_task::initialize_move(scheduled_task &other)
         return (FT_ERR_SUCCESS);
     if (this->initialize() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
+    const int32_t state_move_error = this->_state.move(other._state);
+    if (state_move_error != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (state_move_error);
+    }
     this->_time = other._time;
     this->_interval_ms = other._interval_ms;
     this->_function = ft_move(other._function);
-    this->_state = other._state;
     this->_trace_id = other._trace_id;
     this->_parent_id = other._parent_id;
     this->_label = other._label;
     other._time = t_monotonic_time_point();
     other._interval_ms = 0;
     other._function = ft_function<void()>();
-    other._state.reset();
     other._trace_id = 0;
     other._parent_id = 0;
     other._label = ft_nullptr;
@@ -989,63 +993,49 @@ void ft_task_scheduler::worker_loop()
 
 void ft_task_scheduler::scheduled_heap_sift_up(size_t index)
 {
-    while (index > 0)
+    if (index == 0U)
+        return ;
+    scheduled_task *entries = this->_scheduled.begin();
+    const int64_t deadline = entries[index]._time.milliseconds;
+    ft_size_t parent = (index - 1U) / 2U;
+    if (entries[parent]._time.milliseconds <= deadline)
+        return ;
+    scheduled_task task(ft_move(entries[index]));
+    while (index != 0U && entries[parent]._time.milliseconds > deadline)
     {
-        size_t parent_index;
-        int comparison;
-        scheduled_task temp_task;
-
-        parent_index = (index - 1) / 2;
-        comparison = time_monotonic_point_compare(this->_scheduled[index]._time,
-                this->_scheduled[parent_index]._time);
-        if (comparison >= 0)
-            break ;
-        temp_task = ft_move(this->_scheduled[index]);
-        this->_scheduled[index] = ft_move(this->_scheduled[parent_index]);
-        this->_scheduled[parent_index] = ft_move(temp_task);
-        index = parent_index;
+        entries[index] = ft_move(entries[parent]);
+        index = parent;
+        if (index != 0U)
+            parent = (index - 1U) / 2U;
     }
+    entries[index] = ft_move(task);
     return ;
 }
 
 void ft_task_scheduler::scheduled_heap_sift_down(size_t index)
 {
-    while (true)
+    const ft_size_t size = this->_scheduled.size();
+    if (index >= size / 2U)
+        return ;
+    scheduled_task *entries = this->_scheduled.begin();
+    const int64_t deadline = entries[index]._time.milliseconds;
+    scheduled_task task;
+    const ft_size_t entry_index = index;
+    while (index < size / 2U)
     {
-        size_t size;
-        size_t left_child;
-        size_t right_child;
-        size_t smallest;
-        int comparison_left;
-        int comparison_right;
-        scheduled_task temp_task;
-
-        size = this->_scheduled.size();
-        if (index >= size)
+        ft_size_t child = index * 2U + 1U;
+        if (child + 1U < size
+            && entries[child + 1U]._time.milliseconds < entries[child]._time.milliseconds)
+            ++child;
+        if (entries[child]._time.milliseconds >= deadline)
             break ;
-        left_child = index * 2 + 1;
-        if (left_child >= size)
-            break ;
-        smallest = left_child;
-        right_child = left_child + 1;
-        if (right_child < size)
-        {
-            comparison_right = time_monotonic_point_compare(
-                    this->_scheduled[right_child]._time,
-                    this->_scheduled[smallest]._time);
-            if (comparison_right < 0)
-                smallest = right_child;
-        }
-        comparison_left = time_monotonic_point_compare(
-                this->_scheduled[index]._time,
-                this->_scheduled[smallest]._time);
-        if (comparison_left <= 0)
-            break ;
-        temp_task = ft_move(this->_scheduled[index]);
-        this->_scheduled[index] = ft_move(this->_scheduled[smallest]);
-        this->_scheduled[smallest] = ft_move(temp_task);
-        index = smallest;
+        if (index == entry_index)
+            task = ft_move(entries[index]);
+        entries[index] = ft_move(entries[child]);
+        index = child;
     }
+    if (index != entry_index)
+        entries[index] = ft_move(task);
     return ;
 }
 
@@ -1105,7 +1095,7 @@ bool ft_task_scheduler::scheduled_heap_push(scheduled_task &&task)
         return (true);
     }
     this->scheduled_heap_sift_up(size - 1);
-    this->_scheduled_size_counter = static_cast<long long>(this->_scheduled.size());
+    this->_scheduled_size_counter = static_cast<long long>(size);
     return (true);
 }
 
@@ -1135,7 +1125,7 @@ bool ft_task_scheduler::scheduled_heap_pop(scheduled_task &task)
         return (false);
     this->_scheduled[0] = ft_move(last_task);
     this->scheduled_heap_sift_down(0);
-    this->_scheduled_size_counter = static_cast<long long>(this->_scheduled.size());
+    this->_scheduled_size_counter = static_cast<long long>(size - 1U);
     return (true);
 }
 
@@ -1155,32 +1145,33 @@ bool ft_task_scheduler::scheduled_remove_index(size_t index)
         this->_scheduled.pop_back();
         if (this->_scheduled.get_error() != FT_ERR_SUCCESS)
             return (false);
-        this->_scheduled_size_counter = static_cast<long long>(this->_scheduled.size());
+        this->_scheduled_size_counter = static_cast<long long>(size - 1U);
         return (true);
     }
     scheduled_task last_task;
 
     last_task = ft_move(this->_scheduled[size - 1]);
-        this->_scheduled.pop_back();
-        if (this->_scheduled.get_error() != FT_ERR_SUCCESS)
-            return (false);
+    this->_scheduled.pop_back();
+    if (this->_scheduled.get_error() != FT_ERR_SUCCESS)
+        return (false);
     this->_scheduled[index] = ft_move(last_task);
-    this->scheduled_heap_sift_down(index);
-    this->scheduled_heap_sift_up(index);
-    this->_scheduled_size_counter = static_cast<long long>(this->_scheduled.size());
+    const scheduled_task *entries = this->_scheduled.begin();
+    if (index != 0U
+        && entries[index]._time.milliseconds < entries[(index - 1U) / 2U]._time.milliseconds)
+        this->scheduled_heap_sift_up(index);
+    else
+        this->scheduled_heap_sift_down(index);
+    this->_scheduled_size_counter = static_cast<long long>(size - 1U);
     return (true);
 }
 
 bool ft_task_scheduler::cancel_task_state(const ft_sharedptr<ft_scheduled_task_state> &state)
 {
-    bool removed_entry;
-    size_t index;
     ft_sharedptr<ft_scheduled_task_state> state_copy;
     ft_scheduled_task_state *state_pointer;
     unsigned long long cancelled_trace_id;
     unsigned long long cancelled_parent_id;
     const char *cancelled_label;
-    bool should_emit_cancel;
     bool scheduler_lock_acquired;
     int scheduled_mutex_error;
 
@@ -1216,41 +1207,35 @@ bool ft_task_scheduler::cancel_task_state(const ft_sharedptr<ft_scheduled_task_s
         this->unlock_internal(scheduler_lock_acquired);
         return (false);
     }
-    index = 0;
-    removed_entry = false;
+    const ft_size_t scheduled_count = this->_scheduled.size();
+    const scheduled_task *scheduled_entries = this->_scheduled.begin();
+    if (this->_scheduled.get_error() != FT_ERR_SUCCESS)
+    {
+        (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
+        this->unlock_internal(scheduler_lock_acquired);
+        return (false);
+    }
+    ft_size_t index = 0U;
     cancelled_trace_id = 0;
     cancelled_parent_id = 0;
     cancelled_label = ft_nullptr;
-    should_emit_cancel = false;
-    while (true)
+    while (index < scheduled_count)
     {
-        size_t size;
-
-        size = this->_scheduled.size();
-        if (this->_scheduled.get_error() != FT_ERR_SUCCESS)
+        const scheduled_task &entry = scheduled_entries[index];
+        if (entry._state.get() == state_pointer)
         {
-            (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
-            this->unlock_internal(scheduler_lock_acquired);
-            return (false);
-        }
-        if (index >= size)
-            break ;
-        if (this->_scheduled[index]._state.get() == state_pointer)
-        {
-            cancelled_trace_id = this->_scheduled[index]._trace_id;
-            cancelled_parent_id = this->_scheduled[index]._parent_id;
-            cancelled_label = this->_scheduled[index]._label;
-                if (!this->scheduled_remove_index(index))
-                {
-                    (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
-                    this->unlock_internal(scheduler_lock_acquired);
-                    return (false);
-                }
-            removed_entry = true;
-            should_emit_cancel = true;
+            cancelled_trace_id = entry._trace_id;
+            cancelled_parent_id = entry._parent_id;
+            cancelled_label = entry._label;
+            if (!this->scheduled_remove_index(index))
+            {
+                (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
+                this->unlock_internal(scheduler_lock_acquired);
+                return (false);
+            }
             break ;
         }
-        index++;
+        ++index;
     }
     (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
     if (this->_scheduled_condition.broadcast() != 0)
@@ -1258,12 +1243,7 @@ bool ft_task_scheduler::cancel_task_state(const ft_sharedptr<ft_scheduled_task_s
         this->unlock_internal(scheduler_lock_acquired);
         return (false);
     }
-    if (!removed_entry)
-    {
-        this->unlock_internal(scheduler_lock_acquired);
-        return (true);
-    }
-    if (should_emit_cancel)
+    if (index < scheduled_count)
     {
         this->trace_emit_event(FT_TASK_TRACE_PHASE_CANCELLED, cancelled_trace_id,
                 cancelled_parent_id, cancelled_label, false);
@@ -1398,14 +1378,12 @@ void ft_task_scheduler::timer_loop()
                     original_function();
                 if (!this->_running.load())
                     return ;
+                if (this->_scheduled_mutex.lock() != FT_ERR_SUCCESS)
+                    return ;
                 if (expired_task._interval_ms > 0)
                 {
                     bool should_reschedule;
-                    int scheduled_mutex_lock_error;
 
-                    scheduled_mutex_lock_error = this->_scheduled_mutex.lock();
-                    if (scheduled_mutex_lock_error != FT_ERR_SUCCESS)
-                        return ;
                     should_reschedule = true;
                     if (expired_task._state)
                     {
@@ -1440,7 +1418,6 @@ void ft_task_scheduler::timer_loop()
                             this->trace_emit_event(FT_TASK_TRACE_PHASE_TIMER_REGISTERED,
                                     new_trace_id, previous_trace_id, reschedule_label, true);
                     }
-                    (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
                 }
                 continue;
             }
@@ -1457,14 +1434,12 @@ void ft_task_scheduler::timer_loop()
                     original_function();
                 if (!this->_running.load())
                     return ;
+                if (this->_scheduled_mutex.lock() != FT_ERR_SUCCESS)
+                    return ;
                 if (expired_task._interval_ms > 0)
                 {
                     bool should_reschedule;
-                    int scheduled_mutex_lock_error;
 
-                    scheduled_mutex_lock_error = this->_scheduled_mutex.lock();
-                    if (scheduled_mutex_lock_error != FT_ERR_SUCCESS)
-                        return ;
                     should_reschedule = true;
                     if (expired_task._state)
                     {
@@ -1484,7 +1459,6 @@ void ft_task_scheduler::timer_loop()
                         if (!this->scheduled_heap_push(ft_move(expired_task)))
                             (void)this->_scheduled.get_error();
                     }
-                    (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
                 }
                 continue;
             }
@@ -1517,14 +1491,12 @@ void ft_task_scheduler::timer_loop()
             }
             if (!this->_running.load())
                 return ;
+            if (this->_scheduled_mutex.lock() != FT_ERR_SUCCESS)
+                return ;
             if (expired_task._interval_ms > 0)
             {
                 bool should_reschedule;
-                int scheduled_mutex_lock_error;
 
-                scheduled_mutex_lock_error = this->_scheduled_mutex.lock();
-                if (scheduled_mutex_lock_error != FT_ERR_SUCCESS)
-                    return ;
                 should_reschedule = true;
                 if (expired_task._state)
                 {
@@ -1556,7 +1528,6 @@ void ft_task_scheduler::timer_loop()
                         this->trace_emit_event(FT_TASK_TRACE_PHASE_TIMER_REGISTERED,
                                 new_trace_id, previous_trace_id, reschedule_label, true);
                 }
-                (void)pt_mutex_unlock_if_not_null(&this->_scheduled_mutex);
             }
             continue;
         }
@@ -1633,6 +1604,8 @@ bool ft_task_scheduler::capture_metrics(ft_task_trace_event &event) const
 void ft_task_scheduler::trace_emit_event(e_ft_task_trace_phase phase, unsigned long long trace_id,
         unsigned long long parent_id, const char *label, bool timer_thread)
 {
+    if (task_scheduler_trace_has_sinks() == FT_FALSE)
+        return ;
     ft_task_trace_event event;
     bool captured;
     t_thread_id thread_identifier;

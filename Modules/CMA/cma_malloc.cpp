@@ -25,6 +25,7 @@ static void *cma_malloc_uninstrumented(ft_size_t size)
     ft_size_t request_size = size;
     ft_size_t instrumented_size = 0;
     ft_size_t aligned_size = 0;
+    ft_size_t arena_size = 0;
     Block *block = nullptr;
 
     if (size > FT_SYSTEM_SIZE_MAX)
@@ -49,13 +50,11 @@ static void *cma_malloc_uninstrumented(ft_size_t size)
             static_cast<unsigned long long>(size), result);
         return (result);
     }
-    if (cma_lock_allocator(&lock_acquired) != FT_ERR_SUCCESS)
+    if (cma_lock_allocator_arena(&lock_acquired) != FT_ERR_SUCCESS)
         return (nullptr);
-    result = cma_small_arena_allocate_locked(size);
+    result = cma_small_arena_allocate_locked(size, &arena_size);
     if (result != nullptr)
     {
-        ft_size_t arena_size = cma_small_arena_block_size_locked(result);
-
         g_cma_allocation_count++;
         g_cma_current_bytes += arena_size;
         if (g_cma_current_bytes > g_cma_peak_bytes)
@@ -65,6 +64,11 @@ static void *cma_malloc_uninstrumented(ft_size_t size)
         cma_record_allocation_log("cma_malloc %llu -> %p",
             static_cast<unsigned long long>(size), result);
         return (result);
+    }
+    if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
+        return (nullptr);
     }
     instrumented_size = cma_debug_allocation_size(size);
     if (instrumented_size > FT_SYSTEM_SIZE_MAX - 15)

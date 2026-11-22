@@ -1,9 +1,6 @@
 #include "errno.hpp"
 #include "../Compatebility/compatebility_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
 typedef struct s_ft_error_string
 {
@@ -11,7 +8,10 @@ typedef struct s_ft_error_string
     const char *error_message;
 }   t_ft_error_string;
 
-static const t_ft_error_string g_error_strings[] =
+static constexpr int32_t FIRST_DENSE_ERROR = FT_ERR_SSL_SYSCALL_ERROR;
+static constexpr int32_t LAST_DENSE_ERROR = FT_ERR_RWLOCK_READER_CAPACITY;
+
+static constexpr t_ft_error_string DENSE_ERROR_STRINGS[] =
 {
     {FT_ERR_SUCCESS, "Success"},
     {FT_ERR_NO_MEMORY, "Memory allocation failed"},
@@ -82,24 +82,36 @@ static const t_ft_error_string g_error_strings[] =
     {FT_ERR_SYS_INTERNAL, "Internal system error"},
     {FT_ERR_NOT_INITIALISED, "Object not initialised"},
     {FT_ERR_RWLOCK_READER_CAPACITY, "RW-lock reader ownership capacity reached"},
-    {FT_ERR_SSL_SYSCALL_ERROR, "SSL system call error"},
-    {FT_ERR_HTTP_PROTOCOL_MISMATCH, "HTTP protocol mismatch"},
-    {FT_ERR_API_CIRCUIT_OPEN, "API circuit breaker is open"}
+    {FT_ERR_SSL_SYSCALL_ERROR, "SSL system call error"}
 };
+
+struct errno_message_table
+{
+    const char *messages[LAST_DENSE_ERROR - FIRST_DENSE_ERROR + 1];
+};
+
+static constexpr errno_message_table errno_make_message_table()
+{
+    errno_message_table table{};
+    ft_size_t error_index = 0U;
+    while (error_index < sizeof(DENSE_ERROR_STRINGS) / sizeof(DENSE_ERROR_STRINGS[0]))
+    {
+        const t_ft_error_string &entry = DENSE_ERROR_STRINGS[error_index++];
+        table.messages[entry.error_code - FIRST_DENSE_ERROR] = entry.error_message;
+    }
+    return (table);
+}
+
+static constexpr errno_message_table DENSE_ERROR_MESSAGES = errno_make_message_table();
 
 static const char *ft_find_custom_error(int32_t error_code)
 {
-    ft_size_t error_index;
-    ft_size_t error_count;
-
-    error_count = sizeof(g_error_strings) / sizeof(g_error_strings[0]);
-    error_index = 0;
-    while (error_index < error_count)
-    {
-        if (g_error_strings[error_index].error_code == error_code)
-            return (g_error_strings[error_index].error_message);
-        error_index++;
-    }
+    if (error_code >= FIRST_DENSE_ERROR && error_code <= LAST_DENSE_ERROR)
+        return (DENSE_ERROR_MESSAGES.messages[error_code - FIRST_DENSE_ERROR]);
+    if (error_code == FT_ERR_HTTP_PROTOCOL_MISMATCH)
+        return ("HTTP protocol mismatch");
+    if (error_code == FT_ERR_API_CIRCUIT_OPEN)
+        return ("API circuit breaker is open");
     return (ft_nullptr);
 }
 

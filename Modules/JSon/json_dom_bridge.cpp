@@ -1,5 +1,5 @@
 #include "json_dom_bridge.hpp"
-#include "json.hpp"
+#include "json_internal.hpp"
 #include "../CPP_class/class_big_number.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
@@ -170,7 +170,6 @@ int32_t json_document_to_dom(const json_document &document, ft_dom_document &dom
 {
     int32_t root_initialize_error;
 
-    dom.clear();
     ft_dom_node *root_node;
 
     root_node = new(std::nothrow) ft_dom_node();
@@ -206,161 +205,138 @@ int32_t json_document_to_dom(const json_document &document, ft_dom_document &dom
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t json_dom_apply_item(ft_dom_node *item_node, json_group *group, json_document &document) noexcept
+static int32_t json_dom_has_big_number_type(const ft_dom_node &node, ft_bool &is_big) noexcept
 {
-    if (!item_node || !group)
+    is_big = FT_FALSE;
+    ft_bool locked = FT_FALSE;
+    const int32_t error = node.lock(&locked);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    const auto &keys = node.get_attribute_keys();
+    const auto &values = node.get_attribute_values();
+    const ft_size_t count = keys.size();
+    ft_size_t index = 0U;
+    while (index < count)
     {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
-    }
-    const ft_string &item_name = item_node->get_name();
-    const char *item_key;
-
-    item_key = item_name.c_str();
-    if (!item_key)
-    {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
-    }
-    const ft_string &item_value_string = item_node->get_value();
-    const char *item_value;
-
-    item_value = item_value_string.c_str();
-    if (!item_value)
-    {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
-    }
-    ft_string type_key;
-    int32_t type_initialize_error = type_key.initialize("json:type");
-    if (type_initialize_error != FT_ERR_SUCCESS)
-    {
-        document.set_manual_error(type_initialize_error);
-        return (FT_ERR_INVALID_STATE);
-    }
-    ft_string *type_attribute = item_node->get_attribute(type_key);
-    ft_bool has_type_attribute;
-
-    if (type_attribute == ft_nullptr)
-    {
-        document.set_manual_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
-    has_type_attribute = (type_attribute->size() > 0);
-    if (has_type_attribute && *type_attribute == "big_number")
-    {
-        ft_big_number big_number_value;
-        int32_t big_number_error;
-        int32_t big_number_initialize_error;
-
-        big_number_initialize_error = big_number_value.initialize();
-        if (big_number_initialize_error != FT_ERR_SUCCESS)
+        if (keys[index] == "json:type")
         {
-            delete type_attribute;
-            document.set_manual_error(big_number_initialize_error);
-            return (FT_ERR_INVALID_STATE);
+            is_big = values[index] == "big_number";
+            break ;
         }
-        big_number_value.assign(item_value);
-        big_number_error = big_number_value.get_error();
-        if (big_number_error != FT_ERR_SUCCESS)
-        {
-            delete type_attribute;
-            document.set_manual_error(big_number_error);
-            return (FT_ERR_INVALID_STATE);
-        }
-        json_item *json_item_pointer;
-
-        json_item_pointer = document.create_item(item_key, big_number_value);
-        if (!json_item_pointer)
-        {
-            delete type_attribute;
-            return (FT_ERR_INVALID_STATE);
-        }
-        document.add_item(group, json_item_pointer);
-        delete type_attribute;
-        return (FT_ERR_SUCCESS);
+        ++index;
     }
-    delete type_attribute;
-    json_item *json_item_pointer;
-
-    json_item_pointer = document.create_item(item_key, item_value);
-    if (!json_item_pointer)
-        return (FT_ERR_INVALID_STATE);
-    document.add_item(group, json_item_pointer);
+    node.unlock(locked);
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t json_dom_apply_group(ft_dom_node *group_node, json_document &document) noexcept
+static int32_t json_dom_normalize_number(const char *&value, ft_string &normalized) noexcept
 {
-    if (!group_node)
+    const ft_bool negative = *value == '-';
+    const char *digits = value + negative;
+    const char *end = digits;
+    while (*end >= '0' && *end <= '9')
+        ++end;
+    if (end == digits || *end != '\0')
     {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
+        value = "0";
+        return (FT_ERR_SUCCESS);
     }
-    const ft_string &group_name = group_node->get_name();
-    const char *group_name_cstr;
-
-    group_name_cstr = group_name.c_str();
-    if (!group_name_cstr)
+    while (*digits == '0' && digits[1] != '\0')
+        ++digits;
+    if (!negative || *digits == '0')
     {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
+        value = digits;
+        return (FT_ERR_SUCCESS);
     }
-    json_group *group_pointer;
+    if (digits == value + 1)
+        return (FT_ERR_SUCCESS);
+    int32_t error = normalized.initialize("-");
+    if (error == FT_ERR_SUCCESS)
+        error = normalized.append(digits);
+    if (error == FT_ERR_SUCCESS)
+        value = normalized.c_str();
+    return (error);
+}
 
-    group_pointer = document.create_group(group_name_cstr);
-    if (!group_pointer)
-        return (FT_ERR_INVALID_STATE);
-    document.append_group(group_pointer);
-    const ft_vector<ft_dom_node*> &children = group_node->get_children();
-    ft_size_t index;
-    ft_size_t count;
+static int32_t json_dom_apply_item(const ft_dom_node *item_node, json_item *&item) noexcept
+{
+    if (item_node == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *key = item_node->get_name().c_str();
+    const char *value = item_node->get_value().c_str();
+    if (key == ft_nullptr || value == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_bool is_big;
+    int32_t error = json_dom_has_big_number_type(*item_node, is_big);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    ft_string normalized;
+    if (is_big)
+    {
+        error = json_dom_normalize_number(value, normalized);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    item = json_create_item(key, value);
+    if (item == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    return (json_item_get_error(item));
+}
 
-    index = 0;
-    count = children.size();
+static int32_t json_dom_apply_group(const ft_dom_node *group_node, json_group *&group) noexcept
+{
+    if (group_node == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *name = group_node->get_name().c_str();
+    if (name == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    group = json_create_json_group(name);
+    if (group == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const auto &children = group_node->get_children();
+    const ft_size_t count = children.size();
+    ft_size_t index = 0U;
+    json_item **next_item = &group->items;
     while (index < count)
     {
-        ft_dom_node *child_node = children[index];
-        if (json_dom_apply_item(child_node, group_pointer, document) != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_STATE);
-        index += 1;
+        const int32_t error = json_dom_apply_item(children[index], *next_item);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        next_item = &(*next_item)->next;
+        ++index;
     }
     return (FT_ERR_SUCCESS);
 }
 
 int32_t json_document_from_dom(const ft_dom_document &dom, json_document &document) noexcept
 {
-    document.clear();
-    ft_dom_node *root_node;
-    ft_dom_node_type root_type;
-
-    root_node = dom.get_root();
-    if (!root_node)
+    const ft_dom_node *root = dom.get_root();
+    if (root == ft_nullptr || root->get_type() != FT_DOM_NODE_OBJECT)
     {
         document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
         return (FT_ERR_INVALID_STATE);
     }
-
-    root_type = root_node->get_type();
-    if (root_type != FT_DOM_NODE_OBJECT)
-    {
-        document.set_manual_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_STATE);
-    }
-    const ft_vector<ft_dom_node*> &groups = root_node->get_children();
-
-    ft_size_t index;
-    ft_size_t count;
-
-    index = 0;
-    count = groups.size();
+    const auto &groups = root->get_children();
+    const ft_size_t count = groups.size();
+    ft_size_t index = 0U;
+    json_group *head = ft_nullptr;
+    json_group **next_group = &head;
+    int32_t error = FT_ERR_SUCCESS;
     while (index < count)
     {
-        ft_dom_node *group_node = groups[index];
-        if (json_dom_apply_group(group_node, document) != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_STATE);
-        index += 1;
+        error = json_dom_apply_group(groups[index], *next_group);
+        if (error != FT_ERR_SUCCESS)
+            break ;
+        next_group = &(*next_group)->next;
+        ++index;
     }
-    document.set_manual_error(FT_ERR_SUCCESS);
+    if (error == FT_ERR_SUCCESS)
+        error = json_document_replace_groups(document, head);
+    if (error != FT_ERR_SUCCESS)
+    {
+        json_free_groups(head);
+        document.set_manual_error(error);
+        return (FT_ERR_INVALID_STATE);
+    }
     return (FT_ERR_SUCCESS);
 }

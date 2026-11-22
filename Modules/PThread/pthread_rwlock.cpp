@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include "pthread.hpp"
+#include "pt_thread_workspace.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/basic.hpp"
@@ -38,8 +39,6 @@ struct s_pt_rwlock_tls_state
     }
 };
 
-static thread_local s_pt_rwlock_tls_state g_pt_rwlock_tls_state;
-
 static int pt_rwlock_strategy_lock_mutex(t_pt_rwlock *rwlock);
 static int pt_rwlock_strategy_unlock_mutex(t_pt_rwlock *rwlock);
 static int pt_rwlock_strategy_broadcast(pthread_cond_t *condition);
@@ -51,124 +50,95 @@ static ft_bool pt_rwlock_strategy_has_active_readers(
     const t_pt_rwlock *rwlock)
 {
     if (rwlock->active_readers != 0U
-        || rwlock->fast_active_readers.load(std::memory_order_acquire) != 0U)
+        || rwlock->fast_active_readers.load(std::memory_order_seq_cst) != 0U)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-static int pt_rwlock_tls_has_read_lock(const t_pt_rwlock *rwlock,
-    uint32_t *lock_index)
+static s_pt_rwlock_tls_read_lock &pt_rwlock_tls_entry(
+    s_pt_rwlock_tls_state &state, uint32_t index)
 {
-    uint32_t index;
+    if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
+        return (state.inline_locks[index]);
+    return (state.spill_locks.data[index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY]);
+}
 
-    index = 0U;
-    while (index < g_pt_rwlock_tls_state.lock_count)
+static uint32_t pt_rwlock_tls_find_read_lock_index(
+    s_pt_rwlock_tls_state *state, const t_pt_rwlock *rwlock)
+{
+    if (state == nullptr)
+        return (UINT32_MAX);
+    uint32_t index = state->lock_count;
+    while (index != 0U)
     {
-        if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-        {
-            if (g_pt_rwlock_tls_state.inline_locks[index].rwlock == rwlock)
-            {
-                if (lock_index != ft_nullptr)
-                    *lock_index = index;
-                return (FT_TRUE);
-            }
-        }
-        else if (g_pt_rwlock_tls_state.spill_locks.data[
-                index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].rwlock == rwlock)
-        {
-            if (lock_index != ft_nullptr)
-                *lock_index = index;
-            return (FT_TRUE);
-        }
-        index += 1U;
+        --index;
+        if (pt_rwlock_tls_entry(*state, index).rwlock == rwlock)
+            return (index);
     }
-    return (FT_FALSE);
+    return (UINT32_MAX);
+}
+
+static ft_bool pt_rwlock_tls_holds_read_lock(const t_pt_rwlock *rwlock)
+{
+    auto *state = pt_thread_workspace<s_pt_rwlock_tls_state>::get_existing();
+    return (pt_rwlock_tls_find_read_lock_index(state, rwlock) != UINT32_MAX);
 }
 
 static int pt_rwlock_tls_add_read_lock(t_pt_rwlock *rwlock,
     ft_bool fast_path)
 {
+    auto *state = pt_thread_workspace<s_pt_rwlock_tls_state>::get_or_create();
     s_pt_rwlock_tls_read_lock entry;
     int32_t error_code;
 
+    if (state == nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (state->lock_count == UINT32_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
     entry.rwlock = rwlock;
     entry.fast_path = fast_path;
-    if (g_pt_rwlock_tls_state.lock_count
+    if (state->lock_count
         < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
     {
-        g_pt_rwlock_tls_state.inline_locks[
-            g_pt_rwlock_tls_state.lock_count] = entry;
+        state->inline_locks[
+            state->lock_count] = entry;
     }
     else
     {
-        error_code = pt_buffer_push(g_pt_rwlock_tls_state.spill_locks,
+        error_code = pt_buffer_push(state->spill_locks,
             entry);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
     }
-    g_pt_rwlock_tls_state.lock_count += 1U;
+    state->lock_count += 1U;
     return (FT_ERR_SUCCESS);
 }
 
-static ft_bool pt_rwlock_tls_remove_read_lock(t_pt_rwlock *rwlock,
-    ft_bool *fast_path)
+static void pt_rwlock_tls_erase_read_lock(s_pt_rwlock_tls_state &state,
+    uint32_t index)
 {
-    uint32_t index;
+    const uint32_t last = state.lock_count - 1U;
+    if (index != last)
+        pt_rwlock_tls_entry(state, index) = pt_rwlock_tls_entry(state, last);
+    state.lock_count = last;
+    if (state.spill_locks.size != 0U)
+        --state.spill_locks.size;
+    return ;
+}
 
-    index = 0U;
-    while (index < g_pt_rwlock_tls_state.lock_count)
-    {
-        if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-        {
-            if (g_pt_rwlock_tls_state.inline_locks[index].rwlock != rwlock)
-            {
-                index += 1U;
-                continue;
-            }
-        }
-        else if (g_pt_rwlock_tls_state.spill_locks.data[
-                index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].rwlock != rwlock)
-        {
-            index += 1U;
-            continue;
-        }
-        if (fast_path != ft_nullptr)
-        {
-            if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-                *fast_path = g_pt_rwlock_tls_state.inline_locks[index].fast_path;
-            else
-                *fast_path = g_pt_rwlock_tls_state.spill_locks.data[
-                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].fast_path;
-        }
-        while (index + 1U < g_pt_rwlock_tls_state.lock_count)
-        {
-            if (index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-            {
-                if (index + 1U < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-                    g_pt_rwlock_tls_state.inline_locks[index] =
-                        g_pt_rwlock_tls_state.inline_locks[index + 1U];
-                else
-                    g_pt_rwlock_tls_state.inline_locks[index] =
-                        g_pt_rwlock_tls_state.spill_locks.data[0U];
-            }
-            else
-                g_pt_rwlock_tls_state.spill_locks.data[
-                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY] =
-                    g_pt_rwlock_tls_state.spill_locks.data[
-                    index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY + 1U];
-            index += 1U;
-        }
-        g_pt_rwlock_tls_state.lock_count -= 1U;
-        if (g_pt_rwlock_tls_state.spill_locks.size > 0U)
-            g_pt_rwlock_tls_state.spill_locks.size -= 1U;
-        return (FT_TRUE);
-    }
-    return (FT_FALSE);
+static void pt_rwlock_tls_remove_read_lock(t_pt_rwlock *rwlock)
+{
+    auto *state = pt_thread_workspace<s_pt_rwlock_tls_state>::get_existing();
+    const uint32_t index = pt_rwlock_tls_find_read_lock_index(state, rwlock);
+    if (index != UINT32_MAX)
+        pt_rwlock_tls_erase_read_lock(*state, index);
+    return ;
 }
 
 static void pt_rwlock_strategy_close_reader_fast_path(t_pt_rwlock *rwlock)
 {
-    rwlock->reader_fast_path_open.store(FT_FALSE, std::memory_order_release);
+    if (rwlock->reader_fast_path_open.load(std::memory_order_relaxed) == FT_TRUE)
+        rwlock->reader_fast_path_open.store(FT_FALSE, std::memory_order_seq_cst);
     return ;
 }
 
@@ -196,6 +166,10 @@ static void pt_rwlock_strategy_wake_writer_after_reader_exit(
 {
     int error_code;
 
+    // Writer-priority closes admission before registering a waiting writer.
+    if (rwlock->strategy == PT_RWLOCK_STRATEGY_WRITER_PRIORITY
+        && rwlock->reader_fast_path_open.load(std::memory_order_seq_cst) == FT_TRUE)
+        return ;
     if (rwlock->fast_active_readers.load(std::memory_order_acquire) != 0U)
         return ;
     error_code = pt_rwlock_strategy_lock_mutex(rwlock);
@@ -237,20 +211,21 @@ static int pt_rwlock_strategy_try_fast_read_lock(t_pt_rwlock *rwlock,
     {
         next_reader_count = reader_count + 1U;
         if (rwlock->fast_active_readers.compare_exchange_weak(reader_count,
-                next_reader_count, std::memory_order_acq_rel,
+                next_reader_count, std::memory_order_seq_cst,
                 std::memory_order_relaxed) == true)
         {
-            if (rwlock->reader_fast_path_open.load(std::memory_order_acquire)
+            // Admission is ordered against a writer closing the gate and checking the count.
+            if (rwlock->reader_fast_path_open.load(std::memory_order_seq_cst)
                 == FT_TRUE)
                 return (FT_ERR_SUCCESS);
-            (void)pt_rwlock_tls_remove_read_lock(rwlock, ft_nullptr);
-            rwlock->fast_active_readers.fetch_sub(1U,
-                std::memory_order_acq_rel);
-            pt_rwlock_strategy_wake_writer_after_reader_exit(rwlock);
+            pt_rwlock_tls_remove_read_lock(rwlock);
+            if (rwlock->fast_active_readers.fetch_sub(1U,
+                    std::memory_order_seq_cst) == 1U)
+                pt_rwlock_strategy_wake_writer_after_reader_exit(rwlock);
             return (FT_ERR_THREAD_BUSY);
         }
     }
-    (void)pt_rwlock_tls_remove_read_lock(rwlock, ft_nullptr);
+    pt_rwlock_tls_remove_read_lock(rwlock);
     return (FT_ERR_OUT_OF_RANGE);
 }
 
@@ -574,7 +549,7 @@ static int pt_rwlock_strategy_read_lock_internal(t_pt_rwlock *rwlock,
     if (rwlock->initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
     thread_id = pt_thread_self();
-    if (pt_rwlock_tls_has_read_lock(rwlock, ft_nullptr) == FT_TRUE)
+    if (pt_rwlock_tls_holds_read_lock(rwlock))
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
     error_code = pt_rwlock_strategy_try_fast_read_lock(rwlock,
             &fast_path_attempted);
@@ -746,7 +721,7 @@ static int pt_rwlock_strategy_write_lock_internal(t_pt_rwlock *rwlock,
         pt_rwlock_strategy_unlock_mutex(rwlock);
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
     }
-    if (pt_rwlock_tls_has_read_lock(rwlock, ft_nullptr) == FT_TRUE)
+    if (pt_rwlock_tls_holds_read_lock(rwlock))
     {
         pt_rwlock_strategy_unlock_mutex(rwlock);
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
@@ -776,6 +751,12 @@ static int pt_rwlock_strategy_write_lock_internal(t_pt_rwlock *rwlock,
     if (try_only == FT_TRUE)
     {
         pt_rwlock_strategy_close_reader_fast_path(rwlock);
+        if (pt_rwlock_strategy_has_active_readers(rwlock) == FT_TRUE)
+        {
+            pt_rwlock_strategy_refresh_reader_fast_path(rwlock);
+            pt_rwlock_strategy_unlock_mutex(rwlock);
+            return (FT_ERR_THREAD_BUSY);
+        }
         rwlock->writer_active = FT_TRUE;
         rwlock->active_writer_thread = thread_id;
         rwlock->active_writer_has_ticket = FT_FALSE;
@@ -796,11 +777,18 @@ static int pt_rwlock_strategy_write_lock_internal(t_pt_rwlock *rwlock,
     writer_ticket = rwlock->next_writer_ticket;
     rwlock->next_writer_ticket += 1U;
     rwlock->waiting_writers += 1U;
-    while (pt_rwlock_strategy_has_active_readers(rwlock) == FT_TRUE
-        || rwlock->writer_active == FT_TRUE
-        || rwlock->reader_phase_open == FT_TRUE
-        || writer_ticket != rwlock->serving_writer_ticket)
+    while (1)
     {
+        if (rwlock->writer_active == FT_FALSE
+            && rwlock->reader_phase_open == FT_FALSE
+            && writer_ticket == rwlock->serving_writer_ticket
+            && pt_rwlock_strategy_has_active_readers(rwlock) == FT_FALSE)
+        {
+            pt_rwlock_strategy_close_reader_fast_path(rwlock);
+            if (pt_rwlock_strategy_has_active_readers(rwlock) == FT_FALSE)
+                break ;
+            pt_rwlock_strategy_refresh_reader_fast_path(rwlock);
+        }
 #ifdef LIBFT_TEST_BUILD
         if (pt_rwlock_test_take_failure(PT_RWLOCK_TEST_FAIL_CONDITION_WAIT)
             == FT_TRUE)
@@ -828,7 +816,6 @@ static int pt_rwlock_strategy_write_lock_internal(t_pt_rwlock *rwlock,
         }
     }
     rwlock->waiting_writers -= 1U;
-    pt_rwlock_strategy_close_reader_fast_path(rwlock);
     rwlock->writer_active = FT_TRUE;
     rwlock->active_writer_thread = thread_id;
     rwlock->active_writer_has_ticket = FT_TRUE;
@@ -859,8 +846,6 @@ static int32_t pt_rwlock_strategy_try_wrlock_uninstrumented(
 static int32_t pt_rwlock_strategy_rdunlock_uninstrumented(
     t_pt_rwlock *rwlock)
 {
-    uint32_t lock_index;
-    ft_bool fast_path;
     int error_code;
 
     if (rwlock == ft_nullptr)
@@ -869,23 +854,20 @@ static int32_t pt_rwlock_strategy_rdunlock_uninstrumented(
     if (rwlock->initialised_state != FT_CLASS_STATE_INITIALISED)
         return (pt_rwlock_strategy_report_result(rwlock, FT_ERR_INVALID_STATE,
                 FT_ERR_INVALID_STATE));
-    if (pt_rwlock_tls_has_read_lock(rwlock, &lock_index) == FT_FALSE)
+    auto *state = pt_thread_workspace<s_pt_rwlock_tls_state>::get_existing();
+    const uint32_t held_index = pt_rwlock_tls_find_read_lock_index(state, rwlock);
+    if (held_index == UINT32_MAX)
         return (pt_rwlock_strategy_report_result(rwlock,
                 FT_ERR_MUTEX_NOT_OWNER, FT_ERR_MUTEX_NOT_OWNER));
-    if (lock_index < PT_RWLOCK_TLS_READ_LOCK_CAPACITY)
-        fast_path = g_pt_rwlock_tls_state.inline_locks[lock_index].fast_path;
-    else
-        fast_path = g_pt_rwlock_tls_state.spill_locks.data[
-            lock_index - PT_RWLOCK_TLS_READ_LOCK_CAPACITY].fast_path;
-    if (fast_path == FT_TRUE)
+    if (pt_rwlock_tls_entry(*state, held_index).fast_path == FT_TRUE)
     {
-        (void)pt_rwlock_tls_remove_read_lock(rwlock, ft_nullptr);
+        pt_rwlock_tls_erase_read_lock(*state, held_index);
         if (rwlock->fast_active_readers.load(std::memory_order_acquire) == 0U)
             return (pt_rwlock_strategy_report_result(rwlock,
                     FT_ERR_INVALID_STATE, FT_ERR_INVALID_STATE));
-        rwlock->fast_active_readers.fetch_sub(1U,
-            std::memory_order_acq_rel);
-        pt_rwlock_strategy_wake_writer_after_reader_exit(rwlock);
+        if (rwlock->fast_active_readers.fetch_sub(1U,
+                std::memory_order_seq_cst) == 1U)
+            pt_rwlock_strategy_wake_writer_after_reader_exit(rwlock);
         return (pt_rwlock_strategy_report_result(rwlock, FT_ERR_SUCCESS,
                 FT_ERR_SUCCESS));
     }
@@ -905,7 +887,7 @@ static int32_t pt_rwlock_strategy_rdunlock_uninstrumented(
         return (pt_rwlock_strategy_report_result(rwlock,
                 FT_ERR_INVALID_STATE, FT_ERR_INVALID_STATE));
     }
-    (void)pt_rwlock_tls_remove_read_lock(rwlock, ft_nullptr);
+    pt_rwlock_tls_erase_read_lock(*state, held_index);
     rwlock->active_readers -= 1U;
     if (rwlock->active_readers == 0)
     {
@@ -1033,7 +1015,7 @@ static int32_t pt_rwlock_strategy_unlock_uninstrumented(
         return (pt_rwlock_strategy_report_result(rwlock, FT_ERR_INVALID_STATE,
                 FT_ERR_INVALID_STATE));
     thread_id = pt_thread_self();
-    if (pt_rwlock_tls_has_read_lock(rwlock, ft_nullptr) == FT_TRUE)
+    if (pt_rwlock_tls_holds_read_lock(rwlock))
         return (pt_rwlock_strategy_rdunlock(rwlock));
     error_code = pt_rwlock_strategy_lock_mutex(rwlock);
     if (error_code != FT_ERR_SUCCESS)
@@ -1050,7 +1032,7 @@ static int32_t pt_rwlock_strategy_unlock_uninstrumented(
     if (rwlock->writer_active == FT_TRUE
         && pt_thread_equal(rwlock->active_writer_thread, thread_id) != 0)
         writer_owned = FT_TRUE;
-    else if (pt_rwlock_tls_has_read_lock(rwlock, ft_nullptr) == FT_TRUE)
+    else if (pt_rwlock_tls_holds_read_lock(rwlock))
         reader_owned = FT_TRUE;
     pt_rwlock_strategy_unlock_mutex(rwlock);
     if (writer_owned == FT_TRUE)

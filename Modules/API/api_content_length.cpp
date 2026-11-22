@@ -1,54 +1,17 @@
 #include "api_internal.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include "../Basic/basic.hpp"
+#include <charconv>
+#include <limits>
 
 ft_bool api_append_content_length_header(ft_string &request, ft_size_t content_length)
 {
-    char content_length_buffer[32];
-    char reversed_buffer[32];
-    ft_size_t reversed_length;
-    ft_size_t index;
-    int32_t request_error;
-
-    if (!request.is_initialised())
-    {
-        if (request.initialize() != FT_ERR_SUCCESS)
-            return (FT_FALSE);
-    }
-
-    reversed_length = 0;
-    do
-    {
-        if (reversed_length >= sizeof(reversed_buffer) - 1)
-            return (FT_FALSE);
-        reversed_buffer[reversed_length] = static_cast<char>('0' + (content_length % 10));
-        content_length /= 10;
-        reversed_length++;
-    }
-    while (content_length != 0);
-    index = 0;
-    while (index < reversed_length)
-    {
-        ft_size_t reversed_index;
-
-        reversed_index = reversed_length - index - 1;
-        content_length_buffer[index] = reversed_buffer[reversed_index];
-        index++;
-    }
-    content_length_buffer[reversed_length] = '\0';
-    request += "\r\nContent-Length: ";
-    request_error = request.get_error();
-    if (request_error != FT_ERR_SUCCESS)
-    {
+    constexpr char HEADER[] = "\r\nContent-Length: ";
+    constexpr ft_size_t HEADER_LENGTH = sizeof(HEADER) - 1U;
+    constexpr ft_size_t DIGIT_CAPACITY = std::numeric_limits<ft_size_t>::digits10 + 1U;
+    if (!request.is_initialised() && request.initialize() != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    }
-    request += content_length_buffer;
-    request_error = request.get_error();
-    if (request_error != FT_ERR_SUCCESS)
-    {
-        return (FT_FALSE);
-    }
-    return (FT_TRUE);
+    char record[HEADER_LENGTH + DIGIT_CAPACITY];
+    ft_memcpy_fixed<HEADER_LENGTH>(record, HEADER);
+    const auto result = std::to_chars(record + HEADER_LENGTH, record + sizeof(record), content_length);
+    return (request.append(record, static_cast<ft_size_t>(result.ptr - record)) == FT_ERR_SUCCESS);
 }

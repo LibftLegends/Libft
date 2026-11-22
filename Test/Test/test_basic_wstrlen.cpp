@@ -82,6 +82,30 @@ FT_TEST(test_basic_adv_utf16_to_utf8_surrogate_pair)
     return (1);
 }
 
+FT_TEST(test_basic_adv_utf16_to_utf8_preserves_bytes_across_batches)
+{
+    char16_t input[258];
+    ft_size_t index = 0U;
+    while (index < 252U)
+    {
+        input[index] = u'a';
+        ++index;
+    }
+    input[252U] = static_cast<char16_t>(0xD83DU);
+    input[253U] = static_cast<char16_t>(0xDE00U);
+    input[254U] = u'\0';
+    input[255U] = u'z';
+    input[256U] = u'\0';
+    input[257U] = u'y';
+    ft_string *result = adv_utf16_to_utf8(input, 258U);
+    FT_ASSERT(result != ft_nullptr);
+    FT_ASSERT_EQ(260U, result->size());
+    FT_ASSERT_EQ(0, ft_memcmp(result->c_str() + 252U,
+        "\xF0\x9F\x98\x80" "\0z\0y", 8U));
+    delete result;
+    return (1);
+}
+
 FT_TEST(test_basic_adv_utf16_to_utf8_invalid_surrogate_returns_null)
 {
     char16_t input[2];

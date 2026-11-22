@@ -10,9 +10,10 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include "swap.hpp"
 #include <cstddef>
 #include <functional>
+#include <memory>
+#include <type_traits>
 #include "move.hpp"
 
 template <typename ElementType, typename Compare = std::less<ElementType> >
@@ -32,6 +33,7 @@ class ft_priority_queue
         ft_bool ensure_capacity(ft_size_t desired);
         void heapify_up(ft_size_t index);
         void heapify_down(ft_size_t index);
+        ft_size_t preferred_child(ft_size_t index, ElementType &value);
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
 
@@ -84,31 +86,36 @@ ft_bool ft_priority_queue<ElementType, Compare>::ensure_capacity(ft_size_t desir
 {
     ft_size_t new_capacity;
     ElementType* new_data;
-    ft_size_t element_index;
-
-    if (desired <= this->_capacity)
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    if (desired > MAXIMUM_CAPACITY)
     {
-        set_error(FT_ERR_SUCCESS);
-        return (FT_TRUE);
+        this->set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY);
+        return (FT_FALSE);
     }
-    if (this->_capacity == 0)
-        new_capacity = 1;
-    else
+    new_capacity = desired;
+    if (this->_capacity != 0U && this->_capacity <= MAXIMUM_CAPACITY / 2U)
         new_capacity = this->_capacity * 2;
-    while (new_capacity < desired)
-        new_capacity *= 2;
     new_data = static_cast<ElementType*>(cma_malloc(sizeof(ElementType) * new_capacity));
     if (new_data == ft_nullptr)
     {
         set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY);
         return (FT_FALSE);
     }
-    element_index = 0;
-    while (element_index < this->_size)
+    if constexpr (std::is_trivially_move_constructible_v<ElementType>
+        && std::is_trivially_destructible_v<ElementType>)
     {
-        ::construct_at(&new_data[element_index], ft_move(this->_data[element_index]));
-        ::destroy_at(&this->_data[element_index]);
-        element_index += 1;
+        if (this->_size != 0U)
+            std::uninitialized_move_n(this->_data, this->_size, new_data);
+    }
+    else
+    {
+        ft_size_t element_index = 0U;
+        while (element_index < this->_size)
+        {
+            ::construct_at(&new_data[element_index], ft_move(this->_data[element_index]));
+            ::destroy_at(&this->_data[element_index]);
+            ++element_index;
+        }
     }
     if (this->_data != ft_nullptr)
         cma_free(this->_data);
@@ -121,42 +128,61 @@ ft_bool ft_priority_queue<ElementType, Compare>::ensure_capacity(ft_size_t desir
 template <typename ElementType, typename Compare>
 void ft_priority_queue<ElementType, Compare>::heapify_up(ft_size_t index)
 {
-    ft_size_t parent_index;
-
-    while (index > 0)
+    if (index == 0U)
+        return ;
+    ft_size_t parent_index = (index - 1U) / 2U;
+    if (!this->_comp(this->_data[parent_index], this->_data[index]))
+        return ;
+    ElementType value(ft_move(this->_data[index]));
+    while (FT_TRUE)
     {
-        parent_index = (index - 1) / 2;
-        if (!this->_comp(this->_data[parent_index], this->_data[index]))
-            break ;
-        ft_swap(this->_data[parent_index], this->_data[index]);
+        this->_data[index] = ft_move(this->_data[parent_index]);
         index = parent_index;
+        if (index == 0U)
+            break ;
+        parent_index = (index - 1U) / 2U;
+        if (!this->_comp(this->_data[parent_index], value))
+            break ;
     }
+    this->_data[index] = ft_move(value);
     return ;
+}
+
+template <typename ElementType, typename Compare>
+ft_size_t ft_priority_queue<ElementType, Compare>::preferred_child(ft_size_t index,
+    ElementType &value)
+{
+    if (index >= this->_size / 2U)
+        return (index);
+    const ft_size_t left_child_index = index * 2U + 1U;
+    const ft_size_t right_child_index = left_child_index + 1U;
+    ft_size_t preferred_index = index;
+    ElementType *preferred = std::addressof(value);
+    if (this->_comp(value, this->_data[left_child_index]))
+    {
+        preferred_index = left_child_index;
+        preferred = this->_data + left_child_index;
+    }
+    if (right_child_index < this->_size
+        && this->_comp(*preferred, this->_data[right_child_index]))
+        preferred_index = right_child_index;
+    return (preferred_index);
 }
 
 template <typename ElementType, typename Compare>
 void ft_priority_queue<ElementType, Compare>::heapify_down(ft_size_t index)
 {
-    ft_size_t left_child_index;
-    ft_size_t right_child_index;
-    ft_size_t largest_index;
-
-    while (FT_TRUE)
+    ft_size_t child_index = this->preferred_child(index, this->_data[index]);
+    if (child_index == index)
+        return ;
+    ElementType value(ft_move(this->_data[index]));
+    while (child_index != index)
     {
-        left_child_index = index * 2 + 1;
-        right_child_index = left_child_index + 1;
-        largest_index = index;
-        if (left_child_index < this->_size
-            && this->_comp(this->_data[largest_index], this->_data[left_child_index]))
-            largest_index = left_child_index;
-        if (right_child_index < this->_size
-            && this->_comp(this->_data[largest_index], this->_data[right_child_index]))
-            largest_index = right_child_index;
-        if (largest_index == index)
-            break ;
-        ft_swap(this->_data[index], this->_data[largest_index]);
-        index = largest_index;
+        this->_data[index] = ft_move(this->_data[child_index]);
+        index = child_index;
+        child_index = this->preferred_child(index, value);
     }
+    this->_data[index] = ft_move(value);
     return ;
 }
 
@@ -221,6 +247,11 @@ int32_t ft_priority_queue<ElementType, Compare>::initialize()
     this->_capacity = 0;
     this->_size = 0;
     this->_mutex = ft_nullptr;
+    if (this->_configured_initial_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ElementType))
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY));
+    }
     if (this->_configured_initial_capacity > 0)
     {
         this->_data = static_cast<ElementType *>(cma_malloc(sizeof(ElementType)
@@ -395,7 +426,7 @@ void ft_priority_queue<ElementType, Compare>::push(const ElementType& value)
         set_error(lock_error);
         return ;
     }
-    if (!this->ensure_capacity(this->_size + 1))
+    if (this->_size == this->_capacity && !this->ensure_capacity(this->_size + 1U))
     {
         set_error(FT_ERR_NO_MEMORY);
         (void)this->unlock_internal(lock_acquired);
@@ -424,7 +455,7 @@ void ft_priority_queue<ElementType, Compare>::push(ElementType&& value)
         set_error(lock_error);
         return ;
     }
-    if (!this->ensure_capacity(this->_size + 1))
+    if (this->_size == this->_capacity && !this->ensure_capacity(this->_size + 1U))
     {
         set_error(FT_ERR_NO_MEMORY);
         (void)this->unlock_internal(lock_acquired);

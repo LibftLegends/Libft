@@ -16,6 +16,59 @@
 #define GAME_VOXEL_CHUNK_VERSION 5U
 #define GAME_VOXEL_CHUNK_LEGACY_VERSION 4U
 #define GAME_VOXEL_CHUNK_LEGACY_MAX_DIRTY_EDITS 1048576U
+#define GAME_VOXEL_OVERRIDE_RECORD_BYTES 10U
+#define GAME_VOXEL_OVERRIDE_BATCH_COUNT 64U
+
+static void game_voxel_encode_u32_le(uint8_t *bytes, uint32_t value) noexcept
+{
+    bytes[0] = static_cast<uint8_t>(value);
+    bytes[1] = static_cast<uint8_t>(value >> 8U);
+    bytes[2] = static_cast<uint8_t>(value >> 16U);
+    bytes[3] = static_cast<uint8_t>(value >> 24U);
+    return ;
+}
+
+static uint32_t game_voxel_decode_u32_le(const uint8_t *bytes) noexcept
+{
+    return (static_cast<uint32_t>(bytes[0])
+        | (static_cast<uint32_t>(bytes[1]) << 8U)
+        | (static_cast<uint32_t>(bytes[2]) << 16U)
+        | (static_cast<uint32_t>(bytes[3]) << 24U));
+}
+
+static int32_t game_voxel_serialize_overrides(ft_byte_buffer &buffer,
+    const game_voxel_block_override *overrides, uint32_t count) noexcept
+{
+    uint8_t bytes[GAME_VOXEL_OVERRIDE_BATCH_COUNT * GAME_VOXEL_OVERRIDE_RECORD_BYTES];
+    uint32_t batch_count;
+    uint32_t index;
+    int32_t error_code;
+
+    while (count > 0U)
+    {
+        batch_count = count;
+        if (batch_count > GAME_VOXEL_OVERRIDE_BATCH_COUNT)
+            batch_count = GAME_VOXEL_OVERRIDE_BATCH_COUNT;
+        index = 0U;
+        while (index < batch_count)
+        {
+            const game_voxel_block_override &entry = overrides[index];
+            uint8_t *record = bytes + index * GAME_VOXEL_OVERRIDE_RECORD_BYTES;
+            record[0] = static_cast<uint8_t>(entry.local_index);
+            record[1] = static_cast<uint8_t>(entry.local_index >> 8U);
+            game_voxel_encode_u32_le(record + 2U, entry.generated_block_id);
+            game_voxel_encode_u32_le(record + 6U, entry.current_block_id);
+            ++index;
+        }
+        error_code = buffer.append(bytes,
+            batch_count * GAME_VOXEL_OVERRIDE_RECORD_BYTES);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        overrides += batch_count;
+        count -= batch_count;
+    }
+    return (FT_ERR_SUCCESS);
+}
 
 thread_local int32_t game_voxel_chunk_section::_last_error = FT_ERR_SUCCESS;
 thread_local int32_t game_voxel_chunk::_last_error = FT_ERR_SUCCESS;
@@ -219,6 +272,29 @@ uint32_t game_voxel_chunk_section::get_block(
     if (this->_indices == ft_nullptr || this->_palette == ft_nullptr)
         return (this->_uniform_block_id);
     return (this->_palette[this->_indices[local_index]]);
+}
+
+void game_voxel_chunk_section::copy_row(uint32_t *output, uint16_t first_index,
+    uint32_t count) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_voxel_chunk_section::copy_row");
+    uint32_t index = 0U;
+    if (this->_indices == ft_nullptr || this->_palette == ft_nullptr)
+    {
+        while (index < count)
+        {
+            output[index] = this->_uniform_block_id;
+            index += 1U;
+        }
+        return ;
+    }
+    while (index < count)
+    {
+        output[index] = this->_palette[this->_indices[first_index + index]];
+        index += 1U;
+    }
+    return ;
 }
 
 int32_t game_voxel_chunk_section::set_block(uint16_t local_index,
@@ -1498,40 +1574,8 @@ int32_t game_voxel_chunk::get_generated_block_locked(int32_t local_x,
 int32_t game_voxel_chunk::copy_blocks_locked(uint32_t *blocks_out,
     uint32_t block_count) const noexcept
 {
-    uint32_t expected_block_count;
-    uint32_t local_z;
-    uint32_t local_y;
-    uint32_t local_x;
-    uint32_t output_index;
-    uint8_t section_index;
-
-    expected_block_count = GAME_VOXEL_CHUNK_WIDTH
-        * GAME_VOXEL_CHUNK_DEPTH * GAME_VOXEL_CHUNK_HEIGHT;
-    if (blocks_out == ft_nullptr || block_count != expected_block_count)
-        return (game_voxel_chunk::set_error(FT_ERR_INVALID_ARGUMENT));
-    output_index = 0U;
-    local_z = 0U;
-    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
-    {
-        local_y = 0U;
-        while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
-        {
-            section_index = static_cast<uint8_t>(local_y >> 4U);
-            local_x = 0U;
-            while (local_x < GAME_VOXEL_CHUNK_WIDTH)
-            {
-                blocks_out[output_index] = this->_sections[section_index]
-                    .get_block(static_cast<uint16_t>(local_x
-                        + ((local_z & 15U) << 4U)
-                        + ((local_y & 15U) << 8U)));
-                output_index += 1U;
-                local_x += 1U;
-            }
-            local_y += 1U;
-        }
-        local_z += 1U;
-    }
-    return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
+    return (this->copy_region_locked(blocks_out, block_count, 0U, 0U,
+        GAME_VOXEL_CHUNK_WIDTH, GAME_VOXEL_CHUNK_DEPTH));
 }
 
 int32_t game_voxel_chunk::copy_x_border_locked(uint32_t *blocks_out,
@@ -1574,7 +1618,6 @@ int32_t game_voxel_chunk::copy_region_locked(uint32_t *blocks_out,
     uint32_t expected_block_count;
     uint32_t local_z;
     uint32_t local_y;
-    uint32_t local_x;
     uint32_t output_index;
     uint8_t section_index;
 
@@ -1595,16 +1638,10 @@ int32_t game_voxel_chunk::copy_region_locked(uint32_t *blocks_out,
         while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
         {
             section_index = static_cast<uint8_t>(local_y >> 4U);
-            local_x = first_x;
-            while (local_x < first_x + region_width)
-            {
-                blocks_out[output_index] = this->_sections[section_index]
-                    .get_block(static_cast<uint16_t>(local_x
-                        + ((local_z & 15U) << 4U)
-                        + ((local_y & 15U) << 8U)));
-                output_index += 1U;
-                local_x += 1U;
-            }
+            this->_sections[section_index].copy_row(blocks_out + output_index,
+                static_cast<uint16_t>(first_x + (local_z << 4U)
+                    + ((local_y & 15U) << 8U)), region_width);
+            output_index += region_width;
             local_y += 1U;
         }
         local_z += 1U;
@@ -1618,7 +1655,6 @@ int32_t game_voxel_chunk::copy_z_border_locked(uint32_t *blocks_out,
     const uint32_t expected_block_count = GAME_VOXEL_CHUNK_HEIGHT
         * GAME_VOXEL_CHUNK_WIDTH;
     uint32_t local_y;
-    uint32_t local_x;
     uint32_t output_index;
     uint8_t section_index;
 
@@ -1630,16 +1666,10 @@ int32_t game_voxel_chunk::copy_z_border_locked(uint32_t *blocks_out,
     while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
     {
         section_index = static_cast<uint8_t>(local_y >> 4U);
-        local_x = 0U;
-        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
-        {
-            blocks_out[output_index] = this->_sections[section_index]
-                .get_block(static_cast<uint16_t>(local_x
-                    + ((local_z & 15U) << 4U)
-                    + ((local_y & 15U) << 8U)));
-            output_index += 1U;
-            local_x += 1U;
-        }
+        this->_sections[section_index].copy_row(blocks_out + output_index,
+            static_cast<uint16_t>((local_z << 4U) + ((local_y & 15U) << 8U)),
+            GAME_VOXEL_CHUNK_WIDTH);
+        output_index += GAME_VOXEL_CHUNK_WIDTH;
         local_y += 1U;
     }
     return (game_voxel_chunk::set_error(FT_ERR_SUCCESS));
@@ -1840,7 +1870,6 @@ int32_t game_voxel_chunk::serialize_internal(
     ft_byte_buffer &buffer) const noexcept
 {
     uint8_t section_index;
-    uint32_t override_index;
     int32_t error_code;
 
     error_code = buffer.append_u32_le(GAME_VOXEL_CHUNK_MAGIC);
@@ -1894,22 +1923,8 @@ int32_t game_voxel_chunk::serialize_internal(
     error_code = buffer.append_u32_le(this->_player_override_count);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    override_index = 0U;
-    while (override_index < this->_player_override_count)
-    {
-        error_code = buffer.append_u16_le(this->_player_overrides[
-            override_index].local_index);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = buffer.append_u32_le(this->_player_overrides[
-                override_index].generated_block_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = buffer.append_u32_le(this->_player_overrides[
-                override_index].current_block_id);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        override_index += 1U;
-    }
-    return (FT_ERR_SUCCESS);
+    return (game_voxel_serialize_overrides(buffer, this->_player_overrides,
+        this->_player_override_count));
 }
 
 int32_t game_voxel_chunk::deserialize(ft_byte_buffer &buffer) noexcept
@@ -1958,11 +1973,9 @@ int32_t game_voxel_chunk::deserialize_internal(ft_byte_buffer &buffer) noexcept
     uint32_t legacy_edit_index;
     uint32_t legacy_coordinate;
     uint64_t legacy_tick;
-    uint16_t override_local_index;
-    uint32_t override_generated_block_id;
-    uint32_t override_current_block_id;
     uint32_t override_index;
-    uint32_t duplicate_index;
+    uint8_t seen_override_indices[(UINT16_MAX + 1U) / 8U] = {};
+    uint8_t override_bytes[GAME_VOXEL_OVERRIDE_RECORD_BYTES];
     int32_t error_code;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
@@ -2096,33 +2109,27 @@ int32_t game_voxel_chunk::deserialize_internal(ft_byte_buffer &buffer) noexcept
     override_index = 0U;
     while (override_index < player_override_count)
     {
-        error_code = buffer.read_u16_le(&override_local_index);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = buffer.read_u32_le(&override_generated_block_id);
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = buffer.read_u32_le(&override_current_block_id);
+        error_code = buffer.read(override_bytes, sizeof(override_bytes));
         if (error_code != FT_ERR_SUCCESS)
         {
             (void)this->destroy();
             return (this->set_error(error_code));
         }
-        if (this->find_player_override(override_local_index,
-                &duplicate_index) == FT_ERR_SUCCESS)
+        const uint16_t local_index = static_cast<uint16_t>(override_bytes[0]
+            | (static_cast<uint32_t>(override_bytes[1]) << 8U));
+        const uint32_t generated_block = game_voxel_decode_u32_le(override_bytes + 2U);
+        const uint32_t current_block = game_voxel_decode_u32_le(override_bytes + 6U);
+        uint8_t &seen = seen_override_indices[local_index / 8U];
+        const uint8_t mask = static_cast<uint8_t>(1U << (local_index % 8U));
+        if ((seen & mask) != 0U || generated_block == current_block)
         {
             (void)this->destroy();
             return (this->set_error(FT_ERR_INVALID_ARGUMENT));
         }
-        if (override_generated_block_id == override_current_block_id)
-        {
-            (void)this->destroy();
-            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-        }
-        this->_player_overrides[override_index].local_index =
-            override_local_index;
-        this->_player_overrides[override_index].generated_block_id =
-            override_generated_block_id;
-        this->_player_overrides[override_index].current_block_id =
-            override_current_block_id;
+        seen |= mask;
+        this->_player_overrides[override_index].local_index = local_index;
+        this->_player_overrides[override_index].generated_block_id = generated_block;
+        this->_player_overrides[override_index].current_block_id = current_block;
         override_index += 1U;
     }
     this->_biome_id = biome_id;

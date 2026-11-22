@@ -2116,30 +2116,45 @@ ft_string *ft_big_number::to_string_base(int32_t base) noexcept
     ft_bool is_zero_value_result = this->is_zero_value();
     ft_bool original_negative = this->_is_negative;
 
-    if (is_zero_value_result)
+    if (base == 10 || is_zero_value_result)
     {
-        ft_string *zero_result;
-        int32_t initialization_error;
-
-        zero_result = new (std::nothrow) ft_string();
-        if (zero_result == ft_nullptr)
-            return (finalize_to_string(ft_nullptr, FT_ERR_NO_MEMORY));
-        initialization_error = zero_result->initialize();
-        if (initialization_error != FT_ERR_SUCCESS)
+        const char *magnitude_text = "0";
+        ft_size_t digits = 1U;
+        ft_size_t sign = 0U;
+        if (!is_zero_value_result)
         {
-            delete zero_result;
-            return (finalize_to_string(ft_string::from_error(initialization_error),
-                        initialization_error));
+            ft_size_t first_digit = 0U;
+            while (this->_digits[first_digit] == '0')
+                ++first_digit;
+            magnitude_text = this->_digits + first_digit;
+            digits = this->_size - first_digit;
+            sign = original_negative != FT_FALSE;
         }
-
-        zero_result->append('0');
-        if (ft_big_number::_last_error != 0)
-        {
-            (void)zero_result->destroy();
-            delete zero_result;
+        if (digits > FT_SYSTEM_SIZE_MAX - sign - 1U)
+            return (finalize_to_string(ft_string::from_error(FT_ERR_OUT_OF_RANGE),
+                FT_ERR_OUT_OF_RANGE));
+        const ft_size_t length = digits + sign;
+        char *decimal = static_cast<char *>(cma_malloc(length + 1U));
+        if (decimal == ft_nullptr)
             return (finalize_to_string(ft_string::from_error(FT_ERR_NO_MEMORY), FT_ERR_NO_MEMORY));
+        if (sign != 0U)
+            decimal[0] = '-';
+        ft_memcpy(decimal + sign, magnitude_text, digits);
+        decimal[length] = '\0';
+        ft_string *result = new (std::nothrow) ft_string();
+        if (result == ft_nullptr)
+        {
+            cma_free(decimal);
+            return (finalize_to_string(ft_nullptr, FT_ERR_NO_MEMORY));
         }
-        return (finalize_to_string(zero_result, FT_ERR_SUCCESS));
+        const int32_t error = ft_string_take_owned_buffer(*result, decimal, length);
+        if (error != FT_ERR_SUCCESS)
+        {
+            cma_free(decimal);
+            delete result;
+            return (finalize_to_string(ft_string::from_error(error), error));
+        }
+        return (finalize_to_string(result, FT_ERR_SUCCESS));
     }
     ft_big_number magnitude;
     int32_t magnitude_initialization_error = magnitude.initialize(*this);

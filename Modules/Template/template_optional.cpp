@@ -4,7 +4,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static int32_t check_optional_usage()
+[[maybe_unused]] static int32_t check_optional_usage()
 {
     ft_optional<int32_t> initial_value(21);
     ft_optional<int32_t> moved_value;
@@ -20,4 +20,3 @@ static int32_t check_optional_usage()
             + static_cast<int32_t>(moved_value.has_value()));
 }
 
-static volatile int32_t template_optional_result = check_optional_usage();

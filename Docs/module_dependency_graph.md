@@ -47,7 +47,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `GetNextLine`, `PThread`, `Printf`, `RNG`, `Template` |
 | `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Crypto`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Observability` | `Basic`, `CMA`, `Errno`, `PThread`, `Template`, `Threading`, `Time` |
-| `Analytics` | `Basic`, `Errno` |
+| `Analytics` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Template` |
 | `CardGame` | `Basic`, `Errno`, `Scripting` |
 | `PThread` | `Basic`, `Compatebility`, `Errno`, `System_utils`, `Time` |
 | `Parser` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template` |
@@ -57,7 +57,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Regex` | `Basic`, `CPP_class`, `Errno` |
 | `SCMA` | `Basic`, `Compatebility`, `Errno`, `PThread` |
 | `Sink` | `Basic`, `Errno` |
-| `Storage` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template`, `Threading`, `Time` |
+| `Storage` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `File`, `JSon`, `PThread`, `Parser`, `Template`, `Threading`, `Time` |
 | `Scripting` | `Basic`, `Errno` |
 | `System_utils` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `File`, `PThread`, `Printf`, `SCMA`, `Sink`, `Template` |
 | `Template` | `Basic`, `CMA`, `CPP_class`, `Errno`, `JSon`, `PThread`, `Printf`, `RNG`, `YAML` |
@@ -313,7 +313,10 @@ graph TD
     Observability --> Threading
     Observability --> Time
     Analytics --> Basic
+    Analytics --> CMA
+    Analytics --> CPP_class
     Analytics --> Errno
+    Analytics --> Template
     CardGame --> Basic
     CardGame --> Errno
     CardGame --> Scripting
@@ -376,12 +379,10 @@ graph TD
     Storage --> Compression
     Storage --> Encryption
     Storage --> Errno
-    Storage --> GetNextLine
+    Storage --> File
     Storage --> JSon
     Storage --> PThread
     Storage --> Parser
-    Storage --> Printf
-    Storage --> System_utils
     Storage --> Template
     Storage --> Threading
     Storage --> Time

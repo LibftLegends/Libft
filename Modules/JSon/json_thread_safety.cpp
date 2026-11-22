@@ -17,46 +17,6 @@ static void json_thread_set_error(int32_t error_code)
     return ;
 }
 
-static void json_group_initialize_error(json_group *group) noexcept
-{
-    if (group == ft_nullptr)
-        return ;
-    group->_error_code = FT_ERR_SUCCESS;
-    return ;
-}
-
-static void json_item_initialize_error(json_item *item) noexcept
-{
-    if (item == ft_nullptr)
-        return ;
-    item->_error_code = FT_ERR_SUCCESS;
-    return ;
-}
-
-static void json_schema_initialize_error(json_schema *schema) noexcept
-{
-    if (schema == ft_nullptr)
-        return ;
-    schema->_error_code = FT_ERR_SUCCESS;
-    return ;
-}
-
-static void json_schema_field_initialize_error(json_schema_field *field) noexcept
-{
-    if (field == ft_nullptr)
-        return ;
-    field->_error_code = FT_ERR_SUCCESS;
-    return ;
-}
-
-static void json_stream_reader_initialize_error(json_stream_reader *reader) noexcept
-{
-    if (reader == ft_nullptr)
-        return ;
-    reader->_error_code = FT_ERR_SUCCESS;
-    return ;
-}
-
 int32_t json_group_list_lock()
 {
     int32_t lock_error;
@@ -154,7 +114,6 @@ int32_t json_group_enable_thread_safety(json_group *group)
         }
         group->_mutex = mutex_pointer;
     }
-    json_group_initialize_error(group);
     json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
@@ -284,7 +243,6 @@ int32_t json_item_enable_thread_safety(json_item *item)
         }
         item->_mutex = mutex_pointer;
     }
-    json_item_initialize_error(item);
     json_item_set_error_unlocked(item, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
@@ -393,7 +351,6 @@ int32_t json_schema_field_enable_thread_safety(json_schema_field *field)
         }
         field->_mutex = mutex_pointer;
     }
-    json_schema_field_initialize_error(field);
     json_schema_field_set_error_unlocked(field, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
@@ -487,7 +444,6 @@ int32_t json_schema_enable_thread_safety(json_schema *schema)
         }
         schema->_mutex = mutex_pointer;
     }
-    json_schema_initialize_error(schema);
     json_schema_set_error_unlocked(schema, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
@@ -602,7 +558,6 @@ int32_t json_stream_reader_enable_thread_safety(json_stream_reader *reader)
         }
         reader->_mutex = mutex_pointer;
     }
-    json_stream_reader_initialize_error(reader);
     json_stream_reader_set_error_unlocked(reader, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
@@ -661,13 +616,8 @@ void json_stream_reader_finalize_lock(json_stream_reader *reader)
         json_thread_set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
     }
+    json_stream_reader_set_error_unlocked(reader, current_error);
     (void)pt_recursive_mutex_unlock_if_not_null(reader->_mutex);
-    if (current_error != FT_ERR_SUCCESS)
-    {
-        json_stream_reader_set_error_unlocked(reader, current_error);
-        return ;
-    }
-    json_stream_reader_set_error_unlocked(reader, FT_ERR_SUCCESS);
     return ;
 }
 

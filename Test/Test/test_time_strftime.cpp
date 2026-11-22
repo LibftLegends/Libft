@@ -82,3 +82,17 @@ FT_TEST(test_time_strftime_success_resets_errno)
     FT_ASSERT_EQ(0, ft_strcmp(expected_string, buffer));
     return (1);
 }
+
+FT_TEST(test_time_strftime_preserves_partial_fields_and_unknown_conversions)
+{
+    char buffer[12];
+    t_time_info time_info = create_sample_time_info();
+    time_info.year = 124;
+    time_info.month = 10;
+    time_info.month_day = 5;
+    FT_ASSERT_EQ(5U, time_strftime(buffer, 6U, "%Y%m", &time_info));
+    FT_ASSERT_STR_EQ("20241", buffer);
+    FT_ASSERT_EQ(7U, time_strftime(buffer, sizeof(buffer), "%q %% %d%", &time_info));
+    FT_ASSERT_STR_EQ("q % 05%", buffer);
+    return (1);
+}

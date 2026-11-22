@@ -1,17 +1,20 @@
 #include "http_client.hpp"
-#include "http2_client.hpp"
 #include "socket_class.hpp"
+#include "socket_handle.hpp"
 #include "networking.hpp"
 #include "ssl_wrapper.hpp"
 #include "openssl_support.hpp"
-#include "networking_ssl_compat.hpp"
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../Template/pair.hpp"
 #if NETWORKING_HAS_OPENSSL
 #include <cstring>
-#include <cstdio>
+#include <charconv>
+#include <limits>
+#include <new>
+#include <mutex>
+#include <string_view>
 #include <cerrno>
 #include <vector>
 #include <openssl/x509v3.h>
@@ -37,14 +40,13 @@ struct http_stream_state
 {
     ft_string           header_buffer;
     ft_string           headers;
+    ft_size_t           header_search_offset;
     int32_t                 status_code;
     ft_bool                headers_ready;
     ft_bool                keep_alive_allowed;
     ft_bool                has_content_length;
     ft_size_t              expected_body_length;
     ft_size_t              received_body_length;
-    ft_bool                saw_chunked_encoding;
-    ft_bool                http_1_1;
     http_response_handler handler;
 };
 
@@ -54,16 +56,17 @@ struct http_buffer_adapter_state
     ft_bool        header_appended;
     ft_size_t      body_bytes;
     int32_t         status_code;
+    int32_t         error_code;
 };
 
-static http_buffer_adapter_state g_http_buffer_adapter_state = { NULL, FT_FALSE, 0, 0 };
+static thread_local http_buffer_adapter_state g_http_buffer_adapter_state{};
 
 struct http_client_connection_entry
 {
     ft_string               host;
     ft_string               port;
     ft_bool                    use_ssl;
-    int32_t                     socket_fd;
+    int32_t                     socket_fd = -1;
     SSL_CTX                 *ssl_context;
     SSL                     *ssl_connection;
     t_monotonic_time_point  last_used;
@@ -76,7 +79,8 @@ struct http_client_active_connection
     ft_bool                            store_allowed;
 };
 
-static pt_recursive_mutex *g_http_client_pool_mutex = ft_nullptr;
+static std::mutex g_http_client_pool_mutex;
+static ft_bool g_http_client_pool_enabled = FT_TRUE;
 static std::vector<http_client_connection_entry *> g_http_client_pool_entries;
 static ft_size_t g_http_client_pool_max_idle = 8;
 static int64_t g_http_client_pool_idle_timeout_ms = 30000;
@@ -87,8 +91,6 @@ static ft_size_t g_http_client_pool_acquire_misses = 0;
 #ifdef LIBFT_TEST_BUILD
 static void http_client_pool_untrack_runtime_leaks(void)
 {
-    if (g_http_client_pool_mutex != ft_nullptr)
-        (void)cma_untrack_leak(g_http_client_pool_mutex);
     if (!g_http_client_pool_entries.empty()
         && g_http_client_pool_entries.data() != NULL)
         (void)cma_untrack_leak(g_http_client_pool_entries.data());
@@ -110,48 +112,35 @@ static int32_t http_client_reinitialize_string(ft_string &value)
     return (FT_ERR_SUCCESS);
 }
 
+static void http_client_pool_delete_entry(http_client_connection_entry *entry) noexcept;
+
 int32_t http_client_pool_enable_thread_safety(void)
 {
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    if (g_http_client_pool_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    g_http_client_pool_mutex = mutex_pointer;
-#ifdef LIBFT_TEST_BUILD
-    http_client_pool_untrack_runtime_leaks();
-#endif
+    g_http_client_pool_mutex.lock();
+    g_http_client_pool_enabled = FT_TRUE;
+    g_http_client_pool_mutex.unlock();
     return (FT_ERR_SUCCESS);
 }
 
 int32_t http_client_pool_disable_thread_safety(void)
 {
-    int32_t destroy_error;
-    pt_recursive_mutex *mutex_pointer;
-
-    mutex_pointer = g_http_client_pool_mutex;
-    g_http_client_pool_mutex = ft_nullptr;
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = mutex_pointer->destroy();
-    delete mutex_pointer;
-    return (destroy_error);
+    std::vector<http_client_connection_entry *> detached;
+    g_http_client_pool_mutex.lock();
+    g_http_client_pool_enabled = FT_FALSE;
+    detached.swap(g_http_client_pool_entries);
+    g_http_client_pool_mutex.unlock();
+    ft_size_t index = 0;
+    while (index < detached.size())
+        http_client_pool_delete_entry(detached[index++]);
+    return (FT_ERR_SUCCESS);
 }
 
 ft_bool http_client_pool_is_thread_safe(void)
 {
-    if (g_http_client_pool_mutex != ft_nullptr)
-        return (FT_TRUE);
-    return (FT_FALSE);
+    g_http_client_pool_mutex.lock();
+    const ft_bool enabled = g_http_client_pool_enabled;
+    g_http_client_pool_mutex.unlock();
+    return (enabled);
 }
 
 static void http_client_pool_reset_active(http_client_active_connection &connection)
@@ -187,12 +176,6 @@ static void http_client_pool_dispose_entry(http_client_connection_entry &entry)
         nw_close(entry.socket_fd);
         entry.socket_fd = -1;
     }
-    if (http_client_reinitialize_string(entry.host) != FT_ERR_SUCCESS)
-        return ;
-    if (http_client_reinitialize_string(entry.port) != FT_ERR_SUCCESS)
-        return ;
-    entry.use_ssl = FT_FALSE;
-    entry.last_used = time_monotonic_point_now();
     return ;
 }
 
@@ -209,30 +192,19 @@ static void http_client_pool_delete_entry(http_client_connection_entry *entry) n
 
 static void http_client_pool_prune_locked(t_monotonic_time_point now)
 {
-    ft_size_t index;
-
-    index = 0;
-    while (index < g_http_client_pool_entries.size())
+    ft_size_t expired = 0;
+    while (expired < g_http_client_pool_entries.size())
     {
-        http_client_connection_entry *candidate = g_http_client_pool_entries[index];
-        int64_t idle_time_ms;
-
-        if (candidate == NULL)
-        {
-            g_http_client_pool_entries.erase(g_http_client_pool_entries.begin() + index);
-            continue ;
-        }
-        idle_time_ms = time_monotonic_point_diff_ms(candidate->last_used, now);
-        if (idle_time_ms < 0)
-            idle_time_ms = 0;
-        if (idle_time_ms > g_http_client_pool_idle_timeout_ms)
-        {
-            http_client_pool_delete_entry(candidate);
-            g_http_client_pool_entries.erase(g_http_client_pool_entries.begin() + index);
-            continue ;
-        }
-        index++;
+        http_client_connection_entry *candidate = g_http_client_pool_entries[expired];
+        if (candidate && time_monotonic_point_diff_ms(candidate->last_used, now)
+            <= g_http_client_pool_idle_timeout_ms)
+            break ;
+        http_client_pool_delete_entry(candidate);
+        ++expired;
     }
+    if (expired != 0)
+        g_http_client_pool_entries.erase(g_http_client_pool_entries.begin(),
+            g_http_client_pool_entries.begin() + expired);
     return ;
 }
 
@@ -249,22 +221,16 @@ static void http_client_pool_release_connection(http_client_active_connection &c
         http_client_pool_reset_active(connection);
         return ;
     }
-    int32_t lock_error;
     t_monotonic_time_point now;
     http_client_connection_entry *pooled_entry;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        http_client_pool_dispose_entry(connection.entry);
-        http_client_pool_reset_active(connection);
-        return ;
-    }
+    g_http_client_pool_mutex.lock();
     now = time_monotonic_point_now();
     http_client_pool_prune_locked(now);
-    if (g_http_client_pool_entries.size() >= g_http_client_pool_max_idle)
+    if (!g_http_client_pool_enabled
+        || g_http_client_pool_entries.size() >= g_http_client_pool_max_idle)
     {
-        (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+        g_http_client_pool_mutex.unlock();
         http_client_pool_dispose_entry(connection.entry);
         http_client_pool_reset_active(connection);
         return ;
@@ -272,15 +238,27 @@ static void http_client_pool_release_connection(http_client_active_connection &c
     pooled_entry = new (std::nothrow) http_client_connection_entry();
     if (pooled_entry == NULL)
     {
-        (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+        g_http_client_pool_mutex.unlock();
         http_client_pool_dispose_entry(connection.entry);
         http_client_pool_reset_active(connection);
         return ;
     }
-    if (pooled_entry->host.initialize(connection.entry.host) != FT_ERR_SUCCESS
-        || pooled_entry->port.initialize(connection.entry.port) != FT_ERR_SUCCESS)
+    if (pooled_entry->host.move(connection.entry.host) != FT_ERR_SUCCESS
+        || pooled_entry->port.move(connection.entry.port) != FT_ERR_SUCCESS)
     {
-        (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+        g_http_client_pool_mutex.unlock();
+        http_client_pool_delete_entry(pooled_entry);
+        http_client_pool_dispose_entry(connection.entry);
+        http_client_pool_reset_active(connection);
+        return ;
+    }
+    try
+    {
+        g_http_client_pool_entries.push_back(pooled_entry);
+    }
+    catch (const std::bad_alloc &)
+    {
+        g_http_client_pool_mutex.unlock();
         http_client_pool_delete_entry(pooled_entry);
         http_client_pool_dispose_entry(connection.entry);
         http_client_pool_reset_active(connection);
@@ -294,11 +272,10 @@ static void http_client_pool_release_connection(http_client_active_connection &c
     connection.entry.socket_fd = -1;
     connection.entry.ssl_context = NULL;
     connection.entry.ssl_connection = NULL;
-    g_http_client_pool_entries.push_back(pooled_entry);
 #ifdef LIBFT_TEST_BUILD
     http_client_pool_untrack_runtime_leaks();
 #endif
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     http_client_pool_reset_active(connection);
     return ;
 }
@@ -312,13 +289,10 @@ static void http_client_pool_disable_store(http_client_active_connection &connec
 static int32_t http_client_pool_acquire_connection(const char *host, const char *port,
     ft_bool use_ssl, http_client_active_connection &connection, ft_bool &reused)
 {
-    int32_t lock_error;
     t_monotonic_time_point now;
     ft_size_t index;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_OPERATION);
+    g_http_client_pool_mutex.lock();
     now = time_monotonic_point_now();
     http_client_pool_prune_locked(now);
     g_http_client_pool_acquire_calls++;
@@ -330,14 +304,16 @@ static int32_t http_client_pool_acquire_connection(const char *host, const char 
         if (candidate != NULL && candidate->use_ssl == use_ssl
             && candidate->host == host && candidate->port == port)
         {
-            if (http_client_reinitialize_string(connection.entry.host) != FT_ERR_SUCCESS
-                || http_client_reinitialize_string(connection.entry.port) != FT_ERR_SUCCESS)
+            int32_t move_error = connection.entry.host.move(candidate->host);
+            if (move_error == FT_ERR_SUCCESS)
+                move_error = connection.entry.port.move(candidate->port);
+            if (move_error != FT_ERR_SUCCESS)
             {
-                (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
-                return (FT_ERR_NO_MEMORY);
+                g_http_client_pool_entries.erase(g_http_client_pool_entries.begin() + index);
+                g_http_client_pool_mutex.unlock();
+                http_client_pool_delete_entry(candidate);
+                return (move_error);
             }
-            connection.entry.host = candidate->host;
-            connection.entry.port = candidate->port;
             connection.entry.use_ssl = candidate->use_ssl;
             connection.entry.socket_fd = candidate->socket_fd;
             connection.entry.ssl_context = candidate->ssl_context;
@@ -352,216 +328,163 @@ static int32_t http_client_pool_acquire_connection(const char *host, const char 
             http_client_pool_delete_entry(candidate);
             g_http_client_pool_reuse_hits++;
             reused = FT_TRUE;
-            (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+            g_http_client_pool_mutex.unlock();
             return (FT_ERR_SUCCESS);
         }
         index++;
     }
     g_http_client_pool_acquire_misses++;
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    const ft_bool can_store = g_http_client_pool_enabled;
+    g_http_client_pool_mutex.unlock();
     if (http_client_reinitialize_string(connection.entry.host) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
     if (http_client_reinitialize_string(connection.entry.port) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
-    connection.entry.host = host;
-    connection.entry.port = port;
+    int32_t key_error = connection.entry.host.append(host);
+    if (key_error == FT_ERR_SUCCESS)
+        key_error = connection.entry.port.append(port);
+    if (key_error != FT_ERR_SUCCESS)
+        return (key_error);
     connection.entry.use_ssl = use_ssl;
     connection.entry.socket_fd = -1;
     connection.entry.ssl_context = NULL;
     connection.entry.ssl_connection = NULL;
     connection.entry.last_used = now;
     connection.from_pool = FT_FALSE;
-    connection.store_allowed = FT_TRUE;
+    connection.store_allowed = can_store;
     reused = FT_FALSE;
     return (FT_ERR_SUCCESS);
 }
 
-static void http_client_trim_string(ft_string &value)
+static std::string_view http_client_trim_header(std::string_view value)
 {
-    ft_size_t start_index;
-    ft_size_t end_index;
-
-    start_index = 0;
-    while (start_index < value.size()
-        && ft_isspace(static_cast<unsigned char>(value[start_index])) != 0)
-        start_index++;
-    if (start_index > 0)
-        value.erase(0, start_index);
-    end_index = value.size();
-    while (end_index > 0
-        && ft_isspace(static_cast<unsigned char>(value[end_index - 1])) != 0)
-        end_index--;
-    if (end_index < value.size())
-        value.erase(end_index, value.size() - end_index);
-    return ;
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+        value.remove_prefix(1);
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+        value.remove_suffix(1);
+    return (value);
 }
 
-static void http_client_to_lower(ft_string &value)
+static ft_bool http_client_header_equals(std::string_view value,
+    std::string_view lowercase_name)
 {
-    ft_size_t index;
-    char *mutable_data;
-
-    index = 0;
-    mutable_data = value.data();
-    if (mutable_data == NULL)
-        return ;
-    while (index < value.size())
+    if (value.size() != lowercase_name.size())
+        return (FT_FALSE);
+    while (!value.empty())
     {
-        char character;
+        char character = value.front();
 
-        character = mutable_data[index];
         if (character >= 'A' && character <= 'Z')
-            mutable_data[index] = static_cast<char>(character + 32);
-        index++;
+            character = static_cast<char>(character + ('a' - 'A'));
+        if (character != lowercase_name.front())
+            return (FT_FALSE);
+        value.remove_prefix(1);
+        lowercase_name.remove_prefix(1);
+    }
+    return (FT_TRUE);
+}
+
+static void http_client_parse_connection(std::string_view value,
+    ft_bool &close_connection, ft_bool &keep_alive_requested)
+{
+    while (!value.empty())
+    {
+        const std::size_t separator = value.find(',');
+        const std::string_view token = http_client_trim_header(value.substr(0, separator));
+        if (http_client_header_equals(token, "close"))
+            close_connection = FT_TRUE;
+        else if (http_client_header_equals(token, "keep-alive"))
+            keep_alive_requested = FT_TRUE;
+        if (separator == std::string_view::npos)
+            break ;
+        value.remove_prefix(separator + 1);
     }
     return ;
 }
 
-static void http_client_parse_header_metadata(http_stream_state &state)
+static int32_t http_client_parse_content_length(http_stream_state &state,
+    std::string_view value)
 {
-    const char  *header_data;
-    ft_size_t      header_limit;
-    ft_size_t      offset;
-    ft_string   status_prefix;
-    ft_string   header_name;
-    ft_string   header_value;
-    ft_string   lowered_value;
-
-    if (status_prefix.initialize() != FT_ERR_SUCCESS)
-        return ;
-    if (header_name.initialize() != FT_ERR_SUCCESS)
-        return ;
-    if (header_value.initialize() != FT_ERR_SUCCESS)
-        return ;
-    if (lowered_value.initialize() != FT_ERR_SUCCESS)
-        return ;
-
-    state.keep_alive_allowed = FT_FALSE;
-    state.has_content_length = FT_FALSE;
-    state.expected_body_length = 0;
-    state.received_body_length = 0;
-    state.saw_chunked_encoding = FT_FALSE;
-    state.http_1_1 = FT_FALSE;
-    header_limit = state.headers.size();
-    header_data = state.headers.c_str();
-    if (header_limit >= 8)
+    while (1)
     {
-        status_prefix.assign(header_data, 8);
-        if (status_prefix == "HTTP/1.1")
-        {
-            state.http_1_1 = FT_TRUE;
-            state.keep_alive_allowed = FT_TRUE;
-        }
+        const std::size_t separator = value.find(',');
+        const std::string_view number = http_client_trim_header(value.substr(0, separator));
+        if (number.empty())
+            return (FT_ERR_IO);
+        ft_size_t parsed_length = 0;
+        const char *const number_end = number.data() + number.size();
+        const auto result = std::from_chars(number.data(), number_end, parsed_length);
+        if (result.ec != std::errc{} || result.ptr != number_end
+            || (state.has_content_length && state.expected_body_length != parsed_length))
+            return (FT_ERR_IO);
+        state.has_content_length = FT_TRUE;
+        state.expected_body_length = parsed_length;
+        if (separator == std::string_view::npos)
+            return (FT_ERR_SUCCESS);
+        value.remove_prefix(separator + 1);
     }
-    offset = 0;
-    while (offset < header_limit)
-    {
-        ft_size_t line_length;
-        const char *line_start;
-        ft_size_t colon_index;
+}
 
-        line_start = header_data + offset;
-        line_length = 0;
-        while (offset + line_length + 1 < header_limit)
-        {
-            if (line_start[line_length] == '\r'
-                && line_start[line_length + 1] == '\n')
-                break ;
-            line_length++;
-        }
-        if (offset + line_length + 1 >= header_limit)
+static int32_t http_client_parse_header_metadata(http_stream_state &state)
+{
+    std::string_view header(state.headers.c_str(),
+        FT_UINT64_TO_NATIVE_SIZE_CAST(state.headers.size()));
+    const std::size_t status_line_end = header.find("\r\n");
+    if (status_line_end == std::string_view::npos)
+        return (FT_ERR_IO);
+    ft_bool keep_alive_requested = FT_FALSE;
+    if (header.substr(0, 9) == "HTTP/1.1 ")
+        keep_alive_requested = FT_TRUE;
+    header.remove_prefix(status_line_end + 2);
+    ft_bool close_connection = FT_FALSE;
+    ft_bool has_transfer_encoding = FT_FALSE;
+    while (!header.empty())
+    {
+        const std::size_t line_end = header.find("\r\n");
+        if (line_end == std::string_view::npos || line_end == 0)
             break ;
-        offset += line_length + 2;
-        if (line_length == 0)
+        const std::string_view line = header.substr(0, line_end);
+        header.remove_prefix(line_end + 2);
+        const std::size_t colon = line.find(':');
+        if (colon == std::string_view::npos)
             continue ;
-        colon_index = 0;
-        while (colon_index < line_length && line_start[colon_index] != ':')
-            colon_index++;
-        if (colon_index >= line_length)
-            continue ;
-        header_name.clear();
-        header_value.clear();
-        lowered_value.clear();
-        header_name.assign(line_start, colon_index);
-        header_value.assign(line_start + colon_index + 1, line_length - colon_index - 1);
-        http_client_trim_string(header_name);
-        http_client_trim_string(header_value);
-        http_client_to_lower(header_name);
-        if (header_name == "connection")
+        const std::string_view name = http_client_trim_header(line.substr(0, colon));
+        if (http_client_header_equals(name, "connection"))
+            http_client_parse_connection(line.substr(colon + 1), close_connection,
+                keep_alive_requested);
+        else if (http_client_header_equals(name, "content-length"))
         {
-            lowered_value = header_value;
-            http_client_to_lower(lowered_value);
-            if (lowered_value.find("close") != ft_string::npos)
-                state.keep_alive_allowed = FT_FALSE;
-            else if (lowered_value.find("keep-alive") != ft_string::npos)
-                state.keep_alive_allowed = FT_TRUE;
-            continue ;
+            const int32_t length_error = http_client_parse_content_length(state,
+                line.substr(colon + 1));
+            if (length_error != FT_ERR_SUCCESS)
+                return (length_error);
         }
-        if (header_name == "content-length")
-        {
-            ft_size_t digit_index;
-            uint64_t parsed_length;
-
-            digit_index = 0;
-            parsed_length = 0;
-            while (digit_index < header_value.size()
-                && ft_isdigit(static_cast<unsigned char>(header_value[digit_index])) != 0)
-            {
-                parsed_length = (parsed_length * 10)
-                    + static_cast<uint64_t>(header_value[digit_index] - '0');
-                digit_index++;
-            }
-            state.has_content_length = FT_TRUE;
-            state.expected_body_length = static_cast<ft_size_t>(parsed_length);
-            continue ;
-        }
-        if (header_name == "transfer-encoding")
-        {
-            lowered_value = header_value;
-            http_client_to_lower(lowered_value);
-            if (lowered_value.find("chunked") != ft_string::npos)
-            {
-                state.saw_chunked_encoding = FT_TRUE;
-                state.keep_alive_allowed = FT_FALSE;
-            }
-        }
+        else if (http_client_header_equals(name, "transfer-encoding"))
+            has_transfer_encoding = FT_TRUE;
     }
-    if (state.has_content_length == FT_FALSE)
-        state.keep_alive_allowed = FT_FALSE;
-    if (state.saw_chunked_encoding != FT_FALSE)
-        state.keep_alive_allowed = FT_FALSE;
-    return ;
+    if (has_transfer_encoding && state.has_content_length)
+        return (FT_ERR_IO);
+    if (state.has_content_length && keep_alive_requested && !close_connection)
+        state.keep_alive_allowed = FT_TRUE;
+    return (FT_ERR_SUCCESS);
 }
 
 void http_client_pool_flush(void)
 {
-    int32_t lock_error;
-    ft_size_t index;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    index = 0;
-    while (index < g_http_client_pool_entries.size())
-    {
-        http_client_pool_delete_entry(g_http_client_pool_entries[index]);
-        index++;
-    }
-    g_http_client_pool_entries.clear();
-#ifdef LIBFT_TEST_BUILD
-    http_client_pool_untrack_runtime_leaks();
-#endif
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    std::vector<http_client_connection_entry *> detached;
+    g_http_client_pool_mutex.lock();
+    detached.swap(g_http_client_pool_entries);
+    g_http_client_pool_mutex.unlock();
+    ft_size_t index = 0;
+    while (index < detached.size())
+        http_client_pool_delete_entry(detached[index++]);
     return ;
 }
 
 void http_client_pool_set_max_idle(ft_size_t max_idle)
 {
-    int32_t lock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
+    g_http_client_pool_mutex.lock();
     g_http_client_pool_max_idle = max_idle;
     if (g_http_client_pool_entries.size() > g_http_client_pool_max_idle)
     {
@@ -578,60 +501,48 @@ void http_client_pool_set_max_idle(ft_size_t max_idle)
         http_client_pool_untrack_runtime_leaks();
 #endif
     }
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     return ;
 }
 
 ft_size_t http_client_pool_get_idle_count(void)
 {
-    int32_t lock_error;
     ft_size_t idle_count;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (0);
+    g_http_client_pool_mutex.lock();
     idle_count = g_http_client_pool_entries.size();
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     return (idle_count);
 }
 
 void http_client_pool_debug_reset_counters(void)
 {
-    int32_t lock_error;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
+    g_http_client_pool_mutex.lock();
     g_http_client_pool_acquire_calls = 0;
     g_http_client_pool_reuse_hits = 0;
     g_http_client_pool_acquire_misses = 0;
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     return ;
 }
 
 ft_size_t http_client_pool_debug_get_reuse_count(void)
 {
-    int32_t lock_error;
     ft_size_t reuse_count;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (0);
+    g_http_client_pool_mutex.lock();
     reuse_count = g_http_client_pool_reuse_hits;
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     return (reuse_count);
 }
 
 ft_size_t http_client_pool_debug_get_miss_count(void)
 {
-    int32_t lock_error;
     ft_size_t miss_count;
 
-    lock_error = pt_recursive_mutex_lock_if_not_null(g_http_client_pool_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (0);
+    g_http_client_pool_mutex.lock();
     miss_count = g_http_client_pool_acquire_misses;
-    (void)pt_recursive_mutex_unlock_if_not_null(g_http_client_pool_mutex);
+    g_http_client_pool_mutex.unlock();
     return (miss_count);
 }
 
@@ -690,12 +601,6 @@ static int32_t http_client_initialize_ssl(int32_t socket_fd, const char *host, S
         SSL_CTX_free(local_context);
         return (FT_ERR_INVALID_OPERATION);
     }
-    ft_bool selected_http2;
-    int32_t alpn_error;
-
-    if (!http2_select_alpn_protocol(local_connection, selected_http2, alpn_error))
-    (void)selected_http2;
-    (void)alpn_error;
     if (host != NULL && host[0] != '\0')
     {
         int64_t control_result;
@@ -738,50 +643,53 @@ static int32_t http_client_initialize_ssl(int32_t socket_fd, const char *host, S
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t http_client_connect_resolved(const ft_vector<networking_resolved_address> &addresses)
+{
+    const ft_size_t address_count = addresses.size();
+    ft_size_t index = 0;
+    while (index < address_count)
+    {
+        const auto &address = addresses[index];
+        const int32_t socket_fd = nw_socket(address.address.ss_family, SOCK_STREAM, IPPROTO_TCP);
+        if (socket_fd >= 0)
+        {
+            if (nw_connect(socket_fd, reinterpret_cast<const sockaddr *>(&address.address),
+                    address.length) >= 0)
+                return (socket_fd);
+            nw_close(socket_fd);
+        }
+        ++index;
+    }
+    return (-1);
+}
+
+static int32_t http_client_open_socket(const char *host, const char *port_string)
+{
+    ft_vector<networking_resolved_address> addresses;
+    if (addresses.initialize() != FT_ERR_SUCCESS)
+        return (-1);
+#ifdef _WIN32
+    // Keep Winsock active from DNS through all connection attempts.
+    if (ft_socket_runtime_acquire() != FT_ERR_SUCCESS)
+        return (-1);
+#endif
+    int32_t socket_fd = -1;
+    if (networking_dns_resolve(host, port_string, AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0,
+            addresses))
+        socket_fd = http_client_connect_resolved(addresses);
+#ifdef _WIN32
+    ft_socket_runtime_release();
+#endif
+    return (socket_fd);
+}
+
 static int32_t http_client_establish_connection(const char *host, const char *port_string,
     ft_bool use_ssl, http_client_active_connection &connection)
 {
-    struct addrinfo address_hints;
-    struct addrinfo *address_info;
-    struct addrinfo *current_info;
-    int32_t socket_fd;
-    int32_t result;
-    int32_t resolver_status;
-
     if (connection.entry.socket_fd >= 0)
         return (FT_ERR_SUCCESS);
-    ft_memset(&address_hints, 0, sizeof(address_hints));
-    address_hints.ai_family = AF_UNSPEC;
-    address_hints.ai_socktype = SOCK_STREAM;
-    resolver_status = getaddrinfo(host, port_string, &address_hints, &address_info);
-    if (resolver_status != 0)
-    {
-        networking_dns_set_error(resolver_status);
-        http_client_pool_disable_store(connection);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    socket_fd = -1;
-    result = -1;
-    current_info = address_info;
-    while (current_info != NULL)
-    {
-        socket_fd = nw_socket(current_info->ai_family, current_info->ai_socktype, current_info->ai_protocol);
-        if (socket_fd >= 0)
-        {
-            result = nw_connect(socket_fd, current_info->ai_addr,
-                FT_NETWORKING_SOCKLEN_CAST(current_info->ai_addrlen));
-            if (result >= 0)
-                break ;
-            nw_close(socket_fd);
-            socket_fd = -1;
-        }
-        else
-        {
-        }
-        current_info = current_info->ai_next;
-    }
-    freeaddrinfo(address_info);
-    if (socket_fd < 0 || result < 0)
+    const int32_t socket_fd = http_client_open_socket(host, port_string);
+    if (socket_fd < 0)
     {
         http_client_pool_disable_store(connection);
         return (FT_ERR_INVALID_OPERATION);
@@ -798,7 +706,7 @@ static int32_t http_client_establish_connection(const char *host, const char *po
             http_client_pool_disable_store(connection);
             return (FT_ERR_INVALID_OPERATION);
         }
-        result = SSL_connect(connection.entry.ssl_connection);
+        const int32_t result = SSL_connect(connection.entry.ssl_connection);
         if (result != 1)
         {
             SSL_free(connection.entry.ssl_connection);
@@ -828,7 +736,8 @@ static int32_t http_client_establish_connection(const char *host, const char *po
     return (FT_ERR_SUCCESS);
 }
 
-int32_t http_client_send_plain_request(int32_t socket_fd, const char *buffer, ft_size_t length)
+static int32_t http_client_send_plain_span(int32_t socket_fd, const char *buffer,
+    ft_size_t length, ft_bool &write_started)
 {
     ft_size_t total_sent;
     ssize_t send_result;
@@ -872,8 +781,15 @@ int32_t http_client_send_plain_request(int32_t socket_fd, const char *buffer, ft
             return (FT_ERR_INVALID_OPERATION);
         }
         total_sent += static_cast<ft_size_t>(send_result);
+        write_started = FT_TRUE;
     }
     return (FT_ERR_SUCCESS);
+}
+
+int32_t http_client_send_plain_request(int32_t socket_fd, const char *buffer, ft_size_t length)
+{
+    ft_bool write_started = FT_FALSE;
+    return (http_client_send_plain_span(socket_fd, buffer, length, write_started));
 }
 
 int32_t http_client_send_ssl_request(SSL *ssl_connection, const char *buffer, ft_size_t length)
@@ -944,8 +860,6 @@ int32_t http_client_send_ssl_request(SSL *ssl_connection, const char *buffer, ft
         }
         total_sent += static_cast<ft_size_t>(send_result);
     }
-    if (networking_check_ssl_after_send(ssl_connection) != 0)
-        return (FT_ERR_INVALID_OPERATION);
     return (FT_ERR_SUCCESS);
 }
 
@@ -959,13 +873,12 @@ static int32_t http_client_stream_state_init(http_stream_state &state, http_resp
         return (FT_ERR_NO_MEMORY);
     }
     state.status_code = 0;
+    state.header_search_offset = 0;
     state.headers_ready = FT_FALSE;
     state.keep_alive_allowed = FT_FALSE;
     state.has_content_length = FT_FALSE;
     state.expected_body_length = 0;
     state.received_body_length = 0;
-    state.saw_chunked_encoding = FT_FALSE;
-    state.http_1_1 = FT_FALSE;
     state.handler = handler;
     return (FT_ERR_SUCCESS);
 }
@@ -992,22 +905,30 @@ static int32_t http_client_stream_handle_header(http_stream_state &state)
     ft_size_t      header_length;
     ft_size_t      body_length;
 
-    terminator = ft_strstr(state.header_buffer.c_str(), "\r\n\r\n");
+    const char *const buffer = state.header_buffer.c_str();
+    const ft_size_t buffer_length = state.header_buffer.size();
+    terminator = ft_strstr(buffer + state.header_search_offset, "\r\n\r\n");
     if (terminator == NULL)
-        return (0);
-    header_length = static_cast<ft_size_t>(terminator - state.header_buffer.c_str()) + 4;
-    state.headers = state.header_buffer;
-    if (state.headers.size() > header_length)
-        state.headers.erase(header_length, state.headers.size() - header_length);
+    {
+        if (buffer_length > 3U)
+            state.header_search_offset = buffer_length - 3U;
+        return (FT_ERR_SUCCESS);
+    }
+    header_length = static_cast<ft_size_t>(terminator - buffer) + 4;
+    const int32_t copy_error = state.headers.assign(buffer, header_length);
+    if (copy_error != FT_ERR_SUCCESS)
+        return (copy_error);
     state.status_code = http_client_parse_status(state.headers);
-    http_client_parse_header_metadata(state);
-    body_length = state.header_buffer.size() - header_length;
+    const int32_t metadata_error = http_client_parse_header_metadata(state);
+    if (metadata_error != FT_ERR_SUCCESS)
+        return (metadata_error);
+    body_length = buffer_length - header_length;
     if (body_length > 0 && state.handler != NULL)
     {
         const char *body_ptr;
         ft_size_t deliver_length;
 
-        body_ptr = state.header_buffer.c_str() + header_length;
+        body_ptr = buffer + header_length;
         deliver_length = body_length;
         if (state.has_content_length != FT_FALSE)
         {
@@ -1031,11 +952,11 @@ static int32_t http_client_stream_handle_header(http_stream_state &state)
     }
     state.header_buffer.clear();
     state.headers_ready = FT_TRUE;
-    return (1);
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t http_client_receive_stream(http_client_active_connection &connection,
-    http_response_handler handler, ft_bool &allow_keep_alive)
+    http_response_handler handler, ft_bool &allow_keep_alive, ft_bool &response_started)
 {
     char                buffer[1024];
     ssize_t             bytes_received;
@@ -1045,6 +966,7 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
     ft_bool                use_ssl;
 
     allow_keep_alive = FT_FALSE;
+    response_started = FT_FALSE;
     if (handler == NULL)
     {
         return (FT_ERR_INVALID_ARGUMENT);
@@ -1062,11 +984,18 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
             bytes_received = nw_recv(socket_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received > 0)
         {
+            response_started = FT_TRUE;
             buffer[bytes_received] = '\0';
             if (state.headers_ready == FT_FALSE)
             {
-                state.header_buffer.append(buffer, static_cast<ft_size_t>(bytes_received));
-                if (http_client_stream_handle_header(state) != 0)
+                const int32_t append_error = state.header_buffer.append(
+                    buffer, static_cast<ft_size_t>(bytes_received));
+                if (append_error != FT_ERR_SUCCESS)
+                    return (append_error);
+                const int32_t header_error = http_client_stream_handle_header(state);
+                if (header_error != FT_ERR_SUCCESS)
+                    return (header_error);
+                if (state.headers_ready)
                 {
                     if (state.has_content_length != FT_FALSE
                         && state.received_body_length >= state.expected_body_length)
@@ -1207,14 +1136,9 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
             break ;
         }
     }
-    if (state.headers_ready == FT_FALSE && state.header_buffer.empty() == FT_FALSE)
-    {
-        const char *body_ptr;
-
-        body_ptr = state.header_buffer.c_str();
-        state.handler(state.status_code, state.headers, body_ptr,
-            state.header_buffer.size(), FT_FALSE);
-    }
+    if (!state.headers_ready || (state.has_content_length
+            && state.received_body_length < state.expected_body_length))
+        return (FT_ERR_IO);
     state.handler(state.status_code, state.headers, "", 0, FT_TRUE);
     if (state.headers_ready != FT_FALSE && state.keep_alive_allowed != FT_FALSE
         && state.has_content_length != FT_FALSE
@@ -1228,19 +1152,24 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
 static void http_client_buffering_adapter(int32_t status_code, const ft_string &headers,
     const char *body_chunk, ft_size_t chunk_size, ft_bool finished)
 {
-    if (g_http_buffer_adapter_state.response == NULL)
+    if (g_http_buffer_adapter_state.response == NULL
+        || g_http_buffer_adapter_state.error_code != FT_ERR_SUCCESS)
         return ;
     if (status_code != 0)
         g_http_buffer_adapter_state.status_code = status_code;
     if (g_http_buffer_adapter_state.header_appended == FT_FALSE && headers.empty() == FT_FALSE)
     {
-        g_http_buffer_adapter_state.response->append(headers);
+        g_http_buffer_adapter_state.error_code = g_http_buffer_adapter_state.response->append(headers);
+        if (g_http_buffer_adapter_state.error_code != FT_ERR_SUCCESS)
+            return ;
         g_http_buffer_adapter_state.header_appended = FT_TRUE;
     }
     if (chunk_size > 0)
     {
-        g_http_buffer_adapter_state.response->append(body_chunk);
-        g_http_buffer_adapter_state.body_bytes += chunk_size;
+        g_http_buffer_adapter_state.error_code = g_http_buffer_adapter_state.response->append(
+            body_chunk, chunk_size);
+        if (g_http_buffer_adapter_state.error_code == FT_ERR_SUCCESS)
+            g_http_buffer_adapter_state.body_bytes += chunk_size;
     }
     if (finished != FT_FALSE && status_code != 0)
         g_http_buffer_adapter_state.status_code = status_code;
@@ -1253,6 +1182,7 @@ static void http_client_reset_buffer_adapter_state(void)
     g_http_buffer_adapter_state.header_appended = FT_FALSE;
     g_http_buffer_adapter_state.body_bytes = 0;
     g_http_buffer_adapter_state.status_code = 0;
+    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
     return ;
 }
 
@@ -1265,6 +1195,13 @@ static int32_t http_client_finish_with_metrics(const char *method, const char *h
     int64_t duration_ms;
     int32_t error_code;
 
+    if (result == FT_ERR_SUCCESS)
+        result = g_http_buffer_adapter_state.error_code;
+    if (!observability_networking_metrics_is_active())
+    {
+        http_client_reset_buffer_adapter_state();
+        return (result);
+    }
     finish_time = time_monotonic_point_now();
     duration_ms = time_monotonic_point_diff_ms(start_time, finish_time);
     if (duration_ms < 0)
@@ -1291,9 +1228,51 @@ static int32_t http_client_finish_with_metrics(const char *method, const char *h
         sample.success = FT_FALSE;
         sample.error_tag = ft_strerror(error_code);
     }
-    observability_networking_metrics_record(sample);
     http_client_reset_buffer_adapter_state();
+    observability_networking_metrics_record(sample);
     return (result);
+}
+
+static int32_t http_client_build_request_head(ft_string &request, const char *method,
+    const char *host, const char *path, const ft_size_t *body_length)
+{
+    if (!host || !path)
+        return (FT_ERR_INVALID_ARGUMENT);
+    int32_t error_code = request.initialize();
+    const char *const parts[] = {method, " ", path, " HTTP/1.1\r\nHost: ", host};
+    ft_size_t index = 0;
+    while (error_code == FT_ERR_SUCCESS && index < sizeof(parts) / sizeof(parts[0]))
+    {
+        error_code = request.append(parts[index]);
+        ++index;
+    }
+    if (error_code == FT_ERR_SUCCESS && body_length)
+    {
+        constexpr ft_size_t DIGIT_CAPACITY = std::numeric_limits<ft_size_t>::digits10 + 1U;
+        char length[DIGIT_CAPACITY];
+        const auto text = std::to_chars(length, length + sizeof(length), *body_length);
+        if (text.ec != std::errc{})
+            return (FT_ERR_OUT_OF_RANGE);
+        error_code = request.append("\r\nContent-Length: ");
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = request.append(length, static_cast<ft_size_t>(text.ptr - length));
+    }
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (request.append("\r\nConnection: keep-alive\r\n\r\n"));
+}
+
+static int32_t http_client_send_span(const http_client_active_connection &connection,
+    const char *data, ft_size_t length, ft_bool &write_started)
+{
+    if (connection.entry.use_ssl)
+    {
+        // A failed TLS write can still have sent part of a record.
+        if (length != 0)
+            write_started = FT_TRUE;
+        return (http_client_send_ssl_request(connection.entry.ssl_connection, data, length));
+    }
+    return (http_client_send_plain_span(connection.entry.socket_fd, data, length, write_started));
 }
 
 int32_t http_get_stream(const char *host, const char *path, http_response_handler handler,
@@ -1315,8 +1294,10 @@ int32_t http_get_stream(const char *host, const char *path, http_response_handle
         port_string = "443";
     else
         port_string = "80";
-    if (request.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_NO_MEMORY);
+    const int32_t build_error = http_client_build_request_head(request, "GET", host, path,
+        ft_nullptr);
+    if (build_error != FT_ERR_SUCCESS)
+        return (build_error);
     http_client_pool_reset_active(connection);
     attempt = 0;
     while (attempt < 2)
@@ -1338,18 +1319,9 @@ int32_t http_get_stream(const char *host, const char *path, http_response_handle
             }
             return (FT_ERR_INVALID_OPERATION);
         }
-        request.clear();
-        request.append("GET ");
-        request.append(path);
-        request.append(" HTTP/1.1\r\nHost: ");
-        request.append(host);
-        request.append("\r\nConnection: keep-alive\r\n\r\n");
-        if (use_ssl != FT_FALSE)
-            send_result = http_client_send_ssl_request(connection.entry.ssl_connection,
-                request.c_str(), request.size());
-        else
-            send_result = http_client_send_plain_request(connection.entry.socket_fd,
-                request.c_str(), request.size());
+        ft_bool write_started = FT_FALSE;
+        send_result = http_client_send_span(connection, request.c_str(), request.size(),
+            write_started);
         if (send_result != FT_ERR_SUCCESS)
         {
             http_client_pool_disable_store(connection);
@@ -1361,12 +1333,14 @@ int32_t http_get_stream(const char *host, const char *path, http_response_handle
             }
             return (FT_ERR_INVALID_OPERATION);
         }
-        receive_result = http_client_receive_stream(connection, handler, allow_keep_alive);
+        ft_bool response_started = FT_FALSE;
+        receive_result = http_client_receive_stream(connection, handler, allow_keep_alive,
+            response_started);
         if (receive_result != FT_ERR_SUCCESS)
         {
             http_client_pool_disable_store(connection);
             http_client_pool_release_connection(connection, FT_FALSE);
-            if (reused_connection != FT_FALSE)
+            if (reused_connection && !response_started)
             {
                 attempt++;
                 continue ;
@@ -1390,6 +1364,7 @@ int32_t http_get(const char *host, const char *path, ft_string &response, ft_boo
     g_http_buffer_adapter_state.header_appended = FT_FALSE;
     g_http_buffer_adapter_state.body_bytes = 0;
     g_http_buffer_adapter_state.status_code = 0;
+    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
     result = http_get_stream(host, path, http_client_buffering_adapter, use_ssl, custom_port);
     return (http_client_finish_with_metrics("GET", host, path, 0, result, start_time));
 }
@@ -1399,7 +1374,6 @@ int32_t http_post(const char *host, const char *path, const ft_string &body, ft_
     t_monotonic_time_point start_time;
     const char *port_string;
     ft_string request;
-    char length_string[32];
     http_client_active_connection connection;
     ft_bool allow_keep_alive;
     int32_t attempt;
@@ -1411,19 +1385,34 @@ int32_t http_post(const char *host, const char *path, const ft_string &body, ft_
     g_http_buffer_adapter_state.header_appended = FT_FALSE;
     g_http_buffer_adapter_state.body_bytes = 0;
     g_http_buffer_adapter_state.status_code = 0;
+    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
     if (custom_port != NULL && custom_port[0] != '\0')
         port_string = custom_port;
     else if (use_ssl)
         port_string = "443";
     else
         port_string = "80";
-    if (request.initialize() != FT_ERR_SUCCESS)
-        return (http_client_finish_with_metrics("POST", host, path, body.size(),
-            FT_ERR_NO_MEMORY, start_time));
+    ft_string body_snapshot;
+    const ft_string *source = &body;
+    if (body.is_thread_safe())
+    {
+        const int32_t snapshot_error = body_snapshot.initialize(body);
+        if (snapshot_error != FT_ERR_SUCCESS)
+            return (http_client_finish_with_metrics("POST", host, path, 0,
+                snapshot_error, start_time));
+        source = &body_snapshot;
+    }
+    body_length = source->size();
+    int32_t build_error = http_client_build_request_head(request, "POST", host, path,
+        &body_length);
+    constexpr ft_size_t INLINE_BODY_LIMIT = 1024;
+    const ft_bool send_body_separately = body_length > INLINE_BODY_LIMIT;
+    if (build_error == FT_ERR_SUCCESS && !send_body_separately)
+        build_error = request.append(*source);
+    if (build_error != FT_ERR_SUCCESS)
+        return (http_client_finish_with_metrics("POST", host, path, body_length,
+            build_error, start_time));
     http_client_pool_reset_active(connection);
-    body_length = body.size();
-    std::snprintf(length_string, sizeof(length_string), "%llu",
-        static_cast<unsigned long long>(body_length));
     attempt = 0;
     while (attempt < 2)
     {
@@ -1444,43 +1433,30 @@ int32_t http_post(const char *host, const char *path, const ft_string &body, ft_
             }
             return (http_client_finish_with_metrics("POST", host, path, body_length, FT_ERR_INVALID_OPERATION, start_time));
         }
-        request.clear();
-        request.append("POST ");
-        request.append(path);
-        request.append(" HTTP/1.1\r\nHost: ");
-        request.append(host);
-        request.append("\r\nContent-Length: ");
-        request.append(length_string);
-        request.append("\r\nConnection: keep-alive\r\n\r\n");
-        request.append(body);
-        if (use_ssl != FT_FALSE)
-            send_result = http_client_send_ssl_request(connection.entry.ssl_connection,
-                request.c_str(), request.size());
-        else
-            send_result = http_client_send_plain_request(connection.entry.socket_fd,
-                request.c_str(), request.size());
+        ft_bool write_started = FT_FALSE;
+        send_result = http_client_send_span(connection, request.c_str(), request.size(),
+            write_started);
+        if (send_result == FT_ERR_SUCCESS && send_body_separately)
+            send_result = http_client_send_span(connection, source->c_str(), body_length,
+                write_started);
         if (send_result != FT_ERR_SUCCESS)
         {
             http_client_pool_disable_store(connection);
             http_client_pool_release_connection(connection, FT_FALSE);
-            if (reused_connection != FT_FALSE)
+            if (reused_connection && !write_started)
             {
                 attempt++;
                 continue ;
             }
             return (http_client_finish_with_metrics("POST", host, path, body_length, FT_ERR_INVALID_OPERATION, start_time));
         }
+        ft_bool response_started = FT_FALSE;
         receive_result = http_client_receive_stream(connection, http_client_buffering_adapter,
-            allow_keep_alive);
+            allow_keep_alive, response_started);
         if (receive_result != FT_ERR_SUCCESS)
         {
             http_client_pool_disable_store(connection);
             http_client_pool_release_connection(connection, FT_FALSE);
-            if (reused_connection != FT_FALSE)
-            {
-                attempt++;
-                continue ;
-            }
             return (http_client_finish_with_metrics("POST", host, path, body_length, FT_ERR_INVALID_OPERATION, start_time));
         }
         http_client_pool_release_connection(connection, allow_keep_alive);

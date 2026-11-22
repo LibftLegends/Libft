@@ -7,17 +7,17 @@ all: $(TARGET) $(LEGACY_TARGET)
 validate-levels:
 	@perl tools/demo_validate_levels.pl demo_levels.cpp
 
-$(TARGET): ../Full_Libft.a $(SRCS)
+$(TARGET): ../build/archives/Full_Libft.a $(SRCS)
 	@printf '        [%s] Linking %s\n' "$(MODULE_NAME)" "$(TARGET)"
 	@mkdir -p $(TARGET_DIR)
-	@$(CXX) $(COMPILE_FLAGS) $(SRCS) -o $@ ../Full_Libft.a $(LINK_OPT_FLAGS) $(LINK_FLAGS)
+	@$(CXX) $(COMPILE_FLAGS) $(SRCS) -o $@ ../build/archives/Full_Libft.a $(LINK_OPT_FLAGS) $(LINK_FLAGS)
 
 $(LEGACY_TARGET): $(TARGET)
 	@printf '        [%s] Syncing %s\n' "$(MODULE_NAME)" "$(LEGACY_TARGET)"
 	@cp $(TARGET) $(LEGACY_TARGET)
 
-../Full_Libft.a:
-	@$(MAKE) -C .. Full_Libft.a OPT_LEVEL=$(OPT_LEVEL)
+../build/archives/Full_Libft.a:
+	@$(MAKE) -C .. build/archives/Full_Libft.a OPT_LEVEL=$(OPT_LEVEL)
 
 clean:
 	@status=0; \

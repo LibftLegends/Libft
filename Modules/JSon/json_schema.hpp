@@ -9,7 +9,7 @@ struct json_group;
 typedef enum json_type
 {
     JSON_STRING,
-    JSON_NUMBER,
+    JSON_NUMBER, // Signed or unsigned decimal integer text.
     JSON_BOOL
 } json_type;
 

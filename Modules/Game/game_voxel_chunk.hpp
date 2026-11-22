@@ -55,6 +55,8 @@ class game_voxel_chunk_section
             uint8_t *palette_index) noexcept;
         void collapse_if_uniform() noexcept;
         int32_t copy_payload(const game_voxel_chunk_section &other) noexcept;
+        void copy_row(uint32_t *output, uint16_t first_index,
+            uint32_t count) const noexcept;
 
         friend class game_voxel_chunk;
 

@@ -19,8 +19,14 @@ class json_document
         void set_error_unlocked(int32_t error_code) const noexcept;
         void set_error(int32_t error_code) const noexcept;
         void clear_unlocked() noexcept;
-        char *write_to_string_unlocked() const noexcept;
+        char *write_to_string_unlocked(ft_size_t &length) const noexcept;
+        friend int32_t json_document_serialize_buffer(const json_document &document,
+            char *&output, ft_size_t &length) noexcept;
+        friend int32_t json_document_replace_groups(json_document &document,
+            json_group *groups) noexcept;
         json_item *find_item_by_pointer_unlocked(const char *pointer) const noexcept;
+        template <typename Value>
+        void update_item_checked(json_group *group, const char *key, const Value &value) noexcept;
 
     public:
         json_document() noexcept;

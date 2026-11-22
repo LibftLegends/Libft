@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Compression/compression.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
+#include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -9,8 +10,62 @@
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/pair.hpp"
+#include <random>
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_compression_base64_decodes_wrapped_groups_and_unpadded_binary_tail)
+{
+    const uint8_t input[] = "AAEC\r\nAw\tQF \vBg\f";
+    const uint8_t expected[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U};
+    ft_size_t decoded_size = 0U;
+    uint8_t *decoded = ft_base64_decode(input, sizeof(input) - 1U, &decoded_size);
+    FT_ASSERT(decoded != ft_nullptr);
+    FT_ASSERT_EQ(sizeof(expected), decoded_size);
+    FT_ASSERT_EQ(0, ft_memcmp(expected, decoded, sizeof(expected)));
+    cma_free(decoded);
+    return (1);
+}
+
+FT_TEST(test_compression_base64_encode_rejects_output_size_overflow)
+{
+    const uint8_t input = 0U;
+    ft_size_t encoded_size = 9U;
+    FT_ASSERT_EQ(ft_nullptr, ft_base64_encode(&input, FT_SYSTEM_SIZE_MAX,
+            &encoded_size));
+    FT_ASSERT_EQ(0U, encoded_size);
+    return (1);
+}
+
+FT_TEST(test_compression_base64_roundtrips_seeded_binary_inputs)
+{
+    std::mt19937 random(201991U);
+    uint8_t input[97];
+    uint32_t sample = 0U;
+    while (sample < 1000U)
+    {
+        const ft_size_t length = sample % (sizeof(input) + 1U);
+        ft_size_t index = 0U;
+        while (index < length)
+        {
+            input[index] = static_cast<uint8_t>(random());
+            ++index;
+        }
+        ft_size_t encoded_size = 0U;
+        uint8_t *encoded = ft_base64_encode(input, length, &encoded_size);
+        FT_ASSERT(encoded != ft_nullptr);
+        ft_size_t decoded_size = 0U;
+        uint8_t *decoded = ft_base64_decode(encoded, encoded_size, &decoded_size);
+        cma_free(encoded);
+        FT_ASSERT(decoded != ft_nullptr);
+        const ft_bool matches = (decoded_size == length
+            && ft_memcmp(input, decoded, length) == 0);
+        cma_free(decoded);
+        FT_ASSERT(matches);
+        ++sample;
+    }
+    return (1);
+}
 
 FT_TEST(test_base64_encode_null_input_sets_errno)
 {

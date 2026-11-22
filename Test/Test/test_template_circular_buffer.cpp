@@ -100,3 +100,53 @@ FT_TEST(test_ft_circular_buffer_wraparound_preserves_order)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer_instance.get_error());
     return (1);
 }
+
+FT_TEST(test_ft_circular_buffer_handles_zero_capacity_and_rejects_byte_overflow)
+{
+    ft_circular_buffer<uint64_t> oversized(FT_SYSTEM_SIZE_MAX / sizeof(uint64_t) + 1U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, oversized.initialize());
+    ft_circular_buffer<uint64_t> empty(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, empty.initialize());
+    const uint64_t value = 8U;
+    empty.push(value);
+    FT_ASSERT_EQ(FT_ERR_FULL, empty.get_error());
+    FT_ASSERT_EQ(0U, empty.pop());
+    FT_ASSERT_EQ(FT_ERR_EMPTY, empty.get_error());
+    empty.clear();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, empty.get_error());
+    return (1);
+}
+
+struct s_circular_clear_probe
+{
+    uint32_t *destroyed_mask = ft_nullptr;
+    uint32_t bit = 0U;
+
+    ~s_circular_clear_probe();
+};
+
+s_circular_clear_probe::~s_circular_clear_probe()
+{
+    if (this->destroyed_mask != ft_nullptr)
+        *this->destroyed_mask |= this->bit;
+    return ;
+}
+
+FT_TEST(test_ft_circular_buffer_clear_destroys_both_wrapped_segments)
+{
+    uint32_t destroyed_mask = 0U;
+    const s_circular_clear_probe first = {&destroyed_mask, 1U};
+    const s_circular_clear_probe second = {&destroyed_mask, 2U};
+    const s_circular_clear_probe third = {&destroyed_mask, 4U};
+    ft_circular_buffer<s_circular_clear_probe> values(2U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.initialize());
+    values.push(first);
+    values.push(second);
+    FT_ASSERT_EQ(1U, values.pop().bit);
+    values.push(third);
+    destroyed_mask = 0U;
+    values.clear();
+    FT_ASSERT_EQ(6U, destroyed_mask);
+    FT_ASSERT(values.is_empty());
+    return (1);
+}

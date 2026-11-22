@@ -1,67 +1,25 @@
-#include "filesystem.hpp"
-#include "../Compatebility/compatebility_internal.hpp"
+#include "filesystem_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
-#include "../File/file_utils.hpp"
-#include <new>
+#include "../File/file_internal.hpp"
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static ft_string *filesystem_string_from_owned_c_string(char *value)
+ft_string *filesystem_normalize_portable_slashes(ft_string *value) noexcept
 {
-    ft_string *result;
-
     if (value == ft_nullptr)
         return (ft_nullptr);
-    result = new (std::nothrow) ft_string();
-    if (result == ft_nullptr)
+    char *path = value->data();
+    const ft_size_t length = value->size();
+    ft_size_t index = 0;
+    while (index < length)
     {
-        cma_free(value);
-        return (ft_nullptr);
+        if (path[index] == '\\')
+            path[index] = '/';
+        ++index;
     }
-    if (result->initialize(value) != FT_ERR_SUCCESS)
-    {
-        cma_free(value);
-        delete result;
-        return (ft_nullptr);
-    }
-    cma_free(value);
-    return (result);
-}
-
-static void filesystem_normalize_portable_slashes(char *value) noexcept
-{
-    ft_size_t index;
-
-    if (value == ft_nullptr)
-        return ;
-    index = 0;
-    while (value[index] != '\0')
-    {
-        if (value[index] == '\\')
-            value[index] = '/';
-        index++;
-    }
-    return ;
-}
-
-static ft_string *filesystem_string_from_owned_path(char *value)
-{
-    char *portable_path;
-    ft_string *result;
-    int32_t error_code;
-
-    if (value == ft_nullptr)
-        return (ft_nullptr);
-    portable_path = ft_nullptr;
-    error_code = cmp_translate_path_to_portable(value, &portable_path);
-    cma_free(value);
-    if (error_code != FT_ERR_SUCCESS)
-        return (ft_nullptr);
-    filesystem_normalize_portable_slashes(portable_path);
-    result = filesystem_string_from_owned_c_string(portable_path);
-    return (result);
+    return (value);
 }
 
 ft_string *filesystem_normalize_path(const char *path)
@@ -76,22 +34,22 @@ ft_string *filesystem_join_path(const char *path_left, const char *path_right)
 
 ft_string *filesystem_basename(const char *path)
 {
-    return (filesystem_string_from_owned_path(file_path_basename(path)));
+    return (filesystem_normalize_portable_slashes(file_path_basename_string(path)));
 }
 
 ft_string *filesystem_dirname(const char *path)
 {
-    return (filesystem_string_from_owned_path(file_path_dirname(path)));
+    return (filesystem_normalize_portable_slashes(file_path_dirname_string(path)));
 }
 
 ft_string *filesystem_extension(const char *path)
 {
-    return (filesystem_string_from_owned_path(file_path_extension(path)));
+    return (filesystem_normalize_portable_slashes(file_path_extension_string(path)));
 }
 
 ft_string *filesystem_stem(const char *path)
 {
-    return (filesystem_string_from_owned_path(file_path_stem(path)));
+    return (filesystem_normalize_portable_slashes(file_path_stem_string(path)));
 }
 
 ft_bool filesystem_is_absolute(const char *path) noexcept
@@ -139,39 +97,29 @@ static ft_bool filesystem_ascii_case_equal_span(const char *left,
 int32_t filesystem_split_path(const char *path, ft_string *directory_out,
     ft_string *basename_out)
 {
-    ft_string *directory_value;
-    ft_string *basename_value;
-    int32_t error_code;
-
     if (directory_out == ft_nullptr || basename_out == ft_nullptr
         || directory_out == basename_out)
-    {
         return (FT_ERR_INVALID_ARGUMENT);
-    }
-    directory_value = filesystem_dirname(path);
+    ft_string basename_value;
+    int32_t error_code = basename_value.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    ft_string *directory_value = file_path_split_directory(path, basename_value);
     if (directory_value == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    basename_value = filesystem_basename(path);
-    if (basename_value == ft_nullptr)
-    {
-        (void)directory_value->destroy();
-        delete directory_value;
-        return (FT_ERR_NO_MEMORY);
-    }
+    filesystem_normalize_portable_slashes(directory_value);
+    filesystem_normalize_portable_slashes(&basename_value);
     (void)directory_out->destroy();
     (void)basename_out->destroy();
-    error_code = directory_out->initialize(directory_value->c_str());
+    error_code = directory_out->move(*directory_value);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = basename_out->initialize(basename_value->c_str());
+        error_code = basename_out->move(basename_value);
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)directory_out->destroy();
         (void)basename_out->destroy();
     }
-    (void)directory_value->destroy();
     delete directory_value;
-    (void)basename_value->destroy();
-    delete basename_value;
     return (error_code);
 }
 

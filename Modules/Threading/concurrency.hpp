@@ -275,7 +275,7 @@ int32_t ft_thread_safe_queue<Type>::blocking_pop_for(Type *output,
         return (FT_ERR_INVALID_POINTER);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    if (this->_condition.wait_for(lock, timeout, [this]()
+    if (this->_queue.empty() && this->_condition.wait_for(lock, timeout, [this]()
             { return (!this->_queue.empty()
                     || this->_initialised_state != FT_CLASS_STATE_INITIALISED); }) == false)
         return (FT_ERR_TIMEOUT);
@@ -290,6 +290,8 @@ template <typename Type>
 int32_t ft_thread_safe_queue<Type>::blocking_pop(Type *output,
     const ft_cancellation_token &token) noexcept
 {
+    if (token.is_valid() == FT_FALSE)
+        return (this->blocking_pop(output));
     std::unique_lock<std::mutex> lock(this->_mutex);
 
     if (output == ft_nullptr)

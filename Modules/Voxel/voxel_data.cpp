@@ -1571,39 +1571,6 @@ static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2 =
         / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[0]))
 };
 
-int32_t voxel_floor_div(int32_t value, int32_t divisor) noexcept
-{
-    int32_t quotient;
-    int32_t remainder;
-
-    quotient = value / divisor;
-    remainder = value % divisor;
-    if (remainder < 0)
-        quotient -= 1;
-    return (quotient);
-}
-
-uint64_t voxel_mix_u64(uint64_t value) noexcept
-{
-    value ^= value >> 30;
-    value *= UINT64_C(0xBF58476D1CE4E5B9);
-    value ^= value >> 27;
-    value *= UINT64_C(0x94D049BB133111EB);
-    value ^= value >> 31;
-    return (value);
-}
-
-double voxel_lerp(double left_value, double right_value,
-    double factor) noexcept
-{
-    return (left_value + ((right_value - left_value) * factor));
-}
-
-double voxel_smooth_factor(double factor) noexcept
-{
-    return (factor * factor * (3.0 - (2.0 * factor)));
-}
-
 uint64_t voxel_seed_value(const char *seed_string) noexcept
 {
     return (static_cast<uint64_t>(rng_seed_value(seed_string)));

@@ -1,4 +1,4 @@
-#include "file_utils.hpp"
+#include "file_internal.hpp"
 #include "../Compatebility/compatebility_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -16,50 +16,23 @@
 # define FILE_SECURITY_BINARY_FLAG 0
 #endif
 
-static char *file_security_temp_directory(void)
+static int32_t file_security_append_random_hex(ft_string &name)
 {
-    char *directory_path;
-    int32_t error_code;
-
-    directory_path = ft_nullptr;
-    error_code = cmp_get_temp_directory(&directory_path);
-    if (error_code != FT_ERR_SUCCESS)
-        return (ft_nullptr);
-    return (directory_path);
-}
-
-static char file_security_hex_digit(uint8_t value) noexcept
-{
-    if (value < 10U)
-        return (static_cast<char>('0' + value));
-    return (static_cast<char>('a' + (value - 10U)));
-}
-
-static int32_t file_security_append_random_hex(ft_string *name)
-{
+    static constexpr char HEX_DIGITS[] = "0123456789abcdef";
     uint8_t random_bytes[3];
-    ft_size_t index;
-    int32_t error_code;
+    char suffix[sizeof(random_bytes) * 2];
 
-    if (name == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    error_code = rng_secure_bytes(random_bytes, sizeof(random_bytes));
+    const int32_t error_code = rng_secure_bytes(random_bytes, sizeof(random_bytes));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    index = 0;
+    ft_size_t index = 0;
     while (index < sizeof(random_bytes))
     {
-        error_code = name->append(file_security_hex_digit(
-                static_cast<uint8_t>((random_bytes[index] >> 4U) & 0x0FU)));
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        error_code = name->append(file_security_hex_digit(
-                static_cast<uint8_t>(random_bytes[index] & 0x0FU)));
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
+        suffix[index * 2] = HEX_DIGITS[random_bytes[index] >> 4U];
+        suffix[index * 2 + 1] = HEX_DIGITS[random_bytes[index] & 0x0FU];
         ++index;
     }
-    return (FT_ERR_SUCCESS);
+    return (name.append(suffix, sizeof(suffix)));
 }
 
 static void file_security_delete_string(ft_string *string) noexcept
@@ -71,135 +44,108 @@ static void file_security_delete_string(ft_string *string) noexcept
     return ;
 }
 
-static int32_t file_security_build_temp_path(const char *directory_path,
-    const char *prefix, ft_string *path_out)
+static int32_t file_security_build_temp_path(const char *native_directory_path,
+    const char *prefix, ft_string **path_out)
 {
     ft_string name;
-    ft_string *joined_path;
-    char *native_directory_path;
-    char *temporary_directory_path;
-    int32_t error_code;
 
-    if (path_out == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    error_code = name.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    if (prefix != ft_nullptr && prefix[0] != '\0')
-        error_code = name.append(prefix);
-    else
-        error_code = name.append("libft_secure");
+    int32_t error_code = name.initialize(prefix);
     if (error_code == FT_ERR_SUCCESS)
-        error_code = file_security_append_random_hex(&name);
+        error_code = file_security_append_random_hex(name);
     if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)name.destroy();
         return (error_code);
-    }
-    native_directory_path = ft_nullptr;
-    if (directory_path == ft_nullptr || directory_path[0] == '\0')
+    *path_out = file_path_join(native_directory_path, name.c_str());
+    if (*path_out == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t file_security_open_temp_candidate(const char *path, int32_t *file_descriptor_out)
+{
+    const int32_t file_descriptor = cmp_open(path, O_RDWR | O_CREAT | O_EXCL
+        | FILE_SECURITY_BINARY_FLAG, 0600);
+    if (file_descriptor >= 0)
     {
-        temporary_directory_path = file_security_temp_directory();
-        if (temporary_directory_path == ft_nullptr)
-        {
-            (void)name.destroy();
-            return (FT_ERR_NO_MEMORY);
-        }
-        joined_path = file_path_join(temporary_directory_path, name.c_str());
-        cma_free(temporary_directory_path);
+        *file_descriptor_out = file_descriptor;
+        return (FT_ERR_SUCCESS);
     }
-    else
+    const int32_t open_error = cmp_get_last_open_error();
+#if defined(_WIN32) || defined(_WIN64)
+    if (open_error == ERROR_FILE_EXISTS || open_error == ERROR_ALREADY_EXISTS)
+        return (FT_ERR_ALREADY_EXISTS);
+#else
+    if (open_error == EEXIST)
+        return (FT_ERR_ALREADY_EXISTS);
+#endif
+    if (open_error == 0)
     {
-        error_code = cmp_translate_path_to_native(directory_path,
-                &native_directory_path);
+        const int32_t error_code = cmp_get_last_open_error_code();
         if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        return (FT_ERR_IO);
+    }
+    return (cmp_file_error_to_errno(open_error));
+}
+
+static int32_t file_security_open_temp(const char *native_directory_path,
+    const char *prefix, ft_string &path_out, int32_t *file_descriptor_out)
+{
+    uint32_t attempt_count = 0;
+    while (attempt_count < 64U)
+    {
+        ft_string *candidate_path = ft_nullptr;
+        int32_t error_code = file_security_build_temp_path(native_directory_path,
+            prefix, &candidate_path);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        int32_t file_descriptor;
+        error_code = file_security_open_temp_candidate(candidate_path->c_str(), &file_descriptor);
+        if (error_code == FT_ERR_SUCCESS)
         {
-            (void)name.destroy();
+            error_code = path_out.move(*candidate_path);
+            if (error_code == FT_ERR_SUCCESS)
+                *file_descriptor_out = file_descriptor;
+            else
+            {
+                (void)cmp_close(file_descriptor);
+                (void)file_delete(candidate_path->c_str());
+            }
+            delete candidate_path;
             return (error_code);
         }
-        joined_path = file_path_join(native_directory_path, name.c_str());
-        cma_free(native_directory_path);
+        delete candidate_path;
+        if (error_code != FT_ERR_ALREADY_EXISTS)
+            return (error_code);
+        ++attempt_count;
     }
-    (void)name.destroy();
-    if (joined_path == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    if (joined_path->get_error() != FT_ERR_SUCCESS)
-    {
-        error_code = joined_path->get_error();
-        file_security_delete_string(joined_path);
-        return (error_code);
-    }
-    error_code = path_out->assign(joined_path->c_str(), joined_path->size());
-    file_security_delete_string(joined_path);
-    return (error_code);
+    return (FT_ERR_ALREADY_EXISTS);
 }
 
 int32_t file_secure_temp_file(const char *directory_path, const char *prefix,
     ft_string *path_out, int32_t *file_descriptor_out)
 {
-    ft_string candidate_path;
-    int32_t file_descriptor;
-    uint32_t attempt_count;
+    char *native_directory_path = ft_nullptr;
     int32_t error_code;
 
     if (path_out == ft_nullptr || file_descriptor_out == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
-    error_code = candidate_path.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    attempt_count = 0;
-    while (attempt_count < 64U)
+    if (prefix == ft_nullptr || prefix[0] == '\0')
+        prefix = "libft_secure";
+    if (directory_path == ft_nullptr || directory_path[0] == '\0')
     {
-        (void)candidate_path.clear();
-        error_code = file_security_build_temp_path(directory_path, prefix,
-                &candidate_path);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)candidate_path.destroy();
-            return (error_code);
-        }
-        file_descriptor = cmp_open(candidate_path.c_str(), O_RDWR | O_CREAT
-                | O_EXCL | FILE_SECURITY_BINARY_FLAG, 0600);
-        if (file_descriptor >= 0)
-        {
-            error_code = path_out->assign(candidate_path.c_str(),
-                    candidate_path.size());
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)cmp_close(file_descriptor);
-                (void)file_delete(candidate_path.c_str());
-                (void)candidate_path.destroy();
-                return (error_code);
-            }
-            *file_descriptor_out = file_descriptor;
-            (void)candidate_path.destroy();
-            return (FT_ERR_SUCCESS);
-        }
-        /* A random-name collision is the only failure that is safe to
-         * retry.  Propagate permission, path, descriptor, and filesystem
-         * failures immediately instead of masking them as a collision after
-         * 64 needless RNG/open attempts. */
-        {
-            const int32_t open_error = cmp_get_last_open_error();
-#if defined(_WIN32) || defined(_WIN64)
-            if (open_error != ERROR_FILE_EXISTS
-                && open_error != ERROR_ALREADY_EXISTS)
-            {
-                (void)candidate_path.destroy();
-                return (cmp_file_error_to_errno(open_error));
-            }
-#else
-            if (open_error != EEXIST)
-            {
-                (void)candidate_path.destroy();
-                return (cmp_file_error_to_errno(open_error));
-            }
-#endif
-        }
-        ++attempt_count;
+        if (cmp_get_temp_directory(&native_directory_path) != FT_ERR_SUCCESS)
+            return (FT_ERR_NO_MEMORY);
     }
-    (void)candidate_path.destroy();
-    return (FT_ERR_ALREADY_EXISTS);
+    else
+    {
+        error_code = cmp_translate_path_to_native(directory_path, &native_directory_path);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
+    error_code = file_security_open_temp(native_directory_path, prefix, *path_out,
+        file_descriptor_out);
+    cma_free(native_directory_path);
+    return (error_code);
 }
 
 static ft_bool file_security_has_root_boundary(const char *root,
@@ -228,6 +174,32 @@ static ft_bool file_security_has_root_boundary(const char *root,
     return (FT_FALSE);
 }
 
+static ft_bool file_security_is_normalized_relative(const char *path) noexcept
+{
+    const char *component;
+    const char *cursor;
+
+    component = path;
+    cursor = path;
+    while (FT_TRUE)
+    {
+        while (*cursor != '\0' && *cursor != '/')
+        {
+            if (*cursor == '\\' || *cursor == ':')
+                return (FT_FALSE);
+            ++cursor;
+        }
+        if (cursor == component || (*component == '.'
+                && (cursor - component == 1 || (cursor - component == 2
+                        && component[1] == '.'))))
+            return (FT_FALSE);
+        if (*cursor == '\0')
+            return (FT_TRUE);
+        ++cursor;
+        component = cursor;
+    }
+}
+
 ft_bool file_path_is_inside_root(const char *root_path, const char *candidate_path)
 {
     ft_string *root_normalized;
@@ -236,6 +208,11 @@ ft_bool file_path_is_inside_root(const char *root_path, const char *candidate_pa
 
     if (root_path == ft_nullptr || candidate_path == ft_nullptr)
         return (FT_FALSE);
+    /* The common relative path has no components that normalization would
+     * change. Compare it directly and leave resolved-path checks to callers. */
+    if (file_security_is_normalized_relative(root_path) == FT_TRUE
+        && file_security_is_normalized_relative(candidate_path) == FT_TRUE)
+        return (file_security_has_root_boundary(root_path, candidate_path));
     root_normalized = file_path_normalize(root_path);
     if (root_normalized == ft_nullptr)
         return (FT_FALSE);
@@ -366,78 +343,115 @@ int32_t file_validate_regular_file_inside_root(const char *root_path,
     return (error_code);
 }
 
-static int32_t file_security_write_descriptor(int32_t file_descriptor,
-    const char *data, ft_size_t size)
+static ft_size_t file_security_parent_prefix(const char *path)
 {
-    ft_size_t total_written;
-    int64_t bytes_written;
-    int32_t error_code;
-
-    if (data == ft_nullptr && size > 0)
-        return (FT_ERR_INVALID_POINTER);
-    total_written = 0;
-    while (total_written < size)
+    // Preserve components as provided so the OS resolves the temp and target alike.
+    const ft_bool windows_separators = cmp_path_separator() == '\\';
+    ft_size_t index = ft_strlen_size_t(path);
+    while (index > 0)
     {
-        bytes_written = 0;
-        error_code = cmp_write(file_descriptor, data + total_written,
-                size - total_written, &bytes_written);
+        const char previous = path[index - 1];
+        if (previous == '/' || (windows_separators == FT_TRUE && previous == '\\'))
+            break ;
+        --index;
+    }
+    if (windows_separators == FT_TRUE && index < 2
+        && path[index] != '\0' && path[index + 1] == ':'
+        && file_path_is_absolute(path + index) == FT_TRUE)
+        index += 2;
+    return (index);
+}
+
+static int32_t file_security_open_sibling(const char *target, ft_size_t parent_length,
+    const char *prefix, ft_string &temporary_path, int32_t *file_descriptor_out)
+{
+    uint32_t attempt = 0;
+    while (attempt < 64U)
+    {
+        int32_t error_code = temporary_path.assign(target, parent_length);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = temporary_path.append(prefix);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = file_security_append_random_hex(temporary_path);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        if (bytes_written <= 0)
-            return (FT_ERR_IO);
-        total_written = total_written + static_cast<ft_size_t>(bytes_written);
+        error_code = file_security_open_temp_candidate(temporary_path.c_str(),
+            file_descriptor_out);
+        if (error_code != FT_ERR_ALREADY_EXISTS)
+            return (error_code);
+        ++attempt;
     }
-    return (FT_ERR_SUCCESS);
+    return (FT_ERR_ALREADY_EXISTS);
+}
+
+int32_t file_replace_stream(const char *path, ft_bool durable,
+    file_replace_write_callback write_contents, void *context)
+{
+    if (path == ft_nullptr || write_contents == ft_nullptr)
+        return (FT_ERR_INVALID_POINTER);
+    if (path[0] == '\0')
+        return (FT_ERR_INVALID_PATH);
+    const ft_size_t parent_length = file_security_parent_prefix(path);
+    ft_string directory;
+    const char *prefix = "atomic";
+    if (durable == FT_TRUE)
+    {
+        int32_t error_code = directory.initialize(".");
+        if (error_code == FT_ERR_SUCCESS && parent_length > 0)
+            error_code = directory.assign(path, parent_length);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        prefix = "replace";
+    }
+    // A new temporary name must be distinct even if the target does not exist.
+    const char target_initial = path[parent_length];
+    if (target_initial == prefix[0] || target_initial == prefix[0] - 'a' + 'A')
+        prefix = "temp";
+    ft_string temporary_path;
+    int32_t error_code = temporary_path.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    int32_t file_descriptor;
+    error_code = file_security_open_sibling(path, parent_length, prefix, temporary_path,
+        &file_descriptor);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = write_contents(file_descriptor, context);
+    if (error_code == FT_ERR_SUCCESS && durable == FT_TRUE)
+        error_code = cmp_file_sync(file_descriptor, ft_nullptr);
+    const int32_t close_error = cmp_close(file_descriptor);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = close_error;
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = cmp_file_replace_atomic(temporary_path.c_str(), path);
+    if (error_code != FT_ERR_SUCCESS)
+        (void)file_delete(temporary_path.c_str());
+    else if (durable == FT_TRUE)
+        error_code = cmp_file_sync_directory(directory.c_str(), ft_nullptr);
+    return (error_code);
+}
+
+int32_t file_replace_contents(const char *path, const char *data, ft_size_t size,
+    ft_bool durable)
+{
+    if (data == ft_nullptr && size != 0)
+        return (FT_ERR_INVALID_POINTER);
+    struct write_context
+    {
+        const char *data;
+        ft_size_t size;
+    };
+    write_context context{data, size};
+    return (file_replace_stream(path, durable, [](int32_t descriptor, void *opaque) -> int32_t
+    {
+        const auto &contents = *static_cast<write_context *>(opaque);
+        return (file_write_all_to_descriptor(descriptor, contents.data, contents.size));
+    }, &context));
 }
 
 int32_t file_replace_safe(const char *path, const char *data, ft_size_t size)
 {
-    ft_string *directory_name;
-    ft_string temporary_path;
-    int32_t file_descriptor;
-    int32_t error_code;
-    int32_t sync_error;
-
-    if (path == ft_nullptr || (data == ft_nullptr && size > 0))
-        return (FT_ERR_INVALID_POINTER);
-    directory_name = file_path_dirname_string(path);
-    if (directory_name == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    error_code = temporary_path.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        file_security_delete_string(directory_name);
-        return (error_code);
-    }
-    file_descriptor = -1;
-    error_code = file_secure_temp_file(directory_name->c_str(), "replace",
-            &temporary_path, &file_descriptor);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = file_security_write_descriptor(file_descriptor, data, size);
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        sync_error = FT_ERR_SUCCESS;
-        error_code = cmp_file_sync(file_descriptor, &sync_error);
-        if (sync_error != FT_ERR_SUCCESS)
-            error_code = sync_error;
-    }
-    if (file_descriptor >= 0)
-        (void)cmp_close(file_descriptor);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = file_move(temporary_path.c_str(), path);
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        sync_error = FT_ERR_SUCCESS;
-        error_code = cmp_file_sync_directory(directory_name->c_str(),
-            &sync_error);
-        if (sync_error != FT_ERR_SUCCESS)
-            error_code = sync_error;
-    }
-    if (error_code != FT_ERR_SUCCESS)
-        (void)file_delete(temporary_path.c_str());
-    (void)temporary_path.destroy();
-    file_security_delete_string(directory_name);
-    return (error_code);
+    return (file_replace_contents(path, data, size, FT_TRUE));
 }
 
 int32_t file_close_descriptor(int32_t file_descriptor)

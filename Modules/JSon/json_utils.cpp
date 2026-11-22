@@ -1,5 +1,5 @@
-#include <cstring>
-#include "json.hpp"
+#include <charconv>
+#include "json_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../CPP_class/class_big_number.hpp"
 #include "../Basic/basic.hpp"
@@ -18,12 +18,7 @@ static void json_utils_set_error(int32_t error_code)
     return ;
 }
 
-static int32_t json_utils_get_error(void)
-{
-    return (g_json_utils_last_error);
-}
-
-static json_item *json_find_item_locked(json_group *group, const char *key)
+json_item *json_find_item_locked(json_group *group, const char *key)
 {
     json_item *current;
 
@@ -89,17 +84,13 @@ json_item *json_find_item(json_group *group, const char *key)
         json_utils_set_error(lock_error);
         return (ft_nullptr);
     }
-    current = group->items;
-    while (current)
+    current = json_find_item_locked(group, key);
+    if (current != ft_nullptr)
     {
-        if (current->key && ft_strcmp(current->key, key) == FT_ERR_SUCCESS)
-        {
-            json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
-            (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-            json_utils_set_error(FT_ERR_SUCCESS);
-            return (current);
-        }
-        current = current->next;
+        json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
+        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+        json_utils_set_error(FT_ERR_SUCCESS);
+        return (current);
     }
     json_group_set_error_unlocked(group, FT_ERR_NOT_FOUND);
     (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
@@ -157,266 +148,106 @@ void json_remove_item(json_group *group, const char *key)
     return ;
 }
 
+static int32_t json_replace_item_value(json_item *item, const char *value)
+{
+    if (item->_mutex == ft_nullptr)
+    {
+        const int32_t mutex_error = json_item_enable_thread_safety(item);
+        if (mutex_error != FT_ERR_SUCCESS)
+            return (mutex_error);
+    }
+    if (item->_error_code == FT_ERR_SUCCESS && item->value != ft_nullptr
+        && ft_strcmp(item->value, value) == 0)
+        return (FT_ERR_SUCCESS);
+
+    char *replacement = adv_strdup(value);
+    if (replacement == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_big_number *number;
+    const int32_t error = json_build_item_number(replacement, number);
+    if (error != FT_ERR_SUCCESS)
+    {
+        cma_free(replacement);
+        return (error);
+    }
+    char *previous_value = item->value;
+    ft_big_number *previous_number = item->big_number;
+    item->value = replacement;
+    item->big_number = number;
+    item->is_big_number = number != ft_nullptr;
+    cma_free(previous_value);
+    delete previous_number;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t json_update_item_checked(json_group *group, const char *key, const char *value)
+{
+    if (group == ft_nullptr || key == ft_nullptr || value == ft_nullptr)
+    {
+        json_group_set_error(group, FT_ERR_INVALID_ARGUMENT);
+        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
+        return (FT_ERR_INVALID_ARGUMENT);
+    }
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(group->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        json_utils_set_error(lock_error);
+        return (lock_error);
+    }
+    json_item *item = json_find_item_locked(group, key);
+    int32_t error = FT_ERR_NOT_FOUND;
+    if (item != ft_nullptr)
+    {
+        error = json_replace_item_value(item, value);
+        json_item_set_error_unlocked(item, error);
+    }
+    json_group_set_error_unlocked(group, error);
+    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+    json_utils_set_error(error);
+    return (error);
+}
+
+int32_t json_update_item_checked(json_group *group, const char *key, int32_t value)
+{
+    char buffer[12U];
+    const auto converted = std::to_chars(buffer, buffer + sizeof(buffer) - 1U, value);
+    *converted.ptr = '\0';
+    return (json_update_item_checked(group, key, buffer));
+}
+
+int32_t json_update_item_checked(json_group *group, const char *key, ft_bool value)
+{
+    if (value == FT_TRUE)
+        return (json_update_item_checked(group, key, "true"));
+    return (json_update_item_checked(group, key, "false"));
+}
+
+int32_t json_update_item_checked(json_group *group, const char *key, const ft_big_number &value)
+{
+    return (json_update_item_checked(group, key, value.c_str()));
+}
+
 void json_update_item(json_group *group, const char *key, const char *value)
 {
-    int32_t lock_error;
-    json_item *item;
-
-    if (!group || !key || !value)
-    {
-        json_group_set_error(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(group->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        json_utils_set_error(lock_error);
-        return ;
-    }
-    item = json_find_item_locked(group, key);
-    if (!item)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_NOT_FOUND);
-        json_utils_set_error(FT_ERR_NOT_FOUND);
-        return ;
-    }
-    int32_t enable_error = json_item_enable_thread_safety(item);
-    if (enable_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    if (item->big_number)
-    {
-        delete item->big_number;
-        item->big_number = ft_nullptr;
-    }
-    item->is_big_number = FT_FALSE;
-    if (item->value)
-        cma_free(item->value);
-    item->value = adv_strdup(value);
-    if (!item->value)
-    {
-        json_item_set_error_unlocked(item, FT_ERR_NO_MEMORY);
-        json_group_set_error_unlocked(group, FT_ERR_NO_MEMORY);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    json_item_set_error_unlocked(item, FT_ERR_SUCCESS);
-    json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
-    json_item_refresh_numeric_state(item);
-    int32_t refresh_error = json_utils_get_error();
-    if (refresh_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, refresh_error);
-        json_item_set_error_unlocked(item, refresh_error);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(refresh_error);
-        return ;
-    }
-    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-    json_utils_set_error(FT_ERR_SUCCESS);
+    (void)json_update_item_checked(group, key, value);
     return ;
 }
 
-void json_update_item(json_group *group, const char *key, const int32_t value)
+void json_update_item(json_group *group, const char *key, int32_t value)
 {
-    int32_t lock_error;
-    json_item *item;
-
-    if (!group || !key)
-    {
-        json_group_set_error(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(group->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        json_utils_set_error(lock_error);
-        return ;
-    }
-    item = json_find_item_locked(group, key);
-    if (!item)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_NOT_FOUND);
-        json_utils_set_error(FT_ERR_NOT_FOUND);
-        return ;
-    }
-    int32_t enable_error = json_item_enable_thread_safety(item);
-    if (enable_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    if (item->big_number)
-    {
-        delete item->big_number;
-        item->big_number = ft_nullptr;
-    }
-    item->is_big_number = FT_FALSE;
-    if (item->value)
-        cma_free(item->value);
-    item->value = adv_itoa(value);
-    if (!item->value)
-    {
-        json_item_set_error_unlocked(item, FT_ERR_NO_MEMORY);
-        json_group_set_error_unlocked(group, FT_ERR_NO_MEMORY);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    json_item_set_error_unlocked(item, FT_ERR_SUCCESS);
-    json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
-    json_item_refresh_numeric_state(item);
-    int32_t refresh_error = json_utils_get_error();
-    if (refresh_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, refresh_error);
-        json_item_set_error_unlocked(item, refresh_error);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(refresh_error);
-        return ;
-    }
-    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-    json_utils_set_error(FT_ERR_SUCCESS);
+    (void)json_update_item_checked(group, key, value);
     return ;
 }
 
-void json_update_item(json_group *group, const char *key, const ft_bool value)
+void json_update_item(json_group *group, const char *key, ft_bool value)
 {
-    int32_t lock_error;
-    json_item *item;
-
-    if (!group || !key)
-    {
-        json_group_set_error(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(group->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        json_utils_set_error(lock_error);
-        return ;
-    }
-    item = json_find_item_locked(group, key);
-    if (!item)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_NOT_FOUND);
-        json_utils_set_error(FT_ERR_NOT_FOUND);
-        return ;
-    }
-    int32_t enable_error = json_item_enable_thread_safety(item);
-    if (enable_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    if (item->big_number)
-    {
-        delete item->big_number;
-        item->big_number = ft_nullptr;
-    }
-    item->is_big_number = FT_FALSE;
-    if (item->value)
-        cma_free(item->value);
-    if (value == FT_TRUE)
-        item->value = adv_strdup("true");
-    else
-        item->value = adv_strdup("false");
-    if (!item->value)
-    {
-        json_item_set_error_unlocked(item, FT_ERR_NO_MEMORY);
-        json_group_set_error_unlocked(group, FT_ERR_NO_MEMORY);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    json_item_set_error_unlocked(item, FT_ERR_SUCCESS);
-    json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
-    json_item_refresh_numeric_state(item);
-    int32_t refresh_error = json_utils_get_error();
-    if (refresh_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, refresh_error);
-        json_item_set_error_unlocked(item, refresh_error);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(refresh_error);
-        return ;
-    }
-    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-    json_utils_set_error(FT_ERR_SUCCESS);
+    (void)json_update_item_checked(group, key, value);
     return ;
 }
 
 void json_update_item(json_group *group, const char *key, const ft_big_number &value)
 {
-    int32_t lock_error;
-    json_item *item;
-
-    if (!group || !key)
-    {
-        json_group_set_error(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(group->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        json_utils_set_error(lock_error);
-        return ;
-    }
-    item = json_find_item_locked(group, key);
-    if (!item)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_NOT_FOUND);
-        json_utils_set_error(FT_ERR_NOT_FOUND);
-        return ;
-    }
-    int32_t enable_error = json_item_enable_thread_safety(item);
-    if (enable_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, FT_ERR_INVALID_ARGUMENT);
-        json_utils_set_error(FT_ERR_INVALID_ARGUMENT);
-        return ;
-    }
-    if (item->big_number)
-    {
-        delete item->big_number;
-        item->big_number = ft_nullptr;
-    }
-    item->is_big_number = FT_FALSE;
-    if (item->value)
-        cma_free(item->value);
-    item->value = adv_strdup(value.c_str());
-    if (!item->value)
-    {
-        json_item_set_error_unlocked(item, FT_ERR_NO_MEMORY);
-        json_group_set_error_unlocked(group, FT_ERR_NO_MEMORY);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    json_item_set_error_unlocked(item, FT_ERR_SUCCESS);
-    json_group_set_error_unlocked(group, FT_ERR_SUCCESS);
-    json_item_refresh_numeric_state(item);
-    int32_t refresh_error = json_utils_get_error();
-    if (refresh_error != FT_ERR_SUCCESS)
-    {
-        json_group_set_error_unlocked(group, refresh_error);
-        json_item_set_error_unlocked(item, refresh_error);
-        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-        json_utils_set_error(refresh_error);
-        return ;
-    }
-    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
-    json_utils_set_error(FT_ERR_SUCCESS);
+    (void)json_update_item_checked(group, key, value);
     return ;
 }
 

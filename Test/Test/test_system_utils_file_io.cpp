@@ -19,7 +19,7 @@ static void create_system_io_test_file(void)
 {
     FILE *file_handle;
 
-    file_handle = std::fopen("test_cmp_system_io.txt", "w");
+    file_handle = std::fopen("build_logs/test_cmp_system_io.txt", "w");
     if (file_handle != ft_nullptr)
     {
         std::fputs("data", file_handle);
@@ -120,7 +120,7 @@ FT_TEST(test_cmp_read_translates_errno)
     int64_t bytes_read;
 
     create_system_io_test_file();
-    file_descriptor = cmp_open("test_cmp_system_io.txt", O_WRONLY);
+    file_descriptor = cmp_open("build_logs/test_cmp_system_io.txt", O_WRONLY);
     FT_ASSERT(file_descriptor >= 0);
     bytes_read = 0;
     FT_ASSERT_EQ(FT_ERR_INVALID_HANDLE,
@@ -137,7 +137,7 @@ FT_TEST(test_cmp_write_translates_errno)
     int64_t bytes_written;
 
     create_system_io_test_file();
-    file_descriptor = cmp_open("test_cmp_system_io.txt", O_RDONLY);
+    file_descriptor = cmp_open("build_logs/test_cmp_system_io.txt", O_RDONLY);
     FT_ASSERT(file_descriptor >= 0);
     bytes_written = 0;
     FT_ASSERT_EQ(FT_ERR_INVALID_HANDLE,
@@ -164,7 +164,7 @@ FT_TEST(test_cmp_close_translates_errno)
     int file_descriptor;
 
     create_system_io_test_file();
-    file_descriptor = cmp_open("test_cmp_system_io.txt", O_RDONLY);
+    file_descriptor = cmp_open("build_logs/test_cmp_system_io.txt", O_RDONLY);
     FT_ASSERT(file_descriptor >= 0);
     FT_ASSERT_EQ(0, cmp_close(file_descriptor));
     errno = 0;

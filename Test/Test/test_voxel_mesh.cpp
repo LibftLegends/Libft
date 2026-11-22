@@ -39,9 +39,13 @@ FT_TEST(test_chunk_mesh_generate_single_block_visible_faces)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 1, 1,
         VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_initialize(mesh));
+    const ft_size_t initial_water_capacity = mesh.water_indices.capacity();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_generate_from_chunk(mesh, chunk));
     FT_ASSERT_EQ(24, mesh.vertices.size());
     FT_ASSERT_EQ(36, mesh.indices.size());
+    FT_ASSERT_EQ(36, mesh.solid_indices.size());
+    FT_ASSERT_EQ(0U, mesh.water_indices.size());
+    FT_ASSERT_EQ(initial_water_capacity, mesh.water_indices.capacity());
     FT_ASSERT_EQ(FT_TRUE, mesh.has_occupied_bounds);
     FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK, mesh.vertices[0].block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
@@ -53,7 +57,9 @@ FT_TEST(test_chunk_mesh_prepartitions_solid_and_water_indices)
 {
     game_voxel_chunk chunk;
     chunk_mesh mesh;
-    ft_size_t index;
+    ft_size_t index = 0U;
+    ft_size_t solid_index = 0U;
+    ft_size_t water_index = 0U;
     uint32_t vertex_index;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
@@ -67,22 +73,22 @@ FT_TEST(test_chunk_mesh_prepartitions_solid_and_water_indices)
     FT_ASSERT_NEQ(0, mesh.water_indices.size());
     FT_ASSERT_EQ(mesh.indices.size(), mesh.solid_indices.size()
         + mesh.water_indices.size());
-    index = 0U;
-    while (index < mesh.solid_indices.size())
+    while (index < mesh.indices.size())
     {
-        vertex_index = mesh.solid_indices[index];
+        vertex_index = mesh.indices[index];
         FT_ASSERT(vertex_index < mesh.vertices.size());
-        FT_ASSERT_NEQ(VOXEL_GENERATOR_WATER_BLOCK,
-            mesh.vertices[vertex_index].block_id);
-        index += 1U;
-    }
-    index = 0U;
-    while (index < mesh.water_indices.size())
-    {
-        vertex_index = mesh.water_indices[index];
-        FT_ASSERT(vertex_index < mesh.vertices.size());
-        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK,
-            mesh.vertices[vertex_index].block_id);
+        if (mesh.vertices[vertex_index].block_id == VOXEL_GENERATOR_WATER_BLOCK)
+        {
+            FT_ASSERT(water_index < mesh.water_indices.size());
+            FT_ASSERT_EQ(vertex_index, mesh.water_indices[water_index]);
+            water_index += 1U;
+        }
+        else
+        {
+            FT_ASSERT(solid_index < mesh.solid_indices.size());
+            FT_ASSERT_EQ(vertex_index, mesh.solid_indices[solid_index]);
+            solid_index += 1U;
+        }
         index += 1U;
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
@@ -238,6 +244,10 @@ FT_TEST(test_chunk_mesh_intersects_frustum_uses_occupied_bounds)
     FT_ASSERT_EQ(1, mesh.occupied_bounds.maximum_z);
     FT_ASSERT_EQ(FT_TRUE, chunk_mesh_intersects_frustum(frustum, 0, 0, 0));
     FT_ASSERT_EQ(FT_FALSE, chunk_mesh_intersects_frustum(frustum, mesh, 0, 0,
+        0));
+    FT_ASSERT_EQ(FT_TRUE, chunk_mesh_intersects_frustum(frustum, mesh, -14, 0,
+        0));
+    FT_ASSERT_EQ(FT_FALSE, chunk_mesh_intersects_frustum(frustum, mesh, -13, 0,
         0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk_mesh_destroy(mesh));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());

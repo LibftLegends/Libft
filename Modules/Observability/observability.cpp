@@ -94,10 +94,10 @@ int32_t observability_record_operation(ft_observability_module module,
         storage->successes.fetch_add(1, std::memory_order_relaxed);
     else
         storage->failures.fetch_add(1, std::memory_order_relaxed);
-    storage->bytes_read.fetch_add(bytes_read,
-        std::memory_order_relaxed);
-    storage->bytes_written.fetch_add(bytes_written,
-        std::memory_order_relaxed);
+    if (bytes_read != 0)
+        storage->bytes_read.fetch_add(bytes_read, std::memory_order_relaxed);
+    if (bytes_written != 0)
+        storage->bytes_written.fetch_add(bytes_written, std::memory_order_relaxed);
     return (FT_ERR_SUCCESS);
 }
 

@@ -18,6 +18,14 @@ static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
     return ;
 }
 
+static void cmp_dir_copy_entry_name(file_dirent &entry, const char *name)
+{
+    const ft_size_t length = ft_strnlen(name, sizeof(entry.d_name) - 1);
+    ft_memcpy(entry.d_name, name, length);
+    ft_memset(entry.d_name + length, 0, sizeof(entry.d_name) - length);
+    return ;
+}
+
 #if defined(_WIN32) || defined(_WIN64)
 # include "../Basic/class_nullptr.hpp"
 # include <windows.h>
@@ -28,6 +36,9 @@ static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 # ifndef DT_REG
 #  define DT_REG 8
 # endif
+# ifndef DT_LNK
+#  define DT_LNK 10
+# endif
 
 file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
 {
@@ -37,7 +48,7 @@ file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
         cmp_set_error_code(error_code_out, FT_ERR_INVALID_ARGUMENT);
         return (ft_nullptr);
     }
-    ft_size_t directory_path_length = ft_strlen(directory_path);
+    const ft_size_t directory_path_length = ft_strlen_size_t(directory_path);
     ft_size_t allocation_size = directory_path_length + 3;
     char *search_path = reinterpret_cast<char*>(cma_malloc(allocation_size));
     if (!search_path)
@@ -45,8 +56,8 @@ file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
         cmp_set_error_code(error_code_out, FT_ERR_NO_MEMORY);
         return (ft_nullptr);
     }
-    ft_strlcpy(search_path, directory_path, allocation_size);
-    ft_size_t search_path_length = ft_strlen(search_path);
+    ft_memcpy(search_path, directory_path, directory_path_length);
+    const ft_size_t search_path_length = directory_path_length;
     if (search_path_length > 0
         && (search_path[search_path_length - 1] == '\\'
             || search_path[search_path_length - 1] == '/'))
@@ -94,7 +105,6 @@ file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
     }
     directory_stream->mutex_initialised = FT_TRUE;
     directory_stream->closed = FT_FALSE;
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (directory_stream);
 }
@@ -149,11 +159,11 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
             cmp_set_error_code(error_code_out, unlock_result);
         return (ft_nullptr);
     }
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
-    ft_strncpy(directory_stream->entry.d_name, directory_stream->w_find_data.cFileName,
-        sizeof(directory_stream->entry.d_name) - 1);
+    cmp_dir_copy_entry_name(directory_stream->entry, directory_stream->w_find_data.cFileName);
     directory_stream->entry.d_ino = 0;
-    if (directory_stream->w_find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+    if (directory_stream->w_find_data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+        directory_stream->entry.d_type = DT_LNK;
+    else if (directory_stream->w_find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         directory_stream->entry.d_type = DT_DIR;
     else
         directory_stream->entry.d_type = DT_REG;
@@ -307,7 +317,6 @@ file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
     }
     directory_stream->mutex_initialised = FT_TRUE;
     directory_stream->closed = FT_FALSE;
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (directory_stream);
 #else
@@ -339,7 +348,6 @@ file_dir *cmp_dir_open(const char *directory_path, int32_t *error_code_out)
     }
     directory_stream->mutex_initialised = FT_TRUE;
     directory_stream->closed = FT_FALSE;
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (directory_stream);
 #endif
@@ -378,6 +386,7 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
         int64_t bytes;
 
         directory_stream->buffer_offset = 0;
+        directory_stream->buffer_used = 0;
         bytes = syscall(SYS_getdents64, static_cast<int32_t>(directory_stream->file_descriptor),
             reinterpret_cast<linux_dirent64*>(directory_stream->buffer),
             directory_stream->buffer_size);
@@ -386,14 +395,14 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
             if (bytes == 0)
                 cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
             else if (errno != 0)
-        cmp_set_error_code(error_code_out, cmp_map_system_error_to_ft(errno));
-        else
-            cmp_set_error_code(error_code_out, FT_ERR_INVALID_ARGUMENT);
-        int32_t unlock_result = directory_stream->mutex.unlock();
-        if (unlock_result != FT_ERR_SUCCESS)
-            cmp_set_error_code(error_code_out, unlock_result);
-        return (ft_nullptr);
-    }
+                cmp_set_error_code(error_code_out, cmp_map_system_error_to_ft(errno));
+            else
+                cmp_set_error_code(error_code_out, FT_ERR_INVALID_ARGUMENT);
+            int32_t unlock_result = directory_stream->mutex.unlock();
+            if (unlock_result != FT_ERR_SUCCESS)
+                cmp_set_error_code(error_code_out, unlock_result);
+            return (ft_nullptr);
+        }
         directory_stream->buffer_used = bytes;
     }
     linux_dirent64 *raw = reinterpret_cast<linux_dirent64*>(directory_stream->buffer + directory_stream->buffer_offset);
@@ -405,10 +414,9 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
             cmp_set_error_code(error_code_out, unlock_result);
         return (ft_nullptr);
     }
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
     directory_stream->entry.d_ino = raw->d_ino;
     directory_stream->entry.d_type = raw->d_type;
-    ft_strncpy(directory_stream->entry.d_name, raw->d_name, sizeof(directory_stream->entry.d_name) - 1);
+    cmp_dir_copy_entry_name(directory_stream->entry, raw->d_name);
     directory_stream->buffer_offset += raw->d_reclen;
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     int32_t unlock_result = directory_stream->mutex.unlock();
@@ -449,10 +457,9 @@ file_dirent *cmp_dir_read(file_dir *directory_stream, int32_t *error_code_out)
             cmp_set_error_code(error_code_out, unlock_result);
         return (ft_nullptr);
     }
-    ft_bzero(&directory_stream->entry, sizeof(directory_stream->entry));
     directory_stream->entry.d_ino = entry->d_ino;
     directory_stream->entry.d_type = entry->d_type;
-    ft_strncpy(directory_stream->entry.d_name, entry->d_name, sizeof(directory_stream->entry.d_name) - 1);
+    cmp_dir_copy_entry_name(directory_stream->entry, entry->d_name);
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     int32_t unlock_result = directory_stream->mutex.unlock();
     if (unlock_result != FT_ERR_SUCCESS)
@@ -579,3 +586,14 @@ int32_t cmp_directory_exists(const char *path, int32_t *exists_out,
 }
 
 #endif
+
+file_type cmp_dir_entry_type(const file_dirent &entry) noexcept
+{
+    if (entry.d_type == DT_REG)
+        return (FILE_TYPE_REGULAR);
+    if (entry.d_type == DT_DIR)
+        return (FILE_TYPE_DIRECTORY);
+    if (entry.d_type == DT_LNK)
+        return (FILE_TYPE_SYMLINK);
+    return (FILE_TYPE_UNKNOWN);
+}

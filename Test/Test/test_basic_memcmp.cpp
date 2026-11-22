@@ -6,6 +6,21 @@
 #ifndef LIBFT_TEST_BUILD
 #endif
 
+FT_TEST(test_basic_memcmp_exact_difference_after_unaligned_prefix)
+{
+    uint8_t left[33] = {};
+    uint8_t right[33] = {};
+
+    left[24U] = 0xE2U;
+    right[24U] = 0x12U;
+    left[25U] = 0x04U;
+    right[25U] = 0xF0U;
+    FT_ASSERT_EQ(208, ft_memcmp(left + 1U, right + 1U, 32U));
+    FT_ASSERT_EQ(-208, ft_memcmp(right + 1U, left + 1U, 32U));
+    FT_ASSERT_EQ(0, ft_memcmp(left + 1U, right + 1U, 23U));
+    return (1);
+}
+
 FT_TEST(test_basic_memcmp_equal)
 {
     char a[3];

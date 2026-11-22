@@ -6,11 +6,36 @@
 #include "voxel_types.hpp"
 #include <stdint.h>
 
-int32_t voxel_floor_div(int32_t value, int32_t divisor) noexcept;
-uint64_t voxel_mix_u64(uint64_t value) noexcept;
-double voxel_lerp(double left_value, double right_value,
-    double factor) noexcept;
-double voxel_smooth_factor(double factor) noexcept;
+// The divisor must be positive.
+constexpr int32_t voxel_floor_div(int32_t value, int32_t divisor) noexcept
+{
+    int32_t quotient = value / divisor;
+    if (value % divisor < 0)
+        quotient -= 1;
+    return (quotient);
+}
+
+constexpr uint64_t voxel_mix_u64(uint64_t value) noexcept
+{
+    value ^= value >> 30;
+    value *= UINT64_C(0xBF58476D1CE4E5B9);
+    value ^= value >> 27;
+    value *= UINT64_C(0x94D049BB133111EB);
+    value ^= value >> 31;
+    return (value);
+}
+
+constexpr double voxel_lerp(double left_value, double right_value,
+    double factor) noexcept
+{
+    return (left_value + ((right_value - left_value) * factor));
+}
+
+constexpr double voxel_smooth_factor(double factor) noexcept
+{
+    return (factor * factor * (3.0 - (2.0 * factor)));
+}
+
 uint64_t voxel_seed_value(const char *seed_string) noexcept;
 uint64_t voxel_feature_seed(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, uint64_t salt) noexcept;

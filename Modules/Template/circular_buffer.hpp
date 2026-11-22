@@ -7,10 +7,12 @@
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstdint>
 #include <new>
+#include <type_traits>
 
 template <typename ElementType>
 class ft_circular_buffer
@@ -103,15 +105,17 @@ int32_t ft_circular_buffer<ElementType>::unlock_internal(ft_bool lock_acquired) 
 template <typename ElementType>
 void ft_circular_buffer<ElementType>::destroy_elements_locked()
 {
-    ft_size_t index;
-
-    if (this->_configured_capacity == 0)
-        return ;
-    index = 0;
-    while (index < this->_size)
+    if constexpr (!std::is_trivially_destructible_v<ElementType>)
     {
-        destroy_at(&this->_buffer[(this->_head + index) % this->_configured_capacity]);
-        ++index;
+        ft_size_t remaining = this->_size;
+        ft_size_t index = this->_head;
+        while (remaining != 0U)
+        {
+            ::destroy_at(&this->_buffer[index]);
+            if (++index == this->_configured_capacity)
+                index = 0U;
+            --remaining;
+        }
     }
     return ;
 }
@@ -162,6 +166,11 @@ int32_t ft_circular_buffer<ElementType>::initialize()
     this->_head = 0;
     this->_tail = 0;
     this->_size = 0;
+    if (this->_configured_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ElementType))
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (set_error(FT_ERR_NO_MEMORY));
+    }
     if (this->_configured_capacity > 0)
     {
         this->_buffer = static_cast<ElementType*>(cma_malloc(sizeof(ElementType)
@@ -264,8 +273,8 @@ void ft_circular_buffer<ElementType>::push(const ElementType& value)
         return ;
     }
     construct_at(&this->_buffer[this->_tail], value);
-    if (this->_configured_capacity != 0)
-        this->_tail = (this->_tail + 1) % this->_configured_capacity;
+    if (++this->_tail == this->_configured_capacity)
+        this->_tail = 0U;
     this->_size += 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -293,8 +302,8 @@ void ft_circular_buffer<ElementType>::push(ElementType&& value)
         return ;
     }
     construct_at(&this->_buffer[this->_tail], ft_move(value));
-    if (this->_configured_capacity != 0)
-        this->_tail = (this->_tail + 1) % this->_configured_capacity;
+    if (++this->_tail == this->_configured_capacity)
+        this->_tail = 0U;
     this->_size += 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -324,8 +333,8 @@ ElementType ft_circular_buffer<ElementType>::pop()
     }
     value = ft_move(this->_buffer[this->_head]);
     destroy_at(&this->_buffer[this->_head]);
-    if (this->_configured_capacity != 0)
-        this->_head = (this->_head + 1) % this->_configured_capacity;
+    if (++this->_head == this->_configured_capacity)
+        this->_head = 0U;
     this->_size -= 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);

@@ -41,7 +41,7 @@ static int32_t json_stream_writer_write_chunk(json_stream_writer *writer,
     while (offset < size)
     {
         written = writer->write_callback(writer->user_data, buffer + offset, size - offset);
-        if (written == FT_ERR_SUCCESS)
+        if (written == 0U || written > size - offset)
         {
             JSON_STREAM_WRITER_ERROR_RETURN(FT_ERR_IO, -1);
         }
@@ -50,17 +50,11 @@ static int32_t json_stream_writer_write_chunk(json_stream_writer *writer,
     JSON_STREAM_WRITER_SUCCESS_RETURN(0);
 }
 
+template <ft_size_t Length>
 static int32_t json_stream_writer_write_literal(json_stream_writer *writer,
-    const char *literal)
+    const char (&literal)[Length])
 {
-    ft_size_t length;
-
-    if (!literal)
-    {
-        JSON_STREAM_WRITER_ERROR_RETURN(FT_ERR_INVALID_ARGUMENT, -1);
-    }
-    length = ft_strlen_size_t(literal);
-    return (json_stream_writer_write_chunk(writer, literal, length));
+    return (json_stream_writer_write_chunk(writer, literal, Length - 1U));
 }
 
 static int32_t json_stream_writer_write_escaped_string(json_stream_writer *writer,
@@ -70,14 +64,26 @@ static int32_t json_stream_writer_write_escaped_string(json_stream_writer *write
     ft_size_t index;
     unsigned char character;
     char buffer[6];
-    const char *hex_digits;
+    constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
 
     if (json_stream_writer_write_chunk(writer, "\"", 1) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     index = 0;
-    hex_digits = "0123456789ABCDEF";
     while (index < length)
     {
+        const ft_size_t span_start = index;
+        while (index < length)
+        {
+            character = static_cast<unsigned char>(value[index]);
+            if (character < 0x20U || character == '\\' || character == '"')
+                break ;
+            ++index;
+        }
+        if (index != span_start
+            && json_stream_writer_write_chunk(writer, value + span_start, index - span_start) != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        if (index == length)
+            break ;
         character = static_cast<unsigned char>(value[index]);
         if (character == '\\' || character == '"')
         {
@@ -123,21 +129,13 @@ static int32_t json_stream_writer_write_escaped_string(json_stream_writer *write
             index += 1;
             continue ;
         }
-        if (character < 0x20)
-        {
-            buffer[0] = '\\';
-            buffer[1] = 'u';
-            buffer[2] = '0';
-            buffer[3] = '0';
-            buffer[4] = hex_digits[(character >> 4) & 0x0F];
-            buffer[5] = hex_digits[character & 0x0F];
-            if (json_stream_writer_write_chunk(writer, buffer, 6) != FT_ERR_SUCCESS)
-                return (FT_ERR_INVALID_STATE);
-            index += 1;
-            continue ;
-        }
-        buffer[0] = static_cast<char>(character);
-        if (json_stream_writer_write_chunk(writer, buffer, 1) != FT_ERR_SUCCESS)
+        buffer[0] = '\\';
+        buffer[1] = 'u';
+        buffer[2] = '0';
+        buffer[3] = '0';
+        buffer[4] = HEX_DIGITS[(character >> 4) & 0x0F];
+        buffer[5] = HEX_DIGITS[character & 0x0F];
+        if (json_stream_writer_write_chunk(writer, buffer, 6) != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_STATE);
         index += 1;
     }

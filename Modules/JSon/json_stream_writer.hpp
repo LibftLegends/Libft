@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+// Return the number of bytes accepted from this span. Partial writes are retried.
+// Return zero to signal an I/O failure.
 typedef ft_size_t (*json_stream_write_callback)(void *user_data, const char *buffer, ft_size_t size);
 
 typedef struct json_stream_writer_context

@@ -16,6 +16,10 @@ The `PThread` module wraps the low-level pthread-style primitives used by the re
 - `pt_buffer` - Public pointer/size/capacity buffer struct.
 - `pthread.hpp` wrappers - Thread creation/join, sleep/yield, rwlock, and platform synchronization wrappers used by the rest of the library.
 
+The atomic wait wrappers block on a specific 32-bit address. After changing a
+value, producers should call the corresponding wake helper so blocked callers
+can observe the change. Windows uses native address waits when they are available.
+
 ## Lock Tracking and Error Guards
 
 - `pt_lock_tracking` - Static lock tracking interface for owned mutexes, waits, acquisitions, releases, thread exits, waiter snapshots, and per-thread state.

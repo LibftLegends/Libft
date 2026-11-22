@@ -4,54 +4,20 @@
 #include "../CMA/CMA.hpp"
 #include "../Basic/limits.hpp"
 
-static ft_size_t safe_strlen(const char *string)
-{
-    if (string == ft_nullptr)
-        return (0);
-    ft_size_t length = 0;
-    while (string[length] != '\0')
-    {
-        if (length >= FT_SYSTEM_SIZE_MAX)
-            return (FT_SYSTEM_SIZE_MAX);
-        length += 1;
-    }
-    return (length);
-}
-
 char *adv_strjoin(char const *string_1, char const *string_2)
 {
     if (string_1 == ft_nullptr && string_2 == ft_nullptr)
         return (ft_nullptr);
-    ft_size_t first_string_length = safe_strlen(string_1);
-    ft_size_t second_string_length = safe_strlen(string_2);
-    if (first_string_length >= FT_SYSTEM_SIZE_MAX
-            || second_string_length >= FT_SYSTEM_SIZE_MAX)
-        return (ft_nullptr);
-    if (first_string_length + second_string_length >= FT_SYSTEM_SIZE_MAX)
+    const ft_size_t first_string_length = ft_strlen_size_t(string_1);
+    const ft_size_t second_string_length = ft_strlen_size_t(string_2);
+    if (first_string_length >= FT_SYSTEM_SIZE_MAX - second_string_length)
         return (ft_nullptr);
     ft_size_t total_length = first_string_length + second_string_length;
     char *result = static_cast<char *>(cma_malloc(total_length + 1));
     if (result == ft_nullptr)
         return (ft_nullptr);
-    ft_size_t write_index = 0;
-    if (string_1)
-    {
-        ft_size_t index = 0;
-        while (index < first_string_length)
-        {
-            result[write_index++] = string_1[index];
-            ++index;
-        }
-    }
-    if (string_2)
-    {
-        ft_size_t index = 0;
-        while (index < second_string_length)
-        {
-            result[write_index++] = string_2[index];
-            ++index;
-        }
-    }
-    result[write_index] = '\0';
+    (void)ft_memcpy(result, string_1, first_string_length);
+    (void)ft_memcpy(result + first_string_length, string_2, second_string_length);
+    result[total_length] = '\0';
     return (result);
 }

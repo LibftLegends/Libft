@@ -57,6 +57,27 @@ FT_TEST(test_ft_sort_custom_comparator)
     return (1);
 }
 
+FT_TEST(test_ft_sort_avoids_quadratic_comparisons_on_large_random_access_ranges)
+{
+    constexpr uint32_t LENGTH = 4096U;
+    std::array<uint32_t, LENGTH> values;
+    uint32_t index = 0U;
+    while (index < LENGTH)
+    {
+        values[index] = (index * 17U) % 257U;
+        ++index;
+    }
+    uint32_t comparisons = 0U;
+    ft_sort(values.begin(), values.end(), [&comparisons](uint32_t left, uint32_t right)
+    {
+        ++comparisons;
+        return (left < right);
+    });
+    FT_ASSERT(std::is_sorted(values.begin(), values.end()));
+    FT_ASSERT(comparisons < LENGTH * 32U);
+    return (1);
+}
+
 FT_TEST(test_ft_binary_search_default)
 {
     std::vector<int> values;

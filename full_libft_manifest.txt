@@ -125,6 +125,7 @@ Modules/HTML/html_parser.hpp
 Modules/JSon/document.hpp
 Modules/JSon/json.hpp
 Modules/JSon/json_dom_bridge.hpp
+Modules/JSon/json_internal.hpp
 Modules/JSon/json_schema.hpp
 Modules/JSon/json_schema_evolution.hpp
 Modules/JSon/json_stream_events.hpp

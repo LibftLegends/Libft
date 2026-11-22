@@ -5,189 +5,118 @@
 #include "../Encryption/encryption.hpp"
 #include "../Errno/errno_internal.hpp"
 
-#include <cstddef>
-#include <cstdint>
-#include <vector>
+#include "../Basic/basic.hpp"
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
 
+static constexpr ft_size_t STORAGE_CIPHER_BLOCK_SIZE = 16U;
+static constexpr char STORAGE_CIPHER_HEADER[] = "kvstore-aes-ctr!";
+
+static void storage_kv_apply_block_cipher(uint8_t *payload, ft_size_t length,
+    const uint8_t *key) noexcept
+{
+    uint64_t block_counter = 0;
+    while (length != 0)
+    {
+        uint8_t counter_block[STORAGE_CIPHER_BLOCK_SIZE];
+        ft_memcpy_fixed<sizeof(counter_block)>(counter_block, STORAGE_CIPHER_HEADER);
+        ft_size_t counter_index = 0;
+        while (counter_index < sizeof(block_counter))
+        {
+            counter_block[STORAGE_CIPHER_BLOCK_SIZE - 1U - counter_index] =
+                static_cast<uint8_t>(block_counter >> (counter_index * 8U));
+            ++counter_index;
+        }
+        aes_encrypt(counter_block, key);
+        ft_size_t block_length = STORAGE_CIPHER_BLOCK_SIZE;
+        if (length < block_length)
+            block_length = length;
+        ft_size_t index = 0;
+        while (index < block_length)
+        {
+            payload[index] ^= counter_block[index];
+            ++index;
+        }
+        payload += block_length;
+        length -= block_length;
+        ++block_counter;
+    }
+    return ;
+}
+
 int32_t kv_store::encrypt_value(const ft_string &plain_string, ft_string &encoded_string) const
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::encrypt_value");
-    std::vector<uint8_t> output_buffer;
-    const char *plain_c_string;
-    ft_size_t plain_size;
-    uint8_t header_plain[16];
-    uint8_t header_cipher[16];
-    ft_size_t header_index;
-    uint8_t counter_block[16];
-    ft_size_t counter_index;
-    unsigned char *encoded_buffer;
-    std::size_t encoded_size;
-    ft_size_t output_index;
-    ft_size_t byte_index;
-    uint64_t block_counter;
-
     if (this->_encryption_enabled == FT_FALSE)
     {
-        encoded_string = plain_string;
-        return (FT_ERR_SUCCESS);
+        if (&plain_string == &encoded_string)
+            return (FT_ERR_SUCCESS);
+        return (encoded_string.assign(plain_string.c_str(), plain_string.size()));
     }
-    if (this->_encryption_key.size() != 16)
+    if (this->_encryption_key.size() != STORAGE_CIPHER_BLOCK_SIZE)
         return (FT_ERR_INVALID_ARGUMENT);
-    plain_c_string = plain_string.c_str();
-    plain_size = plain_string.size();
-    header_index = 0;
-    while (header_index < 16)
-    {
-        header_plain[header_index] = static_cast<uint8_t>("kvstore-aes-ctr!"[header_index]);
-        header_cipher[header_index] = header_plain[header_index];
-        header_index++;
-    }
-    aes_encrypt(header_cipher, reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str()));
-    output_buffer.reserve(16 + plain_size);
-    header_index = 0;
-    while (header_index < 16)
-    {
-        output_buffer.push_back(header_cipher[header_index]);
-        header_index++;
-    }
-    block_counter = 0;
-    output_index = 0;
-    while (output_index < plain_size)
-    {
-        counter_index = 0;
-        while (counter_index < 16)
-        {
-            counter_block[counter_index] = header_plain[counter_index];
-            counter_index++;
-        }
-        counter_index = 0;
-        while (counter_index < 8)
-        {
-            counter_block[15 - counter_index] = static_cast<uint8_t>((block_counter >> (counter_index * 8)) & 0xFF);
-            counter_index++;
-        }
-        aes_encrypt(counter_block, reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str()));
-        byte_index = 0;
-        while (byte_index < 16 && output_index < plain_size)
-        {
-            uint8_t cipher_byte;
-
-            cipher_byte = static_cast<uint8_t>(static_cast<unsigned char>(plain_c_string[output_index]) ^ counter_block[byte_index]);
-            output_buffer.push_back(cipher_byte);
-            output_index++;
-            byte_index++;
-        }
-        block_counter++;
-    }
-    encoded_size = 0;
-    encoded_buffer = ft_base64_encode(reinterpret_cast<const unsigned char *>(output_buffer.data()), output_buffer.size(), &encoded_size);
-    if (encoded_buffer == ft_nullptr)
+    const ft_size_t plain_size = plain_string.size();
+    if (plain_size > FT_SYSTEM_SIZE_MAX - STORAGE_CIPHER_BLOCK_SIZE)
         return (FT_ERR_NO_MEMORY);
-    encoded_string.clear();
-    output_index = 0;
-    while (output_index < encoded_size)
+    const ft_size_t buffer_size = STORAGE_CIPHER_BLOCK_SIZE + plain_size;
+    uint8_t *buffer = static_cast<uint8_t *>(cma_malloc(buffer_size));
+    if (buffer == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const uint8_t *key = reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str());
+    ft_memcpy_fixed<STORAGE_CIPHER_BLOCK_SIZE>(buffer, STORAGE_CIPHER_HEADER);
+    aes_encrypt(buffer, key);
+    if (plain_size != 0)
     {
-        encoded_string.append(static_cast<char>(encoded_buffer[output_index]));
-        output_index++;
+        ft_memcpy(buffer + STORAGE_CIPHER_BLOCK_SIZE, plain_string.c_str(), plain_size);
+        storage_kv_apply_block_cipher(buffer + STORAGE_CIPHER_BLOCK_SIZE, plain_size, key);
     }
-    cma_free(encoded_buffer);
-    return (FT_ERR_SUCCESS);
+    std::size_t encoded_size = 0;
+    uint8_t *encoded = ft_base64_encode(buffer, buffer_size, &encoded_size);
+    cma_free(buffer);
+    if (encoded == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const int32_t result = encoded_string.assign(reinterpret_cast<const char *>(encoded), encoded_size);
+    cma_free(encoded);
+    return (result);
 }
 
 int32_t kv_store::decrypt_value(const ft_string &encoded_string, ft_string &plain_string) const
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::decrypt_value");
-    unsigned char *decoded_buffer;
-    std::size_t decoded_size;
-    uint8_t header_plain[16];
-    uint8_t expected_header[16];
-    ft_size_t header_index;
-    ft_size_t payload_size;
-    const unsigned char *payload_pointer;
-    uint8_t counter_block[16];
-    ft_size_t counter_index;
-    ft_size_t payload_index;
-    uint64_t block_counter;
-    ft_size_t byte_index;
-
     if (this->_encryption_enabled == FT_FALSE)
     {
-        plain_string = encoded_string;
-        return (FT_ERR_SUCCESS);
+        if (&encoded_string == &plain_string)
+            return (FT_ERR_SUCCESS);
+        return (plain_string.assign(encoded_string.c_str(), encoded_string.size()));
     }
-    if (this->_encryption_key.size() != 16)
+    if (this->_encryption_key.size() != STORAGE_CIPHER_BLOCK_SIZE)
         return (FT_ERR_INVALID_ARGUMENT);
-    decoded_size = 0;
-    decoded_buffer = ft_base64_decode(reinterpret_cast<const unsigned char *>(encoded_string.c_str()), encoded_string.size(), &decoded_size);
-    if (decoded_buffer == ft_nullptr)
+    std::size_t decoded_size = 0;
+    uint8_t *decoded = ft_base64_decode(reinterpret_cast<const uint8_t *>(encoded_string.c_str()),
+        encoded_string.size(), &decoded_size);
+    if (decoded == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
     if (decoded_size == 0)
+        result = plain_string.clear();
+    else if (decoded_size >= STORAGE_CIPHER_BLOCK_SIZE)
     {
-        plain_string.clear();
-        cma_free(decoded_buffer);
-        return (FT_ERR_SUCCESS);
-    }
-    if (decoded_size < 16)
-    {
-        cma_free(decoded_buffer);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    header_index = 0;
-    while (header_index < 16)
-    {
-        header_plain[header_index] = static_cast<uint8_t>("kvstore-aes-ctr!"[header_index]);
-        expected_header[header_index] = header_plain[header_index];
-        header_index++;
-    }
-    aes_encrypt(expected_header, reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str()));
-    header_index = 0;
-    while (header_index < 16)
-    {
-        if (decoded_buffer[header_index] != expected_header[header_index])
+        const uint8_t *key = reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str());
+        uint8_t expected_header[STORAGE_CIPHER_BLOCK_SIZE];
+        ft_memcpy_fixed<sizeof(expected_header)>(expected_header, STORAGE_CIPHER_HEADER);
+        aes_encrypt(expected_header, key);
+        if (ft_memcmp(decoded, expected_header, sizeof(expected_header)) == 0)
         {
-            cma_free(decoded_buffer);
-            return (FT_ERR_INVALID_ARGUMENT);
+            uint8_t *payload = decoded + STORAGE_CIPHER_BLOCK_SIZE;
+            const ft_size_t payload_size = decoded_size - STORAGE_CIPHER_BLOCK_SIZE;
+            storage_kv_apply_block_cipher(payload, payload_size, key);
+            result = plain_string.assign(reinterpret_cast<const char *>(payload), payload_size);
         }
-        header_index++;
     }
-    payload_size = decoded_size - 16;
-    payload_pointer = decoded_buffer + 16;
-    plain_string.clear();
-    payload_index = 0;
-    block_counter = 0;
-    while (payload_index < payload_size)
-    {
-        counter_index = 0;
-        while (counter_index < 16)
-        {
-            counter_block[counter_index] = header_plain[counter_index];
-            counter_index++;
-        }
-        counter_index = 0;
-        while (counter_index < 8)
-        {
-            counter_block[15 - counter_index] = static_cast<uint8_t>((block_counter >> (counter_index * 8)) & 0xFF);
-            counter_index++;
-        }
-        aes_encrypt(counter_block, reinterpret_cast<const uint8_t *>(this->_encryption_key.c_str()));
-        byte_index = 0;
-        while (byte_index < 16 && payload_index < payload_size)
-        {
-            char plain_character;
-
-            plain_character = static_cast<char>(payload_pointer[payload_index] ^ counter_block[byte_index]);
-            plain_string.append(plain_character);
-            payload_index++;
-            byte_index++;
-        }
-        block_counter++;
-    }
-    cma_free(decoded_buffer);
-    return (FT_ERR_SUCCESS);
+    cma_free(decoded);
+    return (result);
 }
 
 int32_t kv_store::configure_encryption(const char *encryption_key, ft_bool enable_encryption,
@@ -196,24 +125,26 @@ int32_t kv_store::configure_encryption(const char *encryption_key, ft_bool enabl
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::configure_encryption");
     if (encryption_algorithm_name == ft_nullptr)
         encryption_algorithm_name = "aes-128-ecb-base64";
-    if (enable_encryption)
-    {
-        if (encryption_key == ft_nullptr)
-            return (FT_ERR_INVALID_ARGUMENT);
-        this->_encryption_key = encryption_key;
-        if (this->_encryption_key.size() != 16)
-            return (FT_ERR_INVALID_ARGUMENT);
-        this->_encryption_algorithm_name = encryption_algorithm_name;
-        if (this->_encryption_algorithm_name.size() == 0)
-            return (FT_ERR_INVALID_ARGUMENT);
-        this->_encryption_enabled = FT_TRUE;
-        return (FT_ERR_SUCCESS);
-    }
-    this->_encryption_enabled = FT_FALSE;
     if (encryption_key == ft_nullptr)
-        this->_encryption_key.clear();
-    else
-        this->_encryption_key = encryption_key;
-    this->_encryption_algorithm_name = encryption_algorithm_name;
-    return (FT_ERR_SUCCESS);
+        encryption_key = "";
+    if (enable_encryption && (ft_strlen_size_t(encryption_key) != STORAGE_CIPHER_BLOCK_SIZE
+            || encryption_algorithm_name[0] == '\0'))
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_string staged_key;
+    ft_string staged_algorithm;
+    int32_t result = staged_key.initialize(encryption_key);
+    if (result == FT_ERR_SUCCESS)
+        result = staged_algorithm.initialize(encryption_algorithm_name);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_bool lock_acquired = FT_FALSE;
+    result = this->lock_store(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_key.move(staged_key);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_algorithm_name.move(staged_algorithm);
+    if (result == FT_ERR_SUCCESS)
+        this->_encryption_enabled = enable_encryption != FT_FALSE;
+    this->unlock_store_guard(lock_acquired, result);
+    return (result);
 }

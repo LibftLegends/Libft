@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Template/stack.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <vector>
 
@@ -10,6 +11,29 @@
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_ft_stack_transfers_and_releases_one_reusable_node)
+{
+    ft_stack<uint32_t> source;
+    ft_stack<uint32_t> destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    ft_size_t allocations_before = 0U;
+    ft_size_t frees_before = 0U;
+    cma_get_stats(&allocations_before, &frees_before);
+    source.push(11U);
+    FT_ASSERT_EQ(11U, source.pop());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    const uint32_t value = 23U;
+    destination.push(value);
+    FT_ASSERT_EQ(value, destination.pop());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+    ft_size_t allocations_after = 0U;
+    ft_size_t frees_after = 0U;
+    cma_get_stats(&allocations_after, &frees_after);
+    FT_ASSERT_EQ(1U, allocations_after - allocations_before);
+    FT_ASSERT_EQ(1U, frees_after - frees_before);
+    return (1);
+}
 
 using stack_type = ft_stack<int>;
 

@@ -21,7 +21,7 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `networking_dns_resolve(...)` - Resolves all matching addresses into a vector.
 - `networking_dns_resolve_first(...)` - Resolves the first matching address.
 - `networking_resolved_address_to_string(...)` - Converts a resolved address into a printable IP string.
-- `networking_dns_enable_thread_safety()`, `networking_dns_disable_thread_safety()`, and `networking_dns_is_thread_safe()` - Manage resolver synchronization.
+- `networking_dns_enable_thread_safety()`, `networking_dns_disable_thread_safety()`, and `networking_dns_is_thread_safe()` - Select the shared DNS cache (the default) or a separate DNS cache per thread.
 - `networking_dns_clear_cache()` and `networking_dns_set_error(...)` - Clear cache or set resolver error state.
 - `event_loop` - Persistent, thread-safe readiness loop with separate
   registration and readiness state.

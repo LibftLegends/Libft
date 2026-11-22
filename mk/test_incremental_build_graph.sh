@@ -83,9 +83,9 @@ capture_build_manifest()
                 printf '%s|%s\n' "$archive_path" "$archive_checksum"
             fi
         done >>"$manifest_path"
-    if [ -f Full_Libft.a ]; then
-        archive_checksum=$(cksum Full_Libft.a | awk '{print $1 ":" $2}')
-        printf '%s|%s\n' Full_Libft.a "$archive_checksum" \
+    if [ -f build/archives/Full_Libft.a ]; then
+        archive_checksum=$(cksum build/archives/Full_Libft.a | awk '{print $1 ":" $2}')
+        printf '%s|%s\n' build/archives/Full_Libft.a "$archive_checksum" \
             >>"$manifest_path"
     fi
 }
@@ -283,8 +283,8 @@ capture_archive_order_manifest()
 
     find Modules -type f -name '*.a' -print | LC_ALL=C sort \
         >"$archive_list_path"
-    if [ -f Full_Libft.a ]; then
-        printf '%s\n' 'Full_Libft.a' >>"$archive_list_path"
+    if [ -f build/archives/Full_Libft.a ]; then
+        printf '%s\n' 'build/archives/Full_Libft.a' >>"$archive_list_path"
     fi
     : >"$manifest_path"
     while IFS= read -r archive_path; do
@@ -298,8 +298,8 @@ capture_interrupted_archive_members()
     manifest_path=$1
     find Modules -type f -name '*.a' -print | LC_ALL=C sort \
         >"$manifest_path.archives"
-    if [ -f Full_Libft.a ]; then
-        printf '%s\n' Full_Libft.a >>"$manifest_path.archives"
+    if [ -f build/archives/Full_Libft.a ]; then
+        printf '%s\n' build/archives/Full_Libft.a >>"$manifest_path.archives"
     fi
     : >"$manifest_path"
     while IFS= read -r archive_path; do
@@ -350,7 +350,7 @@ rm -f "$deleted_object"
 run_make deleted_object_build global-all
 if [ ! -f "$deleted_object" ] || \
     ! archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
-    ! archive_has_member Full_Libft.a crypto_random.o; then
+    ! archive_has_member build/archives/Full_Libft.a crypto_random.o; then
     printf '%s\n' 'deleted object was not restored to both archives' >&2
     exit 1
 fi
@@ -387,12 +387,12 @@ if grep -F 'crypto_random.cpp' "$manifest" >/dev/null 2>&1; then
 fi
 run_make manifest_removal_build global-all
 if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
-    archive_has_member Full_Libft.a crypto_random.o; then
+    archive_has_member build/archives/Full_Libft.a crypto_random.o; then
     printf '%s\n' 'stale member survived manifest removal' >&2
     printf '%s\n' 'Crypto archive members:' >&2
     ar t Modules/Crypto/crypto.a >&2 || true
     printf '%s\n' 'Full archive members matching crypto_random:' >&2
-    ar t Full_Libft.a | grep -F 'crypto_random' >&2 || true
+    ar t build/archives/Full_Libft.a | grep -F 'crypto_random' >&2 || true
     printf '%s\n' 'Manifest-removal build log:' >&2
     cat "$log_directory/manifest_removal_build.log" >&2
     exit 1
@@ -409,8 +409,8 @@ mv "$manifest.incremental-rewritten" "$manifest"
 run_make source_rename_build global-all
 if archive_has_member Modules/Crypto/crypto.a crypto_random.o || \
     ! archive_has_member Modules/Crypto/crypto.a crypto_random_renamed.o || \
-    archive_has_member Full_Libft.a crypto_random.o || \
-    ! archive_has_member Full_Libft.a crypto_random_renamed.o; then
+    archive_has_member build/archives/Full_Libft.a crypto_random.o || \
+    ! archive_has_member build/archives/Full_Libft.a crypto_random_renamed.o; then
     printf '%s\n' 'source rename archive membership is incorrect' >&2
     exit 1
 fi
@@ -520,7 +520,7 @@ make_jobs=32
 run_make parallel32_build global-all
 make_jobs=$parallel_jobs
 printf '%s\n' Modules/Crypto/crypto.a Modules/Networking/networking.a \
-    Full_Libft.a | while IFS= read -r archive_path; do
+    build/archives/Full_Libft.a | while IFS= read -r archive_path; do
     archive_members_are_unique "$archive_path"
 done
 
@@ -708,7 +708,7 @@ fi
 # objects and manifests warm so this scenario isolates concurrent archive
 # staging rather than compiling the same source twice.
 find Modules -type f -name '*.a' -delete
-rm -f Full_Libft.a
+rm -f build/archives/Full_Libft.a
 make --no-print-directory -j"$make_jobs" global-all \
     >"$log_directory/shared_tree_one.log" 2>&1 &
 shared_tree_one_pid=$!
@@ -724,11 +724,11 @@ if ! wait "$shared_tree_two_pid"; then
     exit 1
 fi
 run_make shared_tree_archive_members archive-members-check
-if [ ! -f Full_Libft.a ]; then
+if [ ! -f build/archives/Full_Libft.a ]; then
     printf '%s\n' 'shared-tree concurrent aggregate archive missing' >&2
     exit 1
 fi
-archive_members_are_unique Full_Libft.a
+archive_members_are_unique build/archives/Full_Libft.a
 
 # Progress accounting has its own adversarial runner because it watches the
 # Make output while jobs complete and must reject missing or double-counted

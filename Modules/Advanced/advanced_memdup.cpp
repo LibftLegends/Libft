@@ -13,13 +13,6 @@ void* adv_memdup(const void* source, ft_size_t size)
     void *duplicate = cma_malloc(size);
     if (duplicate == ft_nullptr)
         return (ft_nullptr);
-    unsigned char *destination = static_cast<unsigned char *>(duplicate);
-    const unsigned char *source_bytes = static_cast<const unsigned char *>(source);
-    ft_size_t index = 0;
-    while (index < size)
-    {
-        destination[index] = source_bytes[index];
-        ++index;
-    }
+    (void)ft_memcpy(duplicate, source, size);
     return (duplicate);
 }

@@ -42,14 +42,9 @@ static const uint8_t VOXEL_SURFACE_WATER_LEGACY = 3U;
 
 static int32_t voxel_floor_division(int32_t value, int32_t divisor) noexcept
 {
-    int32_t quotient;
-
     if (divisor <= 0)
         return (0);
-    quotient = value / divisor;
-    if (value < 0 && value % divisor != 0)
-        quotient -= 1;
-    return (quotient);
+    return (voxel_floor_div(value, divisor));
 }
 
 struct voxel_biome_sample

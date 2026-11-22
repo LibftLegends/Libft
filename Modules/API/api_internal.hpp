@@ -39,6 +39,7 @@ class api_connection_pool_handle
         void abort_lifecycle_error(const char *method_name,
             const char *reason) const noexcept;
         void abort_if_not_initialised(const char *method_name) const noexcept;
+        void reset_connection_state() noexcept;
 
     public:
         ft_string key;
@@ -64,6 +65,7 @@ class api_connection_pool_handle
         api_connection_pool_handle &operator=(api_connection_pool_handle &&other) = delete;
 
         int32_t initialize() noexcept;
+        // Copy the connection key and policy. A live transport is transferable by move.
         int32_t initialize(const api_connection_pool_handle &other) noexcept;
         int32_t initialize(api_connection_pool_handle &&other) noexcept;
         int32_t destroy() noexcept;

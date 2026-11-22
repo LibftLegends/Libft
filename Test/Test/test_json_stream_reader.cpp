@@ -226,3 +226,20 @@ FT_TEST(test_json_document_streaming_loads_file)
     std::remove(file_path);
     return (1);
 }
+
+FT_TEST(test_json_stream_reader_preserves_empty_groups_and_one_byte_numeric_tokens)
+{
+    const char *document = "{\"empty\":{}, \"config\": {\"number\": -12.340e+05}}";
+    const size_t length = ft_strlen_size_t(document);
+    json_stream_test_state state{&document, &length, 1U, 0U, 0U};
+    json_group *groups = json_read_from_stream(test_chunk_callback, &state, 1U);
+    FT_ASSERT(groups != ft_nullptr);
+    const json_group *empty = json_find_group(groups, "empty");
+    const json_group *config = json_find_group(groups, "config");
+    FT_ASSERT(empty != ft_nullptr);
+    FT_ASSERT(empty->items == ft_nullptr);
+    FT_ASSERT(config != ft_nullptr && config->items != ft_nullptr);
+    FT_ASSERT_EQ(std::string("-12.340e+05"), std::string(config->items->value));
+    json_free_groups(groups);
+    return (1);
+}

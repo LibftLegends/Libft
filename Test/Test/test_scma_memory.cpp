@@ -71,6 +71,60 @@ FT_TEST(test_scma_batch_write_prevalidation_is_atomic)
     return (1);
 }
 
+FT_TEST(test_scma_free_span_search_rejects_overlapping_candidate)
+{
+    constexpr ft_size_t BLOCK_SIZE = 32U;
+    uint32_t expected = 0x12345678U;
+    uint32_t observed = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(512U));
+    const scma_handle available = scma_allocate(BLOCK_SIZE);
+    const scma_handle middle = scma_allocate(BLOCK_SIZE);
+    const scma_handle overlapping = scma_allocate(BLOCK_SIZE);
+    const scma_handle tail = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(tail));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(middle, 0U, &expected, sizeof(expected)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(available));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(overlapping));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_mutex_lock());
+    const scma_block_span span = scma_get_block_span();
+    span.data[overlapping.index].offset = span.data[middle.index].offset;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_mutex_unlock());
+    const scma_handle reused = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(available.index, reused.index);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(middle, 0U, &observed, sizeof(observed)));
+    FT_ASSERT_EQ(expected, observed);
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_split_relinks_after_block_table_growth)
+{
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(65536U));
+    const scma_handle large = scma_allocate(64U);
+    const scma_handle barrier = scma_allocate(16U);
+    const scma_handle small = scma_allocate(16U);
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(scma_allocate(16U)));
+    const ft_size_t old_capacity = scma_block_capacity_ref();
+    while (scma_block_count_ref() < old_capacity)
+        FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(scma_allocate(16U)));
+    const uint32_t expected = 0x11223344U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(barrier, 0U, &expected, sizeof(expected)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(large));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(small));
+    const scma_handle first = scma_allocate(32U);
+    FT_ASSERT_EQ(large.index, first.index);
+    FT_ASSERT(scma_block_capacity_ref() > old_capacity);
+    const scma_handle remainder = scma_allocate(32U);
+    FT_ASSERT_EQ(FT_TRUE, scma_handle_is_valid(remainder));
+    FT_ASSERT_EQ(small.index, scma_allocate(16U).index);
+    uint32_t observed = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(barrier, 0U, &observed, sizeof(observed)));
+    FT_ASSERT_EQ(expected, observed);
+    scma_shutdown();
+    return (1);
+}
+
 FT_TEST(test_scma_lazy_compaction_wipes_freed_bytes)
 {
     scma_handle handles[3];
@@ -169,6 +223,39 @@ FT_TEST(test_scma_tail_free_after_reusing_interior_span)
     return (1);
 }
 
+FT_TEST(test_scma_tail_free_coalesces_beyond_previous_high_water)
+{
+    static const ft_size_t BLOCK_SIZE = 8U;
+    const uint32_t payload = 0x12345678U;
+    uint32_t readback = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64U));
+    const scma_handle survivor = scma_allocate(BLOCK_SIZE);
+    const scma_handle gap = scma_allocate(BLOCK_SIZE);
+    const scma_handle middle = scma_allocate(BLOCK_SIZE);
+    const scma_handle tail = scma_allocate(BLOCK_SIZE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(survivor, 0U, &payload,
+        sizeof(payload)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(tail));
+    FT_ASSERT_EQ(BLOCK_SIZE * 3U, scma_used_size_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(gap));
+    FT_ASSERT_EQ(BLOCK_SIZE * 3U, scma_used_size_ref());
+
+    // The live tail ends at 24 before coalescing and the free span ends at 32 after.
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(middle));
+    FT_ASSERT_EQ(BLOCK_SIZE, scma_used_size_ref());
+    FT_ASSERT_EQ(BLOCK_SIZE, scma_blocks_data_ref()[middle.index].offset);
+    FT_ASSERT_EQ(BLOCK_SIZE * 3U, scma_blocks_data_ref()[middle.index].size);
+    FT_ASSERT_EQ(FT_FALSE, scma_handle_is_valid(middle));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(survivor, 0U, &readback,
+        sizeof(readback)));
+    FT_ASSERT_EQ(payload, readback);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(survivor));
+    FT_ASSERT_EQ(0U, scma_used_size_ref());
+    scma_shutdown();
+    return (1);
+}
+
 FT_TEST(test_scma_compaction_preserves_live_blocks)
 {
     scma_handle first_handle;
@@ -199,6 +286,86 @@ FT_TEST(test_scma_compaction_preserves_live_blocks)
     read_value = 0;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(second_handle, 0, &read_value, sizeof(int)));
     FT_ASSERT_EQ(second_value, read_value);
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_compaction_resumes_in_physical_order)
+{
+    const uint32_t payloads[] = {11U, 22U, 33U};
+    uint32_t readback = 0U;
+    scma_handle handles[3];
+    ft_size_t index = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64U));
+    const scma_handle gap = scma_allocate(8U);
+    while (index < 3U)
+    {
+        handles[index] = scma_allocate(8U);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(handles[index], 0U,
+            &payloads[index], sizeof(readback)));
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(gap));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact_incremental(8U));
+    FT_ASSERT_EQ(FT_TRUE, scma_compaction_needed_ref());
+    FT_ASSERT_EQ(0U, scma_blocks_data_ref()[handles[0].index].offset);
+    FT_ASSERT_EQ(16U, scma_blocks_data_ref()[handles[1].index].offset);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact_incremental(8U));
+    FT_ASSERT_EQ(FT_TRUE, scma_compaction_needed_ref());
+    FT_ASSERT_EQ(8U, scma_blocks_data_ref()[handles[1].index].offset);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact_incremental(8U));
+    FT_ASSERT_EQ(FT_FALSE, scma_compaction_needed_ref());
+    FT_ASSERT_EQ(24U, scma_used_size_ref());
+    index = 0U;
+    while (index < 3U)
+    {
+        FT_ASSERT_EQ(index * 8U,
+            scma_blocks_data_ref()[handles[index].index].offset);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(handles[index], 0U,
+            &readback, sizeof(readback)));
+        FT_ASSERT_EQ(payloads[index], readback);
+        index += 1U;
+    }
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_compaction_preserves_payloads_after_hole_reuse)
+{
+    const uint32_t payloads[] = {11U, 22U, 33U};
+    uint32_t readback = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64U));
+    const scma_handle gap = scma_allocate(16U);
+    const scma_handle middle = scma_allocate(8U);
+    const scma_handle tail = scma_allocate(8U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_free(gap));
+    const scma_handle reused = scma_allocate(8U);
+    FT_ASSERT_EQ(reused.index, scma_live_tail_ref());
+    FT_ASSERT_EQ(0U, scma_blocks_data_ref()[reused.index].offset);
+    const scma_handle handles[] = {reused, middle, tail};
+    ft_size_t index = 0U;
+    while (index < 3U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(handles[index], 0U,
+            &payloads[index], sizeof(readback)));
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact_incremental(8U));
+    FT_ASSERT_EQ(FT_TRUE, scma_compaction_needed_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_compact());
+    FT_ASSERT_EQ(24U, scma_used_size_ref());
+    index = 0U;
+    while (index < 3U)
+    {
+        FT_ASSERT_EQ(index * 8U,
+            scma_blocks_data_ref()[handles[index].index].offset);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(handles[index], 0U,
+            &readback, sizeof(readback)));
+        FT_ASSERT_EQ(payloads[index], readback);
+        index += 1U;
+    }
     scma_shutdown();
     return (1);
 }

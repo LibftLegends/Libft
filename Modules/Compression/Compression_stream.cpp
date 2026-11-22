@@ -14,13 +14,13 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
 
-static const std::size_t   g_compress_stream_default_buffer_size = 4096;
-static const std::size_t   g_compress_stream_speed_buffer_size = 16384;
-static const std::size_t   g_compress_stream_ratio_buffer_size = 32768;
-static const int           g_compress_stream_min_window_bits = 8;
-static const int           g_compress_stream_min_memory_level = 1;
-static const int           g_compress_stream_max_memory_level = MAX_MEM_LEVEL;
-static const int           g_compress_stream_default_memory_level = MAX_MEM_LEVEL - 1;
+static constexpr ft_size_t COMPRESS_STREAM_DEFAULT_BUFFER_SIZE = 4096;
+static constexpr ft_size_t COMPRESS_STREAM_SPEED_BUFFER_SIZE = 16384;
+static constexpr ft_size_t COMPRESS_STREAM_RATIO_BUFFER_SIZE = 32768;
+static constexpr int32_t COMPRESS_STREAM_MIN_WINDOW_BITS = 8;
+static constexpr int32_t COMPRESS_STREAM_MIN_MEMORY_LEVEL = 1;
+static constexpr int32_t COMPRESS_STREAM_MAX_MEMORY_LEVEL = MAX_MEM_LEVEL;
+static constexpr int32_t COMPRESS_STREAM_DEFAULT_MEMORY_LEVEL = MAX_MEM_LEVEL - 1;
 
 struct s_compress_stream_options_snapshot
 {
@@ -34,22 +34,6 @@ struct s_compress_stream_options_snapshot
     int                                     memory_level;
     int                                     strategy;
 };
-
-static void compression_stream_init_snapshot(struct s_compress_stream_options_snapshot *snapshot)
-{
-    if (snapshot == ft_nullptr)
-        return ;
-    snapshot->input_buffer_size = 0;
-    snapshot->output_buffer_size = 0;
-    snapshot->progress_callback = ft_nullptr;
-    snapshot->cancel_callback = ft_nullptr;
-    snapshot->callback_user_data = ft_nullptr;
-    snapshot->compression_level = Z_DEFAULT_COMPRESSION;
-    snapshot->window_bits = 0;
-    snapshot->memory_level = 0;
-    snapshot->strategy = Z_DEFAULT_STRATEGY;
-    return ;
-}
 
 void t_compress_stream_options::abort_lifecycle_error(const char *method_name,
     const char *reason) const
@@ -571,17 +555,17 @@ void    ft_compress_stream_apply_speed_preset(t_compress_stream_options *options
     initialize_error = options->initialize();
     if (initialize_error != FT_ERR_SUCCESS && initialize_error != FT_ERR_INVALID_STATE)
         return ;
-    if (options->set_input_buffer_size(g_compress_stream_speed_buffer_size) != FT_ERR_SUCCESS)
+    if (options->set_input_buffer_size(COMPRESS_STREAM_SPEED_BUFFER_SIZE) != FT_ERR_SUCCESS)
         return ;
-    if (options->set_output_buffer_size(g_compress_stream_speed_buffer_size) != FT_ERR_SUCCESS)
+    if (options->set_output_buffer_size(COMPRESS_STREAM_SPEED_BUFFER_SIZE) != FT_ERR_SUCCESS)
         return ;
     if (options->set_compression_level(Z_BEST_SPEED) != FT_ERR_SUCCESS)
         return ;
     if (options->set_window_bits(MAX_WBITS - 2) != FT_ERR_SUCCESS)
         return ;
-    memory_level = g_compress_stream_default_memory_level - 1;
-    if (memory_level < g_compress_stream_min_memory_level)
-        memory_level = g_compress_stream_min_memory_level;
+    memory_level = COMPRESS_STREAM_DEFAULT_MEMORY_LEVEL - 1;
+    if (memory_level < COMPRESS_STREAM_MIN_MEMORY_LEVEL)
+        memory_level = COMPRESS_STREAM_MIN_MEMORY_LEVEL;
     if (options->set_memory_level(memory_level) != FT_ERR_SUCCESS)
         return ;
     if (options->set_strategy(Z_DEFAULT_STRATEGY) != FT_ERR_SUCCESS)
@@ -599,17 +583,17 @@ void    ft_compress_stream_apply_ratio_preset(t_compress_stream_options *options
     initialize_error = options->initialize();
     if (initialize_error != FT_ERR_SUCCESS && initialize_error != FT_ERR_INVALID_STATE)
         return ;
-    if (options->set_input_buffer_size(g_compress_stream_ratio_buffer_size) != FT_ERR_SUCCESS)
+    if (options->set_input_buffer_size(COMPRESS_STREAM_RATIO_BUFFER_SIZE) != FT_ERR_SUCCESS)
         return ;
-    if (options->set_output_buffer_size(g_compress_stream_ratio_buffer_size) != FT_ERR_SUCCESS)
+    if (options->set_output_buffer_size(COMPRESS_STREAM_RATIO_BUFFER_SIZE) != FT_ERR_SUCCESS)
         return ;
     if (options->set_compression_level(Z_BEST_COMPRESSION) != FT_ERR_SUCCESS)
         return ;
     if (options->set_window_bits(MAX_WBITS) != FT_ERR_SUCCESS)
         return ;
-    memory_level = g_compress_stream_default_memory_level + 1;
-    if (memory_level > g_compress_stream_max_memory_level)
-        memory_level = g_compress_stream_max_memory_level;
+    memory_level = COMPRESS_STREAM_DEFAULT_MEMORY_LEVEL + 1;
+    if (memory_level > COMPRESS_STREAM_MAX_MEMORY_LEVEL)
+        memory_level = COMPRESS_STREAM_MAX_MEMORY_LEVEL;
     if (options->set_memory_level(memory_level) != FT_ERR_SUCCESS)
         return ;
     if (options->set_strategy(Z_DEFAULT_STRATEGY) != FT_ERR_SUCCESS)
@@ -617,38 +601,43 @@ void    ft_compress_stream_apply_ratio_preset(t_compress_stream_options *options
     return ;
 }
 
-static int  compression_stream_validate_tuning(const t_compress_stream_options *options)
+static int32_t compression_stream_resolve_settings(
+    const t_compress_stream_options *options,
+    s_compress_stream_options_snapshot &settings)
 {
-    s_compress_stream_options_snapshot snapshot;
-
-    compression_stream_init_snapshot(&snapshot);
     if (options == ft_nullptr)
+    {
+        settings.input_buffer_size = COMPRESS_STREAM_DEFAULT_BUFFER_SIZE;
+        settings.output_buffer_size = COMPRESS_STREAM_DEFAULT_BUFFER_SIZE;
+        settings.compression_level = Z_BEST_COMPRESSION;
+        settings.window_bits = 0;
+        settings.memory_level = 0;
+        settings.strategy = Z_DEFAULT_STRATEGY;
         return (0);
-    if (options->snapshot(&snapshot) != FT_ERR_SUCCESS)
-        return (1);
-    if (snapshot.compression_level < Z_DEFAULT_COMPRESSION || snapshot.compression_level > Z_BEST_COMPRESSION)
-    {
-        return (1);
     }
-    if (snapshot.window_bits != 0
-        && (snapshot.window_bits < g_compress_stream_min_window_bits || snapshot.window_bits > MAX_WBITS))
-    {
+    if (options->snapshot(&settings) != FT_ERR_SUCCESS)
         return (1);
-    }
-    if (snapshot.memory_level != 0
-        && (snapshot.memory_level < g_compress_stream_min_memory_level
-            || snapshot.memory_level > g_compress_stream_max_memory_level))
-    {
+    if (settings.compression_level < Z_DEFAULT_COMPRESSION
+        || settings.compression_level > Z_BEST_COMPRESSION)
         return (1);
-    }
-    if (snapshot.strategy != Z_DEFAULT_STRATEGY
-        && snapshot.strategy != Z_FILTERED
-        && snapshot.strategy != Z_HUFFMAN_ONLY
-        && snapshot.strategy != Z_RLE
-        && snapshot.strategy != Z_FIXED)
-    {
+    if (settings.window_bits != 0
+        && (settings.window_bits < COMPRESS_STREAM_MIN_WINDOW_BITS
+            || settings.window_bits > MAX_WBITS))
         return (1);
-    }
+    if (settings.memory_level != 0
+        && (settings.memory_level < COMPRESS_STREAM_MIN_MEMORY_LEVEL
+            || settings.memory_level > COMPRESS_STREAM_MAX_MEMORY_LEVEL))
+        return (1);
+    if (settings.strategy != Z_DEFAULT_STRATEGY
+        && settings.strategy != Z_FILTERED
+        && settings.strategy != Z_HUFFMAN_ONLY
+        && settings.strategy != Z_RLE
+        && settings.strategy != Z_FIXED)
+        return (1);
+    if (settings.input_buffer_size == 0U || settings.output_buffer_size == 0U
+        || settings.input_buffer_size > std::numeric_limits<uInt>::max()
+        || settings.output_buffer_size > std::numeric_limits<uInt>::max())
+        return (1);
     return (0);
 }
 
@@ -656,38 +645,24 @@ static int  compression_stream_validate_tuning(const t_compress_stream_options *
 static t_compress_stream_deflate_init_hook compression_stream_get_deflate_init_hook(void);
 #endif
 
-static int  compression_stream_begin_deflate(z_stream *stream, const t_compress_stream_options *options)
+static int32_t compression_stream_begin_deflate(z_stream *stream,
+    const s_compress_stream_options_snapshot &settings)
 {
-    int compression_level;
-    int window_bits;
-    int memory_level;
-    int strategy;
-
-    compression_level = Z_BEST_COMPRESSION;
-    if (options != ft_nullptr)
+    int32_t window_bits = settings.window_bits;
+    int32_t memory_level = settings.memory_level;
+    if (window_bits != 0 || memory_level != 0 || settings.strategy != Z_DEFAULT_STRATEGY)
     {
-        s_compress_stream_options_snapshot snapshot;
-
-        compression_stream_init_snapshot(&snapshot);
-        if (options->snapshot(&snapshot) != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_ARGUMENT);
-        compression_level = snapshot.compression_level;
-        window_bits = snapshot.window_bits;
-        memory_level = snapshot.memory_level;
-        strategy = snapshot.strategy;
-        if (window_bits != 0 || memory_level != 0 || strategy != Z_DEFAULT_STRATEGY)
-        {
-            if (window_bits == 0)
-                window_bits = MAX_WBITS;
-            if (memory_level == 0)
-                memory_level = g_compress_stream_default_memory_level;
-            return (deflateInit2(stream, compression_level, Z_DEFLATED, window_bits, memory_level, strategy));
-        }
+        if (window_bits == 0)
+            window_bits = MAX_WBITS;
+        if (memory_level == 0)
+            memory_level = COMPRESS_STREAM_DEFAULT_MEMORY_LEVEL;
+        return (deflateInit2(stream, settings.compression_level, Z_DEFLATED,
+                window_bits, memory_level, settings.strategy));
     }
 #ifdef LIBFT_TEST_BUILD
-    return (compression_stream_get_deflate_init_hook()(stream, compression_level));
+    return (compression_stream_get_deflate_init_hook()(stream, settings.compression_level));
 #else
-    return (deflateInit(stream, compression_level));
+    return (deflateInit(stream, settings.compression_level));
 #endif
 }
 
@@ -727,58 +702,19 @@ static int compression_stream_write_all(int output_file_descriptor,
     return (0);
 }
 
-static int  compression_stream_allocate_buffers(const t_compress_stream_options *options,
-        unsigned char **input_buffer,
-        std::size_t *input_buffer_size,
-        unsigned char **output_buffer,
-        std::size_t *output_buffer_size)
+static int32_t compression_stream_allocate_buffers(ft_size_t input_buffer_size,
+    ft_size_t output_buffer_size, uint8_t *&input_buffer, uint8_t *&output_buffer)
 {
-    std::size_t    resolved_input_size;
-    std::size_t    resolved_output_size;
-
-    if (input_buffer == ft_nullptr || input_buffer_size == ft_nullptr
-        || output_buffer == ft_nullptr || output_buffer_size == ft_nullptr)
+    input_buffer = static_cast<uint8_t *>(cma_malloc(input_buffer_size));
+    if (input_buffer == ft_nullptr)
+        return (1);
+    output_buffer = static_cast<uint8_t *>(cma_malloc(output_buffer_size));
+    if (output_buffer == ft_nullptr)
     {
+        cma_free(input_buffer);
+        input_buffer = ft_nullptr;
         return (1);
     }
-    if (options)
-    {
-        s_compress_stream_options_snapshot snapshot;
-
-        compression_stream_init_snapshot(&snapshot);
-        if (options->snapshot(&snapshot) != FT_ERR_SUCCESS)
-            return (1);
-        resolved_input_size = snapshot.input_buffer_size;
-        resolved_output_size = snapshot.output_buffer_size;
-        if (resolved_input_size == 0 || resolved_output_size == 0)
-        {
-            return (1);
-        }
-    }
-    else
-    {
-        resolved_input_size = g_compress_stream_default_buffer_size;
-        resolved_output_size = g_compress_stream_default_buffer_size;
-    }
-    if (resolved_input_size > std::numeric_limits<unsigned int>::max()
-        || resolved_output_size > std::numeric_limits<unsigned int>::max())
-    {
-        return (1);
-    }
-    *input_buffer = static_cast<unsigned char *>(cma_malloc(resolved_input_size));
-    if (!*input_buffer)
-    {
-        return (1);
-    }
-    *output_buffer = static_cast<unsigned char *>(cma_malloc(resolved_output_size));
-    if (!*output_buffer)
-    {
-        cma_free(*input_buffer);
-        *input_buffer = ft_nullptr;
-        return (1);
-    }
-    *input_buffer_size = resolved_input_size;
-    *output_buffer_size = resolved_output_size;
     return (0);
 }
 
@@ -840,7 +776,6 @@ static int  compression_stream_dispatch_progress(const t_compress_stream_options
     int callback_result;
     s_compress_stream_options_snapshot snapshot;
 
-    compression_stream_init_snapshot(&snapshot);
     if (options == ft_nullptr || progress == ft_nullptr)
         return (0);
     if (options->snapshot(&snapshot) != FT_ERR_SUCCESS)
@@ -860,7 +795,6 @@ static int  compression_stream_check_cancel(const t_compress_stream_options *opt
     int callback_result;
     s_compress_stream_options_snapshot snapshot;
 
-    compression_stream_init_snapshot(&snapshot);
     if (options == ft_nullptr || progress == ft_nullptr)
         return (0);
     if (options->snapshot(&snapshot) != FT_ERR_SUCCESS)
@@ -924,8 +858,6 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
     z_stream        stream;
     unsigned char   *input_buffer;
     unsigned char   *output_buffer;
-    std::size_t     input_buffer_size;
-    std::size_t     output_buffer_size;
     int             flush_mode;
     int             deflate_status;
     ssize_t         read_bytes;
@@ -935,17 +867,16 @@ int ft_compress_stream_with_options(int input_file_descriptor, int output_file_d
     {
         return (1);
     }
-    if (compression_stream_validate_tuning(options) != 0)
+    s_compress_stream_options_snapshot settings;
+    if (compression_stream_resolve_settings(options, settings) != 0)
         return (1);
-    input_buffer = ft_nullptr;
-    output_buffer = ft_nullptr;
-    input_buffer_size = 0;
-    output_buffer_size = 0;
-    if (compression_stream_allocate_buffers(options, &input_buffer, &input_buffer_size,
-            &output_buffer, &output_buffer_size) != 0)
+    const ft_size_t input_buffer_size = settings.input_buffer_size;
+    const ft_size_t output_buffer_size = settings.output_buffer_size;
+    if (compression_stream_allocate_buffers(input_buffer_size, output_buffer_size,
+            input_buffer, output_buffer) != 0)
         return (1);
     ft_bzero(&stream, sizeof(stream));
-    deflate_status = compression_stream_begin_deflate(&stream, options);
+    deflate_status = compression_stream_begin_deflate(&stream, settings);
     if (deflate_status != Z_OK)
     {
         compression_stream_release_buffers(input_buffer, output_buffer);
@@ -1049,8 +980,6 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
     z_stream        stream;
     unsigned char   *input_buffer;
     unsigned char   *output_buffer;
-    std::size_t     input_buffer_size;
-    std::size_t     output_buffer_size;
     int             inflate_status;
     ssize_t         read_bytes;
     int             flush_mode;
@@ -1061,14 +990,13 @@ int ft_decompress_stream_with_options(int input_file_descriptor, int output_file
     {
         return (1);
     }
-    if (compression_stream_validate_tuning(options) != 0)
+    s_compress_stream_options_snapshot settings;
+    if (compression_stream_resolve_settings(options, settings) != 0)
         return (1);
-    input_buffer = ft_nullptr;
-    output_buffer = ft_nullptr;
-    input_buffer_size = 0;
-    output_buffer_size = 0;
-    if (compression_stream_allocate_buffers(options, &input_buffer, &input_buffer_size,
-            &output_buffer, &output_buffer_size) != 0)
+    const ft_size_t input_buffer_size = settings.input_buffer_size;
+    const ft_size_t output_buffer_size = settings.output_buffer_size;
+    if (compression_stream_allocate_buffers(input_buffer_size, output_buffer_size,
+            input_buffer, output_buffer) != 0)
         return (1);
     ft_bzero(&stream, sizeof(stream));
 #ifdef LIBFT_TEST_BUILD

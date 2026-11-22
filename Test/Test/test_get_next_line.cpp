@@ -17,17 +17,17 @@
 
 static int  create_temp_fd_with_content(const char *content)
 {
-    char        template_path[] = "/tmp/gnl_testXXXXXX";
+    char        temporary_path[1024];
     int         file_descriptor;
     ft_size_t   total_written;
     ft_size_t   content_length;
     ssize_t     write_result;
 
-    file_descriptor = test_create_temp_file_from_template(template_path,
-            sizeof(template_path), template_path);
+    file_descriptor = test_create_temp_file_from_template(temporary_path,
+            sizeof(temporary_path), "gnl_testXXXXXX");
     if (file_descriptor < 0)
         return (-1);
-    unlink(template_path);
+    unlink(temporary_path);
     content_length = ft_strlen(content);
     total_written = 0;
     while (total_written < content_length)

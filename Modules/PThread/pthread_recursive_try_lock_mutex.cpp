@@ -12,7 +12,7 @@
 # include <cstdio>
 #endif
 
-static const uint32_t PT_RECURSIVE_MUTEX_TRY_LOCK_ATTEMPTS = 2U;
+static constexpr uint32_t PT_RECURSIVE_MUTEX_TRY_LOCK_ATTEMPTS = 2U;
 
 int pt_recursive_mutex::try_lock_uninstrumented(
     pt_thread_id_type thread_id) const
@@ -25,6 +25,8 @@ int pt_recursive_mutex::try_lock_uninstrumented(
 
     if (ensure_error != FT_ERR_SUCCESS)
         return (ensure_error);
+    if (!pt_thread_equal(thread_id, pt_thread_self()))
+        return (FT_ERR_INVALID_ARGUMENT);
     mutex_handle = static_cast<const void *>(this);
 
     if (this->_lock.load(std::memory_order_acquire))
@@ -32,7 +34,8 @@ int pt_recursive_mutex::try_lock_uninstrumented(
         pt_thread_id_type owner = this->_owner.load(std::memory_order_relaxed);
         if (pt_thread_equal(owner, thread_id))
         {
-            this->_lock_depth.fetch_add(1, std::memory_order_relaxed);
+            const std::size_t depth = this->_lock_depth.load(std::memory_order_relaxed);
+            this->_lock_depth.store(depth + 1U, std::memory_order_relaxed);
             return (FT_ERR_SUCCESS);
         }
     }

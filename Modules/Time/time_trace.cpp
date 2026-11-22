@@ -2,6 +2,8 @@
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include <cstdio>
+#include <charconv>
+#include <utility>
 #include <chrono>
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ static ft_bool                                     g_trace_session_active = FT_F
 static ft_bool                                     g_trace_first_event = FT_TRUE;
 static std::chrono::steady_clock::time_point    g_trace_session_start;
 static std::vector<t_time_trace_frame>          g_trace_stack;
+static std::string g_trace_line;
 
 static ft_bool time_trace_write_raw(const char *buffer, ft_size_t length, ft_bool flush)
 {
@@ -56,121 +59,88 @@ static ft_bool time_trace_write_raw(const char *buffer, ft_size_t length, ft_boo
     return (FT_TRUE);
 }
 
-static std::string  time_trace_escape_json(const char *input)
+static void time_trace_append_json(std::string &line, const char *input)
 {
-    std::string escaped;
-    ft_size_t      index;
-
     if (input == ft_nullptr)
-        return (std::string());
-    index = 0;
-    while (input[index] != '\0')
+        return ;
+    constexpr char HEX_DIGITS[] = "0123456789abcdef";
+    while (*input != '\0')
     {
-        char character;
-
-        character = input[index];
+        const uint8_t character = static_cast<uint8_t>(*input++);
         if (character == '"' || character == '\\')
         {
-            escaped.push_back('\\');
-            escaped.push_back(character);
+            line.push_back('\\');
+            line.push_back(static_cast<char>(character));
         }
         else if (character == '\n')
-        {
-            escaped.push_back('\\');
-            escaped.push_back('n');
-        }
+            line.append("\\n");
         else if (character == '\r')
-        {
-            escaped.push_back('\\');
-            escaped.push_back('r');
-        }
+            line.append("\\r");
         else if (character == '\t')
+            line.append("\\t");
+        else if (character < 0x20U)
         {
-            escaped.push_back('\\');
-            escaped.push_back('t');
+            line.append("\\u00");
+            line.push_back(HEX_DIGITS[character >> 4U]);
+            line.push_back(HEX_DIGITS[character & 15U]);
         }
         else
-            escaped.push_back(character);
-        index++;
+            line.push_back(static_cast<char>(character));
     }
-    return (escaped);
+    return ;
 }
 
-static int64_t    time_trace_elapsed_microseconds(std::chrono::steady_clock::time_point moment)
+static int64_t time_trace_elapsed_microseconds(
+    std::chrono::steady_clock::time_point moment)
 {
-    std::chrono::steady_clock::duration         duration_since_start;
-    int64_t                                   microseconds;
-
-    duration_since_start = moment - g_trace_session_start;
-    microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration_since_start).count();
-    return (microseconds);
+    return (std::chrono::duration_cast<std::chrono::microseconds>(
+            moment - g_trace_session_start).count());
 }
 
-static std::string  time_trace_long_long_to_string(int64_t value)
+static void time_trace_append_integer(std::string &line, int64_t value)
 {
-    return (std::to_string(value));
+    char digits[20];
+    const auto result = std::to_chars(digits, digits + sizeof(digits), value);
+    line.append(digits, result.ptr);
+    return ;
 }
 
-static ft_bool time_trace_write_event_line(const std::string &line)
+static ft_bool time_trace_write_event(const char *name, const char *category,
+    int64_t timestamp_us, const int64_t *duration_us)
 {
-    if (!g_trace_session_active || g_trace_file == ft_nullptr)
+    std::string &line = g_trace_line;
+    line.clear();
+    try
     {
-        (void)(FT_ERR_INVALID_STATE);
+        if (!g_trace_first_event)
+            line.append(",\n");
+        line.append("{\"name\":\"");
+        time_trace_append_json(line, name);
+        line.append("\",\"cat\":\"");
+        time_trace_append_json(line, category);
+        if (duration_us != ft_nullptr)
+            line.append("\",\"ph\":\"X\",\"ts\":");
+        else
+            line.append("\",\"ph\":\"i\",\"ts\":");
+        time_trace_append_integer(line, timestamp_us);
+        if (duration_us != ft_nullptr)
+        {
+            line.append(",\"dur\":");
+            time_trace_append_integer(line, *duration_us);
+        }
+        line.append(",\"pid\":0,\"tid\":0");
+        if (duration_us == ft_nullptr)
+            line.append(",\"s\":\"t\"");
+        line.append("}\n");
+    }
+    catch (const std::bad_alloc &)
+    {
         return (FT_FALSE);
     }
-    if (!g_trace_first_event)
-    {
-        if (!time_trace_write_raw(",\n", 2, FT_FALSE))
-            return (FT_FALSE);
-    }
-    if (!time_trace_write_raw(line.c_str(), line.size(), FT_TRUE))
+    if (!time_trace_write_raw(line.data(), line.size(), FT_TRUE))
         return (FT_FALSE);
-    if (g_trace_first_event)
-        g_trace_first_event = FT_FALSE;
-    (void)(FT_ERR_SUCCESS);
+    g_trace_first_event = FT_FALSE;
     return (FT_TRUE);
-}
-
-static ft_bool time_trace_write_duration_event(const std::string &name,
-    const std::string &category, int64_t start_us, int64_t duration_us)
-{
-    std::string line;
-    std::string escaped_name;
-    std::string escaped_category;
-
-    escaped_name = time_trace_escape_json(name.c_str());
-    escaped_category = time_trace_escape_json(category.c_str());
-    line = "{\"name\":\"";
-    line += escaped_name;
-    line += "\",\"cat\":\"";
-    line += escaped_category;
-    line += "\",\"ph\":\"X\",\"ts\":";
-    line += time_trace_long_long_to_string(start_us);
-    line += ",\"dur\":";
-    line += time_trace_long_long_to_string(duration_us);
-    line += ",\"pid\":0,\"tid\":0}";
-    line += '\n';
-    return (time_trace_write_event_line(line));
-}
-
-static ft_bool time_trace_write_instant_event(const std::string &name,
-    const std::string &category, int64_t timestamp_us)
-{
-    std::string line;
-    std::string escaped_name;
-    std::string escaped_category;
-
-    escaped_name = time_trace_escape_json(name.c_str());
-    escaped_category = time_trace_escape_json(category.c_str());
-    line = "{\"name\":\"";
-    line += escaped_name;
-    line += "\",\"cat\":\"";
-    line += escaped_category;
-    line += "\",\"ph\":\"i\",\"ts\":";
-    line += time_trace_long_long_to_string(timestamp_us);
-    line += ",\"s\":\"t\",\"pid\":0,\"tid\":0}";
-    line += '\n';
-    return (time_trace_write_event_line(line));
 }
 
 ft_bool    time_trace_begin_session(const char *file_path)
@@ -214,6 +184,7 @@ ft_bool    time_trace_begin_session(const char *file_path)
     g_trace_session_active = FT_TRUE;
     g_trace_first_event = FT_TRUE;
     std::vector<t_time_trace_frame>().swap(g_trace_stack);
+    std::string().swap(g_trace_line);
     (void)(FT_ERR_SUCCESS);
     return (FT_TRUE);
 }
@@ -254,97 +225,52 @@ ft_bool    time_trace_end_session(void)
     g_trace_session_active = FT_FALSE;
     g_trace_first_event = FT_TRUE;
     std::vector<t_time_trace_frame>().swap(g_trace_stack);
+    std::string().swap(g_trace_line);
     (void)(FT_ERR_SUCCESS);
     return (FT_TRUE);
 }
 
-ft_bool    time_trace_begin_event(const char *name, const char *category)
+ft_bool time_trace_begin_event(const char *name, const char *category)
 {
-    t_time_trace_frame frame;
-
     if (!g_trace_session_active || g_trace_file == ft_nullptr)
-    {
-        (void)(FT_ERR_INVALID_STATE);
         return (FT_FALSE);
-    }
-    if (name == ft_nullptr)
-        frame.name = "";
-    else
-        frame.name = name;
-    if (category == ft_nullptr)
-        frame.category = "";
-    else
-        frame.category = category;
-    frame.start_time = std::chrono::steady_clock::now();
     try
     {
-        g_trace_stack.push_back(frame);
+        t_time_trace_frame frame;
+        if (name != ft_nullptr)
+            frame.name = name;
+        if (category != ft_nullptr)
+            frame.category = category;
+        frame.start_time = std::chrono::steady_clock::now();
+        g_trace_stack.push_back(std::move(frame));
     }
     catch (const std::bad_alloc &)
     {
-        (void)(FT_ERR_NO_MEMORY);
         return (FT_FALSE);
     }
-    (void)(FT_ERR_SUCCESS);
     return (FT_TRUE);
 }
 
-ft_bool    time_trace_end_event(void)
+ft_bool time_trace_end_event(void)
 {
-    std::chrono::steady_clock::time_point    end_time;
-    t_time_trace_frame                        frame;
-    int64_t                                start_us;
-    int64_t                                duration_us;
-
-    if (!g_trace_session_active || g_trace_file == ft_nullptr)
-    {
-        (void)(FT_ERR_INVALID_STATE);
+    if (!g_trace_session_active || g_trace_file == ft_nullptr || g_trace_stack.empty())
         return (FT_FALSE);
-    }
-    if (g_trace_stack.empty())
-    {
-        (void)(FT_ERR_INVALID_STATE);
-        return (FT_FALSE);
-    }
-    frame = g_trace_stack.back();
+    const t_time_trace_frame frame = std::move(g_trace_stack.back());
     g_trace_stack.pop_back();
-    end_time = std::chrono::steady_clock::now();
-    start_us = time_trace_elapsed_microseconds(frame.start_time);
-    duration_us = time_trace_elapsed_microseconds(end_time) - start_us;
-    if (duration_us < 0)
-        duration_us = 0;
-    if (!time_trace_write_duration_event(frame.name, frame.category,
-            start_us, duration_us))
-        return (FT_FALSE);
-    (void)(FT_ERR_SUCCESS);
-    return (FT_TRUE);
+    const auto end = std::chrono::steady_clock::now();
+    const int64_t start = time_trace_elapsed_microseconds(frame.start_time);
+    int64_t duration = time_trace_elapsed_microseconds(end) - start;
+    if (duration < 0)
+        duration = 0;
+    return (time_trace_write_event(frame.name.c_str(), frame.category.c_str(),
+            start, &duration));
 }
 
-ft_bool    time_trace_instant_event(const char *name, const char *category)
+ft_bool time_trace_instant_event(const char *name, const char *category)
 {
-    std::chrono::steady_clock::time_point    now;
-    std::string                              event_name;
-    std::string                              event_category;
-    int64_t                                timestamp_us;
-
     if (!g_trace_session_active || g_trace_file == ft_nullptr)
-    {
-        (void)(FT_ERR_INVALID_STATE);
         return (FT_FALSE);
-    }
-    if (name == ft_nullptr)
-        event_name = "";
-    else
-        event_name = name;
-    if (category == ft_nullptr)
-        event_category = "";
-    else
-        event_category = category;
-    now = std::chrono::steady_clock::now();
-    timestamp_us = time_trace_elapsed_microseconds(now);
-    if (!time_trace_write_instant_event(event_name, event_category,
-            timestamp_us))
-        return (FT_FALSE);
-    (void)(FT_ERR_SUCCESS);
-    return (FT_TRUE);
+    const auto now = std::chrono::steady_clock::now();
+    return (time_trace_write_event(name, category,
+            time_trace_elapsed_microseconds(now), ft_nullptr));
 }

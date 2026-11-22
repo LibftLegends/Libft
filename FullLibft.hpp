@@ -128,6 +128,7 @@
 #include "Modules/JSon/document.hpp"
 #include "Modules/JSon/json.hpp"
 #include "Modules/JSon/json_dom_bridge.hpp"
+#include "Modules/JSon/json_internal.hpp"
 #include "Modules/JSon/json_schema.hpp"
 #include "Modules/JSon/json_schema_evolution.hpp"
 #include "Modules/JSon/json_stream_events.hpp"

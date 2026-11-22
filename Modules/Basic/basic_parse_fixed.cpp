@@ -13,6 +13,8 @@ static void parse_set_end(char **end_pointer, const char *position)
 int32_t ft_parse_uint32(const char *string, char **end_pointer,
     uint32_t *value_pointer)
 {
+    constexpr uint64_t CUTOFF = UINT32_MAX / 10U;
+    constexpr uint32_t LAST_DIGIT = UINT32_MAX % 10U;
     ft_size_t index;
     uint64_t accumulator;
     uint32_t digit;
@@ -35,7 +37,8 @@ int32_t ft_parse_uint32(const char *string, char **end_pointer,
     while (string[index] >= '0' && string[index] <= '9')
     {
         digit = static_cast<uint32_t>(string[index] - '0');
-        if (accumulator > (4294967295ULL - digit) / 10ULL)
+        if (accumulator > CUTOFF
+            || (accumulator == CUTOFF && digit > LAST_DIGIT))
         {
             parse_set_end(end_pointer, string + index);
             return (FT_ERR_OUT_OF_RANGE);
@@ -53,7 +56,9 @@ int32_t ft_parse_int64(const char *string, char **end_pointer,
 {
     ft_size_t index;
     uint64_t accumulator;
-    uint64_t magnitude_limit;
+    constexpr uint64_t CUTOFF = static_cast<uint64_t>(FT_LLONG_MAX) / 10U;
+    constexpr uint32_t POSITIVE_LAST_DIGIT = FT_LLONG_MAX % 10U;
+    uint32_t last_digit;
     uint32_t digit;
     ft_bool negative;
 
@@ -72,14 +77,15 @@ int32_t ft_parse_int64(const char *string, char **end_pointer,
     }
     if (string[index] < '0' || string[index] > '9')
         return (FT_ERR_INVALID_ARGUMENT);
-    magnitude_limit = 9223372036854775807ULL;
+    last_digit = POSITIVE_LAST_DIGIT;
     if (negative == FT_TRUE)
-        magnitude_limit++;
+        ++last_digit;
     accumulator = 0;
     while (string[index] >= '0' && string[index] <= '9')
     {
         digit = static_cast<uint32_t>(string[index] - '0');
-        if (accumulator > (magnitude_limit - digit) / 10ULL)
+        if (accumulator > CUTOFF
+            || (accumulator == CUTOFF && digit > last_digit))
         {
             parse_set_end(end_pointer, string + index);
             return (FT_ERR_OUT_OF_RANGE);

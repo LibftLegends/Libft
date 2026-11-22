@@ -748,6 +748,40 @@ int32_t ft_string::resize_length(ft_size_t new_length) noexcept
     return (this->resize_length_buffer(new_length));
 }
 
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length,
+    char **previous_buffer) noexcept
+{
+    if (buffer == ft_nullptr || length == FT_SYSTEM_SIZE_MAX)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (output.is_initialised() == FT_FALSE)
+    {
+        const int32_t initialize_error = output.initialize();
+        if (initialize_error != FT_ERR_SUCCESS)
+            return (initialize_error);
+    }
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(output._mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    char *previous = output._data;
+    output._data = buffer;
+    output._length = length;
+    output._capacity = length;
+    output.set_error(FT_ERR_SUCCESS);
+    (void)pt_recursive_mutex_unlock_if_not_null(output._mutex);
+    if (previous == buffer)
+        previous = ft_nullptr;
+    if (previous_buffer != ft_nullptr)
+        *previous_buffer = previous;
+    else if (previous != ft_nullptr)
+        cma_free(previous);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length) noexcept
+{
+    return (ft_string_take_owned_buffer(output, buffer, length, ft_nullptr));
+}
+
 int32_t ft_string::push_back(char character) noexcept
 {
     return (this->append(character));

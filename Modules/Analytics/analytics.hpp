@@ -155,6 +155,8 @@ struct analytics_flow_token
     ft_bool world_active;
 };
 
+struct analytics_thread_state;
+
 class analytics_session
 {
     private:
@@ -233,7 +235,7 @@ class analytics_session
         analytics_output_format _world_output_format;
         std::condition_variable _export_condition;
         std::thread _export_thread;
-        std::mutex _export_write_mutex;
+        std::recursive_mutex _export_drain_mutex;
         ft_bool _exporter_started;
         ft_bool _export_stop;
         std::atomic<int32_t> _export_error;
@@ -244,10 +246,7 @@ class analytics_session
         int32_t start_exporter_internal() noexcept;
         int32_t stop_exporter_internal() noexcept;
         void export_worker_main() noexcept;
-        int32_t write_frame_to_file(const analytics_frame_statistics &frame)
-            noexcept;
-        int32_t write_trace_to_file(const analytics_trace_event &event)
-            noexcept;
+        int32_t drain_export_buffers() noexcept;
         int32_t write_frame_to_output(const analytics_frame_statistics &frame,
             std::FILE *output_file, analytics_output_format output_format)
             noexcept;
@@ -255,6 +254,17 @@ class analytics_session
             std::FILE *output_file)
             noexcept;
         int32_t rotate_active_buffer_locked() noexcept;
+        int32_t enqueue_trace_locked(const analytics_trace_event &event,
+            ft_bool world_active, ft_bool &rotated) noexcept;
+        int32_t publish_thread_traces(const analytics_thread_state &thread_state,
+            ft_bool count_remaining_drops) noexcept;
+        void record_region_sample_locked(uint32_t region_id, uint64_t inclusive_nanoseconds,
+            uint64_t exclusive_nanoseconds) noexcept;
+        template <typename ReadSample>
+        int32_t record_scope_samples(uint32_t count, ReadSample read_sample) noexcept;
+        int32_t record_thread_scopes(const analytics_thread_state &thread_state) noexcept;
+        friend int32_t analytics_end_frame(analytics_session *session) noexcept;
+        friend int32_t analytics_end_thread_frame(analytics_session *session) noexcept;
         int32_t find_free_buffer_locked(uint32_t *buffer_index) const noexcept;
         int32_t obtain_free_buffer_locked(uint32_t *buffer_index) noexcept;
         uint64_t clock_now() const noexcept;

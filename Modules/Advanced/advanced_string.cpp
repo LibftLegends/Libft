@@ -33,19 +33,12 @@ int64_t ft_hash_string31(const ft_string &string)
 char *ft_span_dup(const char *buffer, ft_size_t length)
 {
     char *duplicate;
-    ft_size_t index;
-
-    if (!buffer && length != 0)
+    if ((!buffer && length != 0) || length == FT_SYSTEM_SIZE_MAX)
         return (ft_nullptr);
     duplicate = static_cast<char *>(cma_malloc(length + 1));
     if (duplicate == ft_nullptr)
         return (ft_nullptr);
-    index = 0;
-    while (index < length)
-    {
-        duplicate[index] = buffer[index];
-        ++index;
-    }
+    (void)ft_memcpy(duplicate, buffer, length);
     duplicate[length] = '\0';
     return (duplicate);
 }

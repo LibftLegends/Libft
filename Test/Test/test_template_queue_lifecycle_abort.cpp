@@ -23,12 +23,6 @@ static int queue_expect_sigabrt_uninitialised(void (*operation)(queue_type &))
     return (test_expect_sigabrt_signal_uninitialised<queue_type>(operation));
 }
 
-static void queue_call_destructor_uninitialised(queue_type &queue_value)
-{
-    queue_value.~queue_type();
-    return ;
-}
-
 static void queue_call_destroy_uninitialised(queue_type &queue_value)
 {
     (void)queue_value.destroy();
@@ -151,7 +145,6 @@ FT_TEST(test_ft_queue_uninitialised_destructor_is_noop)
 {
     queue_type queue_value;
 
-    queue_call_destructor_uninitialised(queue_value);
     return (1);
 }
 

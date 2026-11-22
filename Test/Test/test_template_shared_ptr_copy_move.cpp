@@ -7,8 +7,79 @@
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include <atomic>
+#include <thread>
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+struct s_shared_lifetime_probe
+{
+    static uint32_t constructions;
+    std::atomic<uint32_t> *destructions;
+
+    s_shared_lifetime_probe();
+    ~s_shared_lifetime_probe();
+};
+
+uint32_t s_shared_lifetime_probe::constructions = 0U;
+
+s_shared_lifetime_probe::s_shared_lifetime_probe() : destructions(ft_nullptr)
+{
+    ++constructions;
+    return ;
+}
+
+s_shared_lifetime_probe::~s_shared_lifetime_probe()
+{
+    if (this->destructions != ft_nullptr)
+        this->destructions->fetch_add(1U);
+    return ;
+}
+
+FT_TEST(test_ft_sharedptr_proxies_and_concurrent_release_preserve_lifetime)
+{
+    std::atomic<uint32_t> destructions(0U);
+    ft_sharedptr<s_shared_lifetime_probe> first(new s_shared_lifetime_probe());
+    ft_sharedptr<s_shared_lifetime_probe> second;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second.initialize(first));
+    const uint32_t constructions = s_shared_lifetime_probe::constructions;
+    s_shared_lifetime_probe &value = *first;
+    value.destructions = &destructions;
+    const ft_sharedptr<s_shared_lifetime_probe> &const_second = second;
+    const s_shared_lifetime_probe &const_value = *const_second;
+    FT_ASSERT_EQ(&value, &const_value);
+    FT_ASSERT_EQ(constructions, s_shared_lifetime_probe::constructions);
+    std::thread first_release([&first]()
+    {
+        first.reset();
+        return ;
+    });
+    std::thread second_release([&second]()
+    {
+        second.reset();
+        return ;
+    });
+    first_release.join();
+    second_release.join();
+    FT_ASSERT_EQ(1U, destructions.load());
+    return (1);
+}
+
+FT_TEST(test_ft_sharedptr_alias_assignment_preserves_shared_array_and_wrapper_mutex)
+{
+    ft_sharedptr<uint32_t> source(new uint32_t[2]{17U, 29U}, FT_TRUE, 2U);
+    ft_sharedptr<uint32_t> destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    destination = source;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_error());
+    FT_ASSERT(destination.is_thread_safe());
+    FT_ASSERT_EQ(2, destination.use_count());
+    source.reset();
+    FT_ASSERT_EQ(1, destination.use_count());
+    FT_ASSERT_EQ(29U, static_cast<uint32_t &>(destination[1U]));
+    return (1);
+}
 
 FT_TEST(test_ft_sharedptr_copy_constructor_rebuilds_mutex)
 {

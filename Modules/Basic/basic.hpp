@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 
 #ifndef FT_TYPES_HPP
@@ -72,6 +73,12 @@ constexpr TargetType ft_platform_cast(SourceType value)
 class ft_string;
 static constexpr ft_size_t ft_strlen_raw(const char *string)
 {
+#if defined(__has_builtin)
+# if __has_builtin(__builtin_is_constant_evaluated)
+    if (!__builtin_is_constant_evaluated())
+        return (ft_platform_cast<ft_size_t>(std::strlen(string)));
+# endif
+#endif
     const char *string_pointer = string;
 
     while (*string_pointer)
@@ -103,9 +110,62 @@ void            ft_bzero(void *string, ft_size_t size);
 void            *ft_memchr(const void *pointer, int32_t character, ft_size_t size);
 void            *ft_memrchr(const void *pointer, int32_t character, ft_size_t size);
 void            *ft_memcpy(void *destination, const void *source, ft_size_t size);
+void            *ft_memmove(void *destination, const void *source, ft_size_t size);
+
+template <ft_size_t Size>
+inline void *ft_memmove_fixed(void *destination, const void *source)
+{
+    if constexpr (Size == 0)
+        return (destination);
+    else if constexpr (Size <= 32)
+    {
+        if (destination == ft_nullptr || source == ft_nullptr)
+            return (ft_nullptr);
+        if (destination == source)
+            return (destination);
+        const auto *source_bytes = static_cast<const unsigned char *>(source);
+        auto *destination_bytes = static_cast<unsigned char *>(destination);
+        unsigned char bytes[Size];
+        ft_size_t index = 0;
+        while (index < Size)
+        {
+            bytes[index] = source_bytes[index];
+            ++index;
+        }
+        index = 0;
+        while (index < Size)
+        {
+            destination_bytes[index] = bytes[index];
+            ++index;
+        }
+        return (destination);
+    }
+    else
+        return (ft_memmove(destination, source, Size));
+}
+
+template <ft_size_t Size>
+inline void *ft_memcpy_fixed(void *destination, const void *source)
+{
+    if constexpr (Size == 0)
+        return (destination);
+    if (destination == ft_nullptr || source == ft_nullptr)
+        return (ft_nullptr);
+    if (destination == source)
+        return (destination);
+    if constexpr (Size <= 32)
+    {
+        const uintptr_t destination_address = reinterpret_cast<uintptr_t>(destination);
+        const uintptr_t source_address = reinterpret_cast<uintptr_t>(source);
+        if (destination_address - source_address >= Size)
+            return (ft_memmove_fixed<Size>(destination, source));
+    }
+    // Preserve the runtime copy's forward-overlap behavior.
+    return (ft_memcpy(destination, source, Size));
+}
+
 int32_t         ft_memcpy_s(void *destination, ft_size_t destination_size,
                     const void *source, ft_size_t number_of_bytes);
-void            *ft_memmove(void *destination, const void *source, ft_size_t size);
 int32_t         ft_memmove_s(void *destination, ft_size_t destination_size,
                     const void *source, ft_size_t number_of_bytes);
 ft_size_t          ft_strlcat(char *destination, const char *source, ft_size_t buffer_size);

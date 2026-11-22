@@ -148,3 +148,16 @@ FT_TEST(test_time_format_duration_handles_zero_and_negative_values)
     delete result_string;
     return (1);
 }
+
+FT_TEST(test_time_format_duration_preserves_extreme_values_and_fraction_width)
+{
+    ft_string *minimum = time_format_duration(time_duration_ms_create(INT64_MIN));
+    FT_ASSERT(minimum != ft_nullptr);
+    FT_ASSERT_STR_EQ("-P106751991167DT7H12M55.808S", minimum->c_str());
+    delete minimum;
+    ft_string *one_ms = time_format_relative(time_duration_ms_create(1));
+    FT_ASSERT(one_ms != ft_nullptr);
+    FT_ASSERT_STR_EQ("in PT0.001S", one_ms->c_str());
+    delete one_ms;
+    return (1);
+}

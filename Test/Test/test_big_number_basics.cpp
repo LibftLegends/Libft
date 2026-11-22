@@ -1,4 +1,5 @@
 #include "../test_internal.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/CPP_class/class_big_number.hpp"
 #include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -176,3 +177,27 @@ FT_TEST(test_big_number_to_string_base_conversions)
 }
 
 #undef INIT_BIG_NUMBER
+FT_TEST(test_big_number_decimal_format_preserves_sign_zero_and_allocation_errors)
+{
+    ft_big_number number;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, number.initialize());
+    number.assign("-0009223372036854775808123");
+    ft_string *decimal = number.to_string_base(10);
+    FT_ASSERT(decimal != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, decimal->get_error());
+    FT_ASSERT_EQ(0, ft_strcmp(decimal->c_str(), "-9223372036854775808123"));
+    delete decimal;
+    number.assign("-000");
+    ft_string *zero = number.to_string_base(10);
+    FT_ASSERT(zero != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp(zero->c_str(), "0"));
+    delete zero;
+    cma_set_alloc_limit(1U);
+    ft_string *failure = number.to_string_base(10);
+    const int32_t error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    if (failure != ft_nullptr)
+        delete failure;
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error);
+    return (1);
+}

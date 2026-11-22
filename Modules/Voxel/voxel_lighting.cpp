@@ -4,6 +4,7 @@
 
 #include "voxel_api.hpp"
 #include "../Game/game_voxel_chunk.hpp"
+#include "../PThread/pt_thread_workspace.hpp"
 #include <chrono>
 #include <new>
 #include <vector>
@@ -250,12 +251,15 @@ namespace
      * storage instead of allocating two half-million-cell grids and a large
      * propagation queue for every remesh. These buffers are thread-local, so
      * concurrent workers never share mutable solver state. */
-    static thread_local std::vector<uint8_t> light_sky_workspace;
-    static thread_local std::vector<uint8_t> light_block_workspace;
-    static thread_local std::vector<uint8_t> light_sky_queued_workspace;
-    static thread_local std::vector<uint8_t> light_block_queued_workspace;
-    static thread_local std::vector<uint32_t> light_block_id_workspace;
-    static thread_local std::vector<light_node> light_queue_workspace;
+    struct light_workspace
+    {
+        std::vector<uint8_t> sky;
+        std::vector<uint8_t> block;
+        std::vector<uint8_t> sky_queued;
+        std::vector<uint8_t> block_queued;
+        std::vector<uint32_t> block_ids;
+        std::vector<light_node> queue;
+    };
 
     static uint32_t light_index(int32_t x, int32_t y, int32_t z) noexcept
     {
@@ -819,18 +823,21 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     int32_t region_min, int32_t region_max,
     voxel_light_build_stats *stats) noexcept
 {
-    std::vector<uint8_t> &sky = light_sky_workspace;
-    std::vector<uint8_t> &block = light_block_workspace;
-    std::vector<uint8_t> &sky_queued = light_sky_queued_workspace;
-    std::vector<uint8_t> &block_queued = light_block_queued_workspace;
-    std::vector<uint32_t> &block_ids = light_block_id_workspace;
-    std::vector<light_node> &queue = light_queue_workspace;
     size_t grid_size;
     uint32_t index;
     int32_t error;
 
     if (lookup == ft_nullptr)
         return FT_ERR_INVALID_ARGUMENT;
+    light_workspace *workspace = pt_thread_workspace<light_workspace>::get_or_create();
+    if (workspace == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    std::vector<uint8_t> &sky = workspace->sky;
+    std::vector<uint8_t> &block = workspace->block;
+    std::vector<uint8_t> &sky_queued = workspace->sky_queued;
+    std::vector<uint8_t> &block_queued = workspace->block_queued;
+    std::vector<uint32_t> &block_ids = workspace->block_ids;
+    std::vector<light_node> &queue = workspace->queue;
     grid_size = static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE)
         * 256U * VOXEL_LIGHT_GRID_EDGE;
     try

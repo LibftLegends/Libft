@@ -169,8 +169,8 @@ TOTAL_LIBS := $(words $(LIBS))
 TOTAL_DEBUG_LIBS := $(words $(DEBUG_LIBS))
 TOTAL_TEST_LIBS := $(words $(TEST_LIBS))
 
-TARGET        := Full_Libft.a
-DEBUG_TARGET  := Full_Libft_debug.a
+TARGET        := build/archives/Full_Libft.a
+DEBUG_TARGET  := build/archives/Full_Libft_debug.a
 TEST_TARGET   := Test/Full_Libft_test.a
 TEST_DEBUG_TARGET := Test/Full_Libft_test_debug.a
 

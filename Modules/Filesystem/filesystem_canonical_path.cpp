@@ -19,13 +19,12 @@ static ft_string *filesystem_string_from_owned_c_string(char *value)
         cma_free(value);
         return (ft_nullptr);
     }
-    if (result->initialize(value) != FT_ERR_SUCCESS)
+    if (ft_string_take_owned_buffer(*result, value, ft_strlen_size_t(value)) != FT_ERR_SUCCESS)
     {
         cma_free(value);
         delete result;
         return (ft_nullptr);
     }
-    cma_free(value);
     return (result);
 }
 

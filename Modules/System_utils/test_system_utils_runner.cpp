@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <cstring>
 #include <cstdlib>
 #include <exception>
@@ -61,7 +62,7 @@ static void append_test_failure_log(const char *message)
     if (message == NULL)
         return ;
     g_test_failure_log_mutex.lock();
-    failure_log = std::fopen("test_failures.log", "a");
+    failure_log = std::fopen("build_logs/test_failures.log", "a");
     if (failure_log != NULL)
     {
         std::fprintf(failure_log, "%s\n", message);
@@ -217,7 +218,7 @@ static void write_test_trace(int32_t test_number, const s_test_case *test)
 
     if (std::getenv("FT_TEST_TRACE_CURRENT_TEST") == NULL || test == NULL)
         return ;
-    trace_file = std::fopen("test_current.log", "w");
+    trace_file = std::fopen("build_logs/test_current.log", "w");
     if (trace_file == NULL)
         return ;
     std::fprintf(trace_file, "started %d %s/%s\n", test_number,
@@ -853,7 +854,15 @@ int32_t ft_run_registered_tests(void)
 #ifdef LIBFT_TEST_BUILD
     test_timeout_watchdog timeout_watchdog;
 #endif
-    log_file = fopen("test_failures.log", "w");
+    std::error_code directory_error;
+    std::filesystem::create_directories("build_logs", directory_error);
+    if (directory_error)
+    {
+        std::fprintf(stderr, "Test runner: cannot create build_logs: %s\n",
+            directory_error.message().c_str());
+        return (1);
+    }
+    log_file = fopen("build_logs/test_failures.log", "w");
     if (log_file)
         fclose(log_file);
     sort_tests();

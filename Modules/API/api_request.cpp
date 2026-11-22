@@ -1,6 +1,7 @@
 #include "api.hpp"
 #include "api_internal.hpp"
 #include "api_http_internal.hpp"
+#include "api_http_common.hpp"
 #include "api_request_metrics.hpp"
 #include "../Networking/socket_class.hpp"
 #include "../Networking/networking.hpp"
@@ -417,26 +418,6 @@ char *api_request_string(const char *ip_address, uint16_t port,
             error_code = FT_ERR_IO;
         return (hook_result);
     }
-    ft_size_t metrics_request_bytes;
-    char *metrics_payload_string;
-
-    metrics_request_bytes = 0;
-    if (method)
-        metrics_request_bytes += ft_strlen(method);
-    if (path)
-        metrics_request_bytes += ft_strlen(path);
-    if (headers && headers[0])
-        metrics_request_bytes += ft_strlen(headers);
-    if (ip_address)
-        metrics_request_bytes += ft_strlen(ip_address);
-    metrics_payload_string = ft_nullptr;
-    if (payload)
-        metrics_payload_string = json_write_to_string(payload);
-    if (metrics_payload_string)
-    {
-        metrics_request_bytes += ft_strlen(metrics_payload_string);
-        cma_free(metrics_payload_string);
-    }
     char *metrics_result_body;
     int32_t metrics_status_storage;
     int32_t *metrics_status_pointer;
@@ -448,8 +429,8 @@ char *api_request_string(const char *ip_address, uint16_t port,
     else
         metrics_status_pointer = &metrics_status_storage;
     api_request_metrics_guard metrics_guard;
-    (void)metrics_guard.initialize(ip_address, port, method, path,
-        metrics_request_bytes, &metrics_result_body, metrics_status_pointer,
+    (void)metrics_guard.initialize_for_request(ip_address, port, method, path, headers, payload,
+        &metrics_result_body, metrics_status_pointer,
         &error_code);
 
     SocketConfig config;
@@ -579,26 +560,6 @@ char *api_request_string_http2(const char *ip_address, uint16_t port,
             error_code = FT_ERR_IO;
         return (hook_result);
     }
-    ft_size_t metrics_request_bytes;
-    char *metrics_payload_string;
-
-    metrics_request_bytes = 0;
-    if (method)
-        metrics_request_bytes += ft_strlen(method);
-    if (path)
-        metrics_request_bytes += ft_strlen(path);
-    if (headers && headers[0])
-        metrics_request_bytes += ft_strlen(headers);
-    if (ip_address)
-        metrics_request_bytes += ft_strlen(ip_address);
-    metrics_payload_string = ft_nullptr;
-    if (payload)
-        metrics_payload_string = json_write_to_string(payload);
-    if (metrics_payload_string)
-    {
-        metrics_request_bytes += ft_strlen(metrics_payload_string);
-        cma_free(metrics_payload_string);
-    }
     char *metrics_result_body;
     int32_t metrics_status_storage;
     int32_t *metrics_status_pointer;
@@ -610,8 +571,8 @@ char *api_request_string_http2(const char *ip_address, uint16_t port,
     else
         metrics_status_pointer = &metrics_status_storage;
     api_request_metrics_guard metrics_guard;
-    (void)metrics_guard.initialize(ip_address, port, method, path,
-        metrics_request_bytes, &metrics_result_body, metrics_status_pointer,
+    (void)metrics_guard.initialize_for_request(ip_address, port, method, path, headers, payload,
+        &metrics_result_body, metrics_status_pointer,
         &error_code);
 
     SocketConfig config;
@@ -999,17 +960,9 @@ char *api_request_string_bearer(const char *ip_address, uint16_t port,
         return (api_request_string(ip_address, port, method, path, payload,
                                    headers, status, timeout, retry_policy));
     ft_string header_string;
-
-    if (header_string.initialize() != FT_ERR_SUCCESS)
+    if (api_http_build_authorization_headers(header_string, headers,
+            api_http_authorization_scheme::BEARER, token) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-
-    if (headers && headers[0])
-    {
-        header_string = headers;
-        header_string += "\r\n";
-    }
-    header_string += "Authorization: Bearer ";
-    header_string += token;
     return (api_request_string(ip_address, port, method, path, payload,
                                header_string.c_str(), status, timeout,
                                retry_policy));
@@ -1050,17 +1003,9 @@ char *api_request_string_basic(const char *ip_address, uint16_t port,
         return (api_request_string(ip_address, port, method, path, payload,
                                    headers, status, timeout, retry_policy));
     ft_string header_string;
-
-    if (header_string.initialize() != FT_ERR_SUCCESS)
+    if (api_http_build_authorization_headers(header_string, headers,
+            api_http_authorization_scheme::BASIC, credentials) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-
-    if (headers && headers[0])
-    {
-        header_string = headers;
-        header_string += "\r\n";
-    }
-    header_string += "Authorization: Basic ";
-    header_string += credentials;
     return (api_request_string(ip_address, port, method, path, payload,
                                header_string.c_str(), status, timeout,
                                retry_policy));
@@ -1102,17 +1047,9 @@ char *api_request_string_host_bearer(const char *host, uint16_t port,
                                         headers, status, timeout,
                                         retry_policy));
     ft_string header_string;
-
-    if (header_string.initialize() != FT_ERR_SUCCESS)
+    if (api_http_build_authorization_headers(header_string, headers,
+            api_http_authorization_scheme::BEARER, token) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-
-    if (headers && headers[0])
-    {
-        header_string = headers;
-        header_string += "\r\n";
-    }
-    header_string += "Authorization: Bearer ";
-    header_string += token;
     return (api_request_string_host(host, port, method, path, payload,
                                    header_string.c_str(), status, timeout,
                                    retry_policy));
@@ -1154,17 +1091,9 @@ char *api_request_string_host_basic(const char *host, uint16_t port,
                                         headers, status, timeout,
                                         retry_policy));
     ft_string header_string;
-
-    if (header_string.initialize() != FT_ERR_SUCCESS)
+    if (api_http_build_authorization_headers(header_string, headers,
+            api_http_authorization_scheme::BASIC, credentials) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-
-    if (headers && headers[0])
-    {
-        header_string = headers;
-        header_string += "\r\n";
-    }
-    header_string += "Authorization: Basic ";
-    header_string += credentials;
     return (api_request_string_host(host, port, method, path, payload,
                                    header_string.c_str(), status, timeout,
                                    retry_policy));

@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -23,6 +24,7 @@ static ft_bool g_scma_compaction_needed = FT_FALSE;
 static ft_size_t g_scma_compaction_cursor =
     static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 static ft_size_t g_scma_compaction_target_offset = 0;
+static ft_bool g_scma_compaction_in_live_order = FT_FALSE;
 static int32_t g_scma_initialised = 0;
 
 int32_t    &scma_initialised_ref(void)
@@ -125,6 +127,7 @@ void    scma_reset_compaction(void)
 {
     g_scma_compaction_cursor = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     g_scma_compaction_target_offset = 0;
+    g_scma_compaction_in_live_order = FT_FALSE;
     return ;
 }
 
@@ -166,7 +169,8 @@ int32_t    scma_handle_is_invalid(scma_handle handle)
     return (0);
 }
 
-static int32_t scma_validate_live_list(scma_block_span span)
+static int32_t scma_validate_live_list(scma_block_span span,
+    ft_bool &in_offset_order, ft_size_t *live_count = ft_nullptr)
 {
     const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
     ft_size_t current_index = scma_live_head_ref();
@@ -176,7 +180,9 @@ static int32_t scma_validate_live_list(scma_block_span span)
     ft_size_t in_use_count = 0;
     ft_size_t in_use_size = 0;
     ft_size_t index = 0;
+    ft_size_t previous_end = 0;
 
+    in_offset_order = FT_TRUE;
     if ((current_index == invalid_index)
         != (scma_live_tail_ref() == invalid_index))
         return (FT_ERR_INVALID_STATE);
@@ -192,6 +198,9 @@ static int32_t scma_validate_live_list(scma_block_span span)
         if (block->offset > scma_used_size_ref()
             || block->size > scma_used_size_ref() - block->offset)
             return (FT_ERR_INVALID_STATE);
+        if (block->size == 0 || block->offset < previous_end)
+            in_offset_order = FT_FALSE;
+        previous_end = block->offset + block->size;
         if (linked_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
             - block->size)
             return (FT_ERR_INVALID_STATE);
@@ -217,6 +226,61 @@ static int32_t scma_validate_live_list(scma_block_span span)
     if (visited_count != in_use_count || linked_size != in_use_size
         || linked_size != scma_live_size_ref())
         return (FT_ERR_INVALID_STATE);
+    if (live_count != ft_nullptr)
+        *live_count = visited_count;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t scma_order_live_blocks(scma_block_span span,
+    ft_size_t live_count)
+{
+    if (live_count > SIZE_MAX / sizeof(ft_size_t))
+        return (FT_ERR_NO_MEMORY);
+    ft_size_t *indices = static_cast<ft_size_t *>(std::malloc(
+            FT_UINT64_TO_NATIVE_SIZE_CAST(live_count * sizeof(ft_size_t))));
+    if (indices == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_size_t index = 0U;
+    ft_size_t current = scma_live_head_ref();
+    while (index < live_count)
+    {
+        indices[index] = current;
+        current = span.data[current].next_index;
+        ++index;
+    }
+    std::sort(indices, indices + live_count, [span](ft_size_t first, ft_size_t second)
+    {
+        return (span.data[first].offset < span.data[second].offset);
+    });
+    ft_size_t previous_end = 0U;
+    index = 0U;
+    while (index < live_count)
+    {
+        const scma_block &block = span.data[indices[index]];
+        if (block.offset < previous_end || block.size == 0U)
+        {
+            std::free(indices);
+            return (FT_ERR_INVALID_STATE);
+        }
+        previous_end = block.offset + block.size;
+        ++index;
+    }
+    /* Only the links move here. Handle indices and generations stay put. */
+    ft_size_t previous = FT_SYSTEM_SIZE_MAX;
+    index = 0U;
+    while (index < live_count)
+    {
+        current = indices[index];
+        span.data[current].prev_index = previous;
+        if (previous != FT_SYSTEM_SIZE_MAX)
+            span.data[previous].next_index = current;
+        previous = current;
+        ++index;
+    }
+    span.data[previous].next_index = FT_SYSTEM_SIZE_MAX;
+    scma_live_head_ref() = indices[0U];
+    scma_live_tail_ref() = previous;
+    std::free(indices);
     return (FT_ERR_SUCCESS);
 }
 
@@ -292,7 +356,21 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
             == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
     {
         ft_size_t free_index;
+        ft_size_t live_count;
+        ft_bool in_offset_order;
 
+        // Reused holes can put the live links out of physical offset order.
+        if (scma_validate_live_list(span, in_offset_order, &live_count) != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        if (in_offset_order == FT_FALSE)
+        {
+            const int32_t order_error = scma_order_live_blocks(span, live_count);
+            if (order_error == FT_ERR_SUCCESS)
+                in_offset_order = FT_TRUE;
+            else if (order_error != FT_ERR_NO_MEMORY)
+                return (order_error);
+        }
+        g_scma_compaction_in_live_order = in_offset_order;
         g_scma_free_head = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
         free_index = 0;
         while (free_index < g_scma_block_count)
@@ -305,7 +383,10 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
             }
             free_index += 1;
         }
-        g_scma_compaction_cursor = scma_find_first_compaction_block();
+        if (g_scma_compaction_in_live_order == FT_TRUE)
+            g_scma_compaction_cursor = scma_live_head_ref();
+        else
+            g_scma_compaction_cursor = scma_find_first_compaction_block();
         g_scma_compaction_target_offset = 0;
     }
     moved_bytes = 0;
@@ -334,8 +415,11 @@ int32_t scma_compact_incremental(ft_size_t byte_budget)
             }
             g_scma_compaction_target_offset += block->size;
             moved_bytes += block->size;
-            g_scma_compaction_cursor =
-                scma_find_next_compaction_block(source_offset);
+            if (g_scma_compaction_in_live_order == FT_TRUE)
+                g_scma_compaction_cursor = block->next_index;
+            else
+                g_scma_compaction_cursor =
+                    scma_find_next_compaction_block(source_offset);
         }
     }
     if (g_scma_compaction_cursor == static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
@@ -371,8 +455,14 @@ int32_t scma_compact(void)
     scma_block_span span;
 
     span = scma_get_block_span();
-    if (span.count != 0 && scma_validate_live_list(span) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
+    if (g_scma_compaction_cursor != FT_SYSTEM_SIZE_MAX)
+    {
+        ft_bool in_offset_order;
+
+        if (scma_validate_live_list(span, in_offset_order) != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_STATE);
+        g_scma_compaction_in_live_order = in_offset_order;
+    }
     if (span.count == 0 && scma_live_size_ref() != 0)
         return (FT_ERR_INVALID_STATE);
     scma_compaction_needed_ref() = FT_TRUE;
@@ -456,67 +546,30 @@ void    scma_push_free_block(ft_size_t index)
     return ;
 }
 
-static void scma_remove_free_block(ft_size_t index)
+static void scma_discard_free_link(ft_size_t *link, scma_block &block)
 {
-    ft_size_t current_index;
-    ft_size_t previous_index;
-    scma_block *blocks_data;
-    const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
-
-    blocks_data = scma_blocks_data_ref();
-    current_index = scma_free_head_ref();
-    previous_index = invalid_index;
-    while (current_index != invalid_index)
-    {
-        if (current_index >= scma_block_count_ref())
-            return ;
-        if (current_index == index)
-        {
-            if (previous_index == invalid_index)
-                scma_free_head_ref() = blocks_data[current_index].next_free_index;
-            else
-                blocks_data[previous_index].next_free_index =
-                    blocks_data[current_index].next_free_index;
-            blocks_data[current_index].next_free_index = invalid_index;
-            return ;
-        }
-        previous_index = current_index;
-        current_index = blocks_data[current_index].next_free_index;
-    }
-    return ;
-}
-
-void scma_discard_free_block(ft_size_t index)
-{
-    if (index >= scma_block_count_ref())
-        return ;
-    scma_remove_free_block(index);
-    scma_blocks_data_ref()[index].size = 0;
-    scma_blocks_data_ref()[index].next_free_index =
-        static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    *link = block.next_free_index;
+    block.size = 0;
+    block.next_free_index = FT_SYSTEM_SIZE_MAX;
     return ;
 }
 
 void scma_discard_free_spans_from(ft_size_t offset)
 {
-    ft_size_t current_index;
-    ft_size_t next_index;
+    const scma_block_span span = scma_get_block_span();
+    ft_size_t *link = &scma_free_head_ref();
 
-    current_index = scma_free_head_ref();
-    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    while (*link != FT_SYSTEM_SIZE_MAX)
     {
-        if (current_index >= scma_block_count_ref())
+        if (*link >= span.count)
             return ;
-        next_index = scma_blocks_data_ref()[current_index].next_free_index;
-        if (scma_blocks_data_ref()[current_index].offset >= offset
-            || (scma_blocks_data_ref()[current_index].size > 0
-                && scma_blocks_data_ref()[current_index].offset
-                    <= static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
-                        - scma_blocks_data_ref()[current_index].size
-                && scma_blocks_data_ref()[current_index].offset
-                    + scma_blocks_data_ref()[current_index].size > offset))
-            scma_discard_free_block(current_index);
-        current_index = next_index;
+        scma_block &block = span.data[*link];
+        if (block.offset >= offset
+            || (block.size <= FT_SYSTEM_SIZE_MAX - block.offset
+                && block.size > offset - block.offset))
+            scma_discard_free_link(link, block);
+        else
+            link = &block.next_free_index;
     }
     return ;
 }
@@ -557,25 +610,6 @@ static ft_bool scma_free_span_overlaps_live(const scma_block *free_block)
     return (FT_FALSE);
 }
 
-void scma_reconcile_free_spans(void)
-{
-    ft_size_t current_index;
-    ft_size_t next_index;
-
-    current_index = scma_free_head_ref();
-    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
-    {
-        if (current_index >= scma_block_count_ref())
-            return ;
-        next_index = scma_blocks_data_ref()[current_index].next_free_index;
-        if (scma_free_span_overlaps_live(
-                &scma_blocks_data_ref()[current_index]))
-            scma_discard_free_block(current_index);
-        current_index = next_index;
-    }
-    return ;
-}
-
 int32_t scma_take_free_span(ft_size_t size, ft_size_t *index_out)
 {
     ft_size_t current_index;
@@ -587,31 +621,39 @@ int32_t scma_take_free_span(ft_size_t size, ft_size_t *index_out)
     int32_t capacity_result;
     ft_bool expands_tail;
     const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
+    ft_size_t previous_index = invalid_index;
 
     if (index_out == ft_nullptr || size == 0)
         return (FT_ERR_INVALID_ARGUMENT);
     *index_out = invalid_index;
-    scma_reconcile_free_spans();
     expands_tail = FT_FALSE;
-    current_index = scma_free_head_ref();
-    while (current_index != invalid_index)
+    ft_size_t *link = &scma_free_head_ref();
+    while (*link != invalid_index)
     {
-        if (current_index >= scma_block_count_ref())
+        if (*link >= scma_block_count_ref())
             return (FT_ERR_INVALID_STATE);
-        block = &scma_blocks_data_ref()[current_index];
+        block = &scma_blocks_data_ref()[*link];
         if (block->in_use)
             return (FT_ERR_INVALID_STATE);
-        if (block->size >= size)
-            break ;
-        if (block->offset == scma_used_size_ref()
+        expands_tail = static_cast<ft_bool>(block->size < size
+            && block->offset == scma_used_size_ref()
             && block->offset <= scma_heap_capacity_ref()
-            && size <= scma_heap_capacity_ref() - block->offset)
+            && size <= scma_heap_capacity_ref() - block->offset);
+        if (block->size >= size || expands_tail == FT_TRUE)
         {
-            expands_tail = FT_TRUE;
-            break ;
+            /* Validate a span before consuming it. Non-candidates cannot
+             * affect this allocation and need no scan of live blocks. */
+            if (scma_free_span_overlaps_live(block) == FT_FALSE)
+                break ;
+            scma_discard_free_link(link, *block);
         }
-        current_index = block->next_free_index;
+        else
+        {
+            previous_index = *link;
+            link = &block->next_free_index;
+        }
     }
+    current_index = *link;
     if (current_index == invalid_index)
         return (FT_ERR_SUCCESS);
     block = &scma_blocks_data_ref()[current_index];
@@ -631,8 +673,13 @@ int32_t scma_take_free_span(ft_size_t size, ft_size_t *index_out)
         if (capacity_result == 0)
             return (FT_ERR_NO_MEMORY);
     }
-    scma_remove_free_block(current_index);
     block = &scma_blocks_data_ref()[current_index];
+    /* Splitting may have moved the block table, so resolve the link again. */
+    link = &scma_free_head_ref();
+    if (previous_index != invalid_index)
+        link = &scma_blocks_data_ref()[previous_index].next_free_index;
+    *link = block->next_free_index;
+    block->next_free_index = invalid_index;
     if (expands_tail == FT_TRUE)
     {
         scma_discard_free_spans_from(block->offset);
@@ -661,10 +708,11 @@ void scma_coalesce_free_block(ft_size_t index)
 {
     scma_block *blocks_data;
     scma_block *block;
+    ft_size_t *current_link;
     ft_size_t current_index;
-    ft_size_t next_index;
     ft_size_t block_end;
     ft_size_t other_end;
+    const ft_size_t invalid_index = static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX);
 
     if (index >= scma_block_count_ref())
         return ;
@@ -672,52 +720,32 @@ void scma_coalesce_free_block(ft_size_t index)
     block = &blocks_data[index];
     if (block->in_use)
         return ;
-    current_index = scma_free_head_ref();
-    while (current_index != static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
+    current_link = &scma_free_head_ref();
+    while (*current_link != invalid_index)
     {
-        next_index = blocks_data[current_index].next_free_index;
-        if (current_index != index && !blocks_data[current_index].in_use
-            && blocks_data[current_index].size > 0)
+        current_index = *current_link;
+        if (current_index >= scma_block_count_ref())
+            return ;
+        scma_block &other = blocks_data[current_index];
+        if (current_index != index && !other.in_use && other.size > 0
+            && block->offset <= invalid_index - block->size
+            && other.offset <= invalid_index - other.size
+            && block->size <= invalid_index - other.size)
         {
-            if (block->offset > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
-                    - block->size
-                || blocks_data[current_index].offset
-                    > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
-                        - blocks_data[current_index].size)
+            block_end = block->offset + block->size;
+            other_end = other.offset + other.size;
+            if (other_end == block->offset || block_end == other.offset)
             {
-                current_index = next_index;
+                if (other_end == block->offset)
+                    block->offset = other.offset;
+                block->size += other.size;
+                *current_link = other.next_free_index;
+                other.next_free_index = invalid_index;
+                other.size = 0;
                 continue ;
             }
-            block_end = block->offset + block->size;
-            other_end = blocks_data[current_index].offset
-                + blocks_data[current_index].size;
-            if (other_end == block->offset)
-            {
-                if (block->size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
-                        - blocks_data[current_index].size)
-                {
-                    current_index = next_index;
-                    continue ;
-                }
-                block->offset = blocks_data[current_index].offset;
-                block->size += blocks_data[current_index].size;
-                scma_remove_free_block(current_index);
-                blocks_data[current_index].size = 0;
-            }
-            else if (block_end == blocks_data[current_index].offset)
-            {
-                if (block->size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX)
-                        - blocks_data[current_index].size)
-                {
-                    current_index = next_index;
-                    continue ;
-                }
-                block->size += blocks_data[current_index].size;
-                scma_remove_free_block(current_index);
-                blocks_data[current_index].size = 0;
-            }
         }
-        current_index = next_index;
+        current_link = &other.next_free_index;
     }
     return ;
 }
@@ -777,43 +805,30 @@ int32_t    scma_validate_handle(scma_handle handle, scma_block **out_block)
 
 int32_t    scma_ensure_block_capacity(ft_size_t required_count)
 {
+    constexpr ft_size_t MAX_BLOCK_COUNT = SIZE_MAX / sizeof(scma_block);
     ft_size_t new_capacity;
-    ft_size_t allocation_size;
     void *new_data;
     scma_block *&blocks_data = scma_blocks_data_ref();
     ft_size_t &block_capacity = scma_block_capacity_ref();
 
-    new_capacity = block_capacity;
-    if (new_capacity >= required_count)
+    if (block_capacity >= required_count)
         return (1);
-    if (new_capacity == 0)
+    if (required_count > MAX_BLOCK_COUNT)
+        return (0);
+    new_capacity = required_count;
+    if (block_capacity <= MAX_BLOCK_COUNT / 2U
+        && block_capacity * 2U > new_capacity)
+        new_capacity = block_capacity * 2U;
+    new_data = std::realloc(blocks_data,
+            FT_UINT64_TO_NATIVE_SIZE_CAST(new_capacity * sizeof(scma_block)));
+    if (new_data == ft_nullptr && new_capacity > required_count)
+    {
         new_capacity = required_count;
-    while (new_capacity < required_count)
-    {
-        if (new_capacity > required_count / 2)
-            new_capacity = required_count;
-        else
-        {
-            if (new_capacity > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) / 2)
-                new_capacity = required_count;
-            else
-                new_capacity *= 2;
-        }
+        new_data = std::realloc(blocks_data,
+                FT_UINT64_TO_NATIVE_SIZE_CAST(new_capacity * sizeof(scma_block)));
     }
-    if (new_capacity > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
-    {
-        return (0);
-    }
-    if (new_capacity > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX) / sizeof(scma_block))
-    {
-        return (0);
-    }
-    allocation_size = new_capacity * sizeof(scma_block);
-    new_data = std::realloc(blocks_data, allocation_size);
     if (!new_data)
-    {
         return (0);
-    }
     blocks_data = static_cast<scma_block *>(new_data);
     block_capacity = new_capacity;
     return (1);

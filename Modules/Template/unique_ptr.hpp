@@ -171,10 +171,11 @@ ft_uniqueptr<ManagedType>::reference_proxy::~reference_proxy()
 template <typename ManagedType>
 ft_uniqueptr<ManagedType>::reference_proxy::operator ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -206,10 +207,11 @@ ft_uniqueptr<ManagedType>::const_reference_proxy::~const_reference_proxy()
 template <typename ManagedType>
 ft_uniqueptr<ManagedType>::const_reference_proxy::operator const ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -366,25 +368,12 @@ int32_t ft_uniqueptr<ManagedType>::initialize_value(Args&&... args) noexcept
 template <typename ManagedType>
 int32_t ft_uniqueptr<ManagedType>::destroy() noexcept
 {
-    int32_t first_error;
-    int32_t disable_result;
-    ft_bool lock_acquired;
-    int32_t lock_result;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (set_error(FT_ERR_SUCCESS));
-    first_error = FT_ERR_SUCCESS;
-    disable_result = this->disable_thread_safety();
-    if (disable_result != FT_ERR_SUCCESS)
-        first_error = disable_result;
-    lock_acquired = FT_FALSE;
-    lock_result = this->lock_internal(&lock_acquired);
-    if (lock_result != FT_ERR_SUCCESS)
-        return (set_error(lock_result));
+    const int32_t disable_result = this->disable_thread_safety();
     this->destroy_storage();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->unlock_internal(lock_acquired);
-    return (set_error(first_error));
+    return (this->set_error(disable_result));
 }
 
 template <typename ManagedType>

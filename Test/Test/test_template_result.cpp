@@ -8,6 +8,12 @@
 #ifndef LIBFT_TEST_BUILD
 #endif
 
+static_assert(ft_status::success().is_success() == FT_TRUE);
+static_assert(ft_status::success().is_error() == FT_FALSE);
+static_assert(ft_status::failure(FT_ERR_NOT_FOUND).error_code == FT_ERR_NOT_FOUND);
+static_assert(ft_status::failure(FT_ERR_SUCCESS).error_code == FT_ERR_INVALID_ARGUMENT);
+static_assert(ft_status::failure(FT_ERR_SUCCESS).is_error() == FT_TRUE);
+
 class result_counter_value
 {
     private:

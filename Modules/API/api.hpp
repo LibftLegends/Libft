@@ -84,6 +84,10 @@ class api_retry_policy
         int32_t _circuit_breaker_half_open_successes;
         mutable pt_recursive_mutex *_mutex;
 
+        void clear_values() noexcept;
+        int32_t read_value(const int32_t &field) const noexcept;
+        void write_value(int32_t &field, int32_t value) noexcept;
+
         void abort_lifecycle_error(const char *method_name,
             const char *reason) const noexcept;
         void abort_if_not_initialised(const char *method_name) const noexcept;

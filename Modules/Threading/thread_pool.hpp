@@ -13,6 +13,7 @@
 #include "cancellation.hpp"
 #include "../Template/function.hpp"
 #include "../Template/move.hpp"
+#include <atomic>
 #include <cstddef>
 #include <utility>
 #include <type_traits>
@@ -24,8 +25,10 @@ class ft_thread_pool
         ft_queue<ft_function<void()> >  _tasks;
         ft_size_t                       _configured_thread_count;
         ft_size_t                       _max_tasks;
-        ft_bool                         _stop;
+        std::atomic<ft_bool>              _stop;
         ft_size_t                       _active;
+        std::atomic<uint32_t>             _work_epoch;
+        std::atomic<uint32_t>             _idle_epoch;
         mutable pt_recursive_mutex      *_work_mutex;
         mutable pt_recursive_mutex      *_thread_safe_mutex;
         uint8_t                         _initialised_state;
@@ -37,6 +40,7 @@ class ft_thread_pool
 
         static void worker_entry(ft_thread_pool *pool);
         void worker();
+        int32_t stop_workers();
 
     public:
         ft_thread_pool(ft_size_t thread_count = 0, ft_size_t max_tasks = 0);
@@ -114,6 +118,13 @@ void ft_thread_pool::submit(Function &&function)
     }
     {
         ft_function<void()> wrapper(ft_move(function));
+        if (!wrapper)
+        {
+            (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
+            this->unlock_internal(lock_acquired);
+            set_error(FT_ERR_NO_MEMORY);
+            return ;
+        }
         this->_tasks.enqueue(ft_move(wrapper));
         if (this->_tasks.get_error() != FT_ERR_SUCCESS)
         {
@@ -123,8 +134,10 @@ void ft_thread_pool::submit(Function &&function)
             return ;
         }
     }
+    this->_work_epoch.fetch_add(1U, std::memory_order_release);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_work_mutex);
     this->unlock_internal(lock_acquired);
+    (void)pt_thread_wake_one_uint32(&this->_work_epoch);
     set_error(FT_ERR_SUCCESS);
     return ;
 }

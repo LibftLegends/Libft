@@ -5,6 +5,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include "../../Modules/SCMA/scma_internal.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
 
@@ -99,6 +100,34 @@ FT_TEST(test_scma_resize_shrinks_truncates_tail)
             sizeof(int) * 2,
             &read_value,
             sizeof(int)));
+    scma_shutdown();
+    return (1);
+}
+
+FT_TEST(test_scma_resize_updates_live_end_without_moving_other_handles)
+{
+    const uint32_t payload = 0x12345678U;
+    uint32_t readback = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_test_initialize(64U));
+    const scma_handle first = scma_allocate(8U);
+    const scma_handle second = scma_allocate(8U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_write(first, 0U, &payload,
+        sizeof(payload)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_resize(first, 4U));
+    FT_ASSERT_EQ(16U, scma_used_size_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_resize(first, 12U));
+    FT_ASSERT_EQ(28U, scma_used_size_ref());
+    FT_ASSERT_EQ(8U, scma_blocks_data_ref()[second.index].offset);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_resize(first, 16U));
+    FT_ASSERT_EQ(32U, scma_used_size_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_resize(first, 4U));
+    FT_ASSERT_EQ(20U, scma_used_size_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_resize(first, 4U));
+    FT_ASSERT_EQ(20U, scma_used_size_ref());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_read(first, 0U, &readback,
+        sizeof(readback)));
+    FT_ASSERT_EQ(payload, readback);
     scma_shutdown();
     return (1);
 }

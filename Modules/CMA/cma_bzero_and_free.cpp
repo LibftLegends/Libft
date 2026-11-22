@@ -48,7 +48,7 @@ void cma_bzero_and_free(void* memory_pointer)
         cma_backend_deallocate(memory_pointer);
         return ;
     }
-    if (cma_lock_allocator(&lock_acquired) != FT_ERR_SUCCESS)
+    if (cma_lock_allocator_arena(&lock_acquired) != FT_ERR_SUCCESS)
         return ;
     if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_TRUE)
     {
@@ -60,6 +60,11 @@ void cma_bzero_and_free(void* memory_pointer)
         cma_unlock_allocator(lock_acquired);
         lock_acquired = FT_FALSE;
         cma_record_allocation_log("cma_bzero_and_free %p", memory_pointer);
+        return ;
+    }
+    if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
         return ;
     }
     Block *block = cma_find_block_for_pointer(memory_pointer);

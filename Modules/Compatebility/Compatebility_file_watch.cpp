@@ -4,14 +4,14 @@
 
 #include <atomic>
 #include <cerrno>
-#include <cstring>
-#include <mutex>
-#include <thread>
+#include <new>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #if defined(__linux__)
+# include <poll.h>
+# include <sys/eventfd.h>
 # include <sys/inotify.h>
 # include <unistd.h>
 #endif
@@ -28,22 +28,25 @@
 
 struct cmp_file_watch_context
 {
-    std::atomic<ft_bool>    running;
-    std::mutex              mutex;
+    std::atomic<ft_bool> running{FT_FALSE};
 #if defined(__linux__)
-    int32_t                  file_descriptor;
-    int32_t                  watch_descriptor;
-    char                 buffer[4096];
-    ft_size_t               buffer_offset;
-    ft_size_t               buffer_size;
+    int32_t file_descriptor = -1;
+    int32_t stop_descriptor = -1;
+    alignas(struct inotify_event) char buffer[4096];
+    ft_size_t buffer_offset = 0;
+    ft_size_t buffer_size = 0;
 #elif defined(__APPLE__) || defined(__FreeBSD__)
-    int32_t                  kqueue_fd;
-    int32_t                  watch_fd;
+    int32_t kqueue_fd = -1;
+    int32_t watch_fd = -1;
 #elif defined(_WIN32)
-    HANDLE               directory;
-    char                 buffer[4096];
-    DWORD                buffer_offset;
-    DWORD                buffer_size;
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    HANDLE stop_event = ft_nullptr;
+    HANDLE read_event = ft_nullptr;
+    OVERLAPPED read_operation{};
+    ft_bool read_pending = FT_FALSE;
+    alignas(DWORD) char buffer[4096];
+    DWORD buffer_offset = 0;
+    DWORD buffer_size = 0;
 #endif
 };
 
@@ -96,31 +99,42 @@ static file_watch_event_type cmp_file_watch_translate_windows_action(DWORD actio
 }
 #endif
 
+#if defined(_WIN32)
+static int32_t cmp_file_watch_issue_read(cmp_file_watch_context &context)
+{
+    context.read_operation = {};
+    context.read_operation.hEvent = context.read_event;
+    ResetEvent(context.read_event);
+    if (ReadDirectoryChangesW(context.directory, context.buffer,
+            static_cast<DWORD>(sizeof(context.buffer)), FALSE,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE,
+            ft_nullptr, &context.read_operation, ft_nullptr) == FALSE
+        && GetLastError() != ERROR_IO_PENDING)
+        return (cmp_file_watch_translate_error());
+    context.read_pending = FT_TRUE;
+    return (FT_ERR_SUCCESS);
+}
+
+static void cmp_file_watch_cancel_read(cmp_file_watch_context &context)
+{
+    if (context.read_pending == FT_TRUE)
+    {
+        (void)CancelIoEx(context.directory, &context.read_operation);
+        DWORD transferred = 0;
+        (void)GetOverlappedResult(context.directory, &context.read_operation, &transferred, TRUE);
+        context.read_pending = FT_FALSE;
+    }
+    return ;
+}
+#endif
+
 cmp_file_watch_context *cmp_file_watch_create(void)
 {
-    cmp_file_watch_context *context = new cmp_file_watch_context();
-
-    context->running.store(FT_FALSE);
-#if defined(__linux__)
-    context->file_descriptor = -1;
-    context->watch_descriptor = -1;
-    context->buffer_offset = 0;
-    context->buffer_size = 0;
-#elif defined(__APPLE__) || defined(__FreeBSD__)
-    context->kqueue_fd = -1;
-    context->watch_fd = -1;
-#elif defined(_WIN32)
-    context->directory = INVALID_HANDLE_VALUE;
-    context->buffer_offset = 0;
-    context->buffer_size = 0;
-#endif
-    return (context);
+    return (new (std::nothrow) cmp_file_watch_context());
 }
 
 void cmp_file_watch_destroy(cmp_file_watch_context *context)
 {
-    if (!context)
-        return ;
     cmp_file_watch_stop(context);
     delete context;
     return ;
@@ -128,85 +142,109 @@ void cmp_file_watch_destroy(cmp_file_watch_context *context)
 
 int32_t cmp_file_watch_start(cmp_file_watch_context *context, const char *path)
 {
-    int32_t error_code;
-
-    if (!context || !path)
+    if (context == ft_nullptr || path == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     cmp_file_watch_stop(context);
 #if defined(__linux__)
-    context->file_descriptor = inotify_init1(IN_NONBLOCK);
+    context->file_descriptor = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (context->file_descriptor < 0)
+        return (cmp_file_watch_translate_error());
+    context->stop_descriptor = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (context->stop_descriptor < 0 || inotify_add_watch(context->file_descriptor,
+            path, IN_CREATE | IN_MODIFY | IN_DELETE) < 0)
     {
-        error_code = cmp_file_watch_translate_error();
+        const int32_t error_code = cmp_file_watch_translate_error();
+        cmp_file_watch_stop(context);
         return (error_code);
     }
-    context->watch_descriptor = inotify_add_watch(context->file_descriptor, path, IN_CREATE | IN_MODIFY | IN_DELETE);
-    if (context->watch_descriptor < 0)
-    {
-        error_code = cmp_file_watch_translate_error();
-        close(context->file_descriptor);
-        context->file_descriptor = -1;
-        return (error_code);
-    }
-    context->buffer_offset = 0;
-    context->buffer_size = 0;
 #elif defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__APPLE__)
     context->watch_fd = open(path, O_EVTONLY);
+#else
+    context->watch_fd = open(path, O_RDONLY | O_CLOEXEC);
+#endif
     if (context->watch_fd < 0)
-    {
-        error_code = cmp_file_watch_translate_error();
-        return (error_code);
-    }
+        return (cmp_file_watch_translate_error());
     context->kqueue_fd = kqueue();
     if (context->kqueue_fd < 0)
     {
-        error_code = cmp_file_watch_translate_error();
-        close(context->watch_fd);
-        context->watch_fd = -1;
+        const int32_t error_code = cmp_file_watch_translate_error();
+        cmp_file_watch_stop(context);
         return (error_code);
     }
-    struct kevent configuration;
-
-    EV_SET(&configuration, context->watch_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+    struct kevent configuration[2];
+    EV_SET(&configuration[0], context->watch_fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
         NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME, 0, ft_nullptr);
-    if (kevent(context->kqueue_fd, &configuration, 1, ft_nullptr, 0, ft_nullptr) < 0)
+    EV_SET(&configuration[1], 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, ft_nullptr);
+    if (kevent(context->kqueue_fd, configuration, 2, ft_nullptr, 0, ft_nullptr) < 0)
     {
-        error_code = cmp_file_watch_translate_error();
-        close(context->kqueue_fd);
-        context->kqueue_fd = -1;
-        close(context->watch_fd);
-        context->watch_fd = -1;
+        const int32_t error_code = cmp_file_watch_translate_error();
+        cmp_file_watch_stop(context);
         return (error_code);
     }
 #elif defined(_WIN32)
     context->directory = CreateFileA(path, FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        ft_nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, ft_nullptr);
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, ft_nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, ft_nullptr);
     if (context->directory == INVALID_HANDLE_VALUE)
+        return (cmp_file_watch_translate_error());
+    context->stop_event = CreateEventW(ft_nullptr, TRUE, FALSE, ft_nullptr);
+    if (context->stop_event == ft_nullptr)
     {
-        error_code = cmp_file_watch_translate_error();
+        const int32_t error_code = cmp_file_watch_translate_error();
+        cmp_file_watch_stop(context);
         return (error_code);
     }
-    context->buffer_offset = 0;
-    context->buffer_size = 0;
+    context->read_event = CreateEventW(ft_nullptr, TRUE, FALSE, ft_nullptr);
+    if (context->read_event == ft_nullptr)
+    {
+        const int32_t error_code = cmp_file_watch_translate_error();
+        cmp_file_watch_stop(context);
+        return (error_code);
+    }
+    const int32_t read_error = cmp_file_watch_issue_read(*context);
+    if (read_error != FT_ERR_SUCCESS)
+    {
+        cmp_file_watch_stop(context);
+        return (read_error);
+    }
 #endif
     context->running.store(FT_TRUE);
     return (FT_ERR_SUCCESS);
 }
 
+void cmp_file_watch_request_stop(cmp_file_watch_context *context)
+{
+    if (context == ft_nullptr || context->running.exchange(FT_FALSE) == FT_FALSE)
+        return ;
+#if defined(__linux__)
+    const uint64_t wake = 1;
+    while (::write(context->stop_descriptor, &wake, sizeof(wake)) < 0 && errno == EINTR)
+        continue ;
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    struct kevent stop_event;
+    EV_SET(&stop_event, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, ft_nullptr);
+    while (kevent(context->kqueue_fd, &stop_event, 1, ft_nullptr, 0, ft_nullptr) < 0
+        && errno == EINTR)
+        continue ;
+#elif defined(_WIN32)
+    (void)SetEvent(context->stop_event);
+#endif
+    return ;
+}
+
 void cmp_file_watch_stop(cmp_file_watch_context *context)
 {
-    if (!context)
+    if (context == ft_nullptr)
         return ;
-    std::lock_guard<std::mutex> lock(context->mutex);
     context->running.store(FT_FALSE);
 #if defined(__linux__)
-    if (context->watch_descriptor >= 0 && context->file_descriptor >= 0)
-        inotify_rm_watch(context->file_descriptor, context->watch_descriptor);
     if (context->file_descriptor >= 0)
         close(context->file_descriptor);
-    context->watch_descriptor = -1;
+    if (context->stop_descriptor >= 0)
+        close(context->stop_descriptor);
     context->file_descriptor = -1;
+    context->stop_descriptor = -1;
     context->buffer_offset = 0;
     context->buffer_size = 0;
 #elif defined(__APPLE__) || defined(__FreeBSD__)
@@ -217,140 +255,127 @@ void cmp_file_watch_stop(cmp_file_watch_context *context)
     context->watch_fd = -1;
     context->kqueue_fd = -1;
 #elif defined(_WIN32)
+    cmp_file_watch_cancel_read(*context);
     if (context->directory != INVALID_HANDLE_VALUE)
-    {
-        CancelIo(context->directory);
         CloseHandle(context->directory);
-    }
+    if (context->stop_event != ft_nullptr)
+        CloseHandle(context->stop_event);
+    if (context->read_event != ft_nullptr)
+        CloseHandle(context->read_event);
     context->directory = INVALID_HANDLE_VALUE;
+    context->stop_event = ft_nullptr;
+    context->read_event = ft_nullptr;
     context->buffer_offset = 0;
     context->buffer_size = 0;
 #endif
     return ;
 }
 
-ft_bool cmp_file_watch_wait_event(cmp_file_watch_context *context,
-    cmp_file_watch_event *event)
-{
-    if (!context || !event)
-        return (FT_FALSE);
-    if (!context->running.load())
-        return (FT_FALSE);
 #if defined(__linux__)
-    while (context->running.load())
+static ft_bool cmp_file_watch_receive(cmp_file_watch_context &context)
+{
+    struct pollfd descriptors[2] = {
+        {context.stop_descriptor, POLLIN, 0},
+        {context.file_descriptor, POLLIN, 0}
+    };
+    while (context.running.load() == FT_TRUE)
     {
-        std::unique_lock<std::mutex> lock(context->mutex);
-
-        if (!context->running.load())
-            return (FT_FALSE);
-        if (context->buffer_offset < context->buffer_size)
-        {
-            const struct inotify_event *notify_event =
-                reinterpret_cast<const struct inotify_event *>(
-                    context->buffer + context->buffer_offset);
-            ft_size_t entry_size = sizeof(struct inotify_event) + static_cast<ft_size_t>(notify_event->len);
-
-            if (entry_size > 0)
-                context->buffer_offset += entry_size;
-            else
-                context->buffer_offset += sizeof(struct inotify_event);
-            event->event_type = cmp_file_watch_translate_inotify_mask(notify_event->mask);
-            event->has_name = (notify_event->len > 0);
-            if (event->has_name)
-            {
-                ft_size_t name_length = notify_event->len;
-                if (name_length >= sizeof(event->name))
-                    name_length = sizeof(event->name) - 1;
-                std::memcpy(event->name, notify_event->name, name_length);
-                event->name[name_length] = '\0';
-            }
-            else
-            {
-                event->name[0] = '\0';
-            }
-            return (FT_TRUE);
-        }
-        int64_t read_result = ::read(context->file_descriptor, context->buffer,
-                sizeof(context->buffer));
-        if (read_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        {
-            lock.unlock();
-            std::this_thread::yield();
+        const int32_t ready = poll(descriptors, 2, -1);
+        if (ready < 0 && errno == EINTR)
             continue ;
-        }
-        if (read_result <= 0)
-        {
-            context->running.store(FT_FALSE);
+        if (ready <= 0 || descriptors[0].revents != 0
+            || (descriptors[1].revents & POLLIN) == 0)
             return (FT_FALSE);
-        }
-        context->buffer_size = static_cast<ft_size_t>(read_result);
-        context->buffer_offset = 0;
+        const ssize_t count = ::read(context.file_descriptor, context.buffer, sizeof(context.buffer));
+        if (count < 0 && (errno == EAGAIN || errno == EINTR))
+            continue ;
+        if (count <= 0)
+            return (FT_FALSE);
+        context.buffer_size = static_cast<ft_size_t>(count);
+        context.buffer_offset = 0;
+        return (FT_TRUE);
     }
-#elif defined(__APPLE__) || defined(__FreeBSD__)
-    while (context->running.load())
+    return (FT_FALSE);
+}
+#elif defined(_WIN32)
+static ft_bool cmp_file_watch_receive(cmp_file_watch_context &context)
+{
+    if (context.read_pending == FT_FALSE && cmp_file_watch_issue_read(context) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    HANDLE events[2] = {context.stop_event, context.read_event};
+    if (WaitForMultipleObjects(2, events, FALSE, INFINITE) != WAIT_OBJECT_0 + 1)
     {
+        cmp_file_watch_cancel_read(context);
+        return (FT_FALSE);
+    }
+    DWORD transferred = 0;
+    const ft_bool success = GetOverlappedResult(context.directory, &context.read_operation,
+        &transferred, FALSE) != FALSE;
+    context.read_pending = FT_FALSE;
+    if (success == FT_FALSE)
+        return (FT_FALSE);
+    context.buffer_size = transferred;
+    context.buffer_offset = 0;
+    return (FT_TRUE);
+}
+#endif
+
+ft_bool cmp_file_watch_wait_event(cmp_file_watch_context *context, cmp_file_watch_event *event)
+{
+    if (context == ft_nullptr || event == ft_nullptr)
+        return (FT_FALSE);
+    while (context->running.load() == FT_TRUE)
+    {
+#if defined(__linux__)
+        if (context->buffer_offset == context->buffer_size && cmp_file_watch_receive(*context) == FT_FALSE)
+            break ;
+        const auto *notification = reinterpret_cast<const struct inotify_event *>(
+            context->buffer + context->buffer_offset);
+        context->buffer_offset += sizeof(*notification) + static_cast<ft_size_t>(notification->len);
+        event->event_type = cmp_file_watch_translate_inotify_mask(notification->mask);
+        event->has_name = notification->len > 0;
+        ft_size_t name_length = notification->len;
+        if (name_length >= sizeof(event->name))
+            name_length = sizeof(event->name) - 1;
+        if (name_length > 0)
+            ft_memcpy(event->name, notification->name, name_length);
+        event->name[name_length] = '\0';
+        return (FT_TRUE);
+#elif defined(__APPLE__) || defined(__FreeBSD__)
         struct kevent observed_event;
-        int32_t event_count = kevent(context->kqueue_fd, ft_nullptr, 0, &observed_event, 1, ft_nullptr);
-        if (event_count <= 0)
-        {
-            context->running.store(FT_FALSE);
-            return (FT_FALSE);
-        }
+        const int32_t count = kevent(context->kqueue_fd, ft_nullptr, 0, &observed_event, 1, ft_nullptr);
+        if (count < 0 && errno == EINTR)
+            continue ;
+        if (count <= 0 || observed_event.filter == EVFILT_USER)
+            break ;
         event->event_type = cmp_file_watch_translate_bsd_flags(observed_event.fflags);
         event->has_name = FT_FALSE;
         event->name[0] = '\0';
         return (FT_TRUE);
-    }
 #elif defined(_WIN32)
-    while (context->running.load())
-    {
-        if (context->buffer_offset < context->buffer_size)
-        {
-            FILE_NOTIFY_INFORMATION *notification =
-                reinterpret_cast<FILE_NOTIFY_INFORMATION *>(context->buffer + context->buffer_offset);
-            DWORD next_offset = notification->NextEntryOffset;
-            if (next_offset == 0)
-                next_offset = context->buffer_size - context->buffer_offset;
-            context->buffer_offset += next_offset;
-            event->event_type = cmp_file_watch_translate_windows_action(notification->Action);
-            if (notification->FileNameLength > 0)
-            {
-                int32_t converted = WideCharToMultiByte(CP_UTF8, 0, notification->FileName,
-                    static_cast<int32_t>(notification->FileNameLength / sizeof(WCHAR)), event->name,
-                    static_cast<int32_t>(sizeof(event->name) - 1), ft_nullptr, ft_nullptr);
-                if (converted > 0)
-                {
-                    event->name[converted] = '\0';
-                    event->has_name = FT_TRUE;
-                }
-                else
-                {
-                    event->name[0] = '\0';
-                    event->has_name = FT_FALSE;
-                }
-            }
-            else
-            {
-                event->name[0] = '\0';
-                event->has_name = FT_FALSE;
-            }
-            return (FT_TRUE);
-        }
-        DWORD bytes_returned = 0;
-        BOOL success = ReadDirectoryChangesW(context->directory, context->buffer,
-            static_cast<DWORD>(sizeof(context->buffer)), FALSE,
-            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE,
-            &bytes_returned, ft_nullptr, ft_nullptr);
-        if (success == FALSE)
-        {
-            context->running.store(FT_FALSE);
-            return (FT_FALSE);
-        }
-        if (bytes_returned == 0)
+        if (context->buffer_offset == context->buffer_size && cmp_file_watch_receive(*context) == FT_FALSE)
+            break ;
+        if (context->buffer_size == 0)
             continue ;
-        context->buffer_size = bytes_returned;
-        context->buffer_offset = 0;
-    }
+        const auto *notification = reinterpret_cast<const FILE_NOTIFY_INFORMATION *>(
+            context->buffer + context->buffer_offset);
+        if (notification->NextEntryOffset == 0)
+            context->buffer_offset = context->buffer_size;
+        else
+            context->buffer_offset += notification->NextEntryOffset;
+        event->event_type = cmp_file_watch_translate_windows_action(notification->Action);
+        int32_t name_length = 0;
+        if (notification->FileNameLength > 0)
+            name_length = WideCharToMultiByte(CP_UTF8, 0, notification->FileName,
+                static_cast<int32_t>(notification->FileNameLength / sizeof(WCHAR)), event->name,
+                static_cast<int32_t>(sizeof(event->name) - 1), ft_nullptr, ft_nullptr);
+        event->has_name = name_length > 0;
+        event->name[name_length] = '\0';
+        return (FT_TRUE);
+#else
+        break ;
 #endif
+    }
+    context->running.store(FT_FALSE);
     return (FT_FALSE);
 }

@@ -38,26 +38,13 @@ static void free_strings(char **strings, ft_size_t filled)
     return ;
 }
 
-static char *duplicate_range(const char *source, ft_size_t start, ft_size_t length)
-{
-    char *result = static_cast<char *>(cma_malloc(length + 1));
-    if (result == ft_nullptr)
-        return (ft_nullptr);
-    ft_size_t index = 0;
-    while (index < length)
-    {
-        result[index] = source[start + index];
-        ++index;
-    }
-    result[length] = '\0';
-    return (result);
-}
-
 char **adv_split(char const *string, char delimiter)
 {
     if (string == ft_nullptr)
         return (ft_nullptr);
     ft_size_t word_count = count_words(string, delimiter);
+    if (word_count >= FT_SYSTEM_SIZE_MAX / sizeof(char *))
+        return (ft_nullptr);
     char **result = static_cast<char **>(cma_malloc((word_count + 1) * sizeof(char *)));
     if (result == ft_nullptr)
         return (ft_nullptr);
@@ -68,15 +55,13 @@ char **adv_split(char const *string, char delimiter)
         if (string[index] == delimiter)
         {
             ++index;
-            continue;
+            continue ;
         }
         ft_size_t start = index;
         while (string[index] != '\0' && string[index] != delimiter)
             ++index;
         ft_size_t length = index - start;
-        if (length == 0)
-            continue;
-        char *word = duplicate_range(string, start, length);
+        char *word = ft_span_dup(string + start, length);
         if (word == ft_nullptr)
         {
             free_strings(result, current_word);

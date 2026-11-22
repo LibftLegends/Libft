@@ -352,7 +352,8 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     }
     old_size = block->size;
     old_offset = block->offset;
-    scma_recompute_used_size();
+    // Shrinking an interior block leaves the live end unchanged.
+    // Growth takes place at the live end, with relocation if necessary.
     if (new_size == old_size)
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -373,7 +374,6 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
             scma_reset_compaction();
             scma_compaction_needed_ref() = FT_TRUE;
         }
-        scma_recompute_used_size();
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
     }
@@ -388,7 +388,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                         FT_ERR_NO_MEMORY)));
         scma_discard_free_spans_from(used_size);
         block->size = new_size;
-        scma_recompute_used_size();
+        used_size = required_size;
         live_size += new_size - old_size;
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -418,7 +418,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                 return (static_cast<uint32_t>(scma_unlock_and_return_int(
                             FT_ERR_NO_MEMORY)));
             block->size = new_size;
-            scma_recompute_used_size();
+            used_size = required_size;
             live_size += new_size - old_size;
             return (static_cast<uint32_t>(scma_unlock_and_return_int(
                         FT_ERR_SUCCESS)));
@@ -441,7 +441,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     block->offset = used_size;
     block->size = new_size;
     scma_link_block_at_tail(handle.index);
-    scma_recompute_used_size();
+    used_size = required_size;
     live_size += new_size - old_size;
     scma_compaction_needed_ref() = FT_TRUE;
     scma_reset_compaction();

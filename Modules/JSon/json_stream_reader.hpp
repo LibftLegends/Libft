@@ -9,6 +9,7 @@
 
 struct json_group;
 
+// Return at most max_size bytes, zero at end of input, or (ft_size_t)-1 for I/O failure.
 typedef ft_size_t (*json_stream_read_callback)(void *user_data, char *buffer, ft_size_t max_size);
 
 typedef struct json_stream_reader

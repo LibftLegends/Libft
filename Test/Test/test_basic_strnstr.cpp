@@ -116,3 +116,24 @@ FT_TEST(test_basic_strnstr_limit_blocks_partial_match)
     FT_ASSERT_EQ(ft_nullptr, ft_strnstr(haystack, "bar", 5));
     return (1);
 }
+
+FT_TEST(test_basic_strnstr_bounded_prefix_handoff)
+{
+    char buffer[96];
+    ft_size_t index = 0U;
+
+    while (index < sizeof(buffer))
+    {
+        buffer[index] = 'a';
+        ++index;
+    }
+    buffer[63U] = 'b';
+    buffer[64U] = 'c';
+    buffer[65U] = 'd';
+    FT_ASSERT_EQ(buffer + 63U, ft_strnstr(buffer, "bcd", sizeof(buffer)));
+    FT_ASSERT_EQ(buffer + 64U, ft_strnstr(buffer, "cd", sizeof(buffer)));
+    FT_ASSERT_EQ(ft_nullptr, ft_strnstr(buffer, "bcd", 65U));
+    buffer[61U] = '\0';
+    FT_ASSERT_EQ(ft_nullptr, ft_strnstr(buffer, "bcd", sizeof(buffer)));
+    return (1);
+}
