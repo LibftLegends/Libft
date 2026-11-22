@@ -35,7 +35,8 @@ networking_simulator_script_entry::~networking_simulator_script_entry() noexcept
 
 networking_simulated_datagram_io::networking_simulated_datagram_io() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _underlying(ft_nullptr),
-      _configuration(), _pending(), _script(), _now(0U), _random_state(1U),
+      _configuration(), _pending(), _script(), _now(0U), _next_delivery_time(UINT64_MAX),
+      _random_state(1U),
       _send_ordinal(0U),
       _bandwidth_window_start(0U), _bandwidth_window_bytes(0U)
 {
@@ -68,6 +69,7 @@ int32_t networking_simulated_datagram_io::initialize(networking_datagram_io &und
     if (this->_random_state == 0U)
         this->_random_state = 1U;
     this->_now = 0U;
+    this->_next_delivery_time = UINT64_MAX;
     this->_send_ordinal = 0U;
     this->_bandwidth_window_start = 0U;
     this->_bandwidth_window_bytes = 0U;
@@ -80,9 +82,6 @@ int32_t networking_simulated_datagram_io::initialize(networking_datagram_io &und
         (void)this->_script.destroy();
         return (result);
     }
-    while (!this->_pending.empty())
-        delete this->_pending.pop_front();
-    this->_script.clear();
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -94,10 +93,13 @@ int32_t networking_simulated_datagram_io::destroy() noexcept
         return (FT_ERR_SUCCESS);
     while (!this->_pending.empty())
         delete this->_pending.pop_front();
-    (void)this->_script.destroy();
+    const int32_t pending_result = this->_pending.destroy();
+    const int32_t script_result = this->_script.destroy();
     this->_underlying = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    if (pending_result != FT_ERR_SUCCESS)
+        return (pending_result);
+    return (script_result);
 }
 
 int32_t networking_simulated_datagram_io::move(networking_simulated_datagram_io &other) noexcept
@@ -108,22 +110,29 @@ int32_t networking_simulated_datagram_io::move(networking_simulated_datagram_io 
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
-    (void)this->destroy();
+    result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     this->_underlying = other._underlying;
     this->_configuration = other._configuration;
     result = this->_pending.move(other._pending);
-    if (result == FT_ERR_SUCCESS)
-        result = this->_script.move(other._script);
     if (result != FT_ERR_SUCCESS)
         return (result);
+    result = this->_script.move(other._script);
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)other._pending.move(this->_pending);
+        return (result);
+    }
     this->_now = other._now;
+    this->_next_delivery_time = other._next_delivery_time;
     this->_random_state = other._random_state;
     this->_send_ordinal = other._send_ordinal;
     this->_bandwidth_window_start = other._bandwidth_window_start;
     this->_bandwidth_window_bytes = other._bandwidth_window_bytes;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._underlying = ft_nullptr;
-    (void)other.destroy();
+    other._initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
 
@@ -133,6 +142,22 @@ int32_t networking_simulated_datagram_io::clear_script() noexcept
         return (FT_ERR_NOT_INITIALISED);
     this->_script.clear();
     return (FT_ERR_SUCCESS);
+}
+
+static ft_size_t lower_bound_script_action(const networking_simulator_script_entry *entries,
+    ft_size_t count, uint64_t packet_ordinal) noexcept
+{
+    ft_size_t first = 0U;
+    ft_size_t end = count;
+    while (first < end)
+    {
+        const ft_size_t middle = first + (end - first) / 2U;
+        if (entries[middle].packet_ordinal < packet_ordinal)
+            first = middle + 1U;
+        else
+            end = middle;
+    }
+    return (first);
 }
 
 int32_t networking_simulated_datagram_io::add_script_action(
@@ -153,7 +178,19 @@ int32_t networking_simulated_datagram_io::add_script_action(
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_SIMULATOR_QUEUE)
         != FT_FALSE)
         return (FT_ERR_NO_MEMORY);
-    if (this->_script.push_back(entry) != FT_ERR_SUCCESS)
+    const ft_size_t count = this->_script.size();
+    networking_simulator_script_entry *entries = this->_script.begin();
+    if (count == 0U || entries[count - 1U].packet_ordinal < packet_ordinal)
+        (void)this->_script.push_back(entry);
+    else
+    {
+        const ft_size_t position = lower_bound_script_action(entries, count, packet_ordinal);
+        // The first action registered for a packet ordinal takes precedence.
+        if (entries[position].packet_ordinal == packet_ordinal)
+            return (FT_ERR_SUCCESS);
+        this->_script.insert(entries + position, entry);
+    }
+    if (this->_script.get_error() != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
     return (FT_ERR_SUCCESS);
 }
@@ -178,40 +215,51 @@ uint64_t networking_simulated_datagram_io::calculate_delivery_time() noexcept
 
     jitter = 0U;
     if (this->_configuration.jitter_milliseconds != 0U)
-        jitter = this->next_random() % (this->_configuration.jitter_milliseconds + 1U);
+        jitter = static_cast<uint32_t>(this->next_random()
+            % (static_cast<uint64_t>(this->_configuration.jitter_milliseconds) + 1U));
     return (this->_now + this->_configuration.fixed_latency_milliseconds + jitter);
+}
+
+int32_t networking_simulated_datagram_io::queue_datagram(pending_datagram *datagram) noexcept
+{
+    this->_pending.push_back(datagram);
+    if (this->_pending.get_error() != FT_ERR_SUCCESS)
+    {
+        delete datagram;
+        return (FT_ERR_NO_MEMORY);
+    }
+    if (datagram->delivery_time < this->_next_delivery_time)
+        this->_next_delivery_time = datagram->delivery_time;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t networking_simulated_datagram_io::flush_ready_datagrams() noexcept
 {
-    ft_size_t pending_count;
-    ft_size_t index;
-
-    pending_count = this->_pending.size();
-    index = 0U;
+    if (this->_now < this->_next_delivery_time)
+        return (FT_ERR_SUCCESS);
+    // Scan ready packets in queue order, even when several deadlines have elapsed.
+    const ft_size_t pending_count = this->_pending.size();
+    this->_next_delivery_time = UINT64_MAX;
+    ft_size_t index = 0U;
     while (index < pending_count)
     {
-        pending_datagram *datagram = this->_pending.front();
-        this->_pending.pop_front();
+        pending_datagram *datagram = this->_pending.pop_front();
         if (datagram->delivery_time > this->_now)
         {
-            this->_pending.push_back(datagram);
-            if (this->_pending.get_error() != FT_ERR_SUCCESS)
+            if (this->queue_datagram(datagram) != FT_ERR_SUCCESS)
             {
-                delete datagram;
+                this->_next_delivery_time = 0U;
                 return (FT_ERR_NO_MEMORY);
             }
             index += 1U;
             continue ;
         }
-        const uint8_t *payload_data = ft_nullptr;
-        if (datagram->payload.size() != 0U)
-            payload_data = &datagram->payload[0];
         if (this->_configuration.blackhole_outgoing == FT_FALSE
             && this->_underlying->send_datagram(datagram->destination,
-                payload_data, datagram->payload.size()) != FT_ERR_SUCCESS)
+                datagram->payload.begin(), datagram->payload.size()) != FT_ERR_SUCCESS)
         {
             delete datagram;
+            this->_next_delivery_time = 0U;
             return (FT_ERR_SOCKET_SEND_FAILED);
         }
         delete datagram;
@@ -230,7 +278,6 @@ int32_t networking_simulated_datagram_io::send_datagram(
     ft_bool script_duplicate;
     ft_bool script_corruption;
     uint32_t script_delay;
-    ft_size_t script_index;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -249,32 +296,28 @@ int32_t networking_simulated_datagram_io::send_datagram(
     script_duplicate = FT_FALSE;
     script_corruption = FT_FALSE;
     script_delay = 0U;
-    script_index = 0U;
-    while (script_index < this->_script.size())
+    const ft_size_t script_count = this->_script.size();
+    if (script_count != 0U)
     {
-        if (this->_script[script_index].packet_ordinal == this->_send_ordinal)
+        const networking_simulator_script_entry *entries = this->_script.begin();
+        const ft_size_t position = lower_bound_script_action(entries, script_count,
+            this->_send_ordinal);
+        if (position < script_count && entries[position].packet_ordinal == this->_send_ordinal)
         {
-            if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_DROP)
+            const networking_simulator_script_entry &entry = entries[position];
+            if (entry.action == networking_simulator_script_action::SCRIPT_DROP)
                 script_drop = FT_TRUE;
-            else if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_DUPLICATE)
+            else if (entry.action == networking_simulator_script_action::SCRIPT_DUPLICATE)
                 script_duplicate = FT_TRUE;
-            else if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_CORRUPT)
+            else if (entry.action == networking_simulator_script_action::SCRIPT_CORRUPT)
                 script_corruption = FT_TRUE;
-            else if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_DELAY)
-                script_delay = this->_script[script_index].delay_milliseconds;
-            else if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_DISCONNECT)
+            else if (entry.action == networking_simulator_script_action::SCRIPT_DELAY)
+                script_delay = entry.delay_milliseconds;
+            else if (entry.action == networking_simulator_script_action::SCRIPT_DISCONNECT)
                 return (FT_ERR_SOCKET_SEND_FAILED);
-            else if (this->_script[script_index].action
-                == networking_simulator_script_action::SCRIPT_MTU_DROP)
+            else if (entry.action == networking_simulator_script_action::SCRIPT_MTU_DROP)
                 return (FT_ERR_OUT_OF_RANGE);
-            break ;
         }
-        script_index += 1U;
     }
     if (script_drop != FT_FALSE)
         return (FT_ERR_SUCCESS);
@@ -334,12 +377,8 @@ int32_t networking_simulated_datagram_io::send_datagram(
         delete datagram;
         return (FT_ERR_NO_MEMORY);
     }
-    this->_pending.push_back(datagram);
-    if (this->_pending.get_error() != FT_ERR_SUCCESS)
-    {
-        delete datagram;
+    if (this->queue_datagram(datagram) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
-    }
     if (script_duplicate != FT_FALSE
         || (this->_configuration.duplicate_parts_per_million != 0U
         && (this->next_random() % 1000000U)
@@ -347,10 +386,7 @@ int32_t networking_simulated_datagram_io::send_datagram(
     {
         duplicate = new (std::nothrow) pending_datagram();
         if (duplicate == ft_nullptr)
-        {
-            delete duplicate;
             return (FT_ERR_NO_MEMORY);
-        }
         if (duplicate->payload.initialize(datagram->payload) != FT_ERR_SUCCESS)
         {
             delete duplicate;
@@ -358,12 +394,7 @@ int32_t networking_simulated_datagram_io::send_datagram(
         }
         duplicate->destination = datagram->destination;
         duplicate->delivery_time = datagram->delivery_time + 1U;
-        this->_pending.push_back(duplicate);
-        if (this->_pending.get_error() != FT_ERR_SUCCESS)
-        {
-            delete duplicate;
-            return (FT_ERR_NO_MEMORY);
-        }
+        return (this->queue_datagram(duplicate));
     }
     return (FT_ERR_SUCCESS);
 }

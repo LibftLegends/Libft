@@ -96,6 +96,66 @@ FT_TEST(test_networking_unreliable_datagram_is_not_retransmitted)
     return (1);
 }
 
+FT_TEST(test_networking_ack_compacts_ranges_and_retransmits_only_the_gap)
+{
+    networking_test_memory_datagram_io sender_io;
+    networking_test_memory_datagram_io receiver_io;
+    sender_io.connect(receiver_io);
+    receiver_io.connect(sender_io);
+    networking_message_transport_config configuration;
+    configuration.enable_encryption = FT_FALSE;
+    networking_message_transport sender;
+    networking_message_transport receiver;
+    networking_message_connection sender_connection;
+    networking_message_connection receiver_connection;
+    networking_message_endpoint endpoint;
+    networking_test_prepare_endpoint(endpoint);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.initialize(configuration, sender_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.initialize(configuration, receiver_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.open_connection(endpoint, sender_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.open_connection(endpoint, receiver_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+    networking_message_send_options options;
+    uint8_t payload = 1U;
+    while (payload <= 5U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, sender_connection.send_message(&payload, 1U, options));
+        if (payload == 2U)
+            sender_io.drop_next_datagram();
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+        ++payload;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+    networking_message_statistics statistics;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender_connection.get_statistics(statistics));
+    FT_ASSERT_EQ(4U, statistics.packets_acknowledged);
+    FT_ASSERT_EQ(1U, statistics.queue_bytes);
+
+    sender_io.advance(configuration.retransmission_timeout_milliseconds);
+    receiver_io.advance(configuration.retransmission_timeout_milliseconds);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender_connection.get_statistics(statistics));
+    FT_ASSERT_EQ(1U, statistics.packets_retransmitted);
+    FT_ASSERT_EQ(5U, statistics.packets_acknowledged);
+    FT_ASSERT_EQ(0U, statistics.queue_bytes);
+    networking_received_message messages[5];
+    ft_size_t count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.receive_messages(messages, 5U, count));
+    FT_ASSERT_EQ(5U, count);
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        FT_ASSERT_EQ(index + 1U, messages[index].sequence);
+        FT_ASSERT_EQ(1U, messages[index].payload.size());
+        FT_ASSERT_EQ(index + 1U, messages[index].payload[0]);
+        ++index;
+    }
+    return (1);
+}
+
 FT_TEST(test_networking_reliable_messages_retransmit_in_channel_order)
 {
     networking_test_memory_datagram_io client_io;

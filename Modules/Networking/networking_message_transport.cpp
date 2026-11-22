@@ -126,6 +126,7 @@ namespace
     static const uint32_t NETWORKING_MESSAGE_HEADER_SIZE = 64U;
     static const uint32_t NETWORKING_MESSAGE_KEY_EPOCH_SIZE = 8U;
     static const uint32_t NETWORKING_MESSAGE_PATH_TOKEN_SIZE = 8U;
+    static constexpr uint32_t NETWORKING_MESSAGE_AUTH_TAG_SIZE = 16U;
     static const uint32_t NETWORKING_MESSAGE_ACK_RANGE_LIMIT = 4U;
     static const uint32_t NETWORKING_MESSAGE_ACK_RANGE_BYTES = 1U
         + NETWORKING_MESSAGE_ACK_RANGE_LIMIT * 4U;
@@ -240,41 +241,6 @@ namespace
             return (FT_ERR_SUCCESS);
         }
 
-        ft_bool has_byte(uint32_t byte_index) const noexcept
-        {
-            ft_size_t bitmap_index = byte_index / 8U;
-            uint8_t mask = static_cast<uint8_t>(1U << (byte_index % 8U));
-
-            if (bitmap_index >= this->received.size())
-                return (FT_FALSE);
-            if ((this->received[bitmap_index] & mask) == 0U)
-                return (FT_FALSE);
-            return (FT_TRUE);
-        }
-
-        void mark_byte(uint32_t byte_index) noexcept
-        {
-            ft_size_t bitmap_index = byte_index / 8U;
-            uint8_t mask = static_cast<uint8_t>(1U << (byte_index % 8U));
-
-            if (bitmap_index < this->received.size())
-                this->received[bitmap_index] = static_cast<uint8_t>(
-                    this->received[bitmap_index] | mask);
-            return ;
-        }
-
-        void clear_byte(uint32_t byte_index) noexcept
-        {
-            ft_size_t bitmap_index = byte_index / 8U;
-            uint8_t mask = static_cast<uint8_t>(
-                ~(1U << (byte_index % 8U)));
-
-            if (bitmap_index < this->received.size())
-                this->received[bitmap_index] = static_cast<uint8_t>(
-                    this->received[bitmap_index] & mask);
-            return ;
-        }
-
         ~reassembly_record() noexcept
         {
             (void)this->payload.destroy();
@@ -282,6 +248,81 @@ namespace
             return ;
         }
     };
+
+    static uint8_t networking_fragment_mask(uint32_t start_bit, uint32_t byte_count) noexcept
+    {
+        return (static_cast<uint8_t>(((1U << byte_count) - 1U) << start_bit));
+    }
+
+    static ft_bool networking_fragment_matches(const reassembly_record &record,
+        uint32_t fragment_offset, const uint8_t *fragment, uint32_t fragment_size,
+        uint32_t &new_bytes) noexcept
+    {
+        const uint8_t *coverage = record.received.begin();
+        const uint8_t *stored = record.payload.begin() + fragment_offset;
+        new_bytes = 0U;
+        uint32_t position = 0U;
+        while (position < fragment_size)
+        {
+            const uint32_t absolute = fragment_offset + position;
+            const uint32_t start_bit = absolute % 8U;
+            const uint32_t count = std::min(8U - start_bit, fragment_size - position);
+            const uint8_t mask = networking_fragment_mask(start_bit, count);
+            const uint8_t present = coverage[absolute / 8U] & mask;
+            if (present == 0U)
+                new_bytes += count;
+            else if (present == mask)
+            {
+                if (ft_memcmp(stored + position, fragment + position, count) != 0)
+                    return (FT_FALSE);
+            }
+            else
+            {
+                uint32_t index = 0U;
+                while (index < count)
+                {
+                    if ((present & (1U << (start_bit + index))) == 0U)
+                        ++new_bytes;
+                    else if (stored[position + index] != fragment[position + index])
+                        return (FT_FALSE);
+                    ++index;
+                }
+            }
+            position += count;
+        }
+        return (FT_TRUE);
+    }
+
+    static void networking_mark_fragment(reassembly_record &record, uint32_t position,
+        uint32_t fragment_size, uint32_t new_bytes) noexcept
+    {
+        uint8_t *coverage = record.received.begin();
+        const uint32_t end = position + fragment_size;
+        while (position < end)
+        {
+            const uint32_t start_bit = position % 8U;
+            const uint32_t count = std::min(8U - start_bit, end - position);
+            coverage[position / 8U] |= networking_fragment_mask(start_bit, count);
+            position += count;
+        }
+        record.received_count += new_bytes;
+        return ;
+    }
+
+    static void networking_discard_staged_fragment(reassembly_record &record,
+        uint32_t position, uint32_t fragment_size) noexcept
+    {
+        const uint8_t *coverage = record.received.begin();
+        uint8_t *stored = record.payload.begin();
+        const uint32_t end = position + fragment_size;
+        while (position < end)
+        {
+            if ((coverage[position / 8U] & (1U << (position % 8U))) == 0U)
+                stored[position] = 0U;
+            ++position;
+        }
+        return ;
+    }
 
     static uint64_t networking_message_reassembly_allocation_size(
         uint32_t payload_size) noexcept
@@ -299,21 +340,6 @@ namespace
     {
         buffer.push_back(static_cast<uint8_t>((value >> 8U) & 0xffU));
         buffer.push_back(static_cast<uint8_t>(value & 0xffU));
-        return ;
-    }
-
-    static void write_u32(ft_vector<uint8_t> &buffer, uint32_t value) noexcept
-    {
-        uint32_t shift;
-
-        shift = 24U;
-        while (true)
-        {
-            buffer.push_back(static_cast<uint8_t>((value >> shift) & 0xffU));
-            if (shift == 0U)
-                break ;
-            shift -= 8U;
-        }
         return ;
     }
 
@@ -523,6 +549,27 @@ namespace
         return (FT_ERR_SUCCESS);
     }
 
+    static int32_t networking_message_join_decrypted_packet(const uint8_t *header,
+        ft_size_t header_size, const ft_vector<uint8_t> &plaintext,
+        ft_vector<uint8_t> &decoded_packet) noexcept
+    {
+        const ft_size_t plaintext_size = plaintext.size();
+        if (plaintext_size > FT_SYSTEM_SIZE_MAX - header_size)
+            return (FT_ERR_OUT_OF_RANGE);
+        const int32_t initialize_result = decoded_packet.initialize();
+        if (initialize_result != FT_ERR_SUCCESS)
+            return (initialize_result);
+        decoded_packet.resize(header_size + plaintext_size);
+        const int32_t resize_result = decoded_packet.get_error();
+        if (resize_result != FT_ERR_SUCCESS)
+            return (resize_result);
+        uint8_t *bytes = decoded_packet.begin();
+        ft_memcpy(bytes, header, header_size);
+        if (plaintext_size != 0U)
+            ft_memcpy(bytes + header_size, plaintext.begin(), plaintext_size);
+        return (FT_ERR_SUCCESS);
+    }
+
     static int32_t networking_message_validate_encrypted_frame(
         const uint8_t *data, ft_size_t size,
         const networking_message_transport_config &configuration) noexcept
@@ -535,13 +582,12 @@ namespace
         uint64_t packet_number;
         uint64_t key_epoch;
         ft_size_t offset;
-        ft_size_t index;
         int32_t result;
         int32_t cleanup_result;
         ft_bool validation_channel_initialized;
 
         validation_channel_initialized = FT_FALSE;
-        if (data == ft_nullptr || size < 36U + 16U)
+        if (data == ft_nullptr || size < 36U + NETWORKING_MESSAGE_AUTH_TAG_SIZE)
             return (FT_ERR_INVALID_ARGUMENT);
         offset = 4U;
         if (!read_u64(data, size, offset, connection_id)
@@ -559,23 +605,11 @@ namespace
             result = plaintext.initialize();
         if (result == FT_ERR_SUCCESS
             && validation_channel.open_at_epoch(packet_number, key_epoch,
-                data, 36U, data + 36U, size - 36U - 16U,
-                data + size - 16U, plaintext) == FT_FALSE)
+                data, 36U, data + 36U, size - 36U - NETWORKING_MESSAGE_AUTH_TAG_SIZE,
+                data + size - NETWORKING_MESSAGE_AUTH_TAG_SIZE, plaintext) == FT_FALSE)
             result = FT_ERR_PERMISSION_DENIED;
         if (result == FT_ERR_SUCCESS)
-            result = decoded_packet.initialize();
-        index = 0U;
-        while (result == FT_ERR_SUCCESS && index < 36U)
-        {
-            result = decoded_packet.push_back(data[index]);
-            index += 1U;
-        }
-        index = 0U;
-        while (result == FT_ERR_SUCCESS && index < plaintext.size())
-        {
-            result = decoded_packet.push_back(plaintext[index]);
-            index += 1U;
-        }
+            result = networking_message_join_decrypted_packet(data, 36U, plaintext, decoded_packet);
         if (result == FT_ERR_SUCCESS)
             result = networking_message_validate_plain_frame(
                 &decoded_packet[0], decoded_packet.size(),
@@ -932,20 +966,41 @@ static networking_message_transport::connection_record::channel_state *
 networking_message_find_channel_state(networking_message_transport::connection_record &connection,
     uint32_t channel) noexcept
 {
-    ft_size_t index;
-
-    index = 0U;
-    while (index < connection.channels.size())
+    auto &channels = connection.channels;
+    const ft_size_t count = channels.size();
+    auto *states = channels.begin();
+    ft_size_t index = 0U;
+    if (count <= 8U)
     {
-        if (connection.channels[index].channel == channel)
-            return (&connection.channels[index]);
-        index += 1U;
+        while (index < count && states[index].channel < channel)
+            ++index;
     }
+    else
+    {
+        ft_size_t end = count;
+        while (index < end)
+        {
+            const ft_size_t middle = index + (end - index) / 2U;
+            if (states[middle].channel < channel)
+                index = middle + 1U;
+            else
+                end = middle;
+        }
+    }
+    if (index < count && states[index].channel == channel)
+        return (states + index);
     networking_message_transport::connection_record::channel_state state;
     state.channel = channel;
-    if (connection.channels.push_back(state) != FT_ERR_SUCCESS)
+    if (index == count)
+    {
+        if (channels.push_back(state) != FT_ERR_SUCCESS)
+            return (ft_nullptr);
+        return (channels.begin() + index);
+    }
+    auto *inserted = channels.insert(states + index, state);
+    if (channels.get_error() != FT_ERR_SUCCESS)
         return (ft_nullptr);
-    return (&connection.channels[connection.channels.size() - 1U]);
+    return (inserted);
 }
 
 static uint32_t networking_message_select_lane(
@@ -1119,16 +1174,16 @@ static ft_bool networking_message_packet_is_recorded(
 
 static void networking_message_adjust_retransmission_cursor(
     networking_message_transport::connection_record &connection,
-    ft_size_t erased_index) noexcept
+    ft_size_t erased_index, ft_size_t remaining_count) noexcept
 {
-    if (connection.sent.empty())
+    if (remaining_count == 0U)
     {
         connection.retransmission_cursor = 0U;
         return ;
     }
     if (connection.retransmission_cursor > erased_index)
         connection.retransmission_cursor -= 1U;
-    if (connection.retransmission_cursor >= connection.sent.size())
+    if (connection.retransmission_cursor >= remaining_count)
         connection.retransmission_cursor = 0U;
     return ;
 }
@@ -1144,60 +1199,20 @@ static void networking_message_restore_packet_record(
     return ;
 }
 
-static void networking_message_delete_prepared_messages(
-    ft_vector<networking_received_message *> &prepared_messages,
-    ft_size_t first_index) noexcept
-{
-    while (first_index < prepared_messages.size())
-    {
-        delete prepared_messages[first_index];
-        first_index += 1U;
-    }
-    prepared_messages.clear();
-    return ;
-}
-
-static networking_received_message *networking_message_clone(
+static networking_received_message *networking_message_allocate_received(
     const networking_received_message &message) noexcept
 {
-    networking_received_message *clone;
-
-    if (NETWORKING_TEST_SHOULD_FAIL(
-            NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE) != FT_FALSE)
-        clone = ft_nullptr;
-    else
-        clone = new (std::nothrow) networking_received_message();
-    if (clone == ft_nullptr)
+    if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE))
         return (ft_nullptr);
-    clone->connection_id = message.connection_id;
-    clone->channel = message.channel;
-    clone->lane = message.lane;
-    clone->delivery = message.delivery;
-    clone->sequence = message.sequence;
-    if (clone->payload.initialize(message.payload) != FT_ERR_SUCCESS)
-    {
-        delete clone;
-        return (ft_nullptr);
-    }
-    return (clone);
-}
-
-static ft_bool networking_message_append_received(
-    ft_deque<networking_received_message *> &received_messages,
-    const networking_received_message &message) noexcept
-{
-    networking_received_message *stored_message;
-
-    stored_message = networking_message_clone(message);
+    networking_received_message *stored_message = new (std::nothrow) networking_received_message();
     if (stored_message == ft_nullptr)
-        return (FT_FALSE);
-    received_messages.push_back(stored_message);
-    if (received_messages.get_error() != FT_ERR_SUCCESS)
-    {
-        delete stored_message;
-        return (FT_FALSE);
-    }
-    return (FT_TRUE);
+        return (ft_nullptr);
+    stored_message->connection_id = message.connection_id;
+    stored_message->channel = message.channel;
+    stored_message->lane = message.lane;
+    stored_message->delivery = message.delivery;
+    stored_message->sequence = message.sequence;
+    return (stored_message);
 }
 
 static void networking_message_apply_ack(
@@ -1207,13 +1222,16 @@ static void networking_message_apply_ack(
     const uint16_t *acknowledged_range_ends,
     uint64_t now_milliseconds) noexcept
 {
-    ft_size_t sent_index;
-    uint32_t lane_index;
-
-    sent_index = 0U;
-    while (sent_index < connection.sent.size())
+    if (largest_acknowledged == 0U)
+        return ;
+    const ft_size_t sent_count = connection.sent.size();
+    sent_packet **entries = connection.sent.begin();
+    ft_size_t remaining_count = sent_count;
+    ft_size_t next_retained = 0U;
+    ft_size_t sent_index = 0U;
+    while (sent_index < sent_count)
     {
-        sent_packet *sent = connection.sent[sent_index];
+        sent_packet *sent = entries[sent_index++];
         ft_bool acknowledged;
         uint64_t difference;
         uint32_t range_index;
@@ -1229,8 +1247,8 @@ static void networking_message_apply_ack(
             range_index = 0U;
             while (range_index < acknowledged_range_count)
             {
-                if (difference >= acknowledged_range_starts[range_index]
-                    && difference <= acknowledged_range_ends[range_index])
+                if (difference >= acknowledged_range_ends[range_index]
+                    && difference <= acknowledged_range_starts[range_index])
                 {
                     acknowledged = FT_TRUE;
                     break ;
@@ -1240,7 +1258,9 @@ static void networking_message_apply_ack(
         }
         if (acknowledged == FT_FALSE)
         {
-            sent_index += 1U;
+            if (next_retained != sent_index - 1U)
+                entries[next_retained] = sent;
+            ++next_retained;
             continue ;
         }
         connection.statistics.packets_acknowledged = networking_message_saturating_add(
@@ -1313,40 +1333,27 @@ static void networking_message_apply_ack(
         }
         if (connection.congestion_window > 48000U)
             connection.congestion_window = 48000U;
+        const ft_size_t payload_size = sent->frame->payload.size();
         connection.statistics.queue_bytes -= std::min<uint64_t>(
-            connection.statistics.queue_bytes, sent->frame->payload.size());
-        lane_index = static_cast<uint32_t>(sent->frame->lane) % 4U;
+            connection.statistics.queue_bytes, payload_size);
+        const uint32_t lane_index = static_cast<uint32_t>(sent->frame->lane) % 4U;
         connection.statistics.lane_queued_bytes[lane_index] -=
             std::min<uint64_t>(
                 connection.statistics.lane_queued_bytes[lane_index],
-                sent->frame->payload.size());
+                payload_size);
         if (is_reliable(sent->frame->delivery) != FT_FALSE)
             connection.reliable_flow_reserved -= std::min<uint64_t>(
                 connection.reliable_flow_reserved,
-                sent->frame->payload.size());
+                payload_size);
         delete sent->frame;
         delete sent;
-        connection.sent.erase(connection.sent.begin() + sent_index);
+        --remaining_count;
         networking_message_adjust_retransmission_cursor(connection,
-            sent_index);
+            next_retained, remaining_count);
     }
-}
-
-static ft_bool networking_message_append_ordered(
-    ft_vector<networking_received_message *> &ordered_messages,
-    const networking_received_message &message) noexcept
-{
-    networking_received_message *stored_message;
-
-    stored_message = networking_message_clone(message);
-    if (stored_message == ft_nullptr)
-        return (FT_FALSE);
-    if (ordered_messages.push_back(stored_message) != FT_ERR_SUCCESS)
-    {
-        delete stored_message;
-        return (FT_FALSE);
-    }
-    return (FT_TRUE);
+    if (remaining_count != sent_count)
+        connection.sent.resize(remaining_count);
+    return ;
 }
 
 static void networking_message_record_lane_receive(
@@ -1364,153 +1371,114 @@ static void networking_message_record_lane_receive(
             connection.statistics.lane_bytes_received[lane_index], payload_size);
 }
 
+static ft_size_t networking_message_find_ordered_pending(
+    const ft_vector<networking_received_message *> &pending, uint32_t channel,
+    uint64_t sequence) noexcept
+{
+    const ft_size_t count = pending.size();
+    const auto *messages = pending.begin();
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        if (messages[index]->channel == channel && messages[index]->sequence == sequence)
+            return (index);
+        ++index;
+    }
+    return (count);
+}
+
 static int32_t networking_message_deliver(
     networking_message_transport::connection_record &connection,
-    networking_received_message &message,
+    const networking_received_message &message, ft_vector<uint8_t> &payload,
     ft_deque<networking_received_message *> &received_messages) noexcept
 {
-    networking_message_transport::connection_record::channel_state *channel_state;
-    ft_vector<networking_received_message *> prepared_messages;
-    ft_size_t index;
-    ft_size_t appended_count;
-    uint64_t expected_sequence;
-    ft_bool found_pending;
-    int32_t result;
-
-    channel_state = networking_message_find_channel_state(connection, message.channel);
+    auto *channel_state = networking_message_find_channel_state(connection, message.channel);
     if (channel_state == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (message.delivery == networking_message_delivery::UNRELIABLE_SEQUENCED)
+    const ft_bool reliable = (message.delivery == networking_message_delivery::RELIABLE_ORDERED);
+    const ft_bool sequenced = (message.delivery == networking_message_delivery::UNRELIABLE_SEQUENCED);
+    if ((reliable && message.sequence < channel_state->next_receive_reliable_sequence)
+        || (sequenced && message.sequence <= channel_state->latest_unreliable_receive_sequence))
+        return (FT_ERR_SUCCESS);
+
+    networking_received_message *stored_message = networking_message_allocate_received(message);
+    if (stored_message == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    auto &ordered_pending = connection.ordered_pending;
+    if (reliable && message.sequence > channel_state->next_receive_reliable_sequence)
     {
-        if (message.sequence
-            <= channel_state->latest_unreliable_receive_sequence)
-            return (FT_ERR_SUCCESS);
-        if (networking_message_append_received(received_messages, message)
-            == FT_FALSE)
-            return (FT_ERR_NO_MEMORY);
-        channel_state->latest_unreliable_receive_sequence = message.sequence;
-        connection.statistics.messages_received = networking_message_saturating_add(
-            connection.statistics.messages_received, 1U);
-        networking_message_record_lane_receive(connection, message);
-        return (FT_ERR_SUCCESS);
-    }
-    if (message.delivery != networking_message_delivery::RELIABLE_ORDERED)
-    {
-        if (networking_message_append_received(received_messages, message)
-            == FT_FALSE)
-            return (FT_ERR_NO_MEMORY);
-        connection.statistics.messages_received = networking_message_saturating_add(
-            connection.statistics.messages_received, 1U);
-        networking_message_record_lane_receive(connection, message);
-        return (FT_ERR_SUCCESS);
-    }
-    if (message.sequence < channel_state->next_receive_reliable_sequence)
-        return (FT_ERR_SUCCESS);
-    if (message.sequence > channel_state->next_receive_reliable_sequence)
-    {
-        if (networking_message_append_ordered(connection.ordered_pending,
-                message) == FT_FALSE)
-            return (FT_ERR_NO_MEMORY);
-        return (FT_ERR_SUCCESS);
+        int32_t result = ordered_pending.push_back(stored_message);
+        if (result == FT_ERR_SUCCESS)
+        {
+            result = stored_message->payload.move(payload);
+            if (result != FT_ERR_SUCCESS)
+                ordered_pending.pop_back();
+        }
+        if (result != FT_ERR_SUCCESS)
+            delete stored_message;
+        return (result);
     }
 
-    result = prepared_messages.initialize();
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    networking_received_message *prepared_message =
-        networking_message_clone(message);
-    if (prepared_message == ft_nullptr
-        || prepared_messages.push_back(prepared_message) != FT_ERR_SUCCESS)
+    received_messages.push_back(stored_message);
+    if (received_messages.get_error() != FT_ERR_SUCCESS)
     {
-        delete prepared_message;
-        networking_message_delete_prepared_messages(prepared_messages, 0U);
-        (void)prepared_messages.destroy();
+        delete stored_message;
         return (FT_ERR_NO_MEMORY);
     }
-    expected_sequence = message.sequence;
-    while (true)
+    ft_size_t appended_count = 1U;
+    uint64_t next_sequence = message.sequence + 1U;
+    int32_t result = FT_ERR_SUCCESS;
+    if (reliable && !ordered_pending.empty())
     {
-        expected_sequence += 1U;
-        found_pending = FT_FALSE;
-        index = 0U;
-        while (index < connection.ordered_pending.size())
+        const ft_size_t pending_count = ordered_pending.size();
+        ft_size_t index = networking_message_find_ordered_pending(ordered_pending,
+            message.channel, next_sequence);
+        while (index < pending_count)
         {
-            networking_received_message *pending_message = connection.ordered_pending[index];
-            if (pending_message->channel == message.channel
-                && pending_message->sequence == expected_sequence)
+            received_messages.push_back(ordered_pending[index]);
+            if (received_messages.get_error() != FT_ERR_SUCCESS)
             {
-                prepared_message = networking_message_clone(*pending_message);
-                if (prepared_message == ft_nullptr
-                    || prepared_messages.push_back(prepared_message)
-                        != FT_ERR_SUCCESS)
-                {
-                    delete prepared_message;
-                    networking_message_delete_prepared_messages(
-                        prepared_messages, 0U);
-                    (void)prepared_messages.destroy();
-                    return (FT_ERR_NO_MEMORY);
-                }
-                found_pending = FT_TRUE;
+                result = FT_ERR_NO_MEMORY;
                 break ;
             }
-            index += 1U;
+            ++appended_count;
+            ++next_sequence;
+            index = networking_message_find_ordered_pending(ordered_pending,
+                message.channel, next_sequence);
         }
-        if (found_pending == FT_FALSE)
-            break ;
     }
-
-    appended_count = 0U;
-    while (appended_count < prepared_messages.size())
+    if (result == FT_ERR_SUCCESS)
+        result = stored_message->payload.move(payload);
+    if (result != FT_ERR_SUCCESS)
     {
-        received_messages.push_back(prepared_messages[appended_count]);
-        if (received_messages.get_error() != FT_ERR_SUCCESS)
+        // Ordered messages still belong to the pending queue until all pushes succeed.
+        while (appended_count != 0U)
         {
-            while (appended_count != 0U)
-            {
-                networking_received_message *rollback_message;
-
-                rollback_message = received_messages.pop_back();
-                delete rollback_message;
-                prepared_messages[appended_count - 1U] = ft_nullptr;
-                appended_count -= 1U;
-            }
-            networking_message_delete_prepared_messages(prepared_messages, 0U);
-            (void)prepared_messages.destroy();
-            return (FT_ERR_NO_MEMORY);
+            (void)received_messages.pop_back();
+            --appended_count;
         }
-        appended_count += 1U;
+        delete stored_message;
+        return (result);
     }
-    index = 0U;
-    while (index < prepared_messages.size())
+
+    networking_message_record_lane_receive(connection, *stored_message);
+    if (reliable)
     {
-        connection.statistics.messages_received = networking_message_saturating_add(
-            connection.statistics.messages_received, 1U);
-        networking_message_record_lane_receive(connection,
-            *prepared_messages[index]);
-        if (index != 0U)
+        uint64_t sequence = message.sequence + 1U;
+        while (sequence != next_sequence)
         {
-            ft_size_t pending_index = 0U;
-
-            while (pending_index < connection.ordered_pending.size())
-            {
-                if (connection.ordered_pending[pending_index]->channel
-                        == message.channel
-                    && connection.ordered_pending[pending_index]->sequence
-                        == prepared_messages[index]->sequence)
-                {
-                    delete connection.ordered_pending[pending_index];
-                    connection.ordered_pending.erase(
-                        connection.ordered_pending.begin() + pending_index);
-                    break ;
-                }
-                pending_index += 1U;
-            }
+            const ft_size_t index = networking_message_find_ordered_pending(
+                ordered_pending, message.channel, sequence);
+            networking_message_record_lane_receive(connection, *ordered_pending[index]);
+            ordered_pending.erase(ordered_pending.begin() + index);
+            ++sequence;
         }
-        channel_state->next_receive_reliable_sequence += 1U;
-        index += 1U;
+        channel_state->next_receive_reliable_sequence = next_sequence;
     }
-    prepared_messages.clear();
-    (void)prepared_messages.destroy();
+    if (sequenced)
+        channel_state->latest_unreliable_receive_sequence = message.sequence;
+    connection.statistics.messages_received =
+        networking_message_saturating_add(connection.statistics.messages_received, appended_count);
     return (FT_ERR_SUCCESS);
 }
 
@@ -2052,7 +2020,7 @@ int32_t networking_message_connection::get_remote_identity(
 networking_message_transport::networking_message_transport() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _configuration(), _io(ft_nullptr),
       _listening(FT_FALSE), _listen_endpoint(),
-      _connections(), _received_messages(), _events(), _callback_events(),
+      _connections(), _sorted_connection_count(0U), _received_messages(), _events(), _callback_events(),
       _commands(),
       _event_callback(ft_nullptr), _event_callback_user_data(ft_nullptr),
       _containers_initialised(FT_FALSE),
@@ -2097,6 +2065,7 @@ void networking_message_transport::clear_records() noexcept
         index += 1U;
     }
     this->_connections.clear();
+    this->_sorted_connection_count = 0U;
     while (!this->_received_messages.empty())
     {
         networking_received_message *message = this->_received_messages.pop_front();
@@ -2886,6 +2855,11 @@ int32_t networking_message_transport::move(networking_message_transport &other) 
     {
         result = this->_connections.move(other._connections);
         if (result == FT_ERR_SUCCESS)
+        {
+            this->_sorted_connection_count = other._sorted_connection_count;
+            other._sorted_connection_count = 0U;
+        }
+        if (result == FT_ERR_SUCCESS)
             result = this->_received_messages.move(other._received_messages);
         if (result == FT_ERR_SUCCESS)
             result = this->_events.move(other._events);
@@ -2930,16 +2904,52 @@ int32_t networking_message_transport::move(networking_message_transport &other) 
     return (FT_ERR_SUCCESS);
 }
 
+int32_t networking_message_transport::append_connection_record(connection_record *record) noexcept
+{
+    const ft_size_t count = this->_connections.size();
+    const ft_bool extends_sorted_prefix = (count == this->_sorted_connection_count
+        && (count == 0U || this->_connections.begin()[count - 1U]->id < record->id));
+    const int32_t result = this->_connections.push_back(record);
+    if (result == FT_ERR_SUCCESS && extends_sorted_prefix)
+        ++this->_sorted_connection_count;
+    return (result);
+}
+
+void networking_message_transport::pop_connection_record() noexcept
+{
+    if (this->_sorted_connection_count != 0U
+        && this->_sorted_connection_count == this->_connections.size())
+        --this->_sorted_connection_count;
+    this->_connections.pop_back();
+    return ;
+}
+
 networking_message_transport::connection_record *
 networking_message_transport::find_connection(uint64_t connection_id) const noexcept
 {
-    ft_size_t index;
-
-    index = 0U;
-    while (index < this->_connections.size())
+    const ft_size_t count = this->_connections.size();
+    const auto *records = this->_connections.begin();
+    ft_size_t index = 0U;
+    // Legacy incoming IDs can arrive out of order. They retain insertion order in the tail.
+    if (count > 8U && this->_sorted_connection_count != 0U)
     {
-        if (this->_connections[index]->id == connection_id)
-            return (this->_connections[index]);
+        ft_size_t end = this->_sorted_connection_count;
+        while (index < end)
+        {
+            const ft_size_t middle = index + (end - index) / 2U;
+            if (records[middle]->id < connection_id)
+                index = middle + 1U;
+            else
+                end = middle;
+        }
+        if (index < this->_sorted_connection_count && records[index]->id == connection_id)
+            return (records[index]);
+        index = this->_sorted_connection_count;
+    }
+    while (index < count)
+    {
+        if (records[index]->id == connection_id)
+            return (records[index]);
         index += 1U;
     }
     return (ft_nullptr);
@@ -2952,13 +2962,15 @@ networking_message_transport::find_peer_connection(uint64_t peer_connection_id,
     ft_size_t index;
     connection_record *match;
 
+    const ft_size_t count = this->_connections.size();
+    const auto *records = this->_connections.begin();
     index = 0U;
     match = ft_nullptr;
-    while (index < this->_connections.size())
+    while (index < count)
     {
         connection_record *candidate;
 
-        candidate = this->_connections[index];
+        candidate = records[index];
         if (candidate->handshake_enabled != FT_FALSE
             && candidate->handshake.get_peer_connection_id()
                 == peer_connection_id
@@ -2981,13 +2993,15 @@ networking_message_transport::find_peer_connection_by_id(
     ft_size_t index;
     connection_record *match;
 
+    const ft_size_t count = this->_connections.size();
+    const auto *records = this->_connections.begin();
     index = 0U;
     match = ft_nullptr;
-    while (index < this->_connections.size())
+    while (index < count)
     {
         connection_record *candidate;
 
-        candidate = this->_connections[index];
+        candidate = records[index];
         if (candidate->handshake_enabled != FT_FALSE
             && candidate->handshake.get_peer_connection_id()
                 == peer_connection_id)
@@ -3008,13 +3022,15 @@ networking_message_transport::find_handshaking_client(
     ft_size_t index;
     connection_record *match;
 
+    const ft_size_t count = this->_connections.size();
+    const auto *records = this->_connections.begin();
     index = 0U;
     match = ft_nullptr;
-    while (index < this->_connections.size())
+    while (index < count)
     {
         connection_record *candidate;
 
-        candidate = this->_connections[index];
+        candidate = records[index];
         if (candidate->handshake_enabled != FT_FALSE
             && candidate->state
                 == networking_message_connection_state::HANDSHAKING
@@ -3390,7 +3406,7 @@ int32_t networking_message_transport::open_connection(
     }
     record->last_receive = this->_io->now_milliseconds();
     record->last_send = record->last_receive;
-    result = this->_connections.push_back(record);
+    result = this->append_connection_record(record);
     if (result != FT_ERR_SUCCESS)
     {
         delete record;
@@ -3400,7 +3416,7 @@ int32_t networking_message_transport::open_connection(
     result = connection.initialize();
     if (result != FT_ERR_SUCCESS)
     {
-        this->_connections.pop_back();
+        this->pop_connection_record();
         delete record;
         this->unlock_transport();
         return (result);
@@ -3414,7 +3430,7 @@ int32_t networking_message_transport::open_connection(
             record->id, FT_ERR_SUCCESS, ft_nullptr);
     if (result != FT_ERR_SUCCESS)
     {
-        this->_connections.pop_back();
+        this->pop_connection_record();
         delete record;
         (void)connection.destroy();
         this->unlock_transport();
@@ -3429,7 +3445,7 @@ int32_t networking_message_transport::open_connection(
                 networking_message_event_type::CONNECTING, record->id);
             networking_message_remove_last_event(this->_callback_events,
                 networking_message_event_type::CONNECTING, record->id);
-            this->_connections.pop_back();
+            this->pop_connection_record();
             delete record;
             (void)connection.destroy();
             this->unlock_transport();
@@ -3921,6 +3937,15 @@ int32_t networking_message_transport::send_connection_message(
     }
     payload_capacity = this->_configuration.maximum_datagram_size
         - NETWORKING_MESSAGE_HEADER_SIZE - NETWORKING_MESSAGE_FRAME_HEADER_SIZE;
+    if (connection->secure_enabled != FT_FALSE)
+    {
+        if (payload_capacity <= NETWORKING_MESSAGE_AUTH_TAG_SIZE)
+        {
+            this->unlock_transport();
+            return (FT_ERR_CONFIGURATION);
+        }
+        payload_capacity -= NETWORKING_MESSAGE_AUTH_TAG_SIZE;
+    }
     if (payload_capacity == 0U)
     {
         this->unlock_transport();
@@ -4770,73 +4795,82 @@ static uint32_t networking_message_encodable_ack_range_count(
     return (range_index);
 }
 
-    static ft_bool networking_message_encode_frame(const outgoing_frame &frame,
+template <typename Value>
+static void networking_message_write_frame_integer(uint8_t *&output, Value value) noexcept
+{
+    ft_size_t index = sizeof(Value);
+    while (index != 0U)
+    {
+        --index;
+        *output++ = static_cast<uint8_t>(value >> (index * 8U));
+    }
+    return ;
+}
+
+static ft_bool networking_message_encode_frame(const outgoing_frame &frame,
     uint64_t connection_id, uint64_t packet_number, uint64_t key_epoch,
     uint64_t largest_received,
     const networking_ack_range *received_ranges, uint32_t received_range_count,
-    ft_vector<uint8_t> &packet, uint32_t maximum_size) noexcept
+    ft_vector<uint8_t> &packet, uint32_t maximum_size, ft_bool secure_enabled) noexcept
 {
-    uint32_t encoded_range_count;
-
-    if (frame.payload.size() > 65535U || frame.total_size > 0xffffffffU
+    constexpr ft_size_t HEADER_SIZE = NETWORKING_MESSAGE_HEADER_SIZE
+        + NETWORKING_MESSAGE_FRAME_HEADER_SIZE;
+    const ft_size_t payload_size = frame.payload.size();
+    const ft_size_t packet_size = HEADER_SIZE + payload_size;
+    ft_size_t wire_size = packet_size;
+    if (secure_enabled)
+        wire_size += NETWORKING_MESSAGE_AUTH_TAG_SIZE;
+    if (payload_size > 65535U || wire_size > maximum_size
         || received_range_count > NETWORKING_MESSAGE_ACK_RANGE_LIMIT
         || (received_range_count != 0U && received_ranges == ft_nullptr)
         || packet.is_initialised() != FT_CLASS_STATE_INITIALISED)
         return (FT_FALSE);
-    packet.clear();
-    packet.reserve(maximum_size);
-    packet.push_back(NETWORKING_MESSAGE_MAGIC);
-    packet.push_back(NETWORKING_MESSAGE_VERSION);
-    packet.push_back(NETWORKING_MESSAGE_FRAME);
-    packet.push_back(static_cast<uint8_t>(frame.delivery));
-    write_u64(packet, connection_id);
-    write_u64(packet, frame.message_id);
-    write_u64(packet, packet_number);
-    write_u64(packet, key_epoch);
-    write_u64(packet, largest_received);
-    encoded_range_count = networking_message_encodable_ack_range_count(
+    if (secure_enabled)
+    {
+        packet.reserve(wire_size);
+        if (packet.get_error() != FT_ERR_SUCCESS)
+            return (FT_FALSE);
+    }
+    packet.resize(packet_size);
+    if (packet.get_error() != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    uint8_t *output = packet.begin();
+    *output++ = NETWORKING_MESSAGE_MAGIC;
+    *output++ = NETWORKING_MESSAGE_VERSION;
+    *output++ = NETWORKING_MESSAGE_FRAME;
+    *output++ = static_cast<uint8_t>(frame.delivery);
+    networking_message_write_frame_integer(output, connection_id);
+    networking_message_write_frame_integer(output, frame.message_id);
+    networking_message_write_frame_integer(output, packet_number);
+    networking_message_write_frame_integer(output, key_epoch);
+    networking_message_write_frame_integer(output, largest_received);
+    const uint32_t encoded_range_count = networking_message_encodable_ack_range_count(
         largest_received, received_ranges, received_range_count);
-    packet.push_back(static_cast<uint8_t>(encoded_range_count));
+    *output++ = static_cast<uint8_t>(encoded_range_count);
     uint32_t range_index = 0U;
     while (range_index < NETWORKING_MESSAGE_ACK_RANGE_LIMIT)
     {
         uint16_t start_delta = 0U;
         uint16_t end_delta = 0U;
-
-        if (range_index < encoded_range_count
-            && received_ranges != ft_nullptr
-            && received_ranges[range_index].start <= largest_received
-            && largest_received - received_ranges[range_index].start <= 65535U
-            && received_ranges[range_index].end <= largest_received
-            && largest_received - received_ranges[range_index].end <= 65535U)
+        if (range_index < encoded_range_count)
         {
-            start_delta = static_cast<uint16_t>(largest_received
-                - received_ranges[range_index].start);
-            end_delta = static_cast<uint16_t>(largest_received
-                - received_ranges[range_index].end);
+            start_delta = static_cast<uint16_t>(largest_received - received_ranges[range_index].start);
+            end_delta = static_cast<uint16_t>(largest_received - received_ranges[range_index].end);
         }
-        write_u16(packet, start_delta);
-        write_u16(packet, end_delta);
-        range_index += 1U;
+        networking_message_write_frame_integer(output, start_delta);
+        networking_message_write_frame_integer(output, end_delta);
+        ++range_index;
     }
-    write_u32(packet, frame.channel);
-    packet.push_back(frame.lane);
-    packet.push_back(frame.fragment_count);
-    write_u32(packet, frame.total_size);
-    write_u32(packet, frame.offset);
-    write_u64(packet, frame.sequence);
-    write_u16(packet, static_cast<uint16_t>(frame.payload.size()));
-    ft_size_t payload_index = 0U;
-    while (payload_index < frame.payload.size())
-    {
-        packet.push_back(frame.payload[payload_index]);
-        payload_index += 1U;
-    }
-    if (packet.get_error() != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    if (packet.size() <= maximum_size)
-        return (FT_TRUE);
-    return (FT_FALSE);
+    networking_message_write_frame_integer(output, frame.channel);
+    *output++ = frame.lane;
+    *output++ = frame.fragment_count;
+    networking_message_write_frame_integer(output, frame.total_size);
+    networking_message_write_frame_integer(output, frame.offset);
+    networking_message_write_frame_integer(output, frame.sequence);
+    networking_message_write_frame_integer(output, static_cast<uint16_t>(payload_size));
+    if (payload_size != 0U)
+        ft_memcpy(output, frame.payload.begin(), payload_size);
+    return (FT_TRUE);
 }
 
 static int32_t networking_message_encode_ack(uint64_t connection_id, uint64_t packet_number,
@@ -5033,90 +5067,52 @@ static int32_t networking_message_protect_packet(networking_secure_channel &secu
     ft_size_t offset;
     uint64_t packet_number;
     ft_vector<uint8_t> ciphertext;
-    uint8_t authentication_tag[16];
-    ft_vector<uint8_t> protected_packet;
-    int32_t result;
+    uint8_t authentication_tag[NETWORKING_MESSAGE_AUTH_TAG_SIZE];
 
-    if (packet.size() < 20U || packet.is_initialised() != FT_CLASS_STATE_INITIALISED)
+    if (packet.is_initialised() != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t packet_size = packet.size();
+    if (packet_size < 20U || packet_size > FT_SYSTEM_SIZE_MAX - sizeof(authentication_tag))
+        return (FT_ERR_INVALID_ARGUMENT);
+    const uint8_t *packet_bytes = packet.begin();
+    const uint8_t frame_type = packet_bytes[2];
     associated_data_length = 36U;
     packet_number_offset = 20U;
-    if (packet[2] == NETWORKING_MESSAGE_ACK
-        || packet[2] == NETWORKING_MESSAGE_CLOSE
-        || packet[2] == NETWORKING_MESSAGE_PATH_CHALLENGE
-        || packet[2] == NETWORKING_MESSAGE_PATH_RESPONSE
-        || packet[2] == NETWORKING_MESSAGE_FLOW_CONTROL
-        || packet[2] == NETWORKING_MESSAGE_KEY_UPDATE
-        || packet[2] == NETWORKING_MESSAGE_KEY_UPDATE_ACK)
+    if (frame_type == NETWORKING_MESSAGE_ACK
+        || frame_type == NETWORKING_MESSAGE_CLOSE
+        || frame_type == NETWORKING_MESSAGE_PATH_CHALLENGE
+        || frame_type == NETWORKING_MESSAGE_PATH_RESPONSE
+        || frame_type == NETWORKING_MESSAGE_FLOW_CONTROL
+        || frame_type == NETWORKING_MESSAGE_KEY_UPDATE
+        || frame_type == NETWORKING_MESSAGE_KEY_UPDATE_ACK)
     {
         associated_data_length = 28U;
         packet_number_offset = 12U;
     }
     offset = packet_number_offset;
-    if (packet.size() < associated_data_length
-        || !read_u64(&packet[0], packet.size(), offset, packet_number))
+    if (packet_size < associated_data_length
+        || !read_u64(packet_bytes, packet_size, offset, packet_number))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (!secure_channel.seal(packet_number, &packet[0], associated_data_length,
-        &packet[associated_data_length], packet.size() - associated_data_length,
+    const ft_size_t body_size = packet_size - associated_data_length;
+    if (!secure_channel.seal(packet_number, packet_bytes, associated_data_length,
+        packet_bytes + associated_data_length, body_size,
         ciphertext, authentication_tag))
     {
-        if (ciphertext.is_initialised() == FT_CLASS_STATE_INITIALISED)
-            (void)ciphertext.destroy();
         networking_message_wipe(authentication_tag,
             sizeof(authentication_tag));
         return (FT_ERR_INTERNAL);
     }
-    result = protected_packet.initialize();
-    if (result != FT_ERR_SUCCESS)
+    packet.resize(packet_size + sizeof(authentication_tag));
+    const int32_t result = packet.get_error();
+    if (result == FT_ERR_SUCCESS)
     {
-        if (ciphertext.is_initialised() == FT_CLASS_STATE_INITIALISED)
-            (void)ciphertext.destroy();
-        networking_message_wipe(authentication_tag,
-            sizeof(authentication_tag));
-        return (result);
-    }
-    offset = 0U;
-    while (offset < associated_data_length)
-    {
-        protected_packet.push_back(packet[offset]);
-        offset += 1U;
-    }
-    offset = 0U;
-    while (offset < ciphertext.size())
-    {
-        protected_packet.push_back(ciphertext[offset]);
-        offset += 1U;
-    }
-    offset = 0U;
-    while (offset < sizeof(authentication_tag))
-    {
-        protected_packet.push_back(authentication_tag[offset]);
-        offset += 1U;
+        uint8_t *wire_bytes = packet.begin();
+        if (body_size != 0U)
+            ft_memcpy(wire_bytes + associated_data_length, ciphertext.begin(), body_size);
+        ft_memcpy_fixed<NETWORKING_MESSAGE_AUTH_TAG_SIZE>(wire_bytes + packet_size, authentication_tag);
     }
     networking_message_wipe(authentication_tag, sizeof(authentication_tag));
-    if (protected_packet.get_error() != FT_ERR_SUCCESS)
-        result = FT_ERR_NO_MEMORY;
-    else
-        result = packet.destroy();
-    if (result == FT_ERR_SUCCESS)
-        result = packet.move(protected_packet);
-    if (ciphertext.is_initialised() == FT_CLASS_STATE_INITIALISED)
-    {
-        int32_t ciphertext_destroy_result = ciphertext.destroy();
-
-        if (result == FT_ERR_SUCCESS)
-            result = ciphertext_destroy_result;
-    }
-    if (protected_packet.is_initialised() == FT_CLASS_STATE_INITIALISED)
-    {
-        int32_t protected_destroy_result = protected_packet.destroy();
-
-        if (result == FT_ERR_SUCCESS)
-            result = protected_destroy_result;
-    }
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    return (FT_ERR_SUCCESS);
+    return (result);
 }
 
 static void networking_message_drop_queued_frame(
@@ -5415,7 +5411,7 @@ int32_t networking_message_transport::advance_connection(connection_record &conn
                 delete sent;
                 connection.sent.erase(connection.sent.begin() + candidate_index);
                 networking_message_adjust_retransmission_cursor(connection,
-                    candidate_index);
+                    candidate_index, connection.sent.size());
                 continue ;
             }
             minimum_window = static_cast<uint64_t>(this->_configuration.maximum_datagram_size) * 2U;
@@ -5432,7 +5428,7 @@ int32_t networking_message_transport::advance_connection(connection_record &conn
                 networking_message_wire_connection_id(connection), connection.next_packet,
                 key_epoch, connection.largest_received, connection.received_ranges,
                 connection.received_range_count, packet,
-                this->_configuration.maximum_datagram_size))
+                this->_configuration.maximum_datagram_size, connection.secure_enabled))
                 return (FT_ERR_INTERNAL);
             packet_number_in_flight = connection.next_packet;
             networking_message_advance_packet_number(connection.next_packet);
@@ -5538,7 +5534,7 @@ int32_t networking_message_transport::advance_connection(connection_record &conn
         networking_message_wire_connection_id(connection), connection.next_packet,
         key_epoch, connection.largest_received, connection.received_ranges,
         connection.received_range_count, packet,
-        this->_configuration.maximum_datagram_size))
+        this->_configuration.maximum_datagram_size, connection.secure_enabled))
     {
         connection.pending_lanes[lane_index].push_front(frame);
         if (connection.pending_lanes[lane_index].get_error() != FT_ERR_SUCCESS)
@@ -5828,7 +5824,7 @@ int32_t networking_message_transport::process_handshake_datagram(
                 this->_next_connection_id = 0U;
             else
                 this->_next_connection_id += 1U;
-            result = this->_connections.push_back(connection);
+            result = this->append_connection_record(connection);
             if (result != FT_ERR_SUCCESS)
             {
                 delete connection;
@@ -5969,7 +5965,7 @@ int32_t networking_message_transport::process_handshake_datagram(
         }
         if (result != FT_ERR_SUCCESS && connection_created != FT_FALSE)
         {
-            this->_connections.pop_back();
+            this->pop_connection_record();
             delete connection;
             networking_message_wipe(send_key, sizeof(send_key));
             networking_message_wipe(receive_key, sizeof(receive_key));
@@ -5986,7 +5982,7 @@ int32_t networking_message_transport::process_handshake_datagram(
                 connection->id, FT_ERR_SUCCESS, ft_nullptr);
             if (result != FT_ERR_SUCCESS)
             {
-                this->_connections.pop_back();
+                this->pop_connection_record();
                 delete connection;
                 networking_message_wipe(send_key, sizeof(send_key));
                 networking_message_wipe(receive_key, sizeof(receive_key));
@@ -6177,6 +6173,7 @@ int32_t networking_message_transport::process_datagram_impl(
     char close_text[96];
     connection_record *connection;
     ft_vector<uint8_t> decrypted_packet;
+    ft_vector<uint8_t> decoded_packet;
     networking_ack_range received_ranges_before[
         NETWORKING_MESSAGE_ACK_RANGE_LIMIT];
     uint32_t received_range_count_before;
@@ -6186,15 +6183,13 @@ int32_t networking_message_transport::process_datagram_impl(
     int32_t initialization_result;
     reassembly_record *record_pointer;
     ft_size_t reassembly_index;
-    uint32_t byte_index;
+    uint32_t new_fragment_bytes;
     uint64_t aggregate_reassembly_bytes;
     uint64_t allocation_size;
-    uint8_t newly_received_bitmap[8192U];
     ft_bool record_created;
 
     channel = 0U;
     record_created = FT_FALSE;
-    ft_memset(newly_received_bitmap, 0, sizeof(newly_received_bitmap));
     offset = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || this->_io == ft_nullptr)
@@ -6310,7 +6305,7 @@ int32_t networking_message_transport::process_datagram_impl(
         }
         connection->last_receive = this->_io->now_milliseconds();
         connection->last_send = connection->last_receive;
-        initialization_result = this->_connections.push_back(connection);
+        initialization_result = this->append_connection_record(connection);
         if (initialization_result != FT_ERR_SUCCESS)
         {
             delete connection;
@@ -6321,7 +6316,7 @@ int32_t networking_message_transport::process_datagram_impl(
             FT_ERR_SUCCESS, ft_nullptr);
         if (initialization_result != FT_ERR_SUCCESS)
         {
-            this->_connections.pop_back();
+            this->pop_connection_record();
             delete connection;
             return (initialization_result);
         }
@@ -6357,7 +6352,7 @@ int32_t networking_message_transport::process_datagram_impl(
             associated_data_length = 28U;
             packet_number_offset = 12U;
         }
-        if (size < associated_data_length + 16U)
+        if (size < associated_data_length + NETWORKING_MESSAGE_AUTH_TAG_SIZE)
             return (FT_ERR_INVALID_ARGUMENT);
         packet_offset = packet_number_offset;
         if (!read_u64(data, size, packet_offset, packet_number_value)
@@ -6378,7 +6373,8 @@ int32_t networking_message_transport::process_datagram_impl(
         if (!connection->secure_channel.open_at_epoch(packet_number_value,
             key_epoch, data,
             associated_data_length, data + associated_data_length,
-            size - associated_data_length - 16U, data + size - 16U,
+            size - associated_data_length - NETWORKING_MESSAGE_AUTH_TAG_SIZE,
+            data + size - NETWORKING_MESSAGE_AUTH_TAG_SIZE,
             decrypted_packet, FT_FALSE))
         {
             connection->statistics.authentication_failures =
@@ -6386,26 +6382,13 @@ int32_t networking_message_transport::process_datagram_impl(
                     connection->statistics.authentication_failures, 1U);
             return (FT_ERR_PERMISSION_DENIED);
         }
-        ft_vector<uint8_t> decoded_packet;
-        if (decoded_packet.initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_NO_MEMORY);
-        ft_size_t decoded_index = 0U;
-        while (decoded_index < associated_data_length)
-        {
-            decoded_packet.push_back(data[decoded_index]);
-            decoded_index += 1U;
-        }
-        decoded_index = 0U;
-        while (decoded_index < decrypted_packet.size())
-        {
-            decoded_packet.push_back(decrypted_packet[decoded_index]);
-            decoded_index += 1U;
-        }
-        size = decoded_packet.size();
+        const int32_t decode_result = networking_message_join_decrypted_packet(data,
+            associated_data_length, decrypted_packet, decoded_packet);
         (void)decrypted_packet.destroy();
-        if (decrypted_packet.move(decoded_packet) != FT_ERR_SUCCESS)
-            return (FT_ERR_NO_MEMORY);
-        data = &decrypted_packet[0];
+        if (decode_result != FT_ERR_SUCCESS)
+            return (decode_result);
+        size = decoded_packet.size();
+        data = decoded_packet.begin();
     }
     if (frame_type == NETWORKING_MESSAGE_FLOW_CONTROL)
     {
@@ -6776,6 +6759,7 @@ int32_t networking_message_transport::process_datagram_impl(
         return (FT_ERR_OUT_OF_RANGE);
     allocation_size = networking_message_reassembly_allocation_size(
         total_size);
+    new_fragment_bytes = payload_size;
     record_pointer = ft_nullptr;
     reassembly_index = 0U;
     while (reassembly_index < connection->reassembly.size())
@@ -6798,16 +6782,9 @@ int32_t networking_message_transport::process_datagram_impl(
             || record_pointer->delivery
                 != static_cast<networking_message_delivery>(delivery_value))
             return (FT_ERR_INVALID_ARGUMENT);
-        byte_index = 0U;
-        while (byte_index < payload_size)
-        {
-            if (record_pointer->has_byte(fragment_offset + byte_index)
-                    != FT_FALSE
-                && record_pointer->payload[fragment_offset + byte_index]
-                    != data[offset + byte_index])
-                return (FT_ERR_INVALID_ARGUMENT);
-            byte_index += 1U;
-        }
+        if (!networking_fragment_matches(*record_pointer, fragment_offset,
+                data + offset, payload_size, new_fragment_bytes))
+            return (FT_ERR_INVALID_ARGUMENT);
     }
     else if (fragment_count != 1U)
     {
@@ -6823,18 +6800,18 @@ int32_t networking_message_transport::process_datagram_impl(
                 - connection->statistics.reassembly_bytes)
             return (FT_ERR_FULL);
         aggregate_reassembly_bytes = 0U;
-        reassembly_index = 0U;
-        while (reassembly_index < this->_connections.size())
+        ft_size_t connection_index = 0U;
+        while (connection_index < this->_connections.size())
         {
             uint64_t current_reassembly_bytes =
-                this->_connections[reassembly_index]->reassembly_allocated_bytes;
+                this->_connections[connection_index]->reassembly_allocated_bytes;
 
             if (current_reassembly_bytes
                 > this->_configuration.maximum_total_reassembly_bytes
                     - aggregate_reassembly_bytes)
                 return (FT_ERR_FULL);
             aggregate_reassembly_bytes += current_reassembly_bytes;
-            reassembly_index += 1U;
+            connection_index += 1U;
         }
         if (allocation_size > this->_configuration.maximum_total_reassembly_bytes
                 - aggregate_reassembly_bytes)
@@ -6898,7 +6875,7 @@ int32_t networking_message_transport::process_datagram_impl(
             ft_memcpy(&message.payload[0], data + offset, payload_size);
         ft_size_t received_before = this->_received_messages.size();
         delivery_result = networking_message_deliver(*connection, message,
-            this->_received_messages);
+            message.payload, this->_received_messages);
         if (delivery_result != FT_ERR_SUCCESS)
         {
             networking_message_restore_packet_record(*connection,
@@ -6923,17 +6900,6 @@ int32_t networking_message_transport::process_datagram_impl(
             (void)this->emit_event(networking_message_event_type::MESSAGE_AVAILABLE,
                 connection->id, FT_ERR_SUCCESS, ft_nullptr);
         return (FT_ERR_SUCCESS);
-    }
-    record_pointer = ft_nullptr;
-    reassembly_index = 0U;
-    while (reassembly_index < connection->reassembly.size())
-    {
-        if (connection->reassembly[reassembly_index]->message_id == message_id)
-        {
-            record_pointer = connection->reassembly[reassembly_index];
-            break ;
-        }
-        reassembly_index += 1U;
     }
     if (record_pointer == ft_nullptr)
     {
@@ -6972,10 +6938,15 @@ int32_t networking_message_transport::process_datagram_impl(
             this->_io->now_milliseconds(),
             this->_configuration.idle_timeout_milliseconds);
         record_pointer->payload.resize(total_size);
-        record_pointer->received.resize(bitmap_size, 0U);
-        if (record_pointer->payload.get_error() != FT_ERR_SUCCESS
-            || record_pointer->received.get_error() != FT_ERR_SUCCESS
-            || connection->reassembly.push_back(record_pointer) != FT_ERR_SUCCESS)
+        int32_t allocation_result = record_pointer->payload.get_error();
+        if (allocation_result == FT_ERR_SUCCESS)
+        {
+            record_pointer->received.resize(bitmap_size, 0U);
+            allocation_result = record_pointer->received.get_error();
+        }
+        if (allocation_result == FT_ERR_SUCCESS)
+            allocation_result = connection->reassembly.push_back(record_pointer);
+        if (allocation_result != FT_ERR_SUCCESS)
         {
             delete record_pointer;
             networking_message_restore_packet_record(*connection,
@@ -6989,96 +6960,25 @@ int32_t networking_message_transport::process_datagram_impl(
             connection->statistics.reassembly_messages, 1U);
         record_created = FT_TRUE;
     }
-    if (record_pointer->total_size != total_size
-        || record_pointer->fragment_count != fragment_count
-        || record_pointer->channel != channel
-        || record_pointer->sequence != sequence
-        || record_pointer->lane != lane
-        || record_pointer->delivery
-            != static_cast<networking_message_delivery>(delivery_value))
+    if (new_fragment_bytes != 0U)
+        ft_memcpy(record_pointer->payload.begin() + fragment_offset, data + offset, payload_size);
+    if (new_fragment_bytes < record_pointer->total_size - record_pointer->received_count)
     {
-        networking_message_restore_packet_record(*connection,
-            received_ranges_before, received_range_count_before);
-        return (FT_ERR_INVALID_ARGUMENT);
+        if (new_fragment_bytes != 0U)
+            networking_mark_fragment(*record_pointer, fragment_offset, payload_size, new_fragment_bytes);
     }
-    if (fragment_offset + payload_size > record_pointer->payload.size())
+    else
     {
-        networking_message_restore_packet_record(*connection,
-            received_ranges_before, received_range_count_before);
-        return (FT_ERR_OUT_OF_RANGE);
-    }
-    byte_index = 0U;
-    while (byte_index < payload_size)
-    {
-        if (record_pointer->has_byte(fragment_offset + byte_index)
-                != FT_FALSE
-            && record_pointer->payload[fragment_offset + byte_index]
-                != data[offset + byte_index])
-        {
-            networking_message_restore_packet_record(*connection,
-                received_ranges_before, received_range_count_before);
-            return (FT_ERR_INVALID_ARGUMENT);
-        }
-        byte_index += 1U;
-    }
-    if (payload_size != 0U)
-        ft_memcpy(&record_pointer->payload[fragment_offset], data + offset, payload_size);
-    byte_index = 0U;
-    while (byte_index < payload_size)
-    {
-        if (record_pointer->has_byte(fragment_offset + byte_index) == FT_FALSE)
-        {
-            newly_received_bitmap[byte_index / 8U] = static_cast<uint8_t>(
-                newly_received_bitmap[byte_index / 8U]
-                    | static_cast<uint8_t>(1U << (byte_index % 8U)));
-            record_pointer->mark_byte(fragment_offset + byte_index);
-            record_pointer->received_count += 1U;
-        }
-        byte_index += 1U;
-    }
-    if (record_pointer->received_count == record_pointer->total_size)
-    {
+        // Keep the coverage unchanged until delivery succeeds, so a failed delivery can retry.
         networking_received_message message;
         message.connection_id = connection->id;
         message.channel = record_pointer->channel;
         message.lane = record_pointer->lane;
         message.delivery = record_pointer->delivery;
         message.sequence = record_pointer->sequence;
-        if (message.payload.initialize(record_pointer->payload) != FT_ERR_SUCCESS)
-        {
-            if (record_created != FT_FALSE)
-            {
-                connection->statistics.reassembly_bytes -= total_size;
-                connection->reassembly_allocated_bytes -= allocation_size;
-                connection->statistics.reassembly_messages -= 1U;
-                delete record_pointer;
-                connection->reassembly.pop_back();
-            }
-            else
-            {
-                byte_index = 0U;
-                while (byte_index < payload_size)
-                {
-                    if ((newly_received_bitmap[byte_index / 8U]
-                            & static_cast<uint8_t>(1U << (byte_index % 8U)))
-                        != 0U)
-                    {
-                        record_pointer->clear_byte(
-                            fragment_offset + byte_index);
-                        record_pointer->payload[fragment_offset + byte_index]
-                            = 0U;
-                        record_pointer->received_count -= 1U;
-                    }
-                    byte_index += 1U;
-                }
-            }
-            networking_message_restore_packet_record(*connection,
-                received_ranges_before, received_range_count_before);
-            return (FT_ERR_NO_MEMORY);
-        }
-        ft_size_t received_before = this->_received_messages.size();
+        const ft_size_t received_before = this->_received_messages.size();
         delivery_result = networking_message_deliver(*connection, message,
-            this->_received_messages);
+            record_pointer->payload, this->_received_messages);
         if (delivery_result != FT_ERR_SUCCESS)
         {
             if (record_created != FT_FALSE)
@@ -7089,24 +6989,8 @@ int32_t networking_message_transport::process_datagram_impl(
                 delete record_pointer;
                 connection->reassembly.pop_back();
             }
-            else
-            {
-                byte_index = 0U;
-                while (byte_index < payload_size)
-                {
-                    if ((newly_received_bitmap[byte_index / 8U]
-                            & static_cast<uint8_t>(1U << (byte_index % 8U)))
-                        != 0U)
-                    {
-                        record_pointer->clear_byte(
-                            fragment_offset + byte_index);
-                        record_pointer->payload[fragment_offset + byte_index]
-                            = 0U;
-                        record_pointer->received_count -= 1U;
-                    }
-                    byte_index += 1U;
-                }
-            }
+            else if (new_fragment_bytes != 0U)
+                networking_discard_staged_fragment(*record_pointer, fragment_offset, payload_size);
             networking_message_restore_packet_record(*connection,
                 received_ranges_before, received_range_count_before);
             return (delivery_result);
@@ -7295,27 +7179,13 @@ int32_t networking_message_transport::poll() noexcept
     return (first_error);
 }
 
-int32_t networking_message_transport::receive_message(networking_received_message &message) noexcept
+int32_t networking_message_transport::receive_message_locked(networking_received_message &message) noexcept
 {
-    int32_t lock_result;
-
-    lock_result = this->lock_transport();
-    if (lock_result != FT_ERR_SUCCESS)
-        return (lock_result);
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->unlock_transport();
-        return (FT_ERR_NOT_INITIALISED);
-    }
-    if (this->_received_messages.empty())
-    {
-        this->unlock_transport();
-        return (FT_ERR_EMPTY);
-    }
     networking_received_message *stored_message = this->_received_messages.pop_front();
     if (stored_message == ft_nullptr)
     {
-        this->unlock_transport();
+        if (this->_received_messages.get_error() == FT_ERR_EMPTY)
+            return (FT_ERR_EMPTY);
         return (FT_ERR_INTERNAL);
     }
     message.connection_id = stored_message->connection_id;
@@ -7323,26 +7193,30 @@ int32_t networking_message_transport::receive_message(networking_received_messag
     message.lane = stored_message->lane;
     message.delivery = stored_message->delivery;
     message.sequence = stored_message->sequence;
-    (void)message.payload.destroy();
-    if (message.payload.move(stored_message->payload) != FT_ERR_SUCCESS)
-    {
-        delete stored_message;
-        this->unlock_transport();
-        return (FT_ERR_NO_MEMORY);
-    }
+    const int32_t move_result = message.payload.move(stored_message->payload);
     delete stored_message;
-    this->unlock_transport();
+    if (move_result != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t networking_message_transport::receive_message(networking_received_message &message) noexcept
+{
+    const int32_t lock_result = this->lock_transport();
+    if (lock_result != FT_ERR_SUCCESS)
+        return (lock_result);
+    int32_t result = FT_ERR_NOT_INITIALISED;
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        result = this->receive_message_locked(message);
+    this->unlock_transport();
+    return (result);
 }
 
 int32_t networking_message_transport::receive_messages(
     networking_received_message *messages, ft_size_t capacity,
     ft_size_t &received_count) noexcept
 {
-    int32_t lock_result;
-    int32_t result;
-
-    lock_result = this->lock_transport();
+    const int32_t lock_result = this->lock_transport();
     if (lock_result != FT_ERR_SUCCESS)
         return (lock_result);
     received_count = 0U;
@@ -7356,28 +7230,17 @@ int32_t networking_message_transport::receive_messages(
         this->unlock_transport();
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    while (received_count < capacity)
+    int32_t result = FT_ERR_SUCCESS;
+    while (received_count < capacity && result == FT_ERR_SUCCESS)
     {
-        result = this->receive_message(messages[received_count]);
-        if (result == FT_ERR_EMPTY)
-        {
-            if (received_count == 0U)
-            {
-                this->unlock_transport();
-                return (FT_ERR_EMPTY);
-            }
-            this->unlock_transport();
-            return (FT_ERR_SUCCESS);
-        }
-        if (result != FT_ERR_SUCCESS)
-        {
-            this->unlock_transport();
-            return (result);
-        }
-        received_count += 1U;
+        result = this->receive_message_locked(messages[received_count]);
+        if (result == FT_ERR_SUCCESS)
+            ++received_count;
     }
     this->unlock_transport();
-    return (FT_ERR_SUCCESS);
+    if (result == FT_ERR_EMPTY && received_count != 0U)
+        return (FT_ERR_SUCCESS);
+    return (result);
 }
 
 int32_t networking_message_transport::receive_event(

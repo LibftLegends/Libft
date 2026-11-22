@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 
-#include "networking.hpp"
+#include "networking_event_loop_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../PThread/mutex.hpp"
@@ -183,7 +183,7 @@ static void release_event_loop_wait(event_loop *loop)
     return ;
 }
 
-#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
+#ifndef _WIN32
 static int32_t event_loop_remaining_timeout(
     const std::chrono::steady_clock::time_point &deadline)
 {
@@ -1237,6 +1237,80 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     *event_count = local_count;
     release_event_loop_wait(loop);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t event_loop_wait_for_socket(event_loop *loop, int32_t socket_descriptor,
+    ft_bool wait_for_write, int32_t timeout_milliseconds) noexcept
+{
+    if (loop == ft_nullptr || socket_descriptor < 0 || timeout_milliseconds < -1
+        || loop->wait_mutex == ft_nullptr
+        || loop->wait_mutex->try_lock() != FT_ERR_SUCCESS)
+        return (-1);
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        return (-1);
+    }
+    if (loop->stopping || loop->wakeup_read_descriptor < 0)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        return (-1);
+    }
+    drain_loop_signal(loop);
+    loop->wait_active = FT_TRUE;
+    int32_t read_descriptors[] = {loop->wakeup_read_descriptor, socket_descriptor};
+    event_loop_unlock(loop, FT_TRUE);
+
+    int32_t read_count = 2;
+    int32_t write_count = 0;
+    if (wait_for_write)
+    {
+        read_count = 1;
+        write_count = 1;
+    }
+    int32_t write_descriptor = socket_descriptor;
+#ifndef _WIN32
+    std::chrono::steady_clock::time_point deadline;
+    if (timeout_milliseconds > 0)
+        deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(timeout_milliseconds);
+#endif
+    int32_t poll_result = nw_poll(read_descriptors, read_count, &write_descriptor,
+        write_count, timeout_milliseconds);
+#ifndef _WIN32
+    while (poll_result < 0 && errno == EINTR)
+    {
+        if (timeout_milliseconds > 0)
+            timeout_milliseconds = event_loop_remaining_timeout(deadline);
+        if (timeout_milliseconds == 0)
+        {
+            poll_result = 0;
+            break ;
+        }
+        poll_result = nw_poll(read_descriptors, read_count, &write_descriptor,
+            write_count, timeout_milliseconds);
+    }
+#endif
+
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        release_event_loop_wait(loop);
+        return (-1);
+    }
+    const ft_bool stopping = loop->stopping;
+    if (poll_result > 0 && read_descriptors[0] >= 0)
+        drain_loop_signal(loop);
+    loop->wait_active = FT_FALSE;
+    event_loop_unlock(loop, FT_TRUE);
+    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+    if (stopping || poll_result < 0)
+        return (-1);
+    if (poll_result == 0)
+        return (0);
+    if (wait_for_write)
+        return (write_descriptor >= 0);
+    return (read_descriptors[1] >= 0);
 }
 
 int32_t event_loop_interrupt(event_loop *loop) noexcept

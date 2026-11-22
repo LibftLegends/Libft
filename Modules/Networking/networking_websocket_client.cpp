@@ -1,9 +1,9 @@
 #include "websocket_client.hpp"
+#include "networking_websocket_frame_internal.hpp"
+#include "networking_websocket_handshake_internal.hpp"
 #include "networking.hpp"
-#include "../Compression/compression.hpp"
 #include "../CMA/CMA.hpp"
 #include "../RNG/rng.hpp"
-#include "../Encryption/encryption.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
@@ -24,37 +24,6 @@
 # include <netdb.h>
 # include <unistd.h>
 #endif
-
-static void compute_accept_key(const ft_string &key, ft_string &accept)
-{
-    unsigned char digest[20];
-    unsigned char *encoded;
-    std::size_t encoded_size;
-    ft_string magic;
-    int32_t initialize_error;
-
-    initialize_error = magic.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return ;
-    magic = key;
-    magic.append("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    sha1_hash(magic.c_str(), magic.size(), digest);
-    accept.clear();
-    encoded = ft_base64_encode(digest, 20, &encoded_size);
-    if (encoded != ft_nullptr)
-    {
-        ft_size_t index_value;
-
-        index_value = 0;
-        while (index_value < encoded_size)
-        {
-            accept.append(reinterpret_cast<char *>(encoded)[index_value]);
-            index_value++;
-        }
-        cma_free(encoded);
-    }
-    return ;
-}
 
 static int32_t websocket_recv_exact(int32_t socket_fd, void *buffer, ft_size_t length)
 {
@@ -210,115 +179,47 @@ void ft_websocket_client::close()
 
 int32_t ft_websocket_client::perform_handshake_locked(const char *host, const char *path)
 {
-    ft_size_t byte_index;
-    ft_size_t shift_index;
-    ft_string key_string;
+    const int32_t socket_descriptor = this->_socket.get();
+    if (socket_descriptor < 0)
+        return (FT_ERR_INVALID_OPERATION);
+    unsigned char nonce[16];
+    ft_size_t index = 0U;
+    while (index < sizeof(nonce))
+    {
+        const uint32_t random_value = ft_random_uint32();
+        nonce[index++] = static_cast<unsigned char>(random_value);
+        nonce[index++] = static_cast<unsigned char>(random_value >> 8U);
+        nonce[index++] = static_cast<unsigned char>(random_value >> 16U);
+        nonce[index++] = static_cast<unsigned char>(random_value >> 24U);
+    }
+    char key[25];
+    if (!compression_base64_encode_into(nonce, sizeof(nonce), key, sizeof(key)))
+        return (FT_ERR_INVALID_OPERATION);
     ft_string request;
-    char buffer[1024];
-    ssize_t bytes_received;
     ft_string response;
-    const char *accept_line;
-    const char *line_end;
-    ft_string accept_key;
-    ft_string expected;
-    unsigned char random_key[16];
-    std::size_t encoded_size;
-    unsigned char *encoded_key;
-    int32_t socket_fd;
-    const char *request_data;
-    ft_size_t total_sent;
-    ssize_t send_result;
-    int32_t string_init_error;
-
-    string_init_error = key_string.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = request.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = response.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = accept_key.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = expected.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    socket_fd = this->_socket.get();
-    if (socket_fd < 0)
+    if (request.initialize() != FT_ERR_SUCCESS || response.initialize() != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (request.append("GET ") != FT_ERR_SUCCESS || request.append(path) != FT_ERR_SUCCESS
+        || request.append(" HTTP/1.1\r\nHost: ") != FT_ERR_SUCCESS
+        || request.append(host) != FT_ERR_SUCCESS
+        || request.append("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ") != FT_ERR_SUCCESS
+        || request.append(key, sizeof(key) - 1U) != FT_ERR_SUCCESS
+        || request.append("\r\n\r\n") != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (websocket_send_bytes(socket_descriptor, request.c_str(), request.size()) != FT_ERR_SUCCESS
+        || websocket_read_handshake(socket_descriptor, response, FT_SYSTEM_SIZE_MAX) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    byte_index = 0;
-    while (byte_index < 16)
-    {
-        uint32_t random_value;
-
-        random_value = ft_random_uint32();
-        shift_index = 0;
-        while (shift_index < 4 && byte_index < 16)
-        {
-            random_key[byte_index] = static_cast<unsigned char>(random_value >> (shift_index * 8));
-            byte_index++;
-            shift_index++;
-        }
-    }
-    encoded_key = ft_base64_encode(random_key, 16, &encoded_size);
-    if (encoded_key == ft_nullptr)
-        return (FT_ERR_INVALID_OPERATION);
-    key_string.clear();
-    byte_index = 0;
-    while (byte_index < encoded_size)
-    {
-        key_string.append(reinterpret_cast<char *>(encoded_key)[byte_index]);
-        byte_index++;
-    }
-    cma_free(encoded_key);
-    request.append("GET ");
-    request.append(path);
-    request.append(" HTTP/1.1\r\nHost: ");
-    request.append(host);
-    request.append("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ");
-    request.append(key_string);
-    request.append("\r\n\r\n");
-    request_data = request.c_str();
-    total_sent = 0;
-    while (total_sent < request.size())
-    {
-        send_result = nw_send(socket_fd, request_data + total_sent, request.size() - total_sent, 0);
-        if (send_result <= 0)
-            return (FT_ERR_INVALID_OPERATION);
-        total_sent += static_cast<ft_size_t>(send_result);
-    }
-    response.clear();
-    while (FT_TRUE)
-    {
-        bytes_received = nw_recv(socket_fd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received <= 0)
-            return (FT_ERR_INVALID_OPERATION);
-        buffer[bytes_received] = '\0';
-        response.append(buffer);
-        if (ft_strstr(response.c_str(), "\r\n\r\n") != ft_nullptr)
-            break ;
-    }
-    accept_line = ft_strstr(response.c_str(), "Sec-WebSocket-Accept: ");
+    static constexpr char ACCEPT_HEADER[] = "Sec-WebSocket-Accept: ";
+    const char *accept_line = ft_strstr(response.c_str(), ACCEPT_HEADER);
     if (accept_line == ft_nullptr)
         return (FT_ERR_INVALID_OPERATION);
-    accept_line += ft_strlen("Sec-WebSocket-Accept: ");
-    line_end = ft_strstr(accept_line, "\r\n");
-    accept_key.clear();
-    if (line_end != ft_nullptr)
-    {
-        byte_index = 0;
-        while (accept_line + byte_index < line_end)
-        {
-            accept_key.append(accept_line[byte_index]);
-            byte_index++;
-        }
-    }
-    else
-        accept_key.append(accept_line);
-    compute_accept_key(key_string, expected);
-    if (!(accept_key == expected))
+    accept_line += sizeof(ACCEPT_HEADER) - 1U;
+    const char *line_end = ft_strstr(accept_line, "\r\n");
+    char expected[WEBSOCKET_ACCEPT_KEY_LENGTH + 1U];
+    if (line_end == ft_nullptr || static_cast<ft_size_t>(line_end - accept_line) != WEBSOCKET_ACCEPT_KEY_LENGTH
+        || !websocket_compute_accept_key(key, sizeof(key) - 1U, expected)
+        || ft_memcmp(accept_line, expected, WEBSOCKET_ACCEPT_KEY_LENGTH) != 0)
         return (FT_ERR_INVALID_OPERATION);
     return (FT_ERR_SUCCESS);
 }
@@ -380,108 +281,33 @@ int32_t ft_websocket_client::connect(const char *host, uint16_t port, const char
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t websocket_send_masked_frame(int32_t socket_descriptor, unsigned char opcode,
+    const unsigned char *payload, ft_size_t length)
+{
+    if (socket_descriptor < 0 || length > 65535U)
+        return (FT_ERR_INVALID_OPERATION);
+    const uint32_t mask_value = ft_random_uint32();
+    const unsigned char mask_key[] = {
+        static_cast<unsigned char>(mask_value),
+        static_cast<unsigned char>(mask_value >> 8U),
+        static_cast<unsigned char>(mask_value >> 16U),
+        static_cast<unsigned char>(mask_value >> 24U)
+    };
+    return (websocket_send_frame(socket_descriptor, opcode, payload, length, mask_key));
+}
+
 int32_t ft_websocket_client::send_pong_locked(const unsigned char *payload, ft_size_t length)
 {
-    ft_string frame;
-    uint32_t mask_value;
-    unsigned char mask_key[4];
-    ft_size_t index_value;
-    int32_t socket_fd;
-    int32_t initialize_error;
-
-    initialize_error = frame.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    socket_fd = this->_socket.get();
-    if (socket_fd < 0)
-        return (FT_ERR_INVALID_OPERATION);
-    mask_value = ft_random_uint32();
-    index_value = 0;
-    while (index_value < 4)
-    {
-        mask_key[index_value] = static_cast<unsigned char>(mask_value >> (index_value * 8));
-        index_value++;
-    }
-    frame.append(static_cast<char>(0x8A));
-    if (length <= 125)
-        frame.append(static_cast<char>(0x80 | static_cast<unsigned char>(length)));
-    else if (length <= 65535)
-    {
-        frame.append(static_cast<char>(0x80 | 126));
-        frame.append(static_cast<char>((length >> 8) & 0xFF));
-        frame.append(static_cast<char>(length & 0xFF));
-    }
-    else
-        return (FT_ERR_INVALID_OPERATION);
-    index_value = 0;
-    while (index_value < 4)
-    {
-        frame.append(static_cast<char>(mask_key[index_value]));
-        index_value++;
-    }
-    index_value = 0;
-    while (index_value < length)
-    {
-        frame.append(static_cast<char>(payload[index_value] ^ mask_key[index_value % 4]));
-        index_value++;
-    }
-    if (nw_send(socket_fd, frame.c_str(), frame.size(), 0) < 0)
-        return (FT_ERR_INVALID_OPERATION);
-    return (FT_ERR_SUCCESS);
+    return (websocket_send_masked_frame(this->_socket.get(), 0x8AU, payload, length));
 }
 
 int32_t ft_websocket_client::send_text_locked(const ft_string &message)
 {
-    ft_string frame;
-    uint32_t mask_value;
-    unsigned char mask_key[4];
-    ft_size_t index_value;
-    ft_size_t length;
-    int32_t socket_fd;
-    const char *message_data;
-    int32_t initialize_error;
-
-    initialize_error = frame.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    socket_fd = this->_socket.get();
-    if (socket_fd < 0)
+    const int32_t socket_descriptor = this->_socket.get();
+    if (socket_descriptor < 0)
         return (FT_ERR_INVALID_OPERATION);
-    mask_value = ft_random_uint32();
-    index_value = 0;
-    while (index_value < 4)
-    {
-        mask_key[index_value] = static_cast<unsigned char>(mask_value >> (index_value * 8));
-        index_value++;
-    }
-    frame.append(static_cast<char>(0x81));
-    length = message.size();
-    message_data = message.c_str();
-    if (length <= 125)
-        frame.append(static_cast<char>(0x80 | static_cast<unsigned char>(length)));
-    else if (length <= 65535)
-    {
-        frame.append(static_cast<char>(0x80 | 126));
-        frame.append(static_cast<char>((length >> 8) & 0xFF));
-        frame.append(static_cast<char>(length & 0xFF));
-    }
-    else
-        return (FT_ERR_INVALID_OPERATION);
-    index_value = 0;
-    while (index_value < 4)
-    {
-        frame.append(static_cast<char>(mask_key[index_value]));
-        index_value++;
-    }
-    index_value = 0;
-    while (index_value < length)
-    {
-        frame.append(static_cast<char>(message_data[index_value] ^ mask_key[index_value % 4]));
-        index_value++;
-    }
-    if (nw_send(socket_fd, frame.c_str(), frame.size(), 0) < 0)
-        return (FT_ERR_INVALID_OPERATION);
-    return (FT_ERR_SUCCESS);
+    return (websocket_send_masked_frame(socket_descriptor, 0x81U,
+        reinterpret_cast<const unsigned char *>(message.c_str()), message.size()));
 }
 
 int32_t ft_websocket_client::send_text(const ft_string &message)
@@ -536,9 +362,13 @@ int32_t ft_websocket_client::receive_text_locked(ft_string &message)
             if (websocket_recv_exact(socket_fd, mask_key, 4) != FT_ERR_SUCCESS)
                 return (FT_ERR_INVALID_OPERATION);
         }
-        payload = static_cast<unsigned char *>(cma_malloc(payload_length));
-        if (payload == ft_nullptr)
-            return (FT_ERR_INVALID_OPERATION);
+        payload = ft_nullptr;
+        if (payload_length != 0U)
+        {
+            payload = static_cast<unsigned char *>(cma_malloc(payload_length));
+            if (payload == ft_nullptr)
+                return (FT_ERR_INVALID_OPERATION);
+        }
         index_value = 0;
         while (index_value < payload_length)
         {
@@ -552,12 +382,7 @@ int32_t ft_websocket_client::receive_text_locked(ft_string &message)
         }
         if (mask_bit_set)
         {
-            index_value = 0;
-            while (index_value < payload_length)
-            {
-                payload[index_value] = static_cast<unsigned char>(payload[index_value] ^ mask_key[index_value % 4]);
-                index_value++;
-            }
+            websocket_copy_masked_payload(payload, payload, payload_length, mask_key);
         }
         if (opcode == 0x9)
         {
@@ -576,13 +401,13 @@ int32_t ft_websocket_client::receive_text_locked(ft_string &message)
         }
         if (opcode == 0x1)
         {
-            index_value = 0;
-            while (index_value < payload_length)
-            {
-                message.append(static_cast<char>(payload[index_value]));
-                index_value++;
-            }
+            if (payload_length == 0U)
+                return (FT_ERR_SUCCESS);
+            const int32_t append_result = message.append(reinterpret_cast<const char *>(payload),
+                payload_length);
             cma_free(payload);
+            if (append_result != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_OPERATION);
             return (FT_ERR_SUCCESS);
         }
         cma_free(payload);

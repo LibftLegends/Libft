@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "networking_test_support.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include <chrono>
 #include <cinttypes>
 #include <cstdio>
@@ -19,7 +20,7 @@ FT_TEST(test_networking_message_performance_baseline)
     networking_message_connection server_connection;
     networking_message_send_options options;
     networking_received_message received;
-    uint8_t payload[128];
+    uint8_t payload[8192];
     uint64_t latency_microseconds[128];
     uint64_t elapsed_microseconds;
     uint64_t throughput_messages_per_second;
@@ -40,7 +41,13 @@ FT_TEST(test_networking_message_performance_baseline)
     client_io.connect(server_io);
     server_io.connect(client_io);
     networking_test_prepare_endpoint(endpoint);
-    configuration.enable_encryption = FT_FALSE;
+    const char *encrypted = std::getenv("LIBFT_NETWORKING_PERF_ENCRYPTED");
+    configuration.enable_encryption = (encrypted != ft_nullptr && std::strcmp(encrypted, "1") == 0);
+    configuration.encryption_key[0] = 23U;
+    const char *fragmented = std::getenv("LIBFT_NETWORKING_PERF_FRAGMENTED");
+    ft_size_t payload_size = 128U;
+    if (fragmented != ft_nullptr && std::strcmp(fragmented, "1") == 0)
+        payload_size = sizeof(payload);
     configuration.enable_authenticated_handshake = FT_FALSE;
     configuration.enable_retry_cookies = FT_FALSE;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.initialize(configuration, client_io));
@@ -49,16 +56,20 @@ FT_TEST(test_networking_message_performance_baseline)
         client_connection));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.open_connection(endpoint,
         server_connection));
-    ft_memset(payload, 0x5a, sizeof(payload));
+    ft_memset(payload, 0x5a, payload_size);
     options.delivery = networking_message_delivery::RELIABLE_ORDERED;
     options.channel = 1U;
+    ft_size_t allocations_before = 0U;
+    ft_size_t allocations_after = 0U;
+    ft_size_t frees = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_get_stats(&allocations_before, &frees));
     total_start = std::chrono::steady_clock::now();
     message_index = 0U;
     while (message_index < 128U)
     {
         message_start = std::chrono::steady_clock::now();
         FT_ASSERT_EQ(FT_ERR_SUCCESS, client_connection.send_message(payload,
-            sizeof(payload), options));
+            payload_size, options));
         receive_result = FT_ERR_EMPTY;
         poll_attempt = 0U;
         while (poll_attempt < 64U && receive_result == FT_ERR_EMPTY)
@@ -71,13 +82,18 @@ FT_TEST(test_networking_message_performance_baseline)
             FT_ASSERT(server_poll_result == FT_ERR_SUCCESS
                 || server_poll_result == FT_ERR_EMPTY);
             receive_result = server.receive_message(received);
+            if (payload_size == sizeof(payload))
+            {
+                client_io.advance(1U);
+                server_io.advance(1U);
+            }
             if (receive_result == FT_ERR_EMPTY)
                 poll_attempt += 1U;
         }
         FT_ASSERT_EQ(FT_ERR_SUCCESS, receive_result);
-        FT_ASSERT_EQ(sizeof(payload), received.payload.size());
+        FT_ASSERT_EQ(payload_size, received.payload.size());
         FT_ASSERT_EQ(0, ft_memcmp(&received.payload[0U], payload,
-            sizeof(payload)));
+            payload_size));
         message_end = std::chrono::steady_clock::now();
         latency_microseconds[message_index] = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
@@ -85,6 +101,7 @@ FT_TEST(test_networking_message_performance_baseline)
         message_index += 1U;
     }
     total_end = std::chrono::steady_clock::now();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_get_stats(&allocations_after, &frees));
     elapsed_microseconds = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             total_end - total_start).count());
@@ -108,12 +125,14 @@ FT_TEST(test_networking_message_performance_baseline)
         latency_microseconds[insert_index] = value;
         sort_index += 1U;
     }
-    std::printf("networking_performance messages=128 payload_bytes=128 elapsed_us=%" PRIu64
+    std::printf("networking_performance encrypted=%u messages=128 payload_bytes=%" FT_PRIu64 " elapsed_us=%" PRIu64
         " throughput_messages_per_second=%" PRIu64
-        " latency_p50_us=%" PRIu64 " latency_p95_us=%" PRIu64 "\n",
+        " latency_p50_us=%" PRIu64 " latency_p95_us=%" PRIu64 " allocations=%" FT_PRIu64 "\n",
+        static_cast<uint32_t>(configuration.enable_encryption), payload_size,
         elapsed_microseconds, throughput_messages_per_second,
-        latency_microseconds[63U], latency_microseconds[121U]);
-    FT_ASSERT(throughput_messages_per_second >= 1000U);
+        latency_microseconds[63U], latency_microseconds[121U], allocations_after - allocations_before);
+    if (payload_size == 128U)
+        FT_ASSERT(throughput_messages_per_second >= 1000U);
     FT_ASSERT(latency_microseconds[121U] <= 50000U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server.destroy());

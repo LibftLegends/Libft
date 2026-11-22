@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Networking/networking.hpp"
+#include "../../Modules/Networking/udp_socket.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -116,6 +117,112 @@ static void close_one_socket(int descriptor)
 {
     if (descriptor >= 0)
         (void)nw_close(descriptor);
+}
+
+static int32_t bind_udp_loopback(udp_socket &socket, struct sockaddr_in &address)
+{
+    SocketConfig configuration;
+    if (configuration.initialize() != FT_ERR_SUCCESS)
+        return (-1);
+    configuration._type = SocketType::SERVER;
+    configuration._protocol = IPPROTO_UDP;
+    configuration._port = 0;
+    if (socket.initialize() != FT_ERR_SUCCESS
+        || socket.initialize(configuration) != FT_ERR_SUCCESS)
+        return (-1);
+    socklen_t address_length = sizeof(address);
+    if (getsockname(socket.get_fd(), reinterpret_cast<sockaddr *>(&address),
+            &address_length) != 0 || address.sin_family != AF_INET)
+        return (-1);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    return (0);
+}
+
+FT_TEST(test_networking_udp_event_wait_ignores_other_ready_sockets)
+{
+    udp_socket socket;
+    struct sockaddr_in address{};
+    FT_ASSERT_EQ(0, bind_udp_loopback(socket, address));
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    const int32_t other_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ);
+    const int32_t write_result = event_loop_add_interest(&loop, socket.get_fd(),
+        EVENT_LOOP_INTEREST_WRITE);
+    const ssize_t other_sent = nw_send(connection[1], "x", 1, 0);
+    const auto timeout_start = std::chrono::steady_clock::now();
+    const int32_t idle_result = udp_event_loop_wait_read(&loop, socket, 60);
+    const auto timeout_elapsed = std::chrono::steady_clock::now() - timeout_start;
+    const int32_t sender = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ssize_t sent = -1;
+    if (sender >= 0)
+        sent = nw_sendto(sender, "y", 1, 0, reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address));
+    char byte = '\0';
+    const ssize_t received = udp_event_loop_receive(&loop, socket, &byte, 1, 0,
+        ft_nullptr, ft_nullptr, 500);
+    const int32_t writable = udp_event_loop_wait_write(&loop, socket, 500);
+    event_loop_ready_event ready_events[2]{};
+    uint32_t ready_count = 0U;
+    const int32_t wait_result = event_loop_wait(&loop, ready_events, 2, &ready_count, 500);
+    const uint32_t registration_count = loop.registration_count;
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    close_one_socket(sender);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, other_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, write_result);
+    FT_ASSERT_EQ(1, other_sent);
+    FT_ASSERT_EQ(0, idle_result);
+    FT_ASSERT(timeout_elapsed >= std::chrono::milliseconds(40));
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(1, received);
+    FT_ASSERT_EQ('y', byte);
+    FT_ASSERT_EQ(1, writable);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wait_result);
+    FT_ASSERT_EQ(2U, registration_count);
+    FT_ASSERT_EQ(2U, ready_count);
+    return (1);
+}
+
+FT_TEST(test_networking_udp_event_wait_can_be_interrupted)
+{
+    udp_socket socket;
+    struct sockaddr_in address{};
+    FT_ASSERT_EQ(0, bind_udp_loopback(socket, address));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t wait_result = -1;
+    std::thread waiter([&]()
+    {
+        wait_result = udp_event_loop_wait_read(&loop, socket, 1500);
+        return ;
+    });
+    ft_bool active = FT_FALSE;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (!active && std::chrono::steady_clock::now() < deadline)
+    {
+        if (event_loop_lock(&loop, ft_nullptr) == FT_ERR_SUCCESS)
+        {
+            active = loop.wait_active;
+            event_loop_unlock(&loop, FT_TRUE);
+        }
+        if (!active)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto interrupt_start = std::chrono::steady_clock::now();
+    const int32_t interrupted = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto interrupt_elapsed = std::chrono::steady_clock::now() - interrupt_start;
+    event_loop_clear(&loop);
+
+    FT_ASSERT(active);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupted);
+    FT_ASSERT_EQ(0, wait_result);
+    FT_ASSERT(interrupt_elapsed < std::chrono::milliseconds(800));
+    return (1);
 }
 
 FT_TEST(test_networking_event_loop_add_socket_reports_allocation_failure)

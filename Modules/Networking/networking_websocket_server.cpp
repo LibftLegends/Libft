@@ -1,15 +1,17 @@
 #include "websocket_server.hpp"
+#include "networking_websocket_frame_internal.hpp"
+#include "networking_websocket_handshake_internal.hpp"
 #include "networking.hpp"
 #include "socket_class.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Compression/compression.hpp"
 #include "../CMA/CMA.hpp"
-#include "../Encryption/encryption.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstring>
 #include <cerrno>
+#include <climits>
 #include <new>
 #include <zlib.h>
 #include "../Basic/limits.hpp"
@@ -17,7 +19,6 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/map.hpp"
 #include "../Template/pair.hpp"
-#include "../Template/vector.hpp"
 
 static char websocket_ascii_lower(char character)
 {
@@ -152,196 +153,102 @@ static int32_t websocket_recv_exact(int32_t client_fd, void *buffer, ft_size_t l
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t websocket_append_bytes(ft_vector<unsigned char> &buffer,
-    const unsigned char *data, ft_size_t length)
-{
-    ft_size_t index_value;
-
-    if (data == ft_nullptr && length != 0)
-        return (FT_ERR_INVALID_ARGUMENT);
-    index_value = 0;
-    while (index_value < length)
-    {
-        buffer.push_back(data[index_value]);
-        index_value++;
-    }
-    return (FT_ERR_SUCCESS);
-}
+static constexpr ft_size_t WEBSOCKET_DEFLATE_TAIL_SIZE = 4U;
+static constexpr uInt WEBSOCKET_ZLIB_CHUNK_SIZE = 4096U;
 
 static int32_t websocket_permessage_deflate_inflate(const unsigned char *payload,
     ft_size_t payload_length, ft_string &message)
 {
-    unsigned char tail_bytes[4];
-    ft_vector<unsigned char> input_buffer;
-    ft_vector<unsigned char> output_buffer;
-    int32_t append_error;
-    int32_t initialise_error;
-    z_stream stream;
-    int32_t zlib_result;
+    if ((payload == ft_nullptr && payload_length != 0U) || payload_length > UINT_MAX)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_string output;
+    const int32_t initialise_error = output.initialize();
+    if (initialise_error != FT_ERR_SUCCESS)
+        return (initialise_error);
+    z_stream stream{};
+    if (inflateInit2(&stream, -15) != Z_OK)
+        return (FT_ERR_INVALID_ARGUMENT);
 
-    if (payload == ft_nullptr && payload_length != 0)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    initialise_error = input_buffer.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (initialise_error);
-    initialise_error = output_buffer.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (initialise_error);
-    tail_bytes[0] = 0x00;
-    tail_bytes[1] = 0x00;
-    tail_bytes[2] = 0xFF;
-    tail_bytes[3] = 0xFF;
-    input_buffer.reserve(payload_length + 4);
-    append_error = websocket_append_bytes(input_buffer, payload, payload_length);
-    if (append_error != FT_ERR_SUCCESS)
-        return (append_error);
-    append_error = websocket_append_bytes(input_buffer, tail_bytes, 4);
-    if (append_error != FT_ERR_SUCCESS)
-        return (append_error);
-    ft_memset(&stream, 0, sizeof(stream));
-    stream.next_in = input_buffer.begin();
-    stream.avail_in = static_cast<uInt>(input_buffer.size());
-    zlib_result = inflateInit2(&stream, -15);
-    if (zlib_result != Z_OK)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
+    unsigned char tail[WEBSOCKET_DEFLATE_TAIL_SIZE] = {0x00U, 0x00U, 0xFFU, 0xFFU};
+    stream.next_in = const_cast<unsigned char *>(payload);
+    stream.avail_in = static_cast<uInt>(payload_length);
+    ft_bool tail_pending = FT_TRUE;
+    int32_t result = FT_ERR_SUCCESS;
+    char output_chunk[WEBSOCKET_ZLIB_CHUNK_SIZE];
     while (FT_TRUE)
     {
-        unsigned char output_chunk[512];
-        ft_size_t produced_bytes;
-
-        stream.next_out = output_chunk;
+        if (stream.avail_in == 0U && tail_pending)
+        {
+            stream.next_in = tail;
+            stream.avail_in = sizeof(tail);
+            tail_pending = FT_FALSE;
+        }
+        stream.next_out = reinterpret_cast<Bytef *>(output_chunk);
         stream.avail_out = sizeof(output_chunk);
-        zlib_result = inflate(&stream, Z_SYNC_FLUSH);
-        produced_bytes = sizeof(output_chunk) - stream.avail_out;
-        if (produced_bytes > 0)
+        const int32_t zlib_result = inflate(&stream, Z_SYNC_FLUSH);
+        if ((zlib_result != Z_OK && zlib_result != Z_STREAM_END && zlib_result != Z_BUF_ERROR)
+            || (zlib_result == Z_BUF_ERROR && stream.avail_in != 0U))
         {
-            append_error = websocket_append_bytes(output_buffer, output_chunk, produced_bytes);
-            if (append_error != FT_ERR_SUCCESS)
-            {
-                inflateEnd(&stream);
-                return (append_error);
-            }
+            result = FT_ERR_INVALID_ARGUMENT;
+            break ;
         }
-        if (zlib_result == Z_STREAM_END)
-            break ;
-        if (zlib_result == Z_BUF_ERROR && stream.avail_in == 0)
-            break ;
-        if (zlib_result != Z_OK && zlib_result != Z_BUF_ERROR)
+        const ft_size_t produced_bytes = sizeof(output_chunk) - stream.avail_out;
+        if (produced_bytes != 0U)
         {
-            inflateEnd(&stream);
-            return (FT_ERR_INVALID_ARGUMENT);
+            result = output.append(output_chunk, produced_bytes);
+            if (result != FT_ERR_SUCCESS)
+                break ;
         }
+        if (zlib_result == Z_STREAM_END || (zlib_result == Z_BUF_ERROR && !tail_pending))
+            break ;
     }
     inflateEnd(&stream);
-    if (message.assign(reinterpret_cast<const char *>(output_buffer.begin()), output_buffer.size()) != FT_ERR_SUCCESS)
-        return (FT_ERR_NO_MEMORY);
-    return (FT_ERR_SUCCESS);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (message.assign(output.c_str(), output.size()));
 }
 
 static int32_t websocket_permessage_deflate_deflate(const ft_string &message,
-    ft_vector<unsigned char> &compressed)
+    ft_string &compressed)
 {
-    z_stream stream;
-    int32_t zlib_result;
-    ft_vector<unsigned char> output_buffer;
-    int32_t append_error;
-    int32_t initialise_error;
-
-    initialise_error = output_buffer.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (initialise_error);
-    ft_memset(&stream, 0, sizeof(stream));
-    stream.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(message.c_str()));
-    stream.avail_in = static_cast<uInt>(message.size());
-    zlib_result = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY);
-    if (zlib_result != Z_OK)
-    {
+    const ft_size_t input_size = message.size();
+    if (input_size > UINT_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
+    z_stream stream{};
+    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -15, 8, Z_DEFAULT_STRATEGY) != Z_OK)
         return (FT_ERR_INVALID_ARGUMENT);
-    }
+    stream.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(message.c_str()));
+    stream.avail_in = static_cast<uInt>(input_size);
+    char output_chunk[WEBSOCKET_ZLIB_CHUNK_SIZE];
+    int32_t result = FT_ERR_SUCCESS;
     while (FT_TRUE)
     {
-        unsigned char output_chunk[512];
-        ft_size_t produced_bytes;
-
-        stream.next_out = output_chunk;
+        stream.next_out = reinterpret_cast<Bytef *>(output_chunk);
         stream.avail_out = sizeof(output_chunk);
-        zlib_result = deflate(&stream, Z_SYNC_FLUSH);
-        produced_bytes = sizeof(output_chunk) - stream.avail_out;
-        if (produced_bytes > 0)
+        const int32_t zlib_result = deflate(&stream, Z_SYNC_FLUSH);
+        const ft_bool input_flushed = (stream.avail_in == 0U && stream.avail_out != 0U);
+        if (zlib_result != Z_OK && zlib_result != Z_STREAM_END
+            && !(zlib_result == Z_BUF_ERROR && input_flushed))
         {
-            append_error = websocket_append_bytes(output_buffer, output_chunk, produced_bytes);
-            if (append_error != FT_ERR_SUCCESS)
-            {
-                deflateEnd(&stream);
-                return (append_error);
-            }
+            result = FT_ERR_INVALID_ARGUMENT;
+            break ;
         }
-        if (zlib_result == Z_STREAM_END)
-            break ;
-        if (stream.avail_in == 0 && stream.avail_out != 0)
-            break ;
-        if (zlib_result != Z_OK)
+        const ft_size_t produced_bytes = sizeof(output_chunk) - stream.avail_out;
+        if (produced_bytes != 0U)
         {
-            deflateEnd(&stream);
-            return (FT_ERR_INVALID_ARGUMENT);
+            result = compressed.append(output_chunk, produced_bytes);
+            if (result != FT_ERR_SUCCESS)
+                break ;
         }
+        if (zlib_result == Z_STREAM_END || input_flushed)
+            break ;
     }
     deflateEnd(&stream);
-    if (output_buffer.size() < 4)
-    {
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (compressed.size() < WEBSOCKET_DEFLATE_TAIL_SIZE)
         return (FT_ERR_INVALID_ARGUMENT);
-    }
-    ft_size_t trim_index;
-
-    trim_index = 0;
-    while (trim_index < 4)
-    {
-        output_buffer.pop_back();
-        trim_index++;
-    }
-    compressed.clear();
-    trim_index = 0;
-    while (trim_index < output_buffer.size())
-    {
-        compressed.push_back(output_buffer[trim_index]);
-        trim_index++;
-    }
     return (FT_ERR_SUCCESS);
-}
-
-static void compute_accept_key(const ft_string &key, ft_string &accept)
-{
-    unsigned char digest[20];
-    unsigned char *encoded;
-    std::size_t encoded_size;
-    ft_string magic;
-    int32_t initialize_error;
-
-    initialize_error = magic.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    magic = key;
-    magic.append("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    sha1_hash(magic.c_str(), magic.size(), digest);
-    accept.clear();
-    encoded = ft_base64_encode(digest, 20, &encoded_size);
-    if (encoded)
-    {
-        ft_size_t index_value = 0;
-        while (index_value < encoded_size)
-        {
-            accept.append(reinterpret_cast<char *>(encoded)[index_value]);
-            index_value++;
-        }
-        cma_free(encoded);
-    }
-    return ;
 }
 
 ft_websocket_server::ft_websocket_server() noexcept
@@ -549,143 +456,47 @@ int32_t ft_websocket_server::start(const char *ip_address, uint16_t port, int32_
 
 int32_t ft_websocket_server::perform_handshake_locked(int32_t client_fd)
 {
-    static const ft_size_t MAX_HANDSHAKE_SIZE = 8192;
-    char buffer[1024];
-    ssize_t bytes_received;
+    constexpr ft_size_t MAX_HANDSHAKE_SIZE = 8192U;
+    static constexpr char KEY_HEADER[] = "Sec-WebSocket-Key: ";
     ft_string request;
-    const char *key_line;
-    const char *line_end;
-    ft_string key;
-    ft_string accept;
     ft_string response;
-    ft_size_t request_size;
-    ft_bool permessage_deflate_enabled;
-    int32_t string_init_error;
-
-    string_init_error = request.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = key.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = accept.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
-    string_init_error = response.initialize();
-    if (string_init_error != FT_ERR_SUCCESS)
-        return (string_init_error);
+    if (request.initialize() != FT_ERR_SUCCESS || response.initialize() != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
     this->remove_connection_state_locked(client_fd);
-    request.clear();
-    while (FT_TRUE)
-    {
-        if (request.size() >= MAX_HANDSHAKE_SIZE)
-        {
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        bytes_received = nw_recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received < 0)
-            return (FT_ERR_INVALID_OPERATION);
-        if (bytes_received == 0)
-            return (FT_ERR_INVALID_OPERATION);
-        buffer[bytes_received] = '\0';
-        request_size = request.size();
-        if (request_size + static_cast<ft_size_t>(bytes_received) > MAX_HANDSHAKE_SIZE)
-        {
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        request.append(buffer);
-        if (ft_strstr(request.c_str(), "\r\n\r\n"))
-            break ;
-    }
-    key_line = ft_strstr(request.c_str(), "Sec-WebSocket-Key: ");
-    if (!key_line)
+    if (websocket_read_handshake(client_fd, request, MAX_HANDSHAKE_SIZE) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    key_line += ft_strlen("Sec-WebSocket-Key: ");
-    line_end = ft_strstr(key_line, "\r\n");
-    key.clear();
-    if (line_end)
-    {
-        ft_size_t index_value;
-
-        index_value = 0;
-        while (key_line + index_value < line_end)
-        {
-            key.append(key_line[index_value]);
-            index_value++;
-        }
-    }
-    else
-    {
-        ft_size_t index_value;
-
-        index_value = 0;
-        while (key_line[index_value] != '\0')
-        {
-            key.append(key_line[index_value]);
-            index_value++;
-        }
-    }
-    compute_accept_key(key, accept);
-    permessage_deflate_enabled = websocket_header_contains_token(request,
+    const char *key_line = ft_strstr(request.c_str(), KEY_HEADER);
+    if (key_line == ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
+    key_line += sizeof(KEY_HEADER) - 1U;
+    const char *line_end = ft_strstr(key_line, "\r\n");
+    if (line_end == ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
+    char accept[WEBSOCKET_ACCEPT_KEY_LENGTH + 1U];
+    if (!websocket_compute_accept_key(key_line, static_cast<ft_size_t>(line_end - key_line), accept))
+        return (FT_ERR_INVALID_OPERATION);
+    const ft_bool permessage_deflate_enabled = websocket_header_contains_token(request,
         "Sec-WebSocket-Extensions:", "permessage-deflate");
-    response.clear();
-    response.append("HTTP/1.1 101 Switching Protocols\r\n");
-    response.append("Upgrade: websocket\r\n");
-    response.append("Connection: Upgrade\r\n");
-    response.append("Sec-WebSocket-Accept: ");
-    response.append(accept);
-    response.append("\r\n");
-    if (permessage_deflate_enabled != FT_FALSE)
-    {
-        response.append("Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n");
-    }
-    response.append("\r\n");
-    if (nw_send(client_fd, response.c_str(), response.size(), 0) < 0)
-    {
-        this->remove_connection_state_locked(client_fd);
+    if (response.append("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Accept: ") != FT_ERR_SUCCESS
+        || response.append(accept, WEBSOCKET_ACCEPT_KEY_LENGTH) != FT_ERR_SUCCESS
+        || response.append("\r\n") != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (permessage_deflate_enabled
+        && response.append("Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; "
+            "client_no_context_takeover\r\n") != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (response.append("\r\n") != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    if (websocket_send_bytes(client_fd, response.c_str(), response.size()) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    }
     this->store_connection_state_locked(client_fd, permessage_deflate_enabled);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t ft_websocket_server::send_pong_locked(int32_t client_fd, const unsigned char *payload, ft_size_t length)
 {
-    ft_string frame;
-    ft_size_t index_value;
-    int32_t initialize_error;
-
-    initialize_error = frame.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    frame.append(static_cast<char>(0x8A));
-    if (length <= 125)
-        frame.append(static_cast<char>(static_cast<unsigned char>(length)));
-    else if (length <= 65535)
-    {
-        frame.append(static_cast<char>(126));
-        frame.append(static_cast<char>((length >> 8) & 0xFF));
-        frame.append(static_cast<char>(length & 0xFF));
-    }
-    else
-    {
-        frame.append(static_cast<char>(127));
-        index_value = 0;
-        while (index_value < 8)
-        {
-            frame.append(static_cast<char>((length >> ((7 - index_value) * 8)) & 0xFF));
-            index_value++;
-        }
-    }
-    index_value = 0;
-    while (index_value < length)
-    {
-        frame.append(static_cast<char>(payload[index_value]));
-        index_value++;
-    }
-    if (nw_send(client_fd, frame.c_str(), frame.size(), 0) < 0)
-        return (FT_ERR_INVALID_OPERATION);
-    return (FT_ERR_SUCCESS);
+    return (websocket_send_frame(client_fd, 0x8AU, payload, length, ft_nullptr));
 }
 
 int32_t ft_websocket_server::receive_frame_locked(int32_t client_fd, ft_string &message)
@@ -810,12 +621,7 @@ int32_t ft_websocket_server::receive_frame_locked(int32_t client_fd, ft_string &
             }
             index_value += static_cast<ft_size_t>(bytes_received);
         }
-        index_value = 0;
-        while (index_value < payload_length)
-        {
-            payload[index_value] = static_cast<unsigned char>(payload[index_value] ^ mask_key[index_value % 4]);
-            index_value++;
-        }
+        websocket_copy_masked_payload(payload, payload, payload_length, mask_key);
         if (opcode == 0x9)
         {
             if (this->send_pong_locked(client_fd, payload, payload_length) != 0)
@@ -851,17 +657,12 @@ int32_t ft_websocket_server::receive_frame_locked(int32_t client_fd, ft_string &
             else
             {
                 message.clear();
-                index_value = 0;
-                while (index_value < payload_length)
+                if (payload_length != 0U && message.append(
+                        reinterpret_cast<const char *>(payload), payload_length) != FT_ERR_SUCCESS)
                 {
-                    if (message.append(static_cast<char>(payload[index_value])) != FT_ERR_SUCCESS)
-                    {
-                        if (payload != ft_nullptr)
-                            cma_free(payload);
-                        this->remove_connection_state_locked(client_fd);
-                        return (FT_ERR_INVALID_OPERATION);
-                    }
-                    index_value++;
+                    cma_free(payload);
+                    this->remove_connection_state_locked(client_fd);
+                    return (FT_ERR_INVALID_OPERATION);
                 }
             }
             if (payload != ft_nullptr)
@@ -917,91 +718,28 @@ int32_t ft_websocket_server::run_once(int32_t &client_fd, ft_string &message)
 
 int32_t ft_websocket_server::send_text(int32_t client_fd, const ft_string &message)
 {
-    ft_string frame;
-    ft_size_t length;
-    ft_size_t index_value;
-    ft_bool permessage_deflate_enabled;
-    ft_vector<unsigned char> compressed_payload;
-    int32_t lock_error;
-    int32_t deflate_error;
-    int32_t initialise_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_websocket_server::send_text");
-    initialise_error = frame.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (initialise_error);
-    initialise_error = compressed_payload.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (initialise_error);
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
+    if (client_fd < 0 || pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    if (client_fd < 0)
+    int32_t send_result;
+    if (this->connection_supports_permessage_deflate_locked(client_fd))
     {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    permessage_deflate_enabled = this->connection_supports_permessage_deflate_locked(client_fd);
-    if (permessage_deflate_enabled != FT_FALSE)
-    {
-        deflate_error = websocket_permessage_deflate_deflate(message, compressed_payload);
-        if (deflate_error != FT_ERR_SUCCESS)
-        {
-            (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        frame.append(static_cast<char>(0xC1));
-        length = compressed_payload.size();
+        ft_string compressed_payload;
+        const int32_t initialise_error = compressed_payload.initialize();
+        if (initialise_error != FT_ERR_SUCCESS)
+            send_result = initialise_error;
+        else if (websocket_permessage_deflate_deflate(message, compressed_payload) != FT_ERR_SUCCESS)
+            send_result = FT_ERR_INVALID_OPERATION;
+        else
+            send_result = websocket_send_frame(client_fd, 0xC1U,
+                reinterpret_cast<const unsigned char *>(compressed_payload.c_str()),
+                compressed_payload.size() - WEBSOCKET_DEFLATE_TAIL_SIZE, ft_nullptr);
     }
     else
-    {
-        frame.append(static_cast<char>(0x81));
-        length = message.size();
-    }
-    if (length <= 125)
-    {
-        frame.append(static_cast<char>(length));
-    }
-    else if (length <= 65535)
-    {
-        frame.append(static_cast<char>(126));
-        frame.append(static_cast<char>((length >> 8) & 0xFF));
-        frame.append(static_cast<char>(length & 0xFF));
-    }
-    else
-    {
-        frame.append(static_cast<char>(127));
-        index_value = 0;
-        while (index_value < 8)
-        {
-            frame.append(static_cast<char>((length >> ((7 - index_value) * 8)) & 0xFF));
-            index_value++;
-        }
-    }
-    index_value = 0;
-    if (permessage_deflate_enabled != FT_FALSE)
-    {
-        while (index_value < length)
-        {
-            frame.append(static_cast<char>(compressed_payload[index_value]));
-            index_value++;
-        }
-    }
-    else
-    {
-        while (index_value < length)
-        {
-            frame.append(message.c_str()[index_value]);
-            index_value++;
-        }
-    }
-    if (nw_send(client_fd, frame.c_str(), frame.size(), 0) < 0)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_OPERATION);
-    }
+        send_result = websocket_send_frame(client_fd, 0x81U,
+            reinterpret_cast<const unsigned char *>(message.c_str()), message.size(), ft_nullptr);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
+    return (send_result);
 }
 
 int32_t ft_websocket_server::get_port(uint16_t &port_value) const

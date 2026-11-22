@@ -1,4 +1,5 @@
 #include "compression.hpp"
+#include "compression_base64_internal.hpp"
 #include "../Basic/limits.hpp"
 
 static constexpr char BASE64_ALPHABET[] =
@@ -38,18 +39,15 @@ static constexpr compression_base64_decode_table compression_make_base64_decode_
 static constexpr compression_base64_decode_table BASE64_VALUES =
     compression_make_base64_decode_table();
 
-uint8_t *ft_base64_encode(const uint8_t *input_buffer, std::size_t input_size,
-    std::size_t *encoded_size)
+ft_bool compression_base64_encode_into(const uint8_t *input_buffer, ft_size_t input_size,
+    char *output, ft_size_t output_capacity) noexcept
 {
-    if (encoded_size == ft_nullptr)
-        return (ft_nullptr);
-    *encoded_size = 0U;
-    if (input_buffer == ft_nullptr || input_size > (FT_SYSTEM_SIZE_MAX / 4U) * 3U)
-        return (ft_nullptr);
+    if (input_buffer == ft_nullptr || output == ft_nullptr
+        || input_size > (static_cast<ft_size_t>(SIZE_MAX) / 4U) * 3U)
+        return (FT_FALSE);
     const ft_size_t output_length = ((input_size + 2U) / 3U) * 4U;
-    char *output = static_cast<char *>(cma_malloc(output_length + 1U));
-    if (output == ft_nullptr)
-        return (ft_nullptr);
+    if (output_length >= output_capacity)
+        return (FT_FALSE);
     ft_size_t input_index = 0U;
     ft_size_t output_index = 0U;
     while (input_size - input_index >= 3U)
@@ -78,6 +76,26 @@ uint8_t *ft_base64_encode(const uint8_t *input_buffer, std::size_t input_size,
         output[output_index + 1U] = '=';
     }
     output[output_length] = '\0';
+    return (FT_TRUE);
+}
+
+uint8_t *ft_base64_encode(const uint8_t *input_buffer, std::size_t input_size,
+    std::size_t *encoded_size)
+{
+    if (encoded_size == ft_nullptr)
+        return (ft_nullptr);
+    *encoded_size = 0U;
+    if (input_buffer == ft_nullptr || input_size > (SIZE_MAX / 4U) * 3U)
+        return (ft_nullptr);
+    const ft_size_t output_length = ((static_cast<ft_size_t>(input_size) + 2U) / 3U) * 4U;
+    char *output = static_cast<char *>(cma_malloc(output_length + 1U));
+    if (output == ft_nullptr)
+        return (ft_nullptr);
+    if (!compression_base64_encode_into(input_buffer, input_size, output, output_length + 1U))
+    {
+        cma_free(output);
+        return (ft_nullptr);
+    }
     *encoded_size = output_length;
     return (reinterpret_cast<uint8_t *>(output));
 }

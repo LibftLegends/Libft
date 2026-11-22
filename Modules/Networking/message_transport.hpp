@@ -339,6 +339,7 @@ class networking_message_transport
         ft_bool _listening;
         networking_message_endpoint _listen_endpoint;
         ft_vector<connection_record *> _connections;
+        ft_size_t _sorted_connection_count;
         ft_deque<networking_received_message *> _received_messages;
         ft_deque<networking_message_event> _events;
         ft_deque<networking_message_event> _callback_events;
@@ -430,6 +431,9 @@ class networking_message_transport
             uint64_t connection_id, const uint8_t cookie[40],
             ft_size_t received_size) noexcept;
         connection_record *find_connection(uint64_t connection_id) const noexcept;
+        int32_t receive_message_locked(networking_received_message &message) noexcept;
+        int32_t append_connection_record(connection_record *record) noexcept;
+        void pop_connection_record() noexcept;
         void clear_records() noexcept;
         int32_t emit_event(networking_message_event_type type,
             uint64_t connection_id, int32_t reason,

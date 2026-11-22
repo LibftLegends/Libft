@@ -1,4 +1,4 @@
-#include "networking.hpp"
+#include "networking_numeric_address_internal.hpp"
 #include "socket_class.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno_internal.hpp"
@@ -150,57 +150,17 @@ int32_t ft_socket::set_non_blocking(const SocketConfig &config)
 
 int32_t ft_socket::configure_address(const SocketConfig &config)
 {
-    ft_string host_copy;
     char port_string[16];
     struct addrinfo hints;
     struct addrinfo *results;
     struct addrinfo *current;
     int32_t resolver_status;
 
-    ft_memset(&this->_address, 0, sizeof(this->_address));
-    if (host_copy.initialize(config._ip) != FT_ERR_SUCCESS)
-    {
-        (void)nw_close(this->_socket_file_descriptor);
-        this->_socket_file_descriptor = -1;
-        return (FT_ERR_NO_MEMORY);
-    }
-    if (host_copy.get_error() != FT_ERR_SUCCESS)
-    {
-        (void)nw_close(this->_socket_file_descriptor);
-        this->_socket_file_descriptor = -1;
-        return (FT_ERR_NO_MEMORY);
-    }
-    if (config._address_family == AF_INET)
-    {
-        struct sockaddr_in *address_ipv4;
-
-        address_ipv4 = reinterpret_cast<struct sockaddr_in *>(&this->_address);
-        address_ipv4->sin_family = AF_INET;
-        address_ipv4->sin_port = htons(config._port);
-        if (host_copy.empty() != FT_FALSE)
-        {
-            address_ipv4->sin_addr.s_addr = htonl(INADDR_ANY);
-            return (FT_ERR_SUCCESS);
-        }
-        if (nw_inet_pton(AF_INET, host_copy.c_str(), &address_ipv4->sin_addr) > 0)
-            return (FT_ERR_SUCCESS);
-    }
-    else if (config._address_family == AF_INET6)
-    {
-        struct sockaddr_in6 *address_ipv6;
-
-        address_ipv6 = reinterpret_cast<struct sockaddr_in6 *>(&this->_address);
-        address_ipv6->sin6_family = AF_INET6;
-        address_ipv6->sin6_port = htons(config._port);
-        if (host_copy.empty() != FT_FALSE)
-        {
-            address_ipv6->sin6_addr = in6addr_any;
-            return (FT_ERR_SUCCESS);
-        }
-        if (nw_inet_pton(AF_INET6, host_copy.c_str(), &address_ipv6->sin6_addr) > 0)
-            return (FT_ERR_SUCCESS);
-    }
-    else
+    if (networking_configure_numeric_address(this->_address, config._address_family,
+            config._ip, config._port))
+        return (FT_ERR_SUCCESS);
+    ft_bzero(&this->_address, sizeof(this->_address));
+    if (config._address_family != AF_INET && config._address_family != AF_INET6)
     {
         (void)nw_close(this->_socket_file_descriptor);
         this->_socket_file_descriptor = -1;
@@ -213,7 +173,7 @@ int32_t ft_socket::configure_address(const SocketConfig &config)
     hints.ai_protocol = config._protocol;
     std::snprintf(port_string, sizeof(port_string), "%u", config._port);
     results = ft_nullptr;
-    resolver_status = getaddrinfo(host_copy.c_str(), port_string, &hints, &results);
+    resolver_status = getaddrinfo(config._ip, port_string, &hints, &results);
     if (resolver_status != 0)
     {
         (void)nw_close(this->_socket_file_descriptor);

@@ -27,6 +27,41 @@ FT_TEST(test_networking_replication_envelope_round_trip)
     return (1);
 }
 
+FT_TEST(test_networking_replication_envelope_preserves_wire_bytes_and_appends_atomically)
+{
+    networking_replication_envelope envelope;
+    envelope.message_type = 0x1234U;
+    envelope.server_instance_id = 0x0807060504030201ULL;
+    envelope.session_id = 1U;
+    envelope.message_sequence = 2U;
+    const uint8_t expected[] = {
+        NETWORKING_REPLICATION_PROTOCOL_VERSION & 0xFFU,
+        NETWORKING_REPLICATION_PROTOCOL_VERSION >> 8U, 0x34U, 0x12U, 0U, 0U, 0U, 0U,
+        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U,
+        1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U,
+        2U, 0U, 0U, 0U, 0U, 0U, 0U, 0U
+    };
+    ft_byte_buffer buffer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize(sizeof(expected) + 1U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.append_u8(0xA5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_replication_envelope_serialize(envelope, buffer));
+    FT_ASSERT_EQ(sizeof(expected) + 1U, buffer.size());
+    FT_ASSERT_EQ(0, ft_memcmp(buffer.data() + 1U, expected, sizeof(expected)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.skip(1U));
+    networking_replication_envelope restored;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_replication_envelope_deserialize(restored, buffer));
+    FT_ASSERT_EQ(envelope.server_instance_id, restored.server_instance_id);
+    FT_ASSERT_EQ(sizeof(expected) + 1U, buffer.read_position());
+
+    ft_byte_buffer undersized;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, undersized.initialize(sizeof(expected), FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, undersized.append_u8(0xA5U));
+    FT_ASSERT(networking_replication_envelope_serialize(envelope, undersized) != FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(1U, undersized.size());
+    FT_ASSERT_EQ(0xA5U, undersized.data()[0]);
+    return (1);
+}
+
 FT_TEST(test_networking_replication_envelope_rejects_payload_overflow)
 {
     networking_replication_envelope envelope;
@@ -251,7 +286,7 @@ FT_TEST(test_networking_replication_peer_cursor_round_trip_is_transactional)
     ft_byte_buffer truncated;
     ft_size_t initial_read_position;
 
-    source.server_instance_id = 11U;
+    source.server_instance_id = 0x0102030405060708ULL;
     source.session_id = 22U;
     source.subscription_id = 33U;
     source.block_revision = 44U;
@@ -263,6 +298,12 @@ FT_TEST(test_networking_replication_peer_cursor_round_trip_is_transactional)
         networking_replication_peer_cursor_serialize(source, encoded));
     FT_ASSERT_EQ(static_cast<ft_size_t>(NETWORKING_REPLICATION_CURSOR_SIZE),
         encoded.size());
+    const uint8_t expected_prefix[] = {
+        NETWORKING_REPLICATION_CURSOR_VERSION >> 8U,
+        NETWORKING_REPLICATION_CURSOR_VERSION & 0xFFU, 0U, 1U, 0U, 0U, 0U, 0U,
+        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U
+    };
+    FT_ASSERT_EQ(0, ft_memcmp(encoded.data(), expected_prefix, sizeof(expected_prefix)));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded.data(),
         encoded.size() - 1U));

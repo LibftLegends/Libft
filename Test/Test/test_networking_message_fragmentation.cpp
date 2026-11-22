@@ -4,6 +4,49 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Networking/networking_test_hooks.hpp"
 
+FT_TEST(test_networking_encrypted_fragments_fit_datagram_limit)
+{
+    networking_test_memory_datagram_io sender_io;
+    networking_test_memory_datagram_io receiver_io;
+    sender_io.connect(receiver_io);
+    receiver_io.connect(sender_io);
+    networking_message_transport_config configuration;
+    configuration.maximum_datagram_size = 1200U;
+    configuration.encryption_key[0] = 9U;
+    networking_message_transport sender;
+    networking_message_transport receiver;
+    networking_message_connection sender_connection;
+    networking_message_connection receiver_connection;
+    networking_message_endpoint endpoint;
+    networking_test_prepare_endpoint(endpoint);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.initialize(configuration, sender_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.initialize(configuration, receiver_io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.open_connection(endpoint, sender_connection));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.open_connection(endpoint, receiver_connection));
+    uint8_t payload[1115];
+    ft_memset(payload, 0xA5, sizeof(payload));
+    payload[0] = 0U;
+    payload[sizeof(payload) - 1U] = 0xFEU;
+    networking_message_send_options options;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender_connection.send_message(payload, sizeof(payload), options));
+    networking_received_message received;
+    int32_t result = FT_ERR_EMPTY;
+    uint32_t attempt = 0U;
+    while (result == FT_ERR_EMPTY && attempt < 64U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.poll());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.poll());
+        result = receiver.receive_message(received);
+        sender_io.advance(1U);
+        receiver_io.advance(1U);
+        ++attempt;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(sizeof(payload), received.payload.size());
+    FT_ASSERT_EQ(0, ft_memcmp(received.payload.begin(), payload, sizeof(payload)));
+    return (1);
+}
+
 FT_TEST(test_networking_fragmented_message_reassembles_with_exact_bytes)
 {
     networking_test_memory_datagram_io sender_io;
@@ -246,6 +289,50 @@ FT_TEST(test_networking_fragment_reassembly_order_duplicates_and_conflicts)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.receive_message(received));
     FT_ASSERT_EQ(0, ft_memcmp(&received.payload[0U], "abcdefgh", 8U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_fragment_reassembly_retries_after_delivery_allocation_failure)
+{
+    networking_fragmentation_test_io io;
+    networking_message_transport_config configuration;
+    configuration.enable_encryption = FT_FALSE;
+    networking_message_transport transport;
+    networking_message_endpoint endpoint;
+    networking_test_prepare_endpoint(endpoint);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.initialize(configuration, io));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.listen(endpoint));
+    const uint8_t complete[] = "abcdefghijklmnopqrstuvwxyz12345";
+    constexpr uint16_t TOTAL_SIZE = sizeof(complete) - 1U;
+    constexpr uint16_t PREFIX_SIZE = 17U;
+    constexpr uint16_t SUFFIX_OFFSET = 13U;
+    constexpr uint16_t SUFFIX_SIZE = TOTAL_SIZE - SUFFIX_OFFSET;
+    uint8_t packet[128];
+    ft_size_t packet_size = networking_fragmentation_make_packet(packet, 501U, 1U,
+        TOTAL_SIZE, 0U, 2U, complete, PREFIX_SIZE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.process_datagram(endpoint, packet, packet_size));
+
+    uint8_t staged_suffix[SUFFIX_SIZE];
+    ft_memcpy(staged_suffix, complete + SUFFIX_OFFSET, SUFFIX_SIZE);
+    staged_suffix[SUFFIX_SIZE - 1U] = 'X';
+    packet_size = networking_fragmentation_make_packet(packet, 501U, 2U,
+        TOTAL_SIZE, SUFFIX_OFFSET, 2U, staged_suffix, SUFFIX_SIZE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_begin());
+    const int32_t scheduled = networking_test_failure_fail_next(NETWORKING_TEST_RECEIVED_MESSAGE_ALLOCATE);
+    const int32_t failed_delivery = transport.process_datagram(endpoint, packet, packet_size);
+    const int32_t ended = networking_test_failure_end();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scheduled);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_delivery);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ended);
+    networking_received_message received;
+    FT_ASSERT_EQ(FT_ERR_EMPTY, transport.receive_message(received));
+
+    packet_size = networking_fragmentation_make_packet(packet, 501U, 2U,
+        TOTAL_SIZE, SUFFIX_OFFSET, 2U, complete + SUFFIX_OFFSET, SUFFIX_SIZE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.process_datagram(endpoint, packet, packet_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transport.receive_message(received));
+    FT_ASSERT_EQ(TOTAL_SIZE, received.payload.size());
+    FT_ASSERT_EQ(0, ft_memcmp(received.payload.begin(), complete, TOTAL_SIZE));
     return (1);
 }
 

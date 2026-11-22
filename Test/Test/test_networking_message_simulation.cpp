@@ -97,6 +97,37 @@ FT_TEST(test_networking_simulator_scripted_packet_outcomes)
     return (1);
 }
 
+FT_TEST(test_networking_simulator_script_lookup_prefers_first_out_of_order_action)
+{
+    networking_test_idle_datagram_io base;
+    networking_simulated_datagram_io simulator;
+    networking_simulator_config configuration;
+    networking_message_endpoint endpoint;
+    networking_message_endpoint source;
+    networking_test_prepare_endpoint(endpoint);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.initialize(base, configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.add_script_action(3U,
+        networking_simulator_script_action::SCRIPT_MTU_DROP, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.add_script_action(1U,
+        networking_simulator_script_action::SCRIPT_DROP, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.add_script_action(3U,
+        networking_simulator_script_action::SCRIPT_DISCONNECT, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.add_script_action(4U,
+        networking_simulator_script_action::SCRIPT_DROP, 0U));
+    uint8_t packet = 9U;
+    ft_size_t received_size = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(1U, base.sent_datagrams);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.clear_script());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(2U, base.sent_datagrams);
+    return (1);
+}
+
 FT_TEST(test_networking_simulator_corruption_duplication_and_mtu)
 {
     networking_test_memory_datagram_io base;
@@ -206,5 +237,107 @@ FT_TEST(test_networking_simulator_reorders_and_limits_traffic)
         sizeof(output), &received_size));
     FT_ASSERT_EQ(static_cast<int32_t>(1U), static_cast<int32_t>(output[0]));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_simulator_move_preserves_pending_order_and_allows_reuse)
+{
+    networking_test_memory_datagram_io base;
+    networking_test_memory_datagram_io peer;
+    networking_simulated_datagram_io original;
+    networking_simulated_datagram_io moved;
+    networking_simulator_config configuration;
+    networking_message_endpoint endpoint;
+    networking_message_endpoint source;
+    networking_test_prepare_endpoint(endpoint);
+    base.connect(peer);
+    peer.connect(base);
+    configuration.fixed_latency_milliseconds = 10U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.initialize(base, configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.add_script_action(1U,
+        networking_simulator_script_action::SCRIPT_DELAY, 5U));
+    const uint8_t first = 1U;
+    const uint8_t second = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.send_datagram(endpoint, &first, sizeof(first)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.send_datagram(endpoint, &second, sizeof(second)));
+    original.advance(9U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(original));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.initialize(base, configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.initialize(base, configuration));
+
+    uint8_t output = 0U;
+    ft_size_t received_size = 0U;
+    FT_ASSERT_EQ(FT_ERR_EMPTY, moved.receive_datagram(source, &output, sizeof(output), &received_size));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, peer.receive_datagram(source, &output, sizeof(output), &received_size));
+    moved.advance(6U);
+    FT_ASSERT_EQ(FT_ERR_EMPTY, moved.receive_datagram(source, &output, sizeof(output), &received_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.receive_datagram(source, &output, sizeof(output), &received_size));
+    FT_ASSERT_EQ(first, output);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.receive_datagram(source, &output, sizeof(output), &received_size));
+    FT_ASSERT_EQ(second, output);
+    return (1);
+}
+
+class simulator_test_fails_first_send : public networking_test_idle_datagram_io
+{
+    private:
+        ft_bool _fail_next = FT_TRUE;
+
+    public:
+        int32_t send_datagram(const networking_message_endpoint &destination,
+            const uint8_t *data, ft_size_t size) noexcept override
+        {
+            if (this->_fail_next)
+            {
+                this->_fail_next = FT_FALSE;
+                return (FT_ERR_SOCKET_SEND_FAILED);
+            }
+            return (networking_test_idle_datagram_io::send_datagram(destination, data, size));
+        }
+};
+
+FT_TEST(test_networking_simulator_rechecks_remaining_datagrams_after_send_failure)
+{
+    simulator_test_fails_first_send base;
+    networking_simulated_datagram_io simulator;
+    networking_simulator_config configuration;
+    networking_message_endpoint endpoint;
+    networking_message_endpoint source;
+    networking_test_prepare_endpoint(endpoint);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.initialize(base, configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.add_script_action(1U,
+        networking_simulator_script_action::SCRIPT_DELAY, 10U));
+    uint8_t packet = 1U;
+    ft_size_t received_size = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    FT_ASSERT_EQ(FT_ERR_SOCKET_SEND_FAILED,
+        simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(FT_ERR_EMPTY, simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(1U, base.sent_datagrams);
+    simulator.advance(10U);
+    FT_ASSERT_EQ(FT_ERR_EMPTY, simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(2U, base.sent_datagrams);
+    return (1);
+}
+
+FT_TEST(test_networking_simulator_accepts_maximum_jitter)
+{
+    networking_test_idle_datagram_io base;
+    networking_simulated_datagram_io simulator;
+    networking_simulator_config configuration;
+    networking_message_endpoint endpoint;
+    networking_message_endpoint source;
+    networking_test_prepare_endpoint(endpoint);
+    configuration.jitter_milliseconds = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.initialize(base, configuration));
+    uint8_t packet = 1U;
+    ft_size_t received_size = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, simulator.send_datagram(endpoint, &packet, sizeof(packet)));
+    simulator.advance(UINT32_MAX);
+    FT_ASSERT_EQ(FT_ERR_EMPTY, simulator.receive_datagram(source, &packet, sizeof(packet), &received_size));
+    FT_ASSERT_EQ(1U, base.sent_datagrams);
     return (1);
 }

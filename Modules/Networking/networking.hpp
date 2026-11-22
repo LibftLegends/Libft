@@ -148,6 +148,8 @@ void event_loop_teardown_thread_safety(event_loop *loop);
 int32_t event_loop_lock(event_loop *loop, ft_bool *lock_acquired);
 void event_loop_unlock(event_loop *loop, ft_bool lock_acquired);
 
+// Waits for this UDP socket only and leaves loop registrations intact.
+// Returns 1 for readiness, 0 for a timeout or interruption, and -1 on error.
 int32_t udp_event_loop_wait_read(event_loop *loop, udp_socket &socket, int32_t timeout_milliseconds);
 int32_t udp_event_loop_wait_write(event_loop *loop, udp_socket &socket, int32_t timeout_milliseconds);
 ssize_t udp_event_loop_receive(event_loop *loop, udp_socket &socket, void *buffer, ft_size_t size,
