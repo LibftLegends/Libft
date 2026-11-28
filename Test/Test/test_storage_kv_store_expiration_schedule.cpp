@@ -137,3 +137,51 @@ FT_TEST(test_storage_kv_store_prunes_multiple_entries_without_allocating)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
     return (1);
 }
+
+static int32_t check_storage_swap_borrowed_inputs(kv_store &store)
+{
+    clock_seconds = 100;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("borrowed-key", "target", 5));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("borrowed-expected", "original", 5));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("borrowed-replacement", "updated", 5));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("target", "original"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("expired-target", "old", 5));
+    const char *key = store.kv_get("borrowed-key");
+    const char *expected = store.kv_get("borrowed-expected");
+    const char *replacement = store.kv_get("borrowed-replacement");
+    FT_ASSERT(key != ft_nullptr && expected != ft_nullptr && replacement != ft_nullptr);
+    clock_seconds = 105;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_compare_and_swap(key, expected, replacement));
+    FT_ASSERT_EQ(0, ft_strcmp(store.kv_get("target"), "updated"));
+    FT_ASSERT_EQ(FT_FALSE, store.kv_contains("borrowed-key"));
+    FT_ASSERT_EQ(FT_FALSE, store.kv_contains("borrowed-expected"));
+    FT_ASSERT_EQ(FT_FALSE, store.kv_contains("borrowed-replacement"));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, store.kv_compare_and_swap("expired-target", "old", "new"));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("stale", "old", 5));
+    clock_seconds = 110;
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, store.kv_compare_and_swap("stale", "old", "new"));
+    FT_ASSERT_EQ(FT_FALSE, store.kv_contains("stale"));
+    cma_set_alloc_limit(1);
+    const int32_t result = store.kv_compare_and_swap("target", "updated", ft_nullptr);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(FT_FALSE, store.kv_contains("target"));
+    return (1);
+}
+
+FT_TEST(test_storage_kv_store_compare_swap_reads_borrowed_inputs_before_pruning)
+{
+    const char *path = "test_storage_compare_swap_borrowed.json";
+    constexpr char EMPTY[] = "{\"kv_store\":{}}";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, EMPTY, sizeof(EMPTY) - 1));
+    kv_store store;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.initialize(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.enable_thread_safety());
+    time_set_clock_now_hook(test_storage_clock);
+    const int32_t result = check_storage_swap_borrowed_inputs(store);
+    time_reset_clock_now_hook();
+    FT_ASSERT_EQ(1, result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    return (1);
+}

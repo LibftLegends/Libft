@@ -3,6 +3,46 @@
 #include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
+FT_TEST(test_ft_map_erase_at_shifts_only_the_suffix)
+{
+    ft_map<uint32_t, uint32_t> values;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.enable_thread_safety());
+    values.insert(11U, 21U);
+    values.insert(12U, 22U);
+    values.insert(13U, 23U);
+    values.insert(14U, 24U);
+    uint32_t relocations = 0;
+    const auto relocate = [&relocations](Pair<uint32_t, uint32_t> &destination,
+        Pair<uint32_t, uint32_t> &source) noexcept
+    {
+        destination.key = source.key;
+        destination.value = source.value;
+        ++relocations;
+        return ;
+    };
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, values.erase_at(4U, relocate));
+    FT_ASSERT_EQ(4U, values.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.erase_at(3U, relocate));
+    FT_ASSERT_EQ(0U, relocations);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.erase_at(1U, relocate));
+    FT_ASSERT_EQ(1U, relocations);
+    FT_ASSERT_EQ(2U, values.size());
+    const Pair<uint32_t, uint32_t> *begin = values.end() - 2;
+    FT_ASSERT_EQ(11U, begin[0].key);
+    FT_ASSERT_EQ(21U, begin[0].value);
+    FT_ASSERT_EQ(13U, begin[1].key);
+    FT_ASSERT_EQ(23U, begin[1].value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.erase_at(0U, relocate));
+    FT_ASSERT_EQ(2U, relocations);
+    FT_ASSERT_EQ(23U, values.at(13U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.erase_at(0U, relocate));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, values.erase_at(0U, relocate));
+    FT_ASSERT_EQ(2U, relocations);
+    FT_ASSERT_EQ(FT_TRUE, values.empty());
+    return (1);
+}
+
 FT_TEST(test_ft_map_lookup_accepts_borrowed_string_key)
 {
     ft_map<ft_string, uint32_t> values;

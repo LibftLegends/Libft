@@ -169,6 +169,8 @@ class kv_store
             kv_store_entry *existing_entry);
         int32_t apply_existing_updates_locked(const ft_vector<kv_store_operation> &operations,
             ft_size_t operation_count);
+        int32_t apply_deletions_locked(const ft_vector<kv_store_operation> &operations,
+            ft_size_t operation_count);
         int32_t compute_expiration(int64_t ttl_seconds, ft_bool &has_expiration, int64_t &expiration_timestamp) const;
         int64_t current_time_seconds() const;
         int32_t parse_expiration_timestamp(const char *value_string, int64_t &expiration_timestamp) const;

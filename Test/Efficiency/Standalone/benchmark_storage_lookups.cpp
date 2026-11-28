@@ -65,12 +65,106 @@ static int32_t measure_storage(kv_store &store, const char *key, const char *wor
     return (0);
 }
 
-int main()
+static int32_t measure_tail_delete(kv_store &store, const char *key, const char *first_key)
 {
-    constexpr uint32_t ENTRIES = 1024;
+    constexpr uint32_t ITERATIONS = 256;
+    std::chrono::duration<double, std::micro> elapsed{};
+    uint32_t iteration = 0;
+    while (iteration < ITERATIONS)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const int32_t result = store.kv_delete(key);
+        elapsed += std::chrono::steady_clock::now() - start;
+        if (result != FT_ERR_SUCCESS || store.kv_get(key) != ft_nullptr
+            || store.kv_set(key, "original value") != FT_ERR_SUCCESS)
+            return (1);
+        ++iteration;
+    }
+    const char *first_value = store.kv_get(first_key);
+    if (first_value == ft_nullptr || ft_strcmp(first_value, "original value") != 0)
+        return (1);
+    std::printf("%.3f us/operation\n", elapsed.count() / ITERATIONS);
+    return (0);
+}
+
+static int32_t measure_delete_batch(kv_store &store)
+{
+    constexpr uint32_t ITERATIONS = 32;
+    const char *const keys[] = {"key-3", "key-100", "key-20", "key-600"};
+    ft_vector<kv_store_operation> operations;
+    if (operations.initialize() != FT_ERR_SUCCESS)
+        return (1);
+    ft_size_t index = 0;
+    while (index < sizeof(keys) / sizeof(keys[0]))
+    {
+        kv_store_operation operation;
+        if (kv_store_init_delete_operation(operation, keys[index]) != FT_ERR_SUCCESS
+            || operations.push_back(operation) != FT_ERR_SUCCESS)
+            return (1);
+        ++index;
+    }
+    std::chrono::duration<double, std::micro> elapsed{};
+    uint32_t iteration = 0;
+    while (iteration < ITERATIONS)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const int32_t result = store.kv_apply(operations);
+        elapsed += std::chrono::steady_clock::now() - start;
+        if (result != FT_ERR_SUCCESS)
+            return (1);
+        index = 0;
+        while (index < sizeof(keys) / sizeof(keys[0]))
+        {
+            if (store.kv_get(keys[index]) != ft_nullptr
+                || store.kv_set(keys[index], "original value") != FT_ERR_SUCCESS)
+                return (1);
+            ++index;
+        }
+        ++iteration;
+    }
+    const char *retained = store.kv_get("key-0");
+    if (retained == ft_nullptr || ft_strcmp(retained, "original value") != 0)
+        return (1);
+    std::printf("%.3f us/operation\n", elapsed.count() / ITERATIONS);
+    return (0);
+}
+
+static int32_t measure_compare_swap(kv_store &store, const char *key)
+{
+    constexpr uint32_t ITERATIONS = 512;
+    uint32_t iteration = 0;
+    const char *expected = "original value";
+    const char *replacement = "updated value";
+    const auto start = std::chrono::steady_clock::now();
+    while (iteration < ITERATIONS)
+    {
+        if (store.kv_compare_and_swap(key, expected, replacement) != FT_ERR_SUCCESS)
+            return (1);
+        const char *old_expected = expected;
+        expected = replacement;
+        replacement = old_expected;
+        ++iteration;
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    const char *value = store.kv_get(key);
+    if (value == ft_nullptr || ft_strcmp(value, expected) != 0)
+        return (1);
+    std::printf("%.3f us/operation\n",
+        std::chrono::duration<double, std::micro>(elapsed).count() / ITERATIONS);
+    return (0);
+}
+
+int main(int argument_count, char **arguments)
+{
+    const ft_bool tail_delete = (argument_count == 2 && ft_strcmp(arguments[1], "--delete-tail") == 0);
+    const ft_bool delete_batch = (argument_count == 2 && ft_strcmp(arguments[1], "--delete-batch") == 0);
+    const ft_bool compare_swap = (argument_count == 2 && ft_strcmp(arguments[1], "--compare-swap") == 0);
+    uint32_t entry_count = 1024;
+    if (tail_delete == FT_TRUE)
+        entry_count = 4096;
     std::string contents = "{\"kv_store\":{";
     uint32_t index = 0;
-    while (index < ENTRIES)
+    while (index < entry_count)
     {
         if (index != 0)
             contents += ',';
@@ -86,18 +180,27 @@ int main()
     int32_t result = 1;
     if (store.initialize(path.c_str()) == FT_ERR_SUCCESS)
     {
-        const std::string key = "key-" + std::to_string(ENTRIES - 1);
-        result = measure_storage(store, key.c_str(), "no-ttl");
-        if (result == 0)
+        const std::string key = "key-" + std::to_string(entry_count - 1);
+        if (tail_delete == FT_TRUE)
+            result = measure_tail_delete(store, key.c_str(), "key-0");
+        else if (delete_batch == FT_TRUE)
+            result = measure_delete_batch(store);
+        else if (compare_swap == FT_TRUE)
+            result = measure_compare_swap(store, key.c_str());
+        else
         {
-            result = 1;
-            if (store.kv_set("key-0", "original value", 600) == FT_ERR_SUCCESS)
-                result = measure_storage(store, key.c_str(), "future-ttl");
-        }
-        if (result == 0)
-        {
-            const std::string second_key = "key-" + std::to_string(ENTRIES - 2);
-            result = measure_existing_batch(store, key.c_str(), second_key.c_str());
+            result = measure_storage(store, key.c_str(), "no-ttl");
+            if (result == 0)
+            {
+                result = 1;
+                if (store.kv_set("key-0", "original value", 600) == FT_ERR_SUCCESS)
+                    result = measure_storage(store, key.c_str(), "future-ttl");
+            }
+            if (result == 0)
+            {
+                const std::string second_key = "key-" + std::to_string(entry_count - 2);
+                result = measure_existing_batch(store, key.c_str(), second_key.c_str());
+            }
         }
         if (store.destroy() != FT_ERR_SUCCESS)
             result = 1;

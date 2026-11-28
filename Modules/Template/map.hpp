@@ -39,6 +39,8 @@ class ft_map
         static int32_t copy_entries(Pair<Key, MappedType> *destination,
             const Pair<Key, MappedType> *source, ft_size_t count);
         int32_t remove_at_unlocked(ft_size_t index);
+        template <typename Relocate>
+        void relocate_erase_at_unlocked(ft_size_t index, Relocate relocate);
         template <typename Transfer, typename CanShift>
         int32_t remove_transactional_unlocked(ft_size_t index, Transfer transfer,
             CanShift can_shift);
@@ -128,6 +130,9 @@ class ft_map
         // erasure. Relocate must overwrite the destination without failing.
         template <typename Validate, typename Relocate>
         int32_t     erase_value(const Key &key, Validate validate, Relocate relocate);
+        // Erase by current insertion-order index. Synchronize index lookup with erasure.
+        template <typename Relocate>
+        int32_t     erase_at(ft_size_t index, Relocate relocate);
         // Preserve the map if copying a retained entry fails. A successful
         // non-tail erasure can replace the backing storage. The optional
         // transfer preserves value state omitted by copies and must not fail.
@@ -968,18 +973,43 @@ int32_t ft_map<Key, MappedType>::erase_value(const Key &key, Validate validate, 
     {
         result = validate(this->_data[index].value);
         if (result == FT_ERR_SUCCESS)
-        {
-            while (index + 1U < this->_size)
-            {
-                relocate(this->_data[index], this->_data[index + 1U]);
-                ++index;
-            }
-            ::destroy_at(&this->_data[index]);
-            --this->_size;
-        }
+            this->relocate_erase_at_unlocked(index, relocate);
     }
     (void)this->unlock_internal(lock_acquired);
     return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::erase_at(ft_size_t index, Relocate relocate)
+{
+    static_assert(noexcept(relocate(std::declval<Pair<Key, MappedType> &>(),
+        std::declval<Pair<Key, MappedType> &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::erase_at");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    if (index >= this->_size)
+        result = FT_ERR_OUT_OF_RANGE;
+    else
+        this->relocate_erase_at_unlocked(index, relocate);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+void ft_map<Key, MappedType>::relocate_erase_at_unlocked(ft_size_t index, Relocate relocate)
+{
+    while (index + 1U < this->_size)
+    {
+        relocate(this->_data[index], this->_data[index + 1U]);
+        ++index;
+    }
+    ::destroy_at(&this->_data[index]);
+    --this->_size;
+    return ;
 }
 
 template <typename Key, typename MappedType>

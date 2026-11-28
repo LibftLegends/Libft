@@ -230,3 +230,60 @@ FT_TEST(test_readline_completion_callbacks_register)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_set_completion_callback(ft_nullptr, ft_nullptr));
     return (1);
 }
+
+static int32_t add_ranked_dynamic_completion(const char *, int32_t, const char *, void *)
+{
+    return (rl_completion_add_candidate("help"));
+}
+
+FT_TEST(test_readline_tab_completion_orders_names_scores_and_exact_ties)
+{
+    rl_clear_suggestions();
+    rl_add_suggestion("h_e");
+    rl_add_suggestion("help");
+    rl_add_suggestion("helo");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_set_completion_callback(add_ranked_dynamic_completion, ft_nullptr));
+    char buffer[16] = "he";
+    readline_state_t state;
+    state.buffer = buffer;
+    state.buffer_size = sizeof(buffer);
+    state.position = 2;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_handle_tab_completion(&state, "> "));
+    FT_ASSERT_EQ(0, ft_strcmp(buffer, "helo"));
+    FT_ASSERT_EQ(4, state.current_match_count);
+    FT_ASSERT(state.current_matches[1] == rl_completion_get_dynamic_match(0));
+    FT_ASSERT(state.current_matches[2] != state.current_matches[1]);
+    FT_ASSERT_EQ(0, ft_strcmp(state.current_matches[2], "help"));
+    FT_ASSERT_EQ(0, ft_strcmp(state.current_matches[3], "h_e"));
+    FT_ASSERT(state.current_match_scores[2] > state.current_match_scores[3]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_handle_tab_completion(&state, "> "));
+    FT_ASSERT_EQ(0, ft_strcmp(buffer, "help"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_set_completion_callback(ft_nullptr, ft_nullptr));
+    rl_completion_reset_dynamic_matches();
+    rl_clear_suggestions();
+    return (1);
+}
+
+FT_TEST(test_readline_tab_completion_resize_failure_preserves_cursor_for_retry)
+{
+    rl_clear_suggestions();
+    rl_add_suggestion("abcdef");
+    readline_state_t state;
+    state.buffer = static_cast<char *>(cma_malloc(4));
+    FT_ASSERT(state.buffer != ft_nullptr);
+    state.buffer_size = 4;
+    (void)ft_memcpy(state.buffer, "ab", 3);
+    state.position = 2;
+    cma_set_alloc_limit(1);
+    const int32_t failed = rl_handle_tab_completion(&state, "> ");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed);
+    FT_ASSERT_EQ(2, state.position);
+    FT_ASSERT_EQ(0, ft_strcmp(state.buffer, "ab"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_handle_tab_completion(&state, "> "));
+    FT_ASSERT_EQ(6, state.position);
+    FT_ASSERT_EQ(0, ft_strcmp(state.buffer, "abcdef"));
+    cma_free(state.buffer);
+    rl_clear_suggestions();
+    return (1);
+}

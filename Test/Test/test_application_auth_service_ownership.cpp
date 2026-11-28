@@ -65,16 +65,21 @@ FT_TEST(test_application_auth_service_long_signal_output_fits_exact_heap_buffer)
     return (1);
 }
 
-FT_TEST(test_application_auth_service_hex_reuses_the_encoder_allocation)
+FT_TEST(test_application_auth_service_signal_hash_uses_caller_storage)
 {
     application_auth_service service;
-    ft_string output;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize("previous"));
-    cma_set_alloc_limit(65);
-    const int32_t result = service.build_login_signal_one_time_password_hash("fixture-value", output);
+    const char expected[] = "0248f56577e62962fd6ae2f4d93b4ae9323f4976469d53ffa6953d3bd0f1664d";
+    char output[sizeof(expected)];
+    char short_output[] = "unchanged";
+    cma_set_alloc_limit(1);
+    const int32_t result = service.build_login_signal_one_time_password_hash(
+        "fixture-value", output, sizeof(output));
     cma_set_alloc_limit(0);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
-    FT_ASSERT(output == "0248f56577e62962fd6ae2f4d93b4ae9323f4976469d53ffa6953d3bd0f1664d");
+    FT_ASSERT_EQ(0, ft_memcmp(output, expected, sizeof(expected)));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, service.build_login_signal_one_time_password_hash(
+        "fixture-value", short_output, sizeof(short_output)));
+    FT_ASSERT_EQ(0, ft_strcmp(short_output, "unchanged"));
     return (1);
 }
 
@@ -198,7 +203,66 @@ FT_TEST(test_application_auth_service_uses_validated_path_and_preserves_self_mov
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.user_exists("legacy-fixture", exists));
     FT_ASSERT_EQ(FT_FALSE, exists);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_login_session_timestamp("fixture-user", timestamp));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.remove_user("fixture-user"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved._credential_store.kv_set(
+        "application/auth/approvals/fixture-user", "fixture-user"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved._credential_store.kv_set(
+        "application/auth/settings/approval_required/fixture-user", "1"));
+    const char *signal_key = "application/auth/login_signal/fixture-user";
+    const char signal_hash[] = "0248f56577e62962fd6ae2f4d93b4ae9323f4976469d53ffa6953d3bd0f1664d";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.register_user("fixture-user", "fixture-password"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.set_login_signal_output_file_descriptor(17));
+    g_auth_signal_length = 0;
+    su_set_write_syscall_hook(capture_auth_signal_short_write);
+    const int32_t issuance_result = moved.request_login_signal_one_time_password("fixture-user");
+    su_reset_write_syscall_hook();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, issuance_result);
+    const char signal_prefix[] = "fixture-user: ";
+    FT_ASSERT_EQ(sizeof(signal_prefix) - 1 + 32 + 1, g_auth_signal_length);
+    FT_ASSERT_EQ(0, ft_memcmp(g_auth_signal_bytes, signal_prefix, sizeof(signal_prefix) - 1));
+    FT_ASSERT_EQ('\n', g_auth_signal_bytes[g_auth_signal_length - 1]);
+    g_auth_signal_bytes[g_auth_signal_length - 1] = '\0';
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.authenticate_login_signal_one_time_password(
+        "fixture-user", g_auth_signal_bytes + sizeof(signal_prefix) - 1, authenticated));
+    FT_ASSERT_EQ(FT_TRUE, authenticated);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved._credential_store.kv_set(signal_key, signal_hash));
+    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, moved.authenticate_login_signal_one_time_password(
+        "fixture-user", "wrong-value", authenticated));
+    FT_ASSERT_EQ(FT_FALSE, authenticated);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.authenticate_login_signal_one_time_password(
+        "fixture-user", "fixture-value", authenticated));
+    FT_ASSERT_EQ(FT_TRUE, authenticated);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, moved.authenticate_login_signal_one_time_password(
+        "fixture-user", "fixture-value", authenticated));
+    FT_ASSERT_EQ(FT_FALSE, authenticated);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved._credential_store.kv_set(signal_key, signal_hash));
+    const char *borrowed_username = moved._credential_store.kv_get(
+        "application/auth/approvals/fixture-user");
+    FT_ASSERT(borrowed_username != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.remove_user(borrowed_username));
+    FT_ASSERT(moved._credential_store.kv_get("application/auth/approvals/fixture-user") == ft_nullptr);
+    FT_ASSERT(moved._credential_store.kv_get("application/auth/settings/approval_required/fixture-user") == ft_nullptr);
+    FT_ASSERT(moved._credential_store.kv_get("application/auth/login_signal/fixture-user") == ft_nullptr);
+    FT_ASSERT(moved._credential_store.kv_get("application/auth/audit/failed_count/fixture-user") == ft_nullptr);
+    FT_ASSERT(moved._credential_store.kv_get("fixture/unrelated") != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.user_exists("fixture-user", exists));
+    FT_ASSERT_EQ(FT_FALSE, exists);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, moved.remove_user(""));
+    cma_set_alloc_limit(1);
+    const int32_t short_missing_removal = moved.remove_user("fixture-user");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, short_missing_removal);
+    ft_string long_username;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, long_username.initialize(160, 'u'));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.register_user(long_username.c_str(), "fixture-password"));
+    cma_set_alloc_limit(1);
+    const int32_t long_failed_removal = moved.remove_user(long_username.c_str());
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, long_failed_removal);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.user_exists(long_username.c_str(), exists));
+    FT_ASSERT_EQ(FT_TRUE, exists);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.remove_user(long_username.c_str()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.user_exists(long_username.c_str(), exists));
+    FT_ASSERT_EQ(FT_FALSE, exists);
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, moved.get_login_session_timestamp("fixture-user", timestamp));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path.c_str()));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, store_result);

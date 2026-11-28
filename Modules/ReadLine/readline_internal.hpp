@@ -20,25 +20,14 @@
 #define INITIAL_BUFFER_SIZE 1024
 #define RL_KEY_CTRL_R 18
 
-extern struct termios orig_termios;
-
 extern char *history[MAX_HISTORY];
 extern int32_t history_count;
 
+// Static candidates are stored in bytewise lexical order.
 extern char *suggestions[MAX_SUGGESTIONS];
 extern int32_t suggestion_count;
 
 class pt_recursive_mutex;
-
-struct terminal_dimensions
-{
-    uint16_t row_count = 0;
-    uint16_t column_count = 0;
-    uint16_t x_pixels = 0;
-    uint16_t y_pixels = 0;
-    ft_bool dimensions_valid = FT_FALSE;
-    pt_recursive_mutex *mutex = ft_nullptr;
-};
 
 struct s_readline_state
 {
@@ -56,6 +45,7 @@ struct s_readline_state
     int32_t            current_match_count;
     int32_t            current_match_index;
     int32_t            word_start;
+    // Only entries below current_match_count are initialized and available.
     char        *current_matches[MAX_SUGGESTIONS];
     int32_t            current_match_scores[MAX_SUGGESTIONS];
     ft_file        error_file;
@@ -72,9 +62,10 @@ typedef int32_t (*t_rl_completion_callback)(const char *buffer, int32_t cursor_p
 int32_t        rl_initialize_state(readline_state_t *state);
 
 int32_t        rl_disable_raw_mode();
-int32_t        rl_enable_raw_mode();
+int32_t        rl_enable_raw_mode(ft_bool *activated = ft_nullptr);
 
 int32_t        rl_clear_line(const char *prompt, const char *buffer);
+int32_t        rl_clear_line_columns(const char *prompt, int32_t buffer_columns);
 int32_t        rl_resize_buffer(char **buffer_pointer, int32_t *current_size_pointer, int32_t new_size);
 int32_t        rl_handle_escape_sequence(readline_state_t *state, const char *prompt);
 int32_t        rl_handle_backspace(readline_state_t *state, const char *prompt);
@@ -92,6 +83,8 @@ int32_t        rl_read_key(char *character_out);
 int32_t        rl_get_terminal_width(int32_t *terminal_width);
 int32_t        rl_read_escape_sequence(char escape_sequence[2]);
 void    rl_update_history(const char *buffer);
+// Takes ownership of a CMA-allocated entry without scheduling a save.
+void    rl_history_adopt_entry(char *entry);
 void    rl_reset_completion_mode(readline_state_t *state);
 
 int32_t        rl_dispatch_custom_key(readline_state_t *state, const char *prompt, int32_t key, ft_bool *key_handled);
@@ -128,15 +121,5 @@ int32_t        rl_state_prepare_thread_safety(readline_state_t *state);
 void    rl_state_teardown_thread_safety(readline_state_t *state);
 int32_t        rl_state_lock(readline_state_t *state, ft_bool *lock_acquired);
 int32_t        rl_state_unlock(readline_state_t *state, ft_bool lock_acquired);
-
-int32_t        rl_terminal_dimensions_prepare_thread_safety(terminal_dimensions *dimensions);
-void    rl_terminal_dimensions_teardown_thread_safety(terminal_dimensions *dimensions);
-int32_t        rl_terminal_dimensions_lock(terminal_dimensions *dimensions, ft_bool *lock_acquired);
-int32_t        rl_terminal_dimensions_unlock(terminal_dimensions *dimensions, ft_bool lock_acquired);
-int32_t        rl_terminal_dimensions_refresh(terminal_dimensions *dimensions);
-int32_t        rl_terminal_dimensions_get(terminal_dimensions *dimensions,
-            uint16_t *row_count, uint16_t *column_count,
-            uint16_t *x_pixels, uint16_t *y_pixels,
-            ft_bool *dimensions_valid);
 
 #endif

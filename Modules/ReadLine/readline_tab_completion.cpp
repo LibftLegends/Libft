@@ -5,6 +5,7 @@
 #include "../Printf/printf.hpp"
 #include "../Basic/limits.hpp"
 #include "../Basic/basic.hpp"
+#include "../Template/algorithm.hpp"
 #include "../Errno/errno.hpp"
 #include "readline_internal.hpp"
 #include "../PThread/mutex.hpp"
@@ -81,96 +82,60 @@ static int32_t rl_completion_score_fuzzy_match(const char *candidate, const char
     return (50000 - gap_penalty - static_cast<int32_t>(candidate_length));
 }
 
-static int32_t rl_completion_insert_scored_match(readline_state_t *state, char *candidate, int32_t score)
+struct rl_ranked_match
 {
-    int32_t insert_index;
-
-    if (state == ft_nullptr || candidate == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (state->current_match_count >= MAX_SUGGESTIONS)
-        return (FT_ERR_OUT_OF_RANGE);
-    insert_index = state->current_match_count;
-    while (insert_index > 0)
-    {
-        int32_t previous_index;
-        int32_t previous_score;
-        int32_t name_compare;
-
-        previous_index = insert_index - 1;
-        previous_score = state->current_match_scores[previous_index];
-        if (score < previous_score)
-            break ;
-        if (score == previous_score)
-        {
-            name_compare = ft_strcmp(candidate, state->current_matches[previous_index]);
-            if (name_compare >= 0)
-                break ;
-        }
-        state->current_matches[insert_index] = state->current_matches[previous_index];
-        state->current_match_scores[insert_index] = state->current_match_scores[previous_index];
-        insert_index -= 1;
-    }
-    state->current_matches[insert_index] = candidate;
-    state->current_match_scores[insert_index] = score;
-    state->current_match_count += 1;
-    return (FT_ERR_SUCCESS);
-}
+    char *candidate;
+    int32_t score;
+    int32_t original_order;
+};
 
 static int32_t rl_gather_matching_suggestions(readline_state_t *state, const char *prefix, int32_t prefix_len)
 {
-    int32_t dynamic_count;
-    int32_t dynamic_index;
-    int32_t index;
-
     state->current_match_count = 0;
+    int32_t dynamic_count;
     if (rl_completion_get_dynamic_count(&dynamic_count) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    dynamic_index = 0;
-    while (dynamic_index < dynamic_count)
+    rl_ranked_match matches[MAX_SUGGESTIONS];
+    int32_t match_count = 0;
+    int32_t candidate_index = 0;
+    const int32_t candidate_count = dynamic_count + suggestion_count;
+    while (candidate_index < candidate_count)
     {
         char *candidate;
-        int32_t score;
-
-        candidate = rl_completion_get_dynamic_match(dynamic_index);
-        score = rl_completion_score_prefix_match(candidate, prefix, prefix_len);
-        if (score >= 0)
-        {
-            if (rl_completion_insert_scored_match(state, candidate, score) != FT_ERR_SUCCESS)
-                return (FT_ERR_INTERNAL);
-        }
+        if (candidate_index < dynamic_count)
+            candidate = rl_completion_get_dynamic_match(candidate_index);
         else
-        {
+            candidate = suggestions[candidate_index - dynamic_count];
+        int32_t score = rl_completion_score_prefix_match(candidate, prefix, prefix_len);
+        if (score < 0)
             score = rl_completion_score_fuzzy_match(candidate, prefix, prefix_len);
-            if (score >= 0)
-            {
-                if (rl_completion_insert_scored_match(state, candidate, score) != FT_ERR_SUCCESS)
-                    return (FT_ERR_INTERNAL);
-            }
-        }
-        dynamic_index++;
-    }
-    index = 0;
-    while (index < suggestion_count)
-    {
-        int32_t score;
-
-        score = rl_completion_score_prefix_match(suggestions[index], prefix, prefix_len);
         if (score >= 0)
         {
-            if (rl_completion_insert_scored_match(state, suggestions[index], score) != FT_ERR_SUCCESS)
+            if (match_count == MAX_SUGGESTIONS)
                 return (FT_ERR_INTERNAL);
+            matches[match_count] = {candidate, score, candidate_index};
+            ++match_count;
         }
-        else
-        {
-            score = rl_completion_score_fuzzy_match(suggestions[index], prefix, prefix_len);
-            if (score >= 0)
-            {
-                if (rl_completion_insert_scored_match(state, suggestions[index], score) != FT_ERR_SUCCESS)
-                    return (FT_ERR_INTERNAL);
-            }
-        }
-        index++;
+        ++candidate_index;
     }
+    ft_sort(matches, matches + match_count, [](const rl_ranked_match &left,
+        const rl_ranked_match &right) noexcept
+    {
+        if (left.score != right.score)
+            return (left.score > right.score);
+        const int32_t name_comparison = ft_strcmp(left.candidate, right.candidate);
+        if (name_comparison != 0)
+            return (name_comparison < 0);
+        return (left.original_order < right.original_order);
+    });
+    int32_t match_index = 0;
+    while (match_index < match_count)
+    {
+        state->current_matches[match_index] = matches[match_index].candidate;
+        state->current_match_scores[match_index] = matches[match_index].score;
+        ++match_index;
+    }
+    state->current_match_count = match_count;
     return (FT_ERR_SUCCESS);
 }
 
@@ -212,11 +177,11 @@ static int32_t rl_apply_completion(readline_state_t *state, const char *completi
         + static_cast<int64_t>(suffix_length);
     if (total_length > static_cast<int64_t>(FT_INT32_MAX))
         return (FT_ERR_OUT_OF_RANGE);
-    state->position = state->word_start;
     required_size = static_cast<int32_t>(total_length);
     int32_t resize_error = rl_resize_buffer_if_needed(state, required_size);
     if (resize_error != FT_ERR_SUCCESS)
         return (resize_error);
+    state->position = state->word_start;
     ft_memmove(&state->buffer[state->position + completion_length],
         &state->buffer[original_position],
         static_cast<ft_size_t>(suffix_length) + 1);
@@ -233,7 +198,7 @@ static void rl_update_display(const char *prompt, readline_state_t *state)
 
     if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
         return ;
-    if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
+    if (rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
         return ;
     pf_printf("%s%s", prompt, state->buffer);
     columns_after_cursor = state->prev_display_columns - state->display_pos;

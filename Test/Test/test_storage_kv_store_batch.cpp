@@ -119,3 +119,100 @@ FT_TEST(test_storage_kv_store_single_delete_batch_preserves_survivors_without_al
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
     return (1);
 }
+
+FT_TEST(test_storage_kv_store_delete_batch_validates_before_erasing_and_preserves_survivors)
+{
+    const char *path = "test_storage_batch_delete_only.json";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, EMPTY_STORE, sizeof(EMPTY_STORE) - 1));
+    kv_store store;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.initialize(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("first", "discard"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("second", "retained", 600));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("third", "discard"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("fourth", "untouched"));
+    const char *const retained = store.kv_get("second");
+    FT_ASSERT(retained != ft_nullptr);
+
+    kv_store_operation first;
+    kv_store_operation third;
+    kv_store_operation missing;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, kv_store_init_delete_operation(first, "first"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, kv_store_init_delete_operation(third, "third"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, kv_store_init_delete_operation(missing, "missing"));
+    ft_vector<kv_store_operation> operations;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(third));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(missing));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, store.kv_apply(operations));
+    FT_ASSERT(store.kv_get("third") != ft_nullptr);
+    operations.clear();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(third));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(third));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, store.kv_apply(operations));
+    FT_ASSERT(store.kv_get("third") != ft_nullptr);
+
+    operations.clear();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(third));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(first));
+    kv_store_metrics metrics{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.get_metrics(metrics));
+    FT_ASSERT_EQ(INT64_C(0), metrics.delete_operations);
+    cma_set_alloc_limit(1);
+    const int32_t applied = store.kv_apply(operations);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, applied);
+    FT_ASSERT(store.kv_get("first") == ft_nullptr);
+    FT_ASSERT(store.kv_get("third") == ft_nullptr);
+    FT_ASSERT(store.kv_get("second") == retained);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.get_metrics(metrics));
+    FT_ASSERT_EQ(INT64_C(2), metrics.delete_operations);
+    ft_vector<kv_store_snapshot_entry> survivors;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.export_snapshot(survivors));
+    FT_ASSERT_EQ(2U, survivors.size());
+    FT_ASSERT(survivors[0].key == "second");
+    FT_ASSERT_EQ(FT_TRUE, survivors[0].has_expiration);
+    FT_ASSERT(survivors[1].key == "fourth");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    return (1);
+}
+
+FT_TEST(test_storage_kv_store_large_delete_batch_allocation_failure_leaves_every_entry_intact)
+{
+    const char *path = "test_storage_batch_delete_allocation.json";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, EMPTY_STORE, sizeof(EMPTY_STORE) - 1));
+    kv_store store;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.initialize(path));
+    ft_vector<kv_store_operation> operations;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.initialize());
+    char key[] = "key-0";
+    while (key[4] <= '9')
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set(key, "discard"));
+        kv_store_operation deletion;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, kv_store_init_delete_operation(deletion, key));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.push_back(deletion));
+        ++key[4];
+    }
+    cma_set_alloc_limit(1);
+    const int32_t result = store.kv_apply(operations);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, result);
+    key[4] = '0';
+    while (key[4] <= '9')
+    {
+        FT_ASSERT(store.kv_get(key) != ft_nullptr);
+        ++key[4];
+    }
+    kv_store_metrics metrics{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.get_metrics(metrics));
+    FT_ASSERT_EQ(INT64_C(0), metrics.delete_operations);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_apply(operations));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.get_metrics(metrics));
+    FT_ASSERT_EQ(INT64_C(10), metrics.delete_operations);
+    ft_vector<kv_store_snapshot_entry> survivors;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.export_snapshot(survivors));
+    FT_ASSERT_EQ(0U, survivors.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    return (1);
+}

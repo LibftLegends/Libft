@@ -1,3 +1,4 @@
+#include <charconv>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "../Compatebility/sqlite_support.hpp"
@@ -15,6 +16,7 @@
 #include "../Basic/basic.hpp"
 #include "../JSon/json.hpp"
 #include "../Printf/printf.hpp"
+#include "../System_utils/system_utils.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "readline_internal.hpp"
@@ -196,8 +198,7 @@ static int32_t rl_history_plain_load(void *context_pointer)
         line_length = ft_strlen_size_t(line_buffer);
         if (line_length > 0 && line_buffer[line_length - 1] == '\n')
             line_buffer[line_length - 1] = '\0';
-        rl_update_history(line_buffer);
-        cma_free(line_buffer);
+        rl_history_adopt_entry(line_buffer);
     }
     history_file.close();
     return (FT_ERR_SUCCESS);
@@ -205,36 +206,46 @@ static int32_t rl_history_plain_load(void *context_pointer)
 
 static int32_t rl_history_plain_save(void *context_pointer)
 {
-    rl_history_path_context *path_context;
-    ft_file history_file;
-    int32_t open_result;
-    int32_t history_index;
-
-    path_context = static_cast<rl_history_path_context *>(context_pointer);
+    const auto *path_context = static_cast<const rl_history_path_context *>(context_pointer);
     if (path_context == ft_nullptr || path_context->path == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    open_result = history_file.open(path_context->path,
-            O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-    if (open_result != FT_ERR_SUCCESS)
-    {
+    ft_file history_file;
+    if (history_file.open(path_context->path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR)
+        != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    }
-    history_index = 0;
+    const int32_t file_descriptor = history_file.get_file_descriptor();
+    if (file_descriptor < 0)
+        return (FT_ERR_INTERNAL);
+
+    char output[4096];
+    ft_size_t used = 0;
+    int32_t history_index = 0;
     while (history_index < history_count)
     {
-        if (history[history_index] != ft_nullptr)
+        const char *entry = history[history_index++];
+        if (entry == ft_nullptr)
+            continue ;
+        const ft_size_t length = ft_strlen_size_t(entry);
+        if (length >= sizeof(output) - used)
         {
-        if (history_file.printf("%s\n", history[history_index]) < 0)
+            if (su_write(file_descriptor, output, used) < 0)
+                return (FT_ERR_INTERNAL);
+            used = 0;
+        }
+        if (length >= sizeof(output))
         {
-            history_file.close();
-            return (FT_ERR_INTERNAL);
+            if (su_write(file_descriptor, entry, length) < 0)
+                return (FT_ERR_INTERNAL);
         }
+        else
+        {
+            (void)ft_memcpy(output + used, entry, length);
+            used += length;
         }
-        history_index += 1;
+        output[used++] = '\n';
     }
-    history_file.close();
+    if (su_write(file_descriptor, output, used) < 0)
+        return (FT_ERR_INTERNAL);
     return (FT_ERR_SUCCESS);
 }
 
@@ -276,68 +287,86 @@ static int32_t rl_history_json_load(void *context_pointer)
     item_pointer = history_group->items;
     while (item_pointer != ft_nullptr)
     {
-        if (item_pointer->value != ft_nullptr)
-            rl_update_history(item_pointer->value);
-        else
-            rl_update_history("");
+        char *entry = item_pointer->value;
+        item_pointer->value = ft_nullptr;
+        if (entry == ft_nullptr)
+            entry = adv_strdup("");
+        rl_history_adopt_entry(entry);
         item_pointer = item_pointer->next;
     }
     json_free_groups(group_head);
     return (FT_ERR_SUCCESS);
 }
 
+static ft_size_t rl_history_json_append(void *context, const char *bytes, ft_size_t length)
+{
+    auto *output = static_cast<ft_string *>(context);
+    if (output->append(bytes, length) != FT_ERR_SUCCESS)
+        return (0);
+    return (length);
+}
+
+static int32_t rl_history_json_event(json_stream_writer &writer, json_stream_event_type type,
+        const char *bytes = ft_nullptr, ft_size_t length = 0)
+{
+    const json_stream_event event{type, {bytes, length}, FT_FALSE};
+    return (json_stream_writer_process(&writer, &event));
+}
+
+static int32_t rl_history_json_build(ft_string &output)
+{
+    json_stream_writer writer;
+    if (json_stream_writer_init(&writer, rl_history_json_append, &output) != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    int32_t result = FT_ERR_INTERNAL;
+    if (rl_history_json_event(writer, JSON_STREAM_EVENT_BEGIN_DOCUMENT) == FT_ERR_SUCCESS
+        && rl_history_json_event(writer, JSON_STREAM_EVENT_BEGIN_OBJECT) == FT_ERR_SUCCESS
+        && rl_history_json_event(writer, JSON_STREAM_EVENT_KEY, "history", 7) == FT_ERR_SUCCESS
+        && rl_history_json_event(writer, JSON_STREAM_EVENT_BEGIN_OBJECT) == FT_ERR_SUCCESS)
+        result = FT_ERR_SUCCESS;
+    int32_t history_index = 0;
+    while (result == FT_ERR_SUCCESS && history_index < history_count)
+    {
+        const char *entry = history[history_index];
+        if (entry == ft_nullptr)
+            entry = "";
+        char key[12];
+        const auto conversion = std::to_chars(key, key + sizeof(key), history_index);
+        if (conversion.ec != std::errc()
+            || rl_history_json_event(writer, JSON_STREAM_EVENT_KEY, key,
+                static_cast<ft_size_t>(conversion.ptr - key)) != FT_ERR_SUCCESS
+            || rl_history_json_event(writer, JSON_STREAM_EVENT_STRING, entry,
+                ft_strlen_size_t(entry)) != FT_ERR_SUCCESS)
+            result = FT_ERR_INTERNAL;
+        ++history_index;
+    }
+    if (result == FT_ERR_SUCCESS
+        && (rl_history_json_event(writer, JSON_STREAM_EVENT_END_OBJECT) != FT_ERR_SUCCESS
+            || rl_history_json_event(writer, JSON_STREAM_EVENT_END_OBJECT) != FT_ERR_SUCCESS
+            || rl_history_json_event(writer, JSON_STREAM_EVENT_END_DOCUMENT) != FT_ERR_SUCCESS
+            || json_stream_writer_finish(&writer) != FT_ERR_SUCCESS
+            || output.append('\n') != FT_ERR_SUCCESS))
+        result = FT_ERR_INTERNAL;
+    json_stream_writer_destroy(&writer);
+    return (result);
+}
+
 static int32_t rl_history_json_save(void *context_pointer)
 {
-    rl_history_path_context *path_context;
-    json_group *history_group;
-    json_group *root_group;
-    int32_t history_index;
-
-    path_context = static_cast<rl_history_path_context *>(context_pointer);
+    const auto *path_context = static_cast<const rl_history_path_context *>(context_pointer);
     if (path_context == ft_nullptr || path_context->path == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    history_group = json_create_json_group("history");
-    if (history_group == ft_nullptr)
-    {
+    ft_string output;
+    if (output.initialize() != FT_ERR_SUCCESS || rl_history_json_build(output) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    }
-    history_index = 0;
-    while (history_index < history_count)
-    {
-        const char *history_entry;
-        char *key_string;
-        json_item *item_pointer;
 
-        history_entry = history[history_index];
-        if (history_entry == ft_nullptr)
-            history_entry = "";
-        key_string = adv_itoa(history_index);
-        if (key_string == ft_nullptr)
-        {
-            json_free_groups(history_group);
-            return (FT_ERR_INTERNAL);
-        }
-        item_pointer = json_create_item(key_string, history_entry);
-        cma_free(key_string);
-        if (item_pointer == ft_nullptr)
-        {
-            json_free_groups(history_group);
-            return (FT_ERR_INTERNAL);
-        }
-        json_add_item_to_group(history_group, item_pointer);
-        history_index += 1;
-    }
-    root_group = ft_nullptr;
-    json_append_group(&root_group, history_group);
-    int32_t write_result = json_write_to_file(path_context->path, root_group);
-    if (write_result != FT_ERR_SUCCESS)
-    {
-        json_free_groups(root_group);
+    const int32_t descriptor = su_open(path_context->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (descriptor < 0)
         return (FT_ERR_INTERNAL);
-    }
-    json_free_groups(root_group);
+    const int64_t written = su_write(descriptor, output.c_str(), output.size());
+    const int32_t close_result = su_close(descriptor);
+    if (written < 0 || close_result != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
     return (FT_ERR_SUCCESS);
 }
 
@@ -446,7 +475,7 @@ static int32_t rl_history_sqlite_load(void *context_pointer)
                 entry_text = "";
             else
                 entry_text = reinterpret_cast<const char *>(text_pointer);
-            rl_update_history(entry_text);
+            rl_history_adopt_entry(adv_strdup(entry_text));
             continue ;
         }
         sqlite3_finalize(statement_handle);
@@ -652,172 +681,167 @@ static void rl_completion_reset_dynamic_matches_locked(void)
     return ;
 }
 
+static int32_t rl_key_binding_lower_bound_locked(int32_t key)
+{
+    int32_t begin = 0;
+    int32_t end = g_key_binding_count;
+    while (begin < end)
+    {
+        const int32_t middle = begin + (end - begin) / 2;
+        if (g_key_bindings[middle].key < key)
+            begin = middle + 1;
+        else
+            end = middle;
+    }
+    return (begin);
+}
+
 int32_t rl_bind_key(int32_t key, t_rl_key_binding_callback callback, void *user_data)
 {
-    ft_bool lock_acquired;
-    int32_t index;
-
     if (callback == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    lock_acquired = FT_FALSE;
+    ft_bool lock_acquired = FT_FALSE;
     if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    index = 0;
-    while (index < g_key_binding_count)
+    const int32_t index = rl_key_binding_lower_bound_locked(key);
+    if (index >= g_key_binding_count || g_key_bindings[index].key != key)
     {
-        if (g_key_bindings[index].key == key)
+        if (g_key_binding_count == RL_MAX_KEY_BINDINGS)
         {
-            g_key_bindings[index].callback = callback;
-            g_key_bindings[index].user_data = user_data;
-            rl_customization_unlock(lock_acquired);
-            return (FT_ERR_SUCCESS);
+            (void)rl_customization_unlock(lock_acquired);
+            return (FT_ERR_INTERNAL);
         }
-        index += 1;
+        if (index < g_key_binding_count)
+            (void)ft_memmove(g_key_bindings + index + 1, g_key_bindings + index,
+                static_cast<ft_size_t>(g_key_binding_count - index) * sizeof(g_key_bindings[0]));
+        ++g_key_binding_count;
     }
-    if (g_key_binding_count >= RL_MAX_KEY_BINDINGS)
-    {
-        rl_customization_unlock(lock_acquired);
-        return (FT_ERR_INTERNAL);
-    }
-    g_key_bindings[g_key_binding_count].key = key;
-    g_key_bindings[g_key_binding_count].callback = callback;
-    g_key_bindings[g_key_binding_count].user_data = user_data;
-    g_key_binding_count += 1;
-    rl_customization_unlock(lock_acquired);
+    g_key_bindings[index] = {key, callback, user_data};
+    (void)rl_customization_unlock(lock_acquired);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t rl_unbind_key(int32_t key)
 {
-    ft_bool lock_acquired;
-    int32_t index;
-
-    lock_acquired = FT_FALSE;
+    ft_bool lock_acquired = FT_FALSE;
     if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    index = 0;
-    while (index < g_key_binding_count)
+    const int32_t index = rl_key_binding_lower_bound_locked(key);
+    if (index >= g_key_binding_count || g_key_bindings[index].key != key)
     {
-        if (g_key_bindings[index].key == key)
-        {
-            int32_t move_index;
-
-            move_index = index;
-            while (move_index < g_key_binding_count - 1)
-            {
-                g_key_bindings[move_index] = g_key_bindings[move_index + 1];
-                move_index += 1;
-            }
-            g_key_binding_count -= 1;
-            rl_customization_unlock(lock_acquired);
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1;
+        (void)rl_customization_unlock(lock_acquired);
+        return (FT_ERR_INTERNAL);
     }
-    rl_customization_unlock(lock_acquired);
-    return (FT_ERR_INTERNAL);
+    --g_key_binding_count;
+    if (index < g_key_binding_count)
+        (void)ft_memmove(g_key_bindings + index, g_key_bindings + index + 1,
+            static_cast<ft_size_t>(g_key_binding_count - index) * sizeof(g_key_bindings[0]));
+    (void)rl_customization_unlock(lock_acquired);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t rl_dispatch_custom_key(readline_state_t *state, const char *prompt, int32_t key, ft_bool *key_handled)
 {
-    ft_bool lock_acquired;
-    t_rl_key_binding_callback callback;
-    void *user_data;
-    int32_t result;
-
-    lock_acquired = FT_FALSE;
-    callback = ft_nullptr;
-    user_data = ft_nullptr;
     if (key_handled == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     *key_handled = FT_FALSE;
+    ft_bool lock_acquired = FT_FALSE;
     if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    int32_t index;
-
-    index = 0;
-    while (index < g_key_binding_count)
+    const int32_t index = rl_key_binding_lower_bound_locked(key);
+    if (index >= g_key_binding_count || g_key_bindings[index].key != key)
     {
-        if (g_key_bindings[index].key == key)
-        {
-            callback = g_key_bindings[index].callback;
-            user_data = g_key_bindings[index].user_data;
-            break ;
-        }
-        index += 1;
-    }
-    rl_customization_unlock(lock_acquired);
-    if (callback == ft_nullptr)
-    {
+        (void)rl_customization_unlock(lock_acquired);
         return (FT_ERR_SUCCESS);
     }
-    result = callback(state, prompt, user_data);
+    const rl_key_binding_entry binding = g_key_bindings[index];
+    (void)rl_customization_unlock(lock_acquired);
+    const int32_t result = binding.callback(state, prompt, binding.user_data);
     if (result != FT_ERR_SUCCESS)
         return (result);
     *key_handled = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t rl_state_insert_text_locked(readline_state_t *state, const char *text)
+{
+    if (state->buffer == ft_nullptr || state->buffer_size <= 0 || state->position < 0)
+        return (FT_ERR_INTERNAL);
+    const ft_size_t capacity = static_cast<ft_size_t>(state->buffer_size);
+    const auto *terminator = static_cast<const char *>(ft_memchr(state->buffer, '\0', capacity));
+    if (terminator == ft_nullptr)
+        return (FT_ERR_INTERNAL);
+    const ft_size_t line_length = static_cast<ft_size_t>(terminator - state->buffer);
+    const ft_size_t position = static_cast<ft_size_t>(state->position);
+    if (position > line_length)
+        return (FT_ERR_OUT_OF_RANGE);
+
+    const uintptr_t buffer_address = reinterpret_cast<uintptr_t>(state->buffer);
+    const uintptr_t text_address = reinterpret_cast<uintptr_t>(text);
+    ft_size_t source_offset = 0;
+    ft_size_t text_length;
+    const ft_bool borrowed = (text_address >= buffer_address && text_address - buffer_address < capacity);
+    if (borrowed == FT_TRUE)
+    {
+        source_offset = static_cast<ft_size_t>(text_address - buffer_address);
+        if (source_offset > line_length)
+            return (FT_ERR_OUT_OF_RANGE);
+        text_length = line_length - source_offset;
+    }
+    else
+        text_length = ft_strlen_size_t(text);
+    if (text_length >= static_cast<ft_size_t>(FT_INT32_MAX) - line_length)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t required_size = line_length + text_length + 1;
+    if (required_size > capacity)
+    {
+        int32_t new_size = state->buffer_size;
+        while (static_cast<ft_size_t>(new_size) < required_size)
+        {
+            if (new_size > FT_INT32_MAX / 2)
+                return (FT_ERR_OUT_OF_RANGE);
+            new_size *= 2;
+        }
+        const int32_t resize_error = rl_resize_buffer(&state->buffer, &state->buffer_size, new_size);
+        if (resize_error != FT_ERR_SUCCESS)
+            return (resize_error);
+    }
+
+    char *const insertion = state->buffer + position;
+    if (position < line_length)
+        (void)ft_memmove(insertion + text_length, insertion, line_length - position + 1);
+    else
+        insertion[text_length] = '\0';
+    if (borrowed == FT_TRUE)
+    {
+        // Bytes before the cursor stay in place. The suffix now starts after the insertion.
+        ft_size_t prefix_length = 0;
+        if (source_offset < position)
+        {
+            prefix_length = position - source_offset;
+            (void)ft_memcpy(insertion, state->buffer + source_offset, prefix_length);
+        }
+        if (prefix_length < text_length)
+            (void)ft_memcpy(insertion + prefix_length,
+                state->buffer + source_offset + prefix_length + text_length, text_length - prefix_length);
+    }
+    else
+        (void)ft_memcpy(insertion, text, text_length);
+    state->position += static_cast<int32_t>(text_length);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t rl_state_insert_text(readline_state_t *state, const char *text)
 {
-    ft_bool lock_acquired;
-    int32_t text_length;
-    int32_t suffix_length;
-    int64_t total_length;
-    int32_t required_size;
-    int32_t result;
-
     if (state == ft_nullptr || text == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    text_length = ft_strlen(text);
-    if (text_length == FT_ERR_SUCCESS)
-    {
+    if (text[0] == '\0')
         return (FT_ERR_SUCCESS);
-    }
-    lock_acquired = FT_FALSE;
-    result = FT_ERR_SUCCESS;
+    ft_bool lock_acquired = FT_FALSE;
     if (rl_state_lock(state, &lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    suffix_length = ft_strlen(&state->buffer[state->position]);
-    total_length = static_cast<int64_t>(state->position) + static_cast<int64_t>(text_length) + static_cast<int64_t>(suffix_length);
-    required_size = static_cast<int32_t>(total_length) + 1;
-    if (total_length > static_cast<int64_t>(FT_INT32_MAX))
-    {
-        result = FT_ERR_OUT_OF_RANGE;
-        goto cleanup;
-    }
-    if (required_size > state->buffer_size)
-    {
-        int32_t new_bufsize;
-
-        new_bufsize = state->buffer_size;
-        if (new_bufsize <= 0)
-            new_bufsize = 1;
-        while (required_size > new_bufsize)
-        {
-            if (new_bufsize > FT_INT32_MAX / 2)
-            {
-                result = FT_ERR_OUT_OF_RANGE;
-                goto cleanup;
-            }
-            new_bufsize *= 2;
-        }
-        int32_t resize_error = rl_resize_buffer(&state->buffer, &state->buffer_size, new_bufsize);
-        if (resize_error != FT_ERR_SUCCESS)
-        {
-            result = resize_error;
-            goto cleanup;
-        }
-    }
-    ft_memmove(&state->buffer[state->position + text_length], &state->buffer[state->position], static_cast<ft_size_t>(suffix_length) + 1);
-    ft_memcpy(&state->buffer[state->position], text, static_cast<ft_size_t>(text_length));
-    state->position += text_length;
-cleanup:
-    rl_state_unlock(state, lock_acquired);
+    const int32_t result = rl_state_insert_text_locked(state, text);
+    (void)rl_state_unlock(state, lock_acquired);
     return (result);
 }
 
@@ -933,7 +957,7 @@ int32_t rl_state_refresh_display(readline_state_t *state, const char *prompt)
         result = FT_ERR_INTERNAL;
         goto cleanup;
     }
-    if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
+    if (rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
     {
         result = FT_ERR_INTERNAL;
         goto cleanup;

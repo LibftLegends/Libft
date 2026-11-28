@@ -1817,7 +1817,6 @@ Each top-level module is listed below with every `.cpp` and `.hpp` file currentl
   - `static int cmp_set_errno_from_last_error()`
   - `int cmp_readline_enable_raw_mode()`
   - `void cmp_readline_disable_raw_mode()`
-  - `int cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels)`
   - `int cmp_readline_terminal_width()`
   - `static int cmp_set_errno_from_errno()`
 
@@ -1940,7 +1939,6 @@ Each top-level module is listed below with every `.cpp` and `.hpp` file currentl
   - `int cmp_readline_enable_raw_mode(void)`
   - `void cmp_readline_disable_raw_mode(void)`
   - `int cmp_readline_terminal_width(void)`
-  - `int cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels)`
   - `int cmp_rng_secure_bytes(unsigned char *buffer, size_t length)`
   - `int cmp_secure_memzero(void *buffer, size_t length)`
   - `int cmp_setenv(const char *name, const char *value, int overwrite)`
@@ -10859,12 +10857,6 @@ Each top-level module is listed below with every `.cpp` and `.hpp` file currentl
   - `void rl_state_teardown_thread_safety(readline_state_t *state)`
   - `int rl_state_lock(readline_state_t *state, bool *lock_acquired)`
   - `int rl_state_unlock(readline_state_t *state, bool lock_acquired)`
-  - `int rl_terminal_dimensions_prepare_thread_safety(terminal_dimensions *dimensions)`
-  - `void rl_terminal_dimensions_teardown_thread_safety(terminal_dimensions *dimensions)`
-  - `int rl_terminal_dimensions_lock(terminal_dimensions *dimensions, bool *lock_acquired)`
-  - `int rl_terminal_dimensions_unlock(terminal_dimensions *dimensions, bool lock_acquired)`
-  - `int rl_terminal_dimensions_refresh(terminal_dimensions *dimensions)`
-  - `int rl_terminal_dimensions_get(terminal_dimensions *dimensions, unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels, bool *dimensions_valid)`
 - Defines: _None_
 
 ### ReadLine/readline_printeble_char.cpp
@@ -10904,20 +10896,6 @@ Each top-level module is listed below with every `.cpp` and `.hpp` file currentl
   - `static int rl_apply_completion(readline_state_t *state, const char *completion)`
   - `static void rl_update_display(const char *prompt, readline_state_t *state)`
   - `int rl_handle_tab_completion(readline_state_t *state, const char *prompt)`
-
-### ReadLine/readline_terminal_dimensions.cpp
-
-- Declares: _None_
-- Defines:
-  - `static int rl_terminal_dimensions_lock_mutex(pt_mutex *mutex_pointer)`
-  - `static int rl_terminal_dimensions_unlock_mutex(pt_mutex *mutex_pointer)`
-  - `static void rl_terminal_dimensions_clear(terminal_dimensions *dimensions)`
-  - `int rl_terminal_dimensions_prepare_thread_safety(terminal_dimensions *dimensions)`
-  - `void rl_terminal_dimensions_teardown_thread_safety(terminal_dimensions *dimensions)`
-  - `int rl_terminal_dimensions_lock(terminal_dimensions *dimensions, bool *lock_acquired)`
-  - `int rl_terminal_dimensions_unlock(terminal_dimensions *dimensions, bool lock_acquired)`
-  - `int rl_terminal_dimensions_refresh(terminal_dimensions *dimensions)`
-  - `int rl_terminal_dimensions_get(terminal_dimensions *dimensions, unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels, bool *dimensions_valid)`
 
 ### ReadLine/readline_thread_safety.cpp
 
@@ -17260,11 +17238,6 @@ Each top-level module is listed below with every `.cpp` and `.hpp` file currentl
   - `std::this_thread::sleep_for(std::chrono::milliseconds(1))`
   - `std::this_thread::sleep_for(std::chrono::milliseconds(10))`
   - `FT_ASSERT_EQ(0, rl_state_lock(&state, &relock_acquired) )`
-  - `FT_ASSERT_EQ(-1, rl_terminal_dimensions_prepare_thread_safety(ft_nullptr) )`
-  - `FT_ASSERT_EQ(0, rl_terminal_dimensions_lock(&dimensions, &lock_acquired) )`
-  - `FT_ASSERT_EQ(0, rl_terminal_dimensions_prepare_thread_safety(&dimensions) )`
-  - `FT_ASSERT_EQ(0, rl_terminal_dimensions_lock(&dimensions, &main_lock_acquired) )`
-  - `FT_ASSERT_EQ(0, rl_terminal_dimensions_lock(&dimensions, &relock_acquired) )`
   - `FT_ASSERT_EQ(0, ft_strcmp(state.buffer, "hello") )`
   - `FT_ASSERT_EQ(0, ft_strcmp(state.buffer, "h") )`
   - `FT_ASSERT_EQ(0, rl_state_get_buffer(&state, &buffer_pointer) )`

@@ -5,6 +5,7 @@
 #include "../Advanced/advanced.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Printf/printf.hpp"
+#include "../System_utils/system_utils.hpp"
 #include "../Basic/basic.hpp"
 #include "readline_internal.hpp"
 #include "../Basic/limits.hpp"
@@ -41,7 +42,7 @@ int32_t rl_handle_backspace(readline_state_t *state, const char *prompt)
                 &state->buffer[grapheme_end], tail_length);
             state->position = grapheme_start;
             if (rl_update_display_metrics(state) != FT_ERR_SUCCESS
-                || rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
+                || rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
             {
                 state->error_file.printf("clear line failed");
                 result = FT_ERR_INTERNAL;
@@ -75,7 +76,7 @@ static void rl_handle_left_arrow(readline_state_t *state, const char *prompt)
             state->position = grapheme_start;
             if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
                 return ;
-            if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
+            if (rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
                 return ;
             pf_printf("%s%s", prompt, state->buffer);
             int32_t len_after_cursor = state->prev_display_columns - state->display_pos;
@@ -89,73 +90,61 @@ static void rl_handle_left_arrow(readline_state_t *state, const char *prompt)
 
 static void rl_handle_right_arrow(readline_state_t *state, const char *prompt)
 {
-    ft_size_t buffer_length;
-
-    buffer_length = ft_strlen_size_t(state->buffer);
-    if (state->position < static_cast<int32_t>(buffer_length))
-    {
-        int32_t grapheme_start;
-        int32_t grapheme_end;
-        int32_t grapheme_columns;
-
-        if (rl_utf8_find_next_grapheme(state->buffer, state->position,
-                &grapheme_start, &grapheme_end, &grapheme_columns) == FT_ERR_SUCCESS)
-        {
-            (void)grapheme_start;
-            (void)grapheme_columns;
-            state->position = grapheme_end;
-            if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
-                return ;
-            if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
-                return ;
-            pf_printf("%s%s", prompt, state->buffer);
-            int32_t len_after_cursor = state->prev_display_columns - state->display_pos;
-            if (len_after_cursor > 0)
-                pf_printf("\033[%dD", len_after_cursor);
-            fflush(stdout);
-        }
-    }
+    int32_t grapheme_start;
+    int32_t grapheme_end;
+    int32_t grapheme_columns;
+    if (rl_utf8_find_next_grapheme(state->buffer, state->position, &grapheme_start,
+            &grapheme_end, &grapheme_columns) != FT_ERR_SUCCESS)
+        return ;
+    state->position = grapheme_end;
+    if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
+        return ;
+    if (rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
+        return ;
+    pf_printf("%s%s", prompt, state->buffer);
+    const int32_t columns_after_cursor = state->prev_display_columns - state->display_pos;
+    if (columns_after_cursor > 0)
+        pf_printf("\033[%dD", columns_after_cursor);
+    fflush(stdout);
     return ;
 }
 
 static int32_t rl_copy_history_entry_to_buffer(readline_state_t *state, const char *history_entry)
 {
-    ft_size_t entry_length = ft_strlen(history_entry);
-    int32_t required_size = static_cast<int32_t>(entry_length) + 1;
-
-    if (required_size > state->buffer_size)
+    if (history_entry == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t entry_length = ft_strlen_size_t(history_entry);
+    if (entry_length >= static_cast<ft_size_t>(FT_INT32_MAX))
+        return (FT_ERR_OUT_OF_RANGE);
+    const int32_t required_size = static_cast<int32_t>(entry_length) + 1;
+    if (state->buffer == ft_nullptr || required_size > state->buffer_size)
     {
-        int32_t new_bufsize = state->buffer_size;
-
-        if (new_bufsize == FT_ERR_SUCCESS)
-            new_bufsize = 1;
-        while (new_bufsize < required_size)
-            new_bufsize *= 2;
-        int32_t resize_error = rl_resize_buffer(&state->buffer, &state->buffer_size, new_bufsize);
-
+        int32_t new_size = state->buffer_size;
+        if (new_size <= 0)
+            new_size = 1;
+        while (new_size < required_size)
+        {
+            if (new_size > FT_INT32_MAX / 2)
+                new_size = required_size;
+            else
+                new_size *= 2;
+        }
+        const int32_t resize_error = rl_resize_buffer(&state->buffer, &state->buffer_size, new_size);
         if (resize_error != FT_ERR_SUCCESS)
             return (resize_error);
     }
-    ft_strlcpy(state->buffer, history_entry, state->buffer_size);
+    (void)ft_memcpy(state->buffer, history_entry, entry_length + 1);
+    state->position = static_cast<int32_t>(entry_length);
     return (FT_ERR_SUCCESS);
 }
 
 static void rl_reset_completion_mode_locked(readline_state_t *state)
 {
-    int32_t index;
-
     if (state == ft_nullptr)
         return ;
     state->in_completion_mode = 0;
     state->current_match_count = 0;
     state->current_match_index = 0;
-    index = 0;
-    while (index < MAX_SUGGESTIONS)
-    {
-        state->current_matches[index] = ft_nullptr;
-        state->current_match_scores[index] = 0;
-        index++;
-    }
     rl_completion_reset_dynamic_matches();
     return ;
 }
@@ -180,7 +169,7 @@ static int32_t rl_reverse_history_search_redraw(readline_state_t *state, const c
 
     if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
+    if (rl_clear_line_columns(prompt, state->prev_display_columns) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
     pf_printf("%s%s", prompt, state->buffer);
     len_after_cursor = state->prev_display_columns - state->display_pos;
@@ -214,7 +203,6 @@ static int32_t rl_reverse_history_search_apply_current_match(readline_state_t *s
         copy_result = rl_copy_history_entry_to_buffer(state, history[match_index]);
         if (copy_result != FT_ERR_SUCCESS)
             return (copy_result);
-        state->position = ft_strlen(state->buffer);
         state->history_index = match_index;
         if (match_index_out != ft_nullptr)
             *match_index_out = match_index;
@@ -403,55 +391,48 @@ cleanup:
 
 int32_t rl_read_escape_sequence(char escape_sequence[2])
 {
-    if (read(STDIN_FILENO, &escape_sequence[0], 1) != 1)
+    ft_size_t received = 0;
+    while (received < 2)
+    {
+        const int64_t count = su_read(STDIN_FILENO, escape_sequence + received, 2 - received);
+        if (count <= 0)
+            return (FT_ERR_INTERNAL);
+        received += static_cast<ft_size_t>(count);
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t rl_show_history_entry(readline_state_t *state, const char *prompt, int32_t history_index)
+{
+    if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    if (read(STDIN_FILENO, &escape_sequence[1], 1) != 1)
+    const int32_t result = rl_copy_history_entry_to_buffer(state, history[history_index]);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    state->history_index = history_index;
+    pf_printf("%s%s", prompt, state->buffer);
+    if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
+    fflush(stdout);
     return (FT_ERR_SUCCESS);
 }
 
 static int32_t rl_handle_up_arrow(readline_state_t *state, const char *prompt)
 {
     if (state->history_index > 0)
-    {
-        state->history_index--;
-        if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-        state->position = 0;
-        int32_t copy_error = rl_copy_history_entry_to_buffer(state, history[state->history_index]);
-        if (copy_error != FT_ERR_SUCCESS)
-            return (copy_error);
-        pf_printf("%s%s", prompt, state->buffer);
-        state->position = ft_strlen(state->buffer);
-        if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-        fflush(stdout);
-    }
+        return (rl_show_history_entry(state, prompt, state->history_index - 1));
     return (FT_ERR_SUCCESS);
 }
 
 static int32_t rl_handle_down_arrow(readline_state_t *state, const char *prompt)
 {
     if (state->history_index < history_count - 1)
+        return (rl_show_history_entry(state, prompt, state->history_index + 1));
+    if (state->history_index == history_count - 1)
     {
-        state->history_index++;
         if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
             return (FT_ERR_INTERNAL);
-        state->position = 0;
-        int32_t copy_error = rl_copy_history_entry_to_buffer(state, history[state->history_index]);
-        if (copy_error != FT_ERR_SUCCESS)
-            return (copy_error);
-        pf_printf("%s%s", prompt, state->buffer);
-        state->position = ft_strlen(state->buffer);
-        if (rl_update_display_metrics(state) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-        fflush(stdout);
-    }
-    else if (state->history_index == history_count - 1)
-    {
         state->history_index++;
-        if (rl_clear_line(prompt, state->buffer) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
         state->position = 0;
         state->buffer[0] = '\0';
         pf_printf("%s", prompt);

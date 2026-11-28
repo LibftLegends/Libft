@@ -163,11 +163,9 @@ int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
 int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address);
 int32_t cmp_thread_wake_all_uint32(std::atomic<uint32_t> *address);
 
-int32_t cmp_readline_enable_raw_mode(void);
+int32_t cmp_readline_enable_raw_mode(ft_bool *activated);
 int32_t cmp_readline_disable_raw_mode(void);
 int32_t cmp_readline_terminal_width(int32_t *width_out);
-int32_t cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols,
-    unsigned short *x_pixels, unsigned short *y_pixels);
 
 int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length);
 

@@ -1,4 +1,5 @@
 #include "../test_internal.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/File/file_utils.hpp"
 #include "../../Modules/Storage/kv_store.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -49,6 +50,56 @@ FT_TEST(test_storage_kv_store_replication_tracks_only_operation_listeners)
     FT_ASSERT_EQ(1U, state.operations);
     FT_ASSERT_EQ(1U, state.snapshots);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, store.unregister_replication_sink(ft_nullptr, count_snapshot, &state));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    return (1);
+}
+
+static int32_t count_valid_delete(const ft_vector<kv_store_operation> &operations, void *context)
+{
+    auto *state = static_cast<replication_test_state *>(context);
+    if (operations.size() != 1)
+        return (FT_ERR_INVALID_OPERATION);
+    const kv_store_operation &operation = operations[0];
+    if (operation._type != KV_STORE_OPERATION_TYPE_DELETE
+        || operation._key != "replicated" || operation._has_value != FT_FALSE
+        || state->store->kv_get("replicated") != ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
+    ++state->operations;
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_storage_kv_store_delete_stages_notification_only_for_operation_listeners)
+{
+    const char *path = "test_storage_replication_delete.json";
+    constexpr char EMPTY[] = "{\"kv_store\":{}}";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, EMPTY, sizeof(EMPTY) - 1));
+    kv_store store;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.initialize(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("local", "first"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_set("replicated", "second"));
+    replication_test_state state{&store, 0, 0};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.register_replication_sink(
+        ft_nullptr, count_snapshot, &state, FT_TRUE));
+    cma_set_alloc_limit(1);
+    const int32_t local_delete = store.kv_delete("local");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, local_delete);
+    FT_ASSERT(store.kv_get("local") == ft_nullptr);
+    FT_ASSERT_EQ(1U, state.snapshots);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.register_replication_sink(
+        count_valid_delete, ft_nullptr, &state, FT_FALSE));
+    cma_set_alloc_limit(1);
+    const int32_t replica_delete = store.kv_delete("replicated");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, replica_delete);
+    FT_ASSERT(store.kv_get("replicated") != ft_nullptr);
+    FT_ASSERT_EQ(0U, state.operations);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.kv_delete("replicated"));
+    FT_ASSERT_EQ(1U, state.operations);
+    kv_store_metrics metrics{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.get_metrics(metrics));
+    FT_ASSERT_EQ(2, metrics.delete_operations);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
     return (1);
 }

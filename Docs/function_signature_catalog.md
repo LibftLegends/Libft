@@ -1251,7 +1251,6 @@ The catalog lists the function declarations and definitions that appear in the C
 ### Compatebility/Compatebility_readline.cpp
 
 - `int cmp_readline_enable_raw_mode()`
-- `int cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels)`
 - `int cmp_readline_terminal_width()`
 - `static int cmp_set_errno_from_errno()`
 - `static int cmp_set_errno_from_last_error()`
@@ -1356,7 +1355,6 @@ The catalog lists the function declarations and definitions that appear in the C
 - `int cmp_open(const char *path_name, int flags, mode_t mode);`
 - `int cmp_putenv(char *string);`
 - `int cmp_readline_enable_raw_mode(void);`
-- `int cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels);`
 - `int cmp_readline_terminal_width(void);`
 - `int cmp_rng_secure_bytes(unsigned char *buffer, size_t length);`
 - `int cmp_secure_memzero(void *buffer, size_t length);`
@@ -7188,11 +7186,6 @@ The catalog lists the function declarations and definitions that appear in the C
 - `int rl_state_refresh_display(readline_state_t *state, const char *prompt);`
 - `int rl_state_set_cursor(readline_state_t *state, int new_position);`
 - `int rl_state_unlock(readline_state_t *state, bool lock_acquired);`
-- `int rl_terminal_dimensions_get(terminal_dimensions *dimensions, unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels, bool *dimensions_valid);`
-- `int rl_terminal_dimensions_lock(terminal_dimensions *dimensions, bool *lock_acquired);`
-- `int rl_terminal_dimensions_prepare_thread_safety(terminal_dimensions *dimensions);`
-- `int rl_terminal_dimensions_refresh(terminal_dimensions *dimensions);`
-- `int rl_terminal_dimensions_unlock(terminal_dimensions *dimensions, bool lock_acquired);`
 - `int rl_unbind_key(int key);`
 - `int rl_update_display_metrics(readline_state_t *state);`
 - `int rl_utf8_compute_columns(const char *string, int *columns);`
@@ -7204,7 +7197,6 @@ The catalog lists the function declarations and definitions that appear in the C
 - `void rl_internal_set_error(int error_code);`
 - `void rl_reset_completion_mode(readline_state_t *state);`
 - `void rl_state_teardown_thread_safety(readline_state_t *state);`
-- `void rl_terminal_dimensions_teardown_thread_safety(terminal_dimensions *dimensions);`
 - `void rl_update_history(const char *buffer);`
 
 ### ReadLine/readline_raw_mode.cpp
@@ -7222,18 +7214,6 @@ The catalog lists the function declarations and definitions that appear in the C
 - `static int rl_resize_buffer_if_needed(readline_state_t *state, int required_size)`
 - `static void rl_gather_matching_suggestions(readline_state_t *state, const char *prefix, int prefix_len)`
 - `static void rl_update_display(const char *prompt, readline_state_t *state)`
-
-### ReadLine/readline_terminal_dimensions.cpp
-
-- `int rl_terminal_dimensions_get(terminal_dimensions *dimensions, unsigned short *rows, unsigned short *cols, unsigned short *x_pixels, unsigned short *y_pixels, bool *dimensions_valid)`
-- `int rl_terminal_dimensions_lock(terminal_dimensions *dimensions, bool *lock_acquired)`
-- `int rl_terminal_dimensions_prepare_thread_safety(terminal_dimensions *dimensions)`
-- `int rl_terminal_dimensions_refresh(terminal_dimensions *dimensions)`
-- `int rl_terminal_dimensions_unlock(terminal_dimensions *dimensions, bool lock_acquired)`
-- `static int rl_terminal_dimensions_lock_mutex(pt_mutex *mutex_pointer)`
-- `static int rl_terminal_dimensions_unlock_mutex(pt_mutex *mutex_pointer)`
-- `static void rl_terminal_dimensions_clear(terminal_dimensions *dimensions)`
-- `void rl_terminal_dimensions_teardown_thread_safety(terminal_dimensions *dimensions)`
 
 ### ReadLine/readline_thread_safety.cpp
 

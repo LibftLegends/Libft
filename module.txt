@@ -72,7 +72,6 @@ Modules/ReadLine/readline_raw_mode.cpp
 Modules/ReadLine/readline_state.cpp
 Modules/ReadLine/readline_suggestions.cpp
 Modules/ReadLine/readline_tab_completion.cpp
-Modules/ReadLine/readline_terminal_dimensions.cpp
 Modules/ReadLine/readline_thread_safety.cpp
 Modules/ReadLine/readline_utf8.cpp
 Modules/ReadLine/readline_utilities.cpp

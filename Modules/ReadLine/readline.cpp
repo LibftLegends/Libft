@@ -40,43 +40,28 @@ static void rl_cleanup_state(readline_state_t *state)
 
 static char *rl_error(readline_state_t *state)
 {
+    rl_completion_reset_dynamic_matches();
     rl_cleanup_state(state);
-    rl_disable_raw_mode();
+    (void)rl_disable_raw_mode();
     return (ft_nullptr);
 }
 
 char *rl_readline(const char *prompt)
 {
-    readline_state_t     state;
-    int32_t                 init_error;
-
-    init_error = rl_initialize_state(&state);
-    if (init_error != FT_ERR_SUCCESS)
+    readline_state_t state;
+    if (rl_initialize_state(&state) != FT_ERR_SUCCESS)
         return (ft_nullptr);
     pf_printf("%s", prompt);
     fflush(stdout);
     while (1)
     {
         char character;
-        int32_t read_error = rl_read_key(&character);
-        ft_bool custom_key_handled;
-
-        if (read_error != FT_ERR_SUCCESS)
-        {
-            rl_error(&state);
-            return (ft_nullptr);
-        }
-        int32_t key_code = static_cast<uint8_t>(character);
-        int32_t custom_result;
-
-        custom_key_handled = FT_FALSE;
-        custom_result = rl_dispatch_custom_key(&state, prompt, key_code, &custom_key_handled);
-
-        if (custom_result != FT_ERR_SUCCESS)
-        {
-            rl_error(&state);
-            return (ft_nullptr);
-        }
+        if (rl_read_key(&character) != FT_ERR_SUCCESS)
+            return (rl_error(&state));
+        const int32_t key_code = static_cast<uint8_t>(character);
+        ft_bool custom_key_handled = FT_FALSE;
+        if (rl_dispatch_custom_key(&state, prompt, key_code, &custom_key_handled) != FT_ERR_SUCCESS)
+            return (rl_error(&state));
         if (custom_key_handled == FT_TRUE)
             continue ;
 
@@ -92,47 +77,20 @@ char *rl_readline(const char *prompt)
             pf_printf("\n");
             break ;
         }
-        else if (character == 127 || character == '\b')
-        {
-            int32_t backspace_error = rl_handle_backspace(&state, prompt);
-            if (backspace_error != FT_ERR_SUCCESS)
-            {
-                rl_error(&state);
-                return (ft_nullptr);
-            }
-        }
+        int32_t result = FT_ERR_SUCCESS;
+        if (character == 127 || character == '\b')
+            result = rl_handle_backspace(&state, prompt);
         else if (character == 27)
-        {
-            int32_t escape_error = rl_handle_escape_sequence(&state, prompt);
-            if (escape_error != FT_ERR_SUCCESS)
-            {
-                rl_error(&state);
-                return (ft_nullptr);
-            }
-        }
+            result = rl_handle_escape_sequence(&state, prompt);
         else if (character == '\t')
-        {
-            int32_t completion_error = rl_handle_tab_completion(&state, prompt);
-            if (completion_error != FT_ERR_SUCCESS)
-            {
-                rl_error(&state);
-                return (ft_nullptr);
-            }
-        }
+            result = rl_handle_tab_completion(&state, prompt);
         else if (character >= 32 && character <= 126)
-        {
-            int32_t printable_error = rl_handle_printable_char(&state, character, prompt);
-            if (printable_error != FT_ERR_SUCCESS)
-            {
-                rl_error(&state);
-                return (ft_nullptr);
-            }
-        }
+            result = rl_handle_printable_char(&state, character, prompt);
+        if (result != FT_ERR_SUCCESS)
+            return (rl_error(&state));
     }
-    int32_t line_length = ft_strlen(state.buffer);
-    state.buffer[line_length] = '\0';
     rl_update_history(state.buffer);
-    rl_disable_raw_mode();
+    (void)rl_disable_raw_mode();
     rl_state_teardown_thread_safety(&state);
     if (DEBUG == 1)
         pf_printf("returning %s\n", state.buffer);

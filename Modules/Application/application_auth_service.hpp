@@ -36,7 +36,8 @@ class application_auth_service
         int32_t load_string_value(const char *key, ft_string &value, ft_bool *found = ft_nullptr) const noexcept;
         int32_t generate_login_signal_one_time_password(ft_string &one_time_password_output) const noexcept;
         int32_t generate_login_session_token(ft_string &session_token_output) const noexcept;
-        int32_t build_login_signal_one_time_password_hash(const char *one_time_password, ft_string &hash_hex) const noexcept;
+        int32_t build_login_signal_one_time_password_hash(const char *one_time_password, char *hash_hex,
+            ft_size_t hash_capacity) const noexcept;
         int32_t write_login_signal_one_time_password(const char *username, const char *one_time_password) const noexcept;
         int32_t build_login_session_value(const char *session_token, const char *client_ip_address,
             int64_t login_timestamp, ft_string &value_output) const noexcept;

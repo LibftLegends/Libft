@@ -53,7 +53,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Parser` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Printf` | `Basic`, `CPP_class`, `Errno`, `PThread`, `System_utils` |
 | `RNG` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Math`, `PThread`, `Printf`, `Template` |
-| `ReadLine` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Printf`, `System_utils` |
+| `ReadLine` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Regex` | `Basic`, `CPP_class`, `Errno` |
 | `SCMA` | `Basic`, `Compatebility`, `Errno`, `PThread` |
 | `Sink` | `Basic`, `Errno` |
@@ -362,6 +362,7 @@ graph TD
     ReadLine --> PThread
     ReadLine --> Printf
     ReadLine --> System_utils
+    ReadLine --> Template
     Regex --> Basic
     Regex --> CPP_class
     Regex --> Errno

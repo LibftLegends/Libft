@@ -13,6 +13,7 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#include "../Template/algorithm.hpp"
 #include "../Template/map.hpp"
 #include "../Template/unordered_map.hpp"
 #include "../Template/pair.hpp"
@@ -1439,13 +1440,12 @@ static void storage_kv_relocate_entry(Pair<ft_string, kv_store_entry> &destinati
 }
 
 static int32_t storage_kv_erase_entry(ft_map<ft_string, kv_store_entry> &data,
-    const Pair<ft_string, kv_store_entry> *entry)
+    const Pair<ft_string, kv_store_entry> *entry, const Pair<ft_string, kv_store_entry> *end)
 {
-    return (data.erase_if(
-        [entry](const Pair<ft_string, kv_store_entry> &candidate, ft_size_t) noexcept -> ft_bool
-        {
-            return (&candidate == entry);
-        }, storage_kv_relocate_entry));
+    const ft_size_t size = data.size();
+    if (data.get_error() != FT_ERR_SUCCESS)
+        return (data.get_error());
+    return (data.erase_at(size - static_cast<ft_size_t>(end - entry), storage_kv_relocate_entry));
 }
 
 int32_t kv_store::prune_expired_locked(ft_size_t *lookup_index)
@@ -1651,21 +1651,29 @@ int32_t kv_store::kv_delete(const char *key_string)
         return (FT_ERR_INVALID_OPERATION);
     }
     auto *entry = live_end - live_count + lookup_index;
+    // A listener registered afterward can snapshot the committed store under its lock.
+    const ft_bool notify_listeners =
+        (this->_replication_operation_count.load(std::memory_order_acquire) != 0);
     ft_vector<kv_store_operation> operations;
-    kv_store_operation operation;
-    result = operations.initialize();
+    if (notify_listeners == FT_TRUE)
+    {
+        kv_store_operation operation;
+        result = operations.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = kv_store_init_delete_operation(operation, entry->key.c_str());
+        if (result == FT_ERR_SUCCESS)
+            result = operations.push_back(ft_move(operation));
+    }
     if (result == FT_ERR_SUCCESS)
-        result = kv_store_init_delete_operation(operation, entry->key.c_str());
-    if (result == FT_ERR_SUCCESS)
-        result = operations.push_back(ft_move(operation));
-    if (result == FT_ERR_SUCCESS)
-        result = storage_kv_erase_entry(this->_data, entry);
+        result = this->_data.erase_at(lookup_index, storage_kv_relocate_entry);
     if (result == FT_ERR_SUCCESS)
         this->record_delete_operation();
     this->unlock_store_guard(lock_acquired, result);
     if (result != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    return (this->notify_replication_listeners(operations));
+    if (notify_listeners == FT_TRUE)
+        return (this->notify_replication_listeners(operations));
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t kv_store::kv_flush() const
@@ -1990,6 +1998,82 @@ int32_t kv_store::apply_existing_updates_locked(const ft_vector<kv_store_operati
     return (FT_ERR_SUCCESS);
 }
 
+int32_t kv_store::apply_deletions_locked(const ft_vector<kv_store_operation> &operations,
+    ft_size_t operation_count)
+{
+    const auto *operation = operations.begin();
+    if (operations.get_error() != FT_ERR_SUCCESS)
+        return (operations.get_error());
+    const auto *const operations_end = operation + operation_count;
+    const auto *const operations_begin = operation;
+    while (operation != operations_end)
+    {
+        if (operation->_type != KV_STORE_OPERATION_TYPE_DELETE)
+            return (FT_ERR_UNSUPPORTED_TYPE);
+        ++operation;
+    }
+    const ft_size_t size = this->_data.size();
+    if (this->_data.get_error() != FT_ERR_SUCCESS)
+        return (this->_data.get_error());
+    if (operation_count > size)
+        return (FT_ERR_NOT_FOUND);
+    const auto *const entries_end = this->_data.end();
+    if (this->_data.get_error() != FT_ERR_SUCCESS)
+        return (this->_data.get_error());
+    const auto *const entries_begin = entries_end - size;
+
+    ft_vector<ft_size_t> indices;
+    int32_t result = indices.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    indices.reserve(operation_count);
+    result = indices.get_error();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    operation = operations_begin;
+    while (operation != operations_end)
+    {
+        if (operation->_key.is_initialised() == FT_FALSE || operation->_key.empty())
+            return (FT_ERR_INVALID_ARGUMENT);
+        const auto *entry = this->_data.find(operation->_key);
+        if (this->_data.get_error() != FT_ERR_SUCCESS)
+            return (this->_data.get_error());
+        if (entry == entries_end)
+            return (FT_ERR_NOT_FOUND);
+        result = indices.push_back(static_cast<ft_size_t>(entry - entries_begin));
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        ++operation;
+    }
+    auto *const sorted_indices = indices.begin();
+    auto *const sorted_end = sorted_indices + operation_count;
+    ft_sort(sorted_indices, sorted_end);
+    const auto *next_index = sorted_indices + 1;
+    while (next_index != sorted_end)
+    {
+        if (next_index[0] == next_index[-1])
+            return (FT_ERR_NOT_FOUND);
+        ++next_index;
+    }
+    next_index = sorted_indices;
+    result = this->_data.erase_if(
+        [&next_index, sorted_end](const Pair<ft_string, kv_store_entry> &, ft_size_t index) noexcept -> ft_bool
+        {
+            if (next_index == sorted_end || *next_index != index)
+                return (FT_FALSE);
+            ++next_index;
+            return (FT_TRUE);
+        }, storage_kv_relocate_entry);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    while (operation_count != 0)
+    {
+        this->record_delete_operation();
+        --operation_count;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t kv_store::kv_apply(const ft_vector<kv_store_operation> &operations)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::kv_apply");
@@ -2033,7 +2117,7 @@ int32_t kv_store::kv_apply(const ft_vector<kv_store_operation> &operations)
             error_code = FT_ERR_NOT_FOUND;
         else
         {
-            error_code = storage_kv_erase_entry(this->_data, entry);
+            error_code = storage_kv_erase_entry(this->_data, entry, end);
             if (error_code == FT_ERR_SUCCESS)
                 this->record_delete_operation();
         }
@@ -2044,7 +2128,10 @@ int32_t kv_store::kv_apply(const ft_vector<kv_store_operation> &operations)
     }
     if (operation_count > 1)
     {
-        error_code = this->apply_existing_updates_locked(operations, operation_count);
+        if (operations[0]._type == KV_STORE_OPERATION_TYPE_DELETE)
+            error_code = this->apply_deletions_locked(operations, operation_count);
+        else
+            error_code = this->apply_existing_updates_locked(operations, operation_count);
         if (error_code != FT_ERR_UNSUPPORTED_TYPE)
         {
             this->unlock_store_guard(lock_acquired, error_code);
@@ -2082,7 +2169,7 @@ int32_t kv_store::kv_apply(const ft_vector<kv_store_operation> &operations)
                 error_code = FT_ERR_NOT_FOUND;
                 break ;
             }
-            error_code = storage_kv_erase_entry(replacement, entry);
+            error_code = storage_kv_erase_entry(replacement, entry, end);
             if (error_code == FT_ERR_SUCCESS)
                 this->record_delete_operation();
         }
@@ -2114,75 +2201,69 @@ int32_t kv_store::kv_apply(const ft_vector<kv_store_operation> &operations)
 int32_t kv_store::kv_compare_and_swap(const char *key_string, const char *expected_value, const char *new_value, int64_t ttl_seconds)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::kv_compare_and_swap");
-    ft_string key_storage;
-    Pair<ft_string, kv_store_entry> *existing_pair;
-    Pair<ft_string, kv_store_entry> *map_end;
-    ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error;
-
     if (key_string == ft_nullptr || expected_value == ft_nullptr)
         return (FT_ERR_INVALID_OPERATION);
-    if (key_storage.initialize(key_string) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_OPERATION);
-    lock_error = this->lock_store(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_store(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->unlock_store_guard(lock_acquired, lock_error);
+        this->unlock_store_guard(lock_acquired, result);
         return (FT_ERR_INVALID_OPERATION);
     }
-    if (this->prune_expired_locked() != 0)
+    const ft_size_t size = this->_data.size();
+    auto *const map_end = this->_data.end();
+    auto *entry = this->_data.find_as(key_string);
+    result = this->_data.get_error();
+    auto *map_begin = map_end;
+    ft_size_t lookup_index = ft_string::npos;
+    const ft_bool replace_value = (new_value != ft_nullptr);
+    ft_string replacement;
+    if (result == FT_ERR_SUCCESS && entry != map_end)
+    {
+        map_begin = map_end - size;
+        lookup_index = static_cast<ft_size_t>(entry - map_begin);
+        const char *current_value = ft_nullptr;
+        result = entry->value.get_value_pointer(&current_value);
+        if (result == FT_ERR_SUCCESS && ft_strcmp(current_value, expected_value) != 0)
+            result = FT_ERR_INVALID_OPERATION;
+        // The caller may borrow any of the input strings from an entry that pruning removes.
+        if (result == FT_ERR_SUCCESS && replace_value == FT_TRUE)
+            result = replacement.initialize(new_value);
+    }
+    const int32_t prune_result = this->prune_expired_locked(&lookup_index);
+    if (result != FT_ERR_SUCCESS || prune_result != FT_ERR_SUCCESS || lookup_index == ft_string::npos)
     {
         this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
         return (FT_ERR_INVALID_OPERATION);
     }
-    existing_pair = this->_data.find(key_storage);
-    map_end = this->_data.end();
-    if (existing_pair == map_end)
+
+    if (replace_value == FT_FALSE)
     {
-        this->unlock_store_guard(lock_acquired, FT_ERR_NOT_FOUND);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    const char *current_value = ft_nullptr;
-    if (existing_pair->value.get_value_pointer(&current_value) != FT_ERR_SUCCESS)
-    {
-        this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    if (ft_strcmp(current_value, expected_value) != 0)
-    {
-        this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    if (new_value == ft_nullptr)
-    {
-        const int32_t result = storage_kv_erase_entry(this->_data, existing_pair);
-        if (result != FT_ERR_SUCCESS)
-        {
-            this->unlock_store_guard(lock_acquired, result);
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        this->record_delete_operation();
+        result = this->_data.erase_at(lookup_index, storage_kv_relocate_entry);
+        if (result == FT_ERR_SUCCESS)
+            this->record_delete_operation();
     }
     else
     {
         ft_bool has_expiration = FT_FALSE;
         int64_t expiration_timestamp = 0;
-        ft_string replacement;
-        int32_t result = this->compute_expiration(ttl_seconds, has_expiration, expiration_timestamp);
+        result = this->compute_expiration(ttl_seconds, has_expiration, expiration_timestamp);
         if (result == FT_ERR_SUCCESS)
-            result = replacement.initialize(new_value);
-        if (result == FT_ERR_SUCCESS)
-            result = existing_pair->value.commit_value(replacement, FT_TRUE, has_expiration, expiration_timestamp);
-        if (result != FT_ERR_SUCCESS)
         {
-            this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
-            return (FT_ERR_INVALID_OPERATION);
+            // Pruning compacts the existing backing array in place.
+            entry = map_begin + lookup_index;
+            result = entry->value.commit_value(replacement, FT_TRUE, has_expiration, expiration_timestamp);
         }
-        if (has_expiration)
-            this->_next_expiration = storage_kv_earlier_expiration(this->_next_expiration, expiration_timestamp);
-        this->record_set_operation();
+        if (result == FT_ERR_SUCCESS)
+        {
+            if (has_expiration)
+                this->_next_expiration = storage_kv_earlier_expiration(this->_next_expiration, expiration_timestamp);
+            this->record_set_operation();
+        }
     }
-    this->unlock_store_guard(lock_acquired, FT_ERR_SUCCESS);
+    this->unlock_store_guard(lock_acquired, result);
+    if (result != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_OPERATION);
     return (FT_ERR_SUCCESS);
 }
 

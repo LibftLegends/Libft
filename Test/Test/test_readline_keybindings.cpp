@@ -80,3 +80,36 @@ FT_TEST(test_readline_custom_key_bindings_dispatch)
     test_readline_cleanup_state(&state);
     return (1);
 }
+
+FT_TEST(test_readline_custom_key_bindings_update_and_remove_signed_keys)
+{
+    readline_state_t state;
+    int32_t previous = 0;
+    int32_t updated = 0;
+    const int32_t keys[] = {FT_INT32_MAX, -500, FT_INT32_MIN, 500};
+    ft_size_t index = 0;
+    while (index < sizeof(keys) / sizeof(keys[0]))
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_bind_key(keys[index], test_readline_custom_key_callback, &previous));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_bind_key(-500, test_readline_custom_key_callback, &updated));
+    ft_bool handled = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_dispatch_custom_key(&state, "", -500, &handled));
+    FT_ASSERT_EQ(FT_TRUE, handled);
+    FT_ASSERT_EQ(1, updated);
+    FT_ASSERT_EQ(0, previous);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_unbind_key(-500));
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, rl_unbind_key(-500));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_dispatch_custom_key(&state, "", -500, &handled));
+    FT_ASSERT_EQ(FT_FALSE, handled);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_dispatch_custom_key(&state, "", FT_INT32_MIN, &handled));
+    FT_ASSERT_EQ(FT_TRUE, handled);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_dispatch_custom_key(&state, "", FT_INT32_MAX, &handled));
+    FT_ASSERT_EQ(FT_TRUE, handled);
+    FT_ASSERT_EQ(2, previous);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_unbind_key(FT_INT32_MIN));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_unbind_key(FT_INT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_unbind_key(500));
+    return (1);
+}

@@ -812,7 +812,6 @@ Each entry lists the class or struct name introduced in that translation unit.
 ## ReadLine/readline_internal.hpp
 
 - `s_readline_state`
-- `terminal_dimensions`
 
 ## SCMA/SCMA.hpp
 

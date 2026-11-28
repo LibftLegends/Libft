@@ -80,111 +80,69 @@ static int32_t rl_utf8_measure_grapheme_width(const char *buffer, ft_size_t grap
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t rl_utf8_extract_grapheme(const char *buffer, ft_size_t buffer_length,
-        ft_size_t start_index, ft_size_t *end_index, ft_size_t *byte_length,
-        int32_t *display_width)
+static int32_t rl_utf8_ascii_width(uint8_t byte) noexcept
 {
-    ft_size_t local_index;
-    ft_size_t grapheme_length;
-    int32_t width;
-
-    if (end_index == ft_nullptr || byte_length == ft_nullptr
-        || display_width == ft_nullptr)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (buffer == ft_nullptr)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (start_index >= buffer_length)
-    {
-        *end_index = start_index;
-        *byte_length = 0;
-        *display_width = 0;
-        return (FT_ERR_NOT_FOUND);
-    }
-    local_index = start_index;
-    grapheme_length = 0;
-    width = 0;
-    if (ft_utf8_next_grapheme(buffer, buffer_length, &local_index,
-            &grapheme_length) != FT_ERR_SUCCESS)
-    {
-        local_index = start_index + 1;
-        grapheme_length = 1;
-        width = 1;
-    }
-    else
-    {
-        if (rl_utf8_measure_grapheme_width(buffer + start_index,
-                grapheme_length, &width) != FT_ERR_SUCCESS)
-            width = static_cast<int32_t>(grapheme_length);
-    }
-    *end_index = local_index;
-    *byte_length = grapheme_length;
-    *display_width = width;
-    return (FT_ERR_SUCCESS);
+    return (byte >= 0x20 && byte != 0x7F);
 }
 
-static int32_t rl_utf8_compute_columns_range_internal(const char *string,
-        ft_size_t buffer_length, ft_size_t start_index, ft_size_t end_index,
-        int32_t *columns)
+static void rl_utf8_extract_grapheme(const char *buffer, ft_size_t buffer_length,
+        ft_size_t start_index, ft_size_t &end_index, int32_t &display_width)
 {
-    ft_size_t index;
-    int32_t total_columns;
-
-    if (columns == ft_nullptr)
+    const uint8_t byte = static_cast<uint8_t>(buffer[start_index]);
+    end_index = start_index + 1;
+    // The following byte must be ASCII too, or it may start a combining mark.
+    if (byte < 0x80 && (end_index == buffer_length
+            || static_cast<uint8_t>(buffer[end_index]) < 0x80))
     {
-        return (FT_ERR_INTERNAL);
+        display_width = rl_utf8_ascii_width(byte);
+        return ;
     }
-    if (start_index > buffer_length)
-        start_index = buffer_length;
-    if (end_index > buffer_length)
-        end_index = buffer_length;
-    index = start_index;
+
+    ft_size_t decoder_index = start_index;
+    ft_size_t grapheme_length = 0;
+    if (ft_utf8_next_grapheme(buffer, buffer_length, &decoder_index, &grapheme_length) != FT_ERR_SUCCESS)
+    {
+        display_width = 1;
+        return ;
+    }
+    end_index = decoder_index;
+    (void)rl_utf8_measure_grapheme_width(buffer + start_index, grapheme_length, &display_width);
+    return ;
+}
+
+static void rl_utf8_measure_columns(const char *buffer, ft_size_t buffer_length,
+        ft_size_t prefix_length, int32_t &total_columns, int32_t &prefix_columns)
+{
     total_columns = 0;
-    while (index < end_index)
+    prefix_columns = 0;
+    ft_size_t index = 0;
+    while (index < buffer_length)
     {
         ft_size_t next_index;
-        ft_size_t grapheme_length;
         int32_t display_width;
-
-        next_index = index;
-        grapheme_length = 0;
-        display_width = 0;
-        if (rl_utf8_extract_grapheme(string, buffer_length, index,
-                &next_index, &grapheme_length, &display_width) == FT_ERR_NOT_FOUND)
-            break ;
-        if (next_index > end_index)
+        rl_utf8_extract_grapheme(buffer, buffer_length, index, next_index, display_width);
+        if (index < prefix_length)
         {
-            ft_size_t remaining_bytes;
-
-            remaining_bytes = end_index - index;
-            total_columns += static_cast<int32_t>(remaining_bytes);
-            index = end_index;
+            if (next_index <= prefix_length)
+                prefix_columns += display_width;
+            else
+                prefix_columns += static_cast<int32_t>(prefix_length - index);
         }
-        else
-        {
-            total_columns += display_width;
-            index = next_index;
-        }
+        total_columns += display_width;
+        index = next_index;
     }
-    *columns = total_columns;
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
 int32_t rl_utf8_compute_columns(const char *string, int32_t *columns)
 {
-    ft_size_t string_length;
-
     if (string == ft_nullptr || columns == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    string_length = ft_strlen_size_t(string);
-    if (rl_utf8_compute_columns_range_internal(string, string_length,
-            0, string_length, columns) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
+    const ft_size_t string_length = ft_strlen_size_t(string);
+    int32_t total_columns;
+    int32_t unused_prefix_columns;
+    rl_utf8_measure_columns(string, string_length, 0, total_columns, unused_prefix_columns);
+    *columns = total_columns;
     return (FT_ERR_SUCCESS);
 }
 
@@ -206,16 +164,24 @@ int32_t rl_utf8_find_previous_grapheme(const char *buffer, int32_t cursor_pos,
     buffer_length = ft_strlen_size_t(buffer);
     if (static_cast<ft_size_t>(cursor_pos) > buffer_length)
         cursor_pos = static_cast<int32_t>(buffer_length);
+    if (cursor_pos == 0)
+        return (FT_ERR_NOT_FOUND);
+    const uint8_t previous_byte = static_cast<uint8_t>(buffer[cursor_pos - 1]);
+    // A following non-ASCII byte may begin a combining mark.
+    if (previous_byte < 0x80 && static_cast<uint8_t>(buffer[cursor_pos]) < 0x80)
+    {
+        *start_byte = cursor_pos - 1;
+        *end_byte = cursor_pos;
+        *display_width = rl_utf8_ascii_width(previous_byte);
+        return (FT_ERR_SUCCESS);
+    }
     index = 0;
     while (index < static_cast<ft_size_t>(cursor_pos))
     {
         ft_size_t next_index;
-        ft_size_t grapheme_length;
         int32_t width;
 
-        if (rl_utf8_extract_grapheme(buffer, buffer_length, index,
-                &next_index, &grapheme_length, &width) == FT_ERR_NOT_FOUND)
-            break ;
+        rl_utf8_extract_grapheme(buffer, buffer_length, index, next_index, width);
         if (static_cast<int32_t>(next_index) >= cursor_pos)
         {
             if (static_cast<int32_t>(next_index) > cursor_pos)
@@ -253,16 +219,22 @@ int32_t rl_utf8_find_next_grapheme(const char *buffer, int32_t cursor_pos,
     {
         return (FT_ERR_NOT_FOUND);
     }
+    // ASCII always starts a new grapheme, even when combining marks follow it.
+    if (static_cast<uint8_t>(buffer[cursor_pos]) < 0x80)
+    {
+        ft_size_t next_index;
+        rl_utf8_extract_grapheme(buffer, buffer_length, cursor_pos, next_index, *display_width);
+        *start_byte = cursor_pos;
+        *end_byte = static_cast<int32_t>(next_index);
+        return (FT_ERR_SUCCESS);
+    }
     index = 0;
     while (index < buffer_length)
     {
         ft_size_t next_index;
-        ft_size_t grapheme_length;
         int32_t width;
 
-        if (rl_utf8_extract_grapheme(buffer, buffer_length, index,
-                &next_index, &grapheme_length, &width) == FT_ERR_NOT_FOUND)
-            break ;
+        rl_utf8_extract_grapheme(buffer, buffer_length, index, next_index, width);
         if (static_cast<int32_t>(index) >= cursor_pos)
         {
             *start_byte = static_cast<int32_t>(index);
@@ -294,12 +266,8 @@ int32_t rl_update_display_metrics(readline_state_t *state)
         state->position = 0;
     if (static_cast<ft_size_t>(state->position) > buffer_length)
         state->position = static_cast<int32_t>(buffer_length);
-    if (rl_utf8_compute_columns_range_internal(state->buffer, buffer_length,
-            0, buffer_length, &total_columns) != FT_ERR_SUCCESS)
-        total_columns = static_cast<int32_t>(buffer_length);
-    if (rl_utf8_compute_columns_range_internal(state->buffer, buffer_length,
-            0, static_cast<ft_size_t>(state->position), &prefix_columns) != FT_ERR_SUCCESS)
-        prefix_columns = state->position;
+    rl_utf8_measure_columns(state->buffer, buffer_length, static_cast<ft_size_t>(state->position),
+        total_columns, prefix_columns);
     state->display_pos = prefix_columns;
     state->prev_display_columns = total_columns;
     state->prev_buffer_length = static_cast<int32_t>(buffer_length);
