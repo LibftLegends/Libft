@@ -24,12 +24,26 @@ static int32_t custom_game_capture_arguments(game_script_context &context,
     const ft_vector<ft_string> &arguments) noexcept
 {
     (void)context;
-    if (arguments.size() != 3U)
+    if (arguments.size() != 6U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (arguments[0] != "hello" || arguments[1] != "42"
-        || arguments[2] != "1")
+        || arguments[2] != "1" || arguments[3] != "0"
+        || arguments[4] != "9223372036854775807"
+        || arguments[5] != "-9223372036854775808")
         return (FT_ERR_INVALID_ARGUMENT);
-    g_custom_game_argument_count = 3;
+    g_custom_game_argument_count = 6;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t custom_game_integer_limit(game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    if (arguments.size() != 1U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (arguments[0] == "0")
+        context.set_result_integer(INT64_MIN);
+    else
+        context.set_result_integer(INT64_MAX);
     return (FT_ERR_SUCCESS);
 }
 
@@ -111,11 +125,13 @@ FT_TEST(test_game_custom_scripting_converts_typed_callback_arguments)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_register(bridge,
         "capture_arguments", custom_game_capture_arguments));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_register(bridge,
+        "integer_limit", custom_game_integer_limit));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize(
-        "capture_arguments(\"hello\", 42, true);"));
+        "capture_arguments(\"hello\", 42, true, 0, integer_limit(1), integer_limit(0));"));
     g_custom_game_argument_count = 0;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(script, state));
-    FT_ASSERT_EQ(3, g_custom_game_argument_count);
+    FT_ASSERT_EQ(6, g_custom_game_argument_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
     return (1);
 }
@@ -139,6 +155,16 @@ FT_TEST(test_game_custom_scripting_reports_callback_failures_and_recovers)
         bridge.execute(invalid_script, state));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(valid_script, state));
     FT_ASSERT_EQ(12, g_custom_game_callback_value);
+    ft_string callback_name;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, callback_name.initialize("capture_value"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.remove_function(callback_name));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, bridge.execute(valid_script, state));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_register(bridge,
+        "capture_value", custom_game_capture_value));
+    constexpr char RECOVERED_SCRIPT[] = "capture_value(13);";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_script.assign(RECOVERED_SCRIPT, sizeof(RECOVERED_SCRIPT) - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(valid_script, state));
+    FT_ASSERT_EQ(13, g_custom_game_callback_value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
     return (1);
 }
@@ -157,5 +183,24 @@ FT_TEST(test_game_custom_scripting_returns_native_result)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize("add(7, 5);"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(script, state));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
+    return (1);
+}
+
+FT_TEST(test_game_custom_scripting_failed_registration_leaves_no_callback)
+{
+    ft_sharedptr<game_world> world_pointer;
+    game_script_bridge bridge;
+    ft_string name;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_prepare(bridge, world_pointer));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_register(bridge, "add", custom_game_add));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, name.initialize(FT_SCRIPTING_MAX_NATIVE_NAME_BYTES, 'a'));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, custom_game_register(bridge,
+        name.c_str(), custom_game_add));
+    FT_ASSERT_EQ(1U, bridge.get_callback_count());
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, custom_game_register(bridge,
+        name.c_str(), custom_game_add));
+    FT_ASSERT_EQ(1U, bridge.get_callback_count());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, custom_game_register(bridge, "capture_value", custom_game_capture_value));
+    FT_ASSERT_EQ(2U, bridge.get_callback_count());
     return (1);
 }

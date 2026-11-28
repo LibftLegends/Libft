@@ -76,8 +76,12 @@ class ft_vector
         void    reset_to_small_buffer();
     int32_t     lock_internal(ft_bool *lock_acquired) const;
     int32_t     unlock_internal(ft_bool lock_acquired) const;
+        int32_t lock_copy_pair(const ft_vector<ElementType> &other,
+            ft_bool &self_locked, ft_bool &other_locked) const;
         template <typename ArgType>
         int32_t construct_element_unlocked(ElementType *destination, ArgType &&value);
+        int32_t replace_from_unlocked(const ft_vector<ElementType> &other);
+        int32_t erase_at_unlocked(ft_size_t index);
         static int32_t set_error(int32_t error_code) noexcept;
 
     protected:
@@ -103,7 +107,10 @@ class ft_vector
         int32_t     enable_thread_safety();
         int32_t     disable_thread_safety();
         int32_t     copy_from(const ft_vector<ElementType> &other);
+        int32_t     replace_from(const ft_vector<ElementType> &other);
         ft_bool is_thread_safe() const;
+        // For lifecycle checks when the caller has exclusive access.
+        ft_bool has_active_lock() const noexcept;
         uint8_t is_initialised() const noexcept;
         int32_t     lock(ft_bool *lock_acquired) const;
         void    unlock(ft_bool lock_acquired) const;
@@ -116,6 +123,8 @@ class ft_vector
 
         int32_t push_back(const ElementType &value);
         int32_t push_back(ElementType &&value);
+        // Appends trivially copyable elements, including a live range in this vector.
+        int32_t append(const ElementType *values, ft_size_t count);
         void pop_back();
 
         ElementType& operator[](ft_size_t index);
@@ -127,6 +136,7 @@ class ft_vector
 
         iterator insert(iterator pos, const ElementType& value);
         iterator erase(iterator pos);
+        int32_t erase_at(ft_size_t index);
         iterator begin();
         const_iterator begin() const;
         iterator end();
@@ -360,16 +370,10 @@ int32_t ft_vector<ElementType>::copy_from(const ft_vector<ElementType> &other)
     if (this == &other)
         return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
     ft_bool self_lock_acquired = FT_FALSE;
-    int32_t self_lock_error = this->lock_internal(&self_lock_acquired);
-    if (self_lock_error != FT_ERR_SUCCESS)
-        return (ft_vector<ElementType>::set_error(self_lock_error));
     ft_bool other_lock_acquired = FT_FALSE;
-    int32_t other_lock_error = other.lock_internal(&other_lock_acquired);
-    if (other_lock_error != FT_ERR_SUCCESS)
-    {
-        this->unlock_internal(self_lock_acquired);
-        return (ft_vector<ElementType>::set_error(other_lock_error));
-    }
+    const int32_t lock_error = this->lock_copy_pair(other, self_lock_acquired, other_lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
     this->destroy_elements_unlocked(0, this->_size);
     if (this->_data != ft_nullptr && this->using_small_buffer() == FT_FALSE)
         cma_free(this->_data);
@@ -406,6 +410,110 @@ int32_t ft_vector<ElementType>::copy_from(const ft_vector<ElementType> &other)
     return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
 }
 
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::replace_from(const ft_vector<ElementType> &other)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_vector::replace_from destination");
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
+        "ft_vector::replace_from source");
+    if (this == &other)
+        return (set_error(FT_ERR_SUCCESS));
+
+    ft_bool self_locked = FT_FALSE;
+    ft_bool other_locked = FT_FALSE;
+    const int32_t lock_error = this->lock_copy_pair(other, self_locked, other_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+    const int32_t result = this->replace_from_unlocked(other);
+    (void)other.unlock_internal(other_locked);
+    (void)this->unlock_internal(self_locked);
+    return (set_error(result));
+}
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::lock_copy_pair(const ft_vector<ElementType> &other,
+    ft_bool &self_locked, ft_bool &other_locked) const
+{
+    const ft_vector<ElementType> *first = this;
+    const ft_vector<ElementType> *second = &other;
+    ft_bool *first_locked = &self_locked;
+    ft_bool *second_locked = &other_locked;
+    if (reinterpret_cast<uintptr_t>(first) > reinterpret_cast<uintptr_t>(second))
+    {
+        first = &other;
+        second = this;
+        first_locked = &other_locked;
+        second_locked = &self_locked;
+    }
+    const int32_t first_error = first->lock_internal(first_locked);
+    if (first_error != FT_ERR_SUCCESS)
+        return (first_error);
+    const int32_t second_error = second->lock_internal(second_locked);
+    if (second_error != FT_ERR_SUCCESS)
+        (void)first->unlock_internal(*first_locked);
+    return (second_error);
+}
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::replace_from_unlocked(const ft_vector<ElementType> &other)
+{
+    const ft_size_t count = other._size;
+    if (count == 0U)
+    {
+        this->destroy_elements_unlocked(0U, this->_size);
+        this->_size = 0U;
+        return (FT_ERR_SUCCESS);
+    }
+
+    constexpr ft_bool trivial_copy = std::is_trivially_copy_constructible_v<ElementType>
+        && std::is_trivially_destructible_v<ElementType>;
+    const ft_bool reuse_buffer = (this->_size == 0U || trivial_copy)
+        && count <= this->_capacity;
+    ElementType *replacement = this->_data;
+    if (!reuse_buffer)
+    {
+        replacement = static_cast<ElementType *>(cma_malloc(count * sizeof(ElementType)));
+        if (replacement == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    if constexpr (trivial_copy)
+    {
+        const ElementType *source = other._data;
+        std::uninitialized_copy_n(source, count, replacement);
+        if (reuse_buffer && count < this->_size)
+            this->destroy_elements_unlocked(count, this->_size);
+    }
+    else
+    {
+        ft_size_t index = 0U;
+        while (index < count)
+        {
+            const int32_t result = this->construct_element_unlocked(
+                &replacement[index], other._data[index]);
+            if (result != FT_ERR_SUCCESS)
+            {
+                while (index != 0U)
+                    ::destroy_at(&replacement[--index]);
+                if (!reuse_buffer)
+                    cma_free(replacement);
+                return (result);
+            }
+            ++index;
+        }
+    }
+    if (!reuse_buffer)
+    {
+        this->destroy_elements_unlocked(0U, this->_size);
+        if (this->_data != ft_nullptr && !this->using_small_buffer())
+            cma_free(this->_data);
+        this->_data = replacement;
+        this->_capacity = count;
+    }
+    this->_size = count;
+    return (FT_ERR_SUCCESS);
+}
 
 template <typename ElementType>
 int32_t ft_vector<ElementType>::enable_thread_safety()
@@ -455,6 +563,12 @@ ft_bool ft_vector<ElementType>::is_thread_safe() const
     enabled = (this->_mutex != ft_nullptr);
     ft_vector<ElementType>::set_error(FT_ERR_SUCCESS);
     return (enabled);
+}
+
+template <typename ElementType>
+ft_bool ft_vector<ElementType>::has_active_lock() const noexcept
+{
+    return (this->_mutex != ft_nullptr && this->_mutex->lockState());
 }
 
 template <typename ElementType>
@@ -627,6 +741,62 @@ int32_t ft_vector<ElementType>::push_back(ElementType &&value)
     this->unlock_internal(lock_acquired);
     ft_vector<ElementType>::set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
+}
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::append(const ElementType *values, ft_size_t count)
+{
+    static_assert(std::is_trivially_copyable_v<ElementType>
+        && std::is_nothrow_copy_constructible_v<ElementType>,
+        "ft_vector::append requires a trivially copyable, nonthrowing element");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_vector::append");
+    if (count == 0U)
+        return (ft_vector<ElementType>::set_error(FT_ERR_SUCCESS));
+    if (values == ft_nullptr)
+        return (ft_vector<ElementType>::set_error(FT_ERR_INVALID_ARGUMENT));
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    int32_t error_code = FT_ERR_SUCCESS;
+    if (count > MAXIMUM_CAPACITY - this->_size)
+        error_code = FT_ERR_NO_MEMORY;
+    else
+    {
+        const uintptr_t data_address = reinterpret_cast<uintptr_t>(this->_data);
+        const uintptr_t source_address = reinterpret_cast<uintptr_t>(values);
+        ft_size_t source_index = this->_size;
+        if (source_address >= data_address
+            && source_address - data_address < this->_capacity * sizeof(ElementType))
+        {
+            const uintptr_t byte_offset = source_address - data_address;
+            source_index = byte_offset / sizeof(ElementType);
+            if (byte_offset % sizeof(ElementType) != 0U || source_index >= this->_size
+                || count > this->_size - source_index)
+                error_code = FT_ERR_INVALID_ARGUMENT;
+        }
+        const ft_size_t required_capacity = this->_size + count;
+        if (error_code == FT_ERR_SUCCESS && required_capacity > this->_capacity)
+        {
+            ft_size_t new_capacity = MAXIMUM_CAPACITY;
+            if (this->_capacity <= MAXIMUM_CAPACITY / 2U)
+                new_capacity = this->_capacity * 2U;
+            if (new_capacity < required_capacity)
+                new_capacity = required_capacity;
+            error_code = this->reserve_internal_unlocked(new_capacity);
+        }
+        if (error_code == FT_ERR_SUCCESS)
+        {
+            if (source_index < this->_size)
+                values = this->_data + source_index;
+            std::uninitialized_copy_n(values, count, this->_data + this->_size);
+            this->_size = required_capacity;
+        }
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (ft_vector<ElementType>::set_error(error_code));
 }
 
 template <typename ElementType>
@@ -877,53 +1047,57 @@ typename ft_vector<ElementType>::iterator ft_vector<ElementType>::insert(iterato
 }
 
 template <typename ElementType>
+int32_t ft_vector<ElementType>::erase_at_unlocked(ft_size_t index)
+{
+    if (index >= this->_size)
+        return (FT_ERR_OUT_OF_RANGE);
+    ::destroy_at(&this->_data[index]);
+    while (index + 1U < this->_size)
+    {
+        const int32_t result = this->construct_element_unlocked(&this->_data[index],
+            ft_move(this->_data[index + 1U]));
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        ::destroy_at(&this->_data[index + 1U]);
+        ++index;
+    }
+    --this->_size;
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename ElementType>
 typename ft_vector<ElementType>::iterator ft_vector<ElementType>::erase(iterator pos)
 {
     ft_bool lock_acquired;
-    ft_size_t index;
-    ft_size_t shift_index;
-    iterator   end_iterator;
-    iterator   result_iterator;
-    int32_t lock_error;
-
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         ft_vector<ElementType>::set_error(lock_error);
         return (this->_data + this->_size);
     }
-    index = pos - this->_data;
-    if (index >= this->_size)
-    {
-        end_iterator = this->_data + this->_size;
-        this->unlock_internal(lock_acquired);
-        ft_vector<ElementType>::set_error(FT_ERR_OUT_OF_RANGE);
-        return (end_iterator);
-    }
-    ::destroy_at(&this->_data[index]);
-    shift_index = index;
-    while (shift_index < this->_size - 1)
-    {
-        if (this->construct_element_unlocked(&this->_data[shift_index],
-                ft_move(this->_data[shift_index + 1])) != FT_ERR_SUCCESS)
-        {
-            this->unlock_internal(lock_acquired);
-            ft_vector<ElementType>::set_error(ft_vector<ElementType>::_last_error);
-            return (this->_data + this->_size);
-        }
-        ::destroy_at(&this->_data[shift_index + 1]);
-        shift_index += 1;
-    }
-    this->_size -= 1;
-    if (index >= this->_size)
-        result_iterator = this->_data + this->_size;
-    else
-        result_iterator = &this->_data[index];
+    const ft_size_t index = pos - this->_data;
+    const int32_t result = this->erase_at_unlocked(index);
+    iterator next = this->_data + this->_size;
+    if (result == FT_ERR_SUCCESS && index < this->_size)
+        next = this->_data + index;
     this->unlock_internal(lock_acquired);
-    ft_vector<ElementType>::set_error(FT_ERR_SUCCESS);
-    return (result_iterator);
+    ft_vector<ElementType>::set_error(result);
+    return (next);
 }
+
+template <typename ElementType>
+int32_t ft_vector<ElementType>::erase_at(ft_size_t index)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_vector::erase_at");
+    ft_bool lock_acquired;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (ft_vector<ElementType>::set_error(lock_error));
+    const int32_t result = this->erase_at_unlocked(index);
+    this->unlock_internal(lock_acquired);
+    return (ft_vector<ElementType>::set_error(result));
+}
+
 
 template <typename ElementType>
 typename ft_vector<ElementType>::iterator ft_vector<ElementType>::begin()

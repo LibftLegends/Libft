@@ -1,53 +1,42 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
-#include <climits>
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
+#include <array>
+#include <cstddef>
+
+static constexpr uint32_t MAX_INT32_FACTORIAL_INPUT = 12U;
+static constexpr uint32_t MAX_INT64_FACTORIAL_INPUT = 20U;
+
+static constexpr std::array<int64_t, MAX_INT64_FACTORIAL_INPUT + 1U>
+    math_factorial_values()
+{
+    std::array<int64_t, MAX_INT64_FACTORIAL_INPUT + 1U> values{};
+    values[0] = 1;
+    uint32_t index = 1U;
+    while (index <= MAX_INT64_FACTORIAL_INPUT)
+    {
+        values[index] = values[index - 1U] * static_cast<int64_t>(index);
+        index += 1U;
+    }
+    return (values);
+}
+
+static constexpr auto FACTORIAL_VALUES = math_factorial_values();
+static_assert(FACTORIAL_VALUES[MAX_INT32_FACTORIAL_INPUT] <= INT32_MAX
+    && FACTORIAL_VALUES[MAX_INT32_FACTORIAL_INPUT + 1U] > INT32_MAX);
+static_assert(FACTORIAL_VALUES[MAX_INT64_FACTORIAL_INPUT]
+    > INT64_MAX / (MAX_INT64_FACTORIAL_INPUT + 1U));
 
 int32_t math_factorial(int32_t number)
 {
-    int32_t result;
-    int32_t current_number;
-
-    if (number < 0)
-    {
+    const uint32_t index = static_cast<uint32_t>(number);
+    if (index > MAX_INT32_FACTORIAL_INPUT)
         return (0);
-    }
-    result = 1;
-    current_number = 2;
-    while (current_number <= number)
-    {
-        if (result > INT_MAX / current_number)
-        {
-            return (0);
-        }
-        result *= current_number;
-        current_number += 1;
-    }
-    return (result);
+    return (static_cast<int32_t>(FACTORIAL_VALUES[index]));
 }
 
 int64_t math_factorial(int64_t number)
 {
-    int64_t result;
-    int64_t current_number;
-
-    if (number < 0)
-    {
+    const uint64_t index = static_cast<uint64_t>(number);
+    if (index > MAX_INT64_FACTORIAL_INPUT)
         return (0);
-    }
-    result = 1;
-    current_number = 2;
-    while (current_number <= number)
-    {
-        if (result > LLONG_MAX / current_number)
-        {
-            return (0);
-        }
-        result *= current_number;
-        current_number += 1;
-    }
-    return (result);
+    return (FACTORIAL_VALUES[static_cast<std::size_t>(index)]);
 }

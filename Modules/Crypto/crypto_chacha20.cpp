@@ -39,6 +39,17 @@ namespace
         state[b] = rotate_left(state[b] ^ state[c], 7U);
         return ;
     }
+
+    static ft_bool crypto_chacha20_overlaps_output(const uint8_t *data,
+        ft_size_t length, uintptr_t output_address, ft_size_t output_capacity) noexcept
+    {
+        if (length == 0U)
+            return (FT_FALSE);
+        const uintptr_t data_address = reinterpret_cast<uintptr_t>(data);
+        if (data_address < output_address)
+            return (output_address - data_address < length);
+        return (data_address - output_address < output_capacity);
+    }
 }
 
 #ifdef LIBFT_TEST_BUILD
@@ -135,48 +146,58 @@ int32_t crypto_chacha20_xor(const uint8_t key[32], const uint8_t nonce[12],
         if (result != FT_ERR_SUCCESS)
             return (result);
     }
-    result = staging.initialize();
+    if (length != 0U && (length - 1U) / sizeof(block) > UINT32_MAX - counter)
+    {
+        output.clear();
+        return (FT_ERR_OUT_OF_RANGE);
+    }
+    ft_vector<uint8_t> *target = &staging;
+    const ft_size_t output_capacity = output.capacity();
+    if (length <= output_capacity && output.is_thread_safe() == FT_FALSE)
+    {
+        const uintptr_t output_address = reinterpret_cast<uintptr_t>(output.begin());
+        if (!crypto_chacha20_overlaps_output(input, length, output_address, output_capacity)
+            && !crypto_chacha20_overlaps_output(key, 32U, output_address, output_capacity)
+            && !crypto_chacha20_overlaps_output(nonce, 12U, output_address, output_capacity))
+            target = &output;
+    }
+    if (target == &staging)
+    {
+        result = staging.initialize();
+        if (result != FT_ERR_SUCCESS)
+        {
+            output.clear();
+            return (result);
+        }
+    }
+    target->resize(length);
+    result = target->get_error();
     if (result != FT_ERR_SUCCESS)
     {
         output.clear();
         return (result);
     }
-    staging.resize(length);
-    if (staging.get_error() != FT_ERR_SUCCESS)
-    {
-        result = staging.get_error();
-        (void)staging.destroy();
-        output.clear();
-        return (result);
-    }
+    uint8_t *output_bytes = target->begin();
     offset = 0U;
     while (offset < length)
     {
-        crypto_chacha20_block(key, counter, nonce, block);
+        crypto_chacha20_block(key,
+            counter + static_cast<uint32_t>(offset / sizeof(block)), nonce, block);
+        ft_size_t block_length = length - offset;
+        if (block_length > sizeof(block))
+            block_length = sizeof(block);
         block_index = 0U;
-        while (block_index < sizeof(block)
-            && block_index < length - offset)
+        while (block_index < block_length)
         {
-            staging[offset + block_index] = static_cast<uint8_t>(
+            output_bytes[offset + block_index] = static_cast<uint8_t>(
                 input[offset + block_index] ^ block[block_index]);
             block_index += 1U;
         }
-        offset += block_index;
-        if (offset < length)
-        {
-            if (counter == 0xffffffffU)
-            {
-                (void)crypto_secure_wipe(block, sizeof(block));
-                if (staging.size() != 0U)
-                    (void)crypto_secure_wipe(&staging[0], staging.size());
-                (void)staging.destroy();
-                output.clear();
-                return (FT_ERR_OUT_OF_RANGE);
-            }
-            counter += 1U;
-        }
+        offset += block_length;
     }
     (void)crypto_secure_wipe(block, sizeof(block));
+    if (target == &output)
+        return (FT_ERR_SUCCESS);
     result = output.move(staging);
     if (result != FT_ERR_SUCCESS)
     {

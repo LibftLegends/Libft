@@ -90,7 +90,7 @@ class game_script_bridge
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
         int32_t execute_line(game_script_context &context, const ft_string &line) noexcept;
-        int32_t handle_call(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept;
+        int32_t handle_call(game_script_context &context, ft_vector<ft_string> &tokens) noexcept;
         int32_t handle_set(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept;
         int32_t handle_unset(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept;
         void tokenize_line(const ft_string &line, ft_vector<ft_string> &tokens) const noexcept;

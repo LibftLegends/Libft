@@ -396,10 +396,17 @@ struct card_game_player_snapshot
 class card_game_host_intent_snapshot
 {
     private:
+        friend class card_game_engine;
+
         uint8_t _initialised_state;
         card_game_host_intent_record *_records;
         uint32_t _count;
         uint32_t _capacity;
+
+        int32_t initialize_storage(uint32_t count) noexcept;
+        int32_t initialize_ranges(const card_game_host_intent_record *first,
+            uint32_t first_count, const card_game_host_intent_record *second,
+            uint32_t second_count) noexcept;
 
     public:
         card_game_host_intent_snapshot() noexcept;
@@ -542,6 +549,7 @@ class card_game_engine
         uint8_t _initialised_state;
         card_game_rules _rules;
         card_game_card_definition *_cards;
+        /* Type IDs in registration order, followed by the card ID hash buckets. */
         uint32_t *_card_type_ids;
         uint32_t _card_capacity;
         card_game_card_type_definition _card_types[FT_CARD_GAME_MAX_CARD_TYPES];
@@ -552,6 +560,9 @@ class card_game_engine
         uint32_t _effect_event_types[FT_CARD_GAME_MAX_EFFECTS];
         uint32_t _effect_priorities[FT_CARD_GAME_MAX_EFFECTS];
         uint32_t _effect_usage_limit_ids[FT_CARD_GAME_MAX_EFFECTS];
+        uint16_t _event_effect_order[FT_CARD_GAME_MAX_EFFECTS];
+        uint32_t _event_effect_count;
+        uint64_t _event_effect_revision;
         card_game_phase_definition _phases[FT_CARD_GAME_MAX_PHASES];
         uint32_t _phase_count;
         card_game_zone_definition _zones[FT_CARD_GAME_MAX_ZONES];
@@ -597,6 +608,7 @@ class card_game_engine
         card_game_host_intent_definition _host_intent_types[
             FT_CARD_GAME_MAX_HOST_INTENT_TYPES];
         uint32_t _host_intent_type_count;
+        uint32_t _host_intent_record_head;
         card_game_host_intent_record *_host_intent_records;
         uint32_t _host_intent_record_count;
         uint32_t _host_intent_record_capacity;
@@ -614,6 +626,7 @@ class card_game_engine
 
         int32_t find_card(uint32_t card_id,
             card_game_card_definition **definition) noexcept;
+        uint32_t find_card_index(uint32_t card_id) const noexcept;
         ft_bool is_card_registered(uint32_t card_id) const noexcept;
         int32_t find_card_type_id(uint32_t card_id,
             uint32_t *type_id) const noexcept;
@@ -629,22 +642,35 @@ class card_game_engine
             const card_game_card_definition &definition,
             uint32_t type_id) noexcept;
         ft_bool is_command_allowed(uint32_t command_mask) const noexcept;
+        uint32_t find_event_effect_position(uint32_t event_type) const noexcept;
         int32_t apply_operation(const card_game_operation &operation) noexcept;
         int32_t allocate_deck_instance_id(uint32_t *instance_id) noexcept;
         ft_bool deck_instance_exists(uint32_t instance_id) const noexcept;
-        ft_bool zone_instance_exists(uint32_t player_id,
-            uint32_t instance_id) const noexcept;
+        ft_bool zone_instance_exists(uint32_t player_id, uint32_t instance_id) const noexcept;
+        int32_t deck_insert_unique_instance(uint32_t player_id, uint32_t index,
+            const card_game_zone_entry &entry) noexcept;
         int32_t allocate_modifier_id(uint32_t *modifier_id) noexcept;
-        int32_t expire_turn_modifiers() noexcept;
+        void expire_turn_modifiers() noexcept;
+        int32_t get_unclamped_instance_stats(uint32_t player_id, uint32_t instance_index,
+            int64_t *attack, int64_t *health) const noexcept;
         int32_t grow_command_records() noexcept;
         int32_t grow_events() noexcept;
-        int32_t grow_card_definitions() noexcept;
-        int32_t resolve_start_override(
-            card_game_start_override_field field, uint32_t player_id,
-            uint32_t baseline, uint32_t *value) const noexcept;
+        int32_t resize_card_definitions(uint32_t capacity) noexcept;
         int32_t apply_snapshot_internal(
             const card_game_snapshot &snapshot) noexcept;
         int32_t apply_delta_internal(const card_game_delta &delta) noexcept;
+        int32_t place_card_on_board(uint32_t player_id,
+            const card_game_card_definition &definition,
+            uint32_t *instance_id) noexcept;
+        int32_t play_card_with_effect(uint32_t player_id,
+            const card_game_card_definition &definition,
+            uint32_t target_instance, void *context) noexcept;
+        void remove_hand_card_at(uint32_t player_id, uint32_t hand_index) noexcept;
+        int32_t play_hand_card_at(uint32_t player_id, uint32_t hand_index,
+            uint32_t target_instance, void *context) noexcept;
+        int32_t submit_command_internal(const card_game_command &command,
+            void *context,
+            const card_game_command_record *expected_record) noexcept;
         int32_t submit_action_internal(const card_game_action &action,
             card_game_action_result *result, void *context,
             uint64_t authoritative_epoch, ft_bool allow_choice) noexcept;
@@ -655,7 +681,10 @@ class card_game_engine
             const card_game_host_intent_definition **definition) const noexcept;
         int32_t validate_host_intent(
             const card_game_host_intent &intent) const noexcept;
+        uint32_t host_intent_record_index(uint32_t index) const noexcept;
+        uint32_t host_intent_first_range_count() const noexcept;
         int32_t reserve_host_intent_records(uint32_t required_count) noexcept;
+        void store_host_intent(const card_game_host_intent &intent) noexcept;
         int32_t resolve_draw_command(uint32_t player_id,
             uint32_t draw_count, uint32_t required_discard_count) noexcept;
         int32_t resolve_draw_attempt(uint32_t player_id) noexcept;

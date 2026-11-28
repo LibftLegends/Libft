@@ -346,7 +346,12 @@ static void nw_poll_filter(int32_t *descriptors, int32_t count, int16_t interest
 static int32_t nw_poll_descriptor_list(int32_t *read_file_descriptors, int32_t read_count,
     int32_t *write_file_descriptors, int32_t write_count, int32_t timeout_milliseconds)
 {
+#ifdef _WIN32
+    // Two standard Winsock sets can reach this path due to one wake socket.
+    constexpr int32_t STACK_REQUESTS = 2 * 64 + 1;
+#else
     constexpr int32_t STACK_REQUESTS = 32;
+#endif
     const int64_t active = static_cast<int64_t>(
         nw_poll_count_active(read_file_descriptors, read_count))
         + nw_poll_count_active(write_file_descriptors, write_count);

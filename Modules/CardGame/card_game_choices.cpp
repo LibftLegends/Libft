@@ -1,5 +1,6 @@
 #include "card_game_choices.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
 #include <new>
 
 static void card_game_choices_write_u32(uint8_t *output, uint32_t *offset,
@@ -136,11 +137,44 @@ int32_t card_game_choice_ledger::clone_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t card_game_validate_choice_ids(const card_game_choice *choices,
+    uint32_t count, ft_bool *sequential) noexcept
+{
+    ft_bool consecutive = FT_TRUE;
+    ft_bool increasing = FT_TRUE;
+    uint32_t previous_id = 0U;
+    uint32_t index = 0U;
+    while (index < count)
+    {
+        const uint32_t id = choices[index].choice_id;
+        if (id <= previous_id)
+            increasing = FT_FALSE;
+        if (id != index + 1U)
+            consecutive = FT_FALSE;
+        previous_id = id;
+        ++index;
+    }
+    if (increasing == FT_FALSE)
+    {
+        uint32_t ids[FT_CARD_GAME_MAX_CHOICES];
+        index = 0U;
+        while (index < count)
+        {
+            ids[index] = choices[index].choice_id;
+            ++index;
+        }
+        std::sort(ids, ids + count);
+        if (std::adjacent_find(ids, ids + count) != ids + count)
+            return (FT_ERR_INVALID_ARGUMENT);
+    }
+    *sequential = consecutive;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_choice_ledger::apply_snapshot(
     const card_game_choice_snapshot &snapshot) noexcept
 {
     uint32_t index;
-    uint32_t compare_index;
     uint32_t option_index;
     uint32_t option_compare_index;
 
@@ -183,22 +217,28 @@ int32_t card_game_choice_ledger::apply_snapshot(
             && this->find_option(snapshot.choices[index],
                 snapshot.choices[index].selected_option_id) != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_ARGUMENT);
-        compare_index = index + 1U;
-        while (compare_index < snapshot.count)
-        {
-            if (snapshot.choices[index].choice_id
-                == snapshot.choices[compare_index].choice_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            compare_index += 1U;
-        }
         index += 1U;
     }
+    if (card_game_validate_choice_ids(snapshot.choices, snapshot.count,
+            &this->_sequential_ids) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (snapshot.count != 0U)
         ft_memcpy(this->_choices, snapshot.choices,
             static_cast<ft_size_t>(snapshot.count) * sizeof(card_game_choice));
     this->_count = snapshot.count;
     this->_next_id = snapshot.next_id;
     return (FT_ERR_SUCCESS);
+}
+
+ft_bool card_game_choice_ledger::matches_snapshot(
+    const card_game_choice_snapshot &snapshot) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_count != snapshot.count || this->_next_id != snapshot.next_id)
+        return (FT_FALSE);
+    return (this->_count == 0U || (snapshot.choices != ft_nullptr
+        && ft_memcmp(this->_choices, snapshot.choices,
+            this->_count * sizeof(*this->_choices)) == 0));
 }
 
 ft_bool card_game_choice_ledger::snapshots_equal(
@@ -217,7 +257,7 @@ ft_bool card_game_choice_ledger::snapshots_equal(
 }
 
 card_game_choice_ledger::card_game_choice_ledger() noexcept
-    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _count(0U),
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _sequential_ids(FT_TRUE), _count(0U),
       _next_id(1U), _choices()
 {
     return ;
@@ -235,6 +275,7 @@ int32_t card_game_choice_ledger::initialize() noexcept
         return (FT_ERR_ALREADY_INITIALISED);
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -243,6 +284,7 @@ int32_t card_game_choice_ledger::destroy() noexcept
 {
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -256,6 +298,7 @@ int32_t card_game_choice_ledger::move(card_game_choice_ledger &other) noexcept
     (void)this->destroy();
     this->_count = other._count;
     this->_next_id = other._next_id;
+    this->_sequential_ids = other._sequential_ids;
     ft_memcpy(this->_choices, other._choices, sizeof(this->_choices));
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     (void)other.destroy();
@@ -269,6 +312,13 @@ int32_t card_game_choice_ledger::find(uint32_t choice_id,
 
     if (index == ft_nullptr || choice_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_sequential_ids == FT_TRUE)
+    {
+        if (choice_id > this->_count)
+            return (FT_ERR_NOT_FOUND);
+        *index = choice_id - 1U;
+        return (FT_ERR_SUCCESS);
+    }
     current_index = 0U;
     while (current_index < this->_count)
     {
@@ -311,6 +361,8 @@ int32_t card_game_choice_ledger::open(uint32_t player_id,
         return (FT_ERR_FULL);
     if (this->_next_id == 0U || this->_next_id == UINT32_MAX)
         return (FT_ERR_FULL);
+    if (this->_next_id != this->_count + 1U)
+        this->_sequential_ids = FT_FALSE;
     this->_choices[this->_count].choice_id = this->_next_id;
     this->_choices[this->_count].player_id = player_id;
     this->_choices[this->_count].kind = kind;
@@ -582,7 +634,6 @@ int32_t card_game_choice_ledger::serialize(uint8_t *output,
     {
         const card_game_choice &choice = this->_choices[choice_index];
 
-        ft_bzero(output + offset, FT_CARD_GAME_CHOICE_RECORD_BYTES);
         card_game_choices_write_u32(output, &offset, choice.choice_id);
         card_game_choices_write_u32(output, &offset, choice.player_id);
         card_game_choices_write_u32(output, &offset,
@@ -606,8 +657,11 @@ int32_t card_game_choice_ledger::serialize(uint8_t *output,
                 choice.options[option_index].value_b);
             option_index += 1U;
         }
-        offset += (FT_CARD_GAME_MAX_CHOICE_OPTIONS - choice.option_count)
-            * 12U;
+        const uint32_t unused_bytes = (FT_CARD_GAME_MAX_CHOICE_OPTIONS
+            - choice.option_count) * 12U;
+        if (unused_bytes != 0U)
+            ft_bzero(output + offset, unused_bytes);
+        offset += unused_bytes;
         choice_index += 1U;
     }
     *output_size = offset;
@@ -748,21 +802,12 @@ int32_t card_game_choice_ledger::deserialize(const uint8_t *input,
         choice_index += 1U;
     }
     candidate._count = count;
-    choice_index = 0U;
-    while (choice_index < count)
-    {
-        option_index = 0U;
-        while (option_index < choice_index)
-        {
-            if (candidate._choices[option_index].choice_id
-                == candidate._choices[choice_index].choice_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            option_index += 1U;
-        }
-        choice_index += 1U;
-    }
+    if (card_game_validate_choice_ids(candidate._choices, count,
+            &candidate._sequential_ids) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
     this->_count = candidate._count;
     this->_next_id = candidate._next_id;
+    this->_sequential_ids = candidate._sequential_ids;
     ft_memcpy(this->_choices, candidate._choices, sizeof(this->_choices));
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     (void)candidate.destroy();

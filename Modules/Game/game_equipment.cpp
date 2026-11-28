@@ -184,12 +184,12 @@ int32_t game_equipment::move(game_equipment &other) noexcept
     initialize_error = this->initialize();
     if (initialize_error != FT_ERR_SUCCESS)
         return (initialize_error);
-    this->_head = other._head;
-    this->_chest = other._chest;
-    this->_weapon = other._weapon;
-    this->_legs = other._legs;
-    this->_feet = other._feet;
-    this->_off_hand = other._off_hand;
+    this->_head.swap(other._head);
+    this->_chest.swap(other._chest);
+    this->_weapon.swap(other._weapon);
+    this->_legs.swap(other._legs);
+    this->_feet.swap(other._feet);
+    this->_off_hand.swap(other._off_hand);
     source_error = other.get_error();
     source_destroy_error = other.destroy();
     if (source_destroy_error != FT_ERR_SUCCESS)
@@ -201,11 +201,17 @@ int32_t game_equipment::move(game_equipment &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-ft_bool game_equipment::validate_item(const ft_sharedptr<game_item> &item) const noexcept
+game_equipment::slot_member_pointer game_equipment::find_slot(int32_t slot) noexcept
 {
-    if (!item)
-        return (FT_FALSE);
-    return (FT_TRUE);
+    static_assert(EQUIP_HEAD == 0 && EQUIP_CHEST == 1 && EQUIP_WEAPON == 2
+        && EQUIP_LEGS == 3 && EQUIP_FEET == 4 && EQUIP_OFF_HAND == 5);
+    static constexpr slot_member_pointer SLOTS[] = {
+        &game_equipment::_head, &game_equipment::_chest, &game_equipment::_weapon,
+        &game_equipment::_legs, &game_equipment::_feet, &game_equipment::_off_hand
+    };
+    if (slot < EQUIP_HEAD || slot > EQUIP_OFF_HAND)
+        return (nullptr);
+    return (SLOTS[slot]);
 }
 
 int32_t game_equipment::lock_internal(ft_bool *lock_acquired) const noexcept
@@ -238,249 +244,82 @@ void game_equipment::unlock_internal(ft_bool lock_acquired) const noexcept
 
 int32_t game_equipment::equip(int32_t slot, const ft_sharedptr<game_item> &item) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_equipment::equip");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    if (this->validate_item(item) == FT_FALSE)
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
+    if (item)
     {
-        this->unlock_internal(lock_acquired);
-        result = FT_ERR_INVALID_ARGUMENT;
-        this->set_error(result);
-        return (result);
-    }
-    if (slot == EQUIP_HEAD)
-    {
-        this->_head = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_CHEST)
-    {
-        this->_chest = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_WEAPON)
-    {
-        this->_weapon = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_LEGS)
-    {
-        this->_legs = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_FEET)
-    {
-        this->_feet = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_OFF_HAND)
-    {
-        this->_off_hand = item;
-        result = FT_ERR_SUCCESS;
-    }
-    else
-    {
-        result = FT_ERR_INVALID_ARGUMENT;
+        const slot_member_pointer member = this->find_slot(slot);
+        if (member != nullptr)
+        {
+            this->*member = item;
+            result = FT_ERR_SUCCESS;
+        }
     }
     this->unlock_internal(lock_acquired);
-    this->set_error(result);
-    return (result);
+    return (this->set_error(result));
 }
 
 void game_equipment::unequip(int32_t slot) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_equipment::unequip");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return ;
-    if (slot == EQUIP_HEAD)
+    const slot_member_pointer member = this->find_slot(slot);
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
+    if (member != nullptr)
     {
-        (void)this->_head.destroy();
-        result = this->_head.initialize();
-    }
-    else if (slot == EQUIP_CHEST)
-    {
-        (void)this->_chest.destroy();
-        result = this->_chest.initialize();
-    }
-    else if (slot == EQUIP_WEAPON)
-    {
-        (void)this->_weapon.destroy();
-        result = this->_weapon.initialize();
-    }
-    else if (slot == EQUIP_LEGS)
-    {
-        (void)this->_legs.destroy();
-        result = this->_legs.initialize();
-    }
-    else if (slot == EQUIP_FEET)
-    {
-        (void)this->_feet.destroy();
-        result = this->_feet.initialize();
-    }
-    else if (slot == EQUIP_OFF_HAND)
-    {
-        (void)this->_off_hand.destroy();
-        result = this->_off_hand.initialize();
-    }
-    else
-    {
-        result = FT_ERR_INVALID_ARGUMENT;
+        ft_sharedptr<game_item> &item = this->*member;
+        item.reset();
+        result = item.get_error();
     }
     this->unlock_internal(lock_acquired);
     this->set_error(result);
     return ;
 }
 
-static void game_equipment_delete_item_handle(ft_sharedptr<game_item> *item) noexcept
+int32_t game_equipment::read_item(int32_t slot, ft_sharedptr<game_item> &result) const noexcept
 {
-    if (item == ft_nullptr)
-        return ;
-    (void)item->destroy();
-    delete item;
-    return ;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    const slot_member_pointer member = this->find_slot(slot);
+    if (member == nullptr)
+        status = FT_ERR_INVALID_ARGUMENT;
+    else
+    {
+        result = this->*member;
+        status = result.get_error();
+    }
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(status));
 }
 
 ft_sharedptr<game_item> *game_equipment::get_item(int32_t slot) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t result_error;
-    ft_sharedptr<game_item> *result;
+    return (static_cast<const game_equipment *>(this)->get_item(slot));
+}
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_equipment::get_item");
-    result = new (std::nothrow) ft_sharedptr<game_item>();
+ft_sharedptr<game_item> *game_equipment::get_item(int32_t slot) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_equipment::get_item const");
+    auto *result = new (std::nothrow) ft_sharedptr<game_item>();
     if (result == ft_nullptr)
     {
         this->set_error(FT_ERR_NO_MEMORY);
         return (ft_nullptr);
     }
-    if (result->initialize() != FT_ERR_SUCCESS)
+    if (this->read_item(slot, *result) != FT_ERR_SUCCESS)
     {
-        this->set_error(result->get_error());
         delete result;
         return (ft_nullptr);
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        game_equipment_delete_item_handle(result);
-        return (ft_nullptr);
-    }
-    if (slot == EQUIP_HEAD)
-    {
-        *result = this->_head;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_CHEST)
-    {
-        *result = this->_chest;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_WEAPON)
-    {
-        *result = this->_weapon;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_LEGS)
-    {
-        *result = this->_legs;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_FEET)
-    {
-        *result = this->_feet;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else if (slot == EQUIP_OFF_HAND)
-    {
-        *result = this->_off_hand;
-        result_error = FT_ERR_SUCCESS;
-    }
-    else
-    {
-        result_error = FT_ERR_INVALID_ARGUMENT;
-    }
-    this->unlock_internal(lock_acquired);
-    if (result_error == FT_ERR_SUCCESS && result->get_error() != FT_ERR_SUCCESS)
-        result_error = result->get_error();
-    this->set_error(result_error);
-    if (result_error != FT_ERR_SUCCESS)
-    {
-        game_equipment_delete_item_handle(result);
-        return (ft_nullptr);
-    }
-    return (result);
-}
-
-ft_sharedptr<game_item> *game_equipment::get_item(int32_t slot) const noexcept
-{
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_sharedptr<game_item> *result;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_equipment::get_item const");
-    result = new (std::nothrow) ft_sharedptr<game_item>();
-    if (result == ft_nullptr)
-    {
-        const_cast<game_equipment *>(this)->set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    if (result->initialize() != FT_ERR_SUCCESS)
-    {
-        const_cast<game_equipment *>(this)->set_error(result->get_error());
-        delete result;
-        return (ft_nullptr);
-    }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        game_equipment_delete_item_handle(result);
-        return (ft_nullptr);
-    }
-    if (slot == EQUIP_HEAD)
-        *result = this->_head;
-    else if (slot == EQUIP_CHEST)
-        *result = this->_chest;
-    else if (slot == EQUIP_WEAPON)
-        *result = this->_weapon;
-    else if (slot == EQUIP_LEGS)
-        *result = this->_legs;
-    else if (slot == EQUIP_FEET)
-        *result = this->_feet;
-    else if (slot == EQUIP_OFF_HAND)
-        *result = this->_off_hand;
-    else
-    {
-        this->unlock_internal(lock_acquired);
-        const_cast<game_equipment *>(this)->set_error(FT_ERR_INVALID_ARGUMENT);
-        game_equipment_delete_item_handle(result);
-        return (ft_nullptr);
-    }
-    if (result->get_error() != FT_ERR_SUCCESS)
-    {
-        this->unlock_internal(lock_acquired);
-        const_cast<game_equipment *>(this)->set_error(result->get_error());
-        game_equipment_delete_item_handle(result);
-        return (ft_nullptr);
-    }
-    const_cast<game_equipment *>(this)->set_error(FT_ERR_SUCCESS);
-    this->unlock_internal(lock_acquired);
     return (result);
 }
 

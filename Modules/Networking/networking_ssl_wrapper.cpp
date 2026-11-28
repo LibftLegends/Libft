@@ -1,93 +1,57 @@
 #include "ssl_wrapper.hpp"
 #include <climits>
-#include "../Errno/errno.hpp"
-
 #if NETWORKING_HAS_OPENSSL
 
-static ssize_t ssl_translate_result(SSL *ssl, int32_t result, int32_t *error_code)
+static ssize_t ssl_translate_result(SSL *ssl, int32_t result, int32_t &ssl_error)
 {
-    int32_t ssl_error;
-
     if (result > 0)
     {
-        if (error_code)
-            *error_code = FT_ERR_SUCCESS;
+        ssl_error = SSL_ERROR_NONE;
         return (result);
     }
     ssl_error = SSL_get_error(ssl, result);
-    if (ssl_error == SSL_ERROR_WANT_READ)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SSL_WANT_READ;
+    if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE
+        || ssl_error == SSL_ERROR_ZERO_RETURN)
         return (0);
-    }
-    if (ssl_error == SSL_ERROR_WANT_WRITE)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SSL_WANT_WRITE;
-        return (0);
-    }
-    if (ssl_error == SSL_ERROR_ZERO_RETURN)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SSL_ZERO_RETURN;
-        return (0);
-    }
-    if (ssl_error == SSL_ERROR_SYSCALL)
-    {
-        if (error_code)
-            *error_code = FT_ERR_SSL_SYSCALL_ERROR;
-        return (-1);
-    }
-    if (error_code)
-        *error_code = FT_ERR_IO;
     return (-1);
 }
 
-static ssize_t ssl_report(int32_t error_code, ssize_t result)
+ssize_t networking_ssl_write_with_status(SSL *ssl, const void *buffer,
+    ft_size_t length, int32_t &ssl_error)
 {
-    (void)(error_code);
-    return (result);
+    if (ssl == ft_nullptr || length > static_cast<ft_size_t>(INT_MAX))
+    {
+        ssl_error = SSL_ERROR_SSL;
+        return (-1);
+    }
+    const int32_t result = SSL_write(ssl, buffer, static_cast<int32_t>(length));
+    return (ssl_translate_result(ssl, result, ssl_error));
 }
 
-static ssize_t ssl_write_platform(SSL *ssl, const void *buf, ft_size_t len)
+ssize_t networking_ssl_read_with_status(SSL *ssl, void *buffer,
+    ft_size_t length, int32_t &ssl_error)
 {
-    int32_t write_length;
-    int32_t ret;
-    int32_t error_code;
-
-    if (len > static_cast<ft_size_t>(INT_MAX))
+    if (ssl == ft_nullptr || length > static_cast<ft_size_t>(INT_MAX))
     {
-        return (ssl_report(FT_ERR_INVALID_ARGUMENT, -1));
+        ssl_error = SSL_ERROR_SSL;
+        return (-1);
     }
-    write_length = static_cast<int32_t>(len);
-    ret = SSL_write(ssl, buf, write_length);
-    return (ssl_report(error_code, ssl_translate_result(ssl, ret, &error_code)));
+    const int32_t result = SSL_read(ssl, buffer, static_cast<int32_t>(length));
+    return (ssl_translate_result(ssl, result, ssl_error));
 }
 
 extern "C"
 {
     ssize_t nw_ssl_write(SSL *ssl, const void *buf, ft_size_t len)
     {
-        ssize_t result;
-
-        result = ssl_write_platform(ssl, buf, len);
-        return (result);
+        int32_t ssl_error;
+        return (networking_ssl_write_with_status(ssl, buf, len, ssl_error));
     }
 
     ssize_t nw_ssl_read(SSL *ssl, void *buf, ft_size_t len)
     {
-        int32_t read_length;
-        int32_t ret;
-        int32_t error_code;
-
-        if (len > static_cast<ft_size_t>(INT_MAX))
-        {
-            return (ssl_report(FT_ERR_INVALID_ARGUMENT, -1));
-        }
-        read_length = static_cast<int32_t>(len);
-        ret = SSL_read(ssl, buf, read_length);
-        return (ssl_report(error_code, ssl_translate_result(ssl, ret, &error_code)));
+        int32_t ssl_error;
+        return (networking_ssl_read_with_status(ssl, buf, len, ssl_error));
     }
 }
 

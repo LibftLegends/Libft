@@ -88,3 +88,17 @@ FT_TEST(test_su_service_install_signal_handlers_dispatches)
     su_service_clear_signal_handlers();
     return (1);
 }
+
+FT_TEST(test_su_service_clear_restores_previous_handler)
+{
+    su_service_clear_signal_handlers();
+    const auto original = std::signal(SIGTERM, SIG_IGN);
+    FT_ASSERT(original != SIG_ERR);
+    const int32_t install_result = su_service_install_signal_handlers(
+        test_su_service_signal_handler, ft_nullptr);
+    su_service_clear_signal_handlers();
+    const auto restored = std::signal(SIGTERM, original);
+    FT_ASSERT_EQ(0, install_result);
+    FT_ASSERT(restored == SIG_IGN);
+    return (1);
+}

@@ -26,6 +26,24 @@ class game_skill
         static thread_local int32_t _last_error;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t capture_damage_modifiers(int32_t &bonus, int32_t &percent) const noexcept;
+        struct checkpoint_fields
+        {
+            int32_t id;
+            int32_t level;
+            int32_t cooldown;
+            int32_t modifier1;
+            int32_t modifier2;
+            int32_t modifier3;
+            int32_t modifier4;
+        };
+        int32_t capture_checkpoint_fields(checkpoint_fields &fields) const noexcept;
+        int32_t read_field(const int32_t &field, ft_bool return_lock_error = FT_FALSE) const noexcept;
+        void write_field(int32_t &field, int64_t value, ft_bool relative) noexcept;
+        void reset_fields() noexcept;
+        void copy_fields_from(const game_skill &other) noexcept;
+        int32_t copy_with_lifecycle(const game_skill &other) noexcept;
+        friend class game_character;
         static int32_t set_error(int32_t error_code) noexcept;
     public:
         int32_t get_error() const noexcept;

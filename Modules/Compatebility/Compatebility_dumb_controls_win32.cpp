@@ -40,29 +40,36 @@ static void dumb_controls_win32_show_cursor(ft_bool show)
 
 void ft_dumb_controls_win32_register_capture_window(void *window_handle)
 {
+    const HWND capture_window = static_cast<HWND>(window_handle);
     RECT client_rect;
     POINT top_left;
     POINT bottom_right;
     RECT screen_rect;
 
-    g_dumb_controls_win32_capture_window = static_cast<HWND>(window_handle);
-    g_dumb_controls_win32_has_previous_mouse_position = FT_FALSE;
-    if (g_dumb_controls_win32_capture_window == nullptr)
+    if (capture_window == nullptr)
+    {
+        ft_dumb_controls_win32_unregister_capture_window();
         return ;
-    GetClientRect(g_dumb_controls_win32_capture_window, &client_rect);
+    }
+    if (!GetClientRect(capture_window, &client_rect))
+        return ;
     top_left.x = client_rect.left;
     top_left.y = client_rect.top;
     bottom_right.x = client_rect.right;
     bottom_right.y = client_rect.bottom;
-    ClientToScreen(g_dumb_controls_win32_capture_window, &top_left);
-    ClientToScreen(g_dumb_controls_win32_capture_window, &bottom_right);
+    if (!ClientToScreen(capture_window, &top_left) || !ClientToScreen(capture_window, &bottom_right))
+        return ;
     screen_rect.left = top_left.x;
     screen_rect.top = top_left.y;
     screen_rect.right = bottom_right.x;
     screen_rect.bottom = bottom_right.y;
+    g_dumb_controls_win32_capture_window = capture_window;
+    g_dumb_controls_win32_has_previous_mouse_position = FT_FALSE;
     ClipCursor(&screen_rect);
-    SetCapture(g_dumb_controls_win32_capture_window);
-    dumb_controls_win32_show_cursor(FT_FALSE);
+    SetCapture(capture_window);
+    if (g_dumb_controls_win32_cursor_hidden == FT_FALSE)
+        dumb_controls_win32_show_cursor(FT_FALSE);
+    return ;
 }
 
 void ft_dumb_controls_win32_unregister_capture_window(void)
@@ -80,12 +87,9 @@ void ft_dumb_controls_win32_unregister_capture_window(void)
 
 ft_bool ft_dumb_platform_control_is_down(ft_dumb_control control)
 {
-    ft_dumb_keyboard_layout layout;
-
-    layout = ft_dumb_controls_get_keyboard_layout();
     if (control == FT_DUMB_CONTROL_UP)
     {
-        if (layout == FT_DUMB_KEYBOARD_LAYOUT_AZERTY)
+        if (ft_dumb_controls_get_keyboard_layout() == FT_DUMB_KEYBOARD_LAYOUT_AZERTY)
         {
             return (dumb_controls_win32_virtual_key_is_down('Z')
                 || dumb_controls_win32_virtual_key_is_down(VK_UP));
@@ -100,7 +104,7 @@ ft_bool ft_dumb_platform_control_is_down(ft_dumb_control control)
     }
     if (control == FT_DUMB_CONTROL_LEFT)
     {
-        if (layout == FT_DUMB_KEYBOARD_LAYOUT_AZERTY)
+        if (ft_dumb_controls_get_keyboard_layout() == FT_DUMB_KEYBOARD_LAYOUT_AZERTY)
         {
             return (dumb_controls_win32_virtual_key_is_down('Q')
                 || dumb_controls_win32_virtual_key_is_down(VK_LEFT));
@@ -150,50 +154,33 @@ ft_bool ft_dumb_platform_control_is_down(ft_dumb_control control)
 
 ft_dumb_mouse_delta ft_dumb_platform_mouse_delta(void)
 {
-    ft_dumb_mouse_delta delta;
+    ft_dumb_mouse_delta delta = {};
     POINT position;
-    RECT client_rect;
-    POINT center;
-    POINT top_left;
-    POINT bottom_right;
 
-    delta.x = 0;
-    delta.y = 0;
-    if (GetCursorPos(&position) == 0)
+    const HWND capture_window = g_dumb_controls_win32_capture_window;
+    if ((capture_window != nullptr && GetForegroundWindow() != capture_window)
+        || !GetCursorPos(&position))
     {
         g_dumb_controls_win32_has_previous_mouse_position = FT_FALSE;
-        return (delta);
-    }
-    if (g_dumb_controls_win32_capture_window != nullptr)
-    {
-        if (GetForegroundWindow() != g_dumb_controls_win32_capture_window)
-        {
-            g_dumb_controls_win32_has_previous_mouse_position = FT_FALSE;
-            return (delta);
-        }
-        GetClientRect(g_dumb_controls_win32_capture_window, &client_rect);
-        center.x = (client_rect.left + client_rect.right) / 2;
-        center.y = (client_rect.top + client_rect.bottom) / 2;
-        top_left = center;
-        bottom_right = center;
-        ClientToScreen(g_dumb_controls_win32_capture_window, &top_left);
-        ClientToScreen(g_dumb_controls_win32_capture_window, &bottom_right);
-        center.x = top_left.x;
-        center.y = top_left.y;
-        if (g_dumb_controls_win32_has_previous_mouse_position == FT_TRUE)
-        {
-            delta.x = position.x - g_dumb_controls_win32_previous_mouse_position.x;
-            delta.y = position.y - g_dumb_controls_win32_previous_mouse_position.y;
-        }
-        SetCursorPos(center.x, center.y);
-        g_dumb_controls_win32_previous_mouse_position = center;
-        g_dumb_controls_win32_has_previous_mouse_position = FT_TRUE;
         return (delta);
     }
     if (g_dumb_controls_win32_has_previous_mouse_position == FT_TRUE)
     {
         delta.x = position.x - g_dumb_controls_win32_previous_mouse_position.x;
         delta.y = position.y - g_dumb_controls_win32_previous_mouse_position.y;
+    }
+    if (capture_window != nullptr)
+    {
+        RECT client_rect;
+        if (GetClientRect(capture_window, &client_rect))
+        {
+            POINT center = {(client_rect.left + client_rect.right) / 2,
+                (client_rect.top + client_rect.bottom) / 2};
+            if (ClientToScreen(capture_window, &center)
+                && (position.x != center.x || position.y != center.y)
+                && SetCursorPos(center.x, center.y))
+                position = center;
+        }
     }
     g_dumb_controls_win32_previous_mouse_position = position;
     g_dumb_controls_win32_has_previous_mouse_position = FT_TRUE;

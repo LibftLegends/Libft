@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "config_entries_internal.hpp"
 #include "../Errno/errno.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/basic.hpp"
@@ -175,14 +176,13 @@ void config_data_free(config_data *config)
 }
 
 static int32_t config_parse_line(config_data *config, char *line_string,
-    char **current_section)
+    char **current_section, ft_size_t &capacity)
 {
     char *equals_sign;
     char *key;
     char *value;
     char *key_start;
     char *value_start;
-    config_entry *new_entries;
     config_entry *new_entry;
     int32_t error_code;
 
@@ -242,15 +242,13 @@ static int32_t config_parse_line(config_data *config, char *line_string,
                 return (FT_ERR_NO_MEMORY);
         }
     }
-    new_entries = static_cast<config_entry*>(cma_realloc(config->entries,
-        sizeof(config_entry) * (config->entry_count + 1U)));
-    if (!new_entries)
+    error_code = config_reserve_entries(*config, capacity, config->entry_count + 1U);
+    if (error_code != FT_ERR_SUCCESS)
     {
         cma_free(key);
         cma_free(value);
-        return (FT_ERR_NO_MEMORY);
+        return (error_code);
     }
-    config->entries = new_entries;
     new_entry = &config->entries[config->entry_count];
     new_entry->mutex = ft_nullptr;
     new_entry->section = ft_nullptr;
@@ -313,30 +311,32 @@ config_data *config_parse(const char *filename)
     }
     error_code = FT_ERR_SUCCESS;
     current_section = ft_nullptr;
+    ft_size_t capacity = 0U;
     while (ft_fgets(buffer, sizeof(buffer), file))
     {
-        chunk_length = ft_strlen(buffer);
-        error_code = line.append(buffer, chunk_length);
+        chunk_length = ft_strlen_size_t(buffer);
+        const ft_bool line_finished = chunk_length != 0U
+            && (buffer[chunk_length - 1U] == '\n'
+                || buffer[chunk_length - 1U] == '\r');
+        if (line_finished == FT_TRUE && line.size() == 0U)
+            error_code = config_parse_line(config, buffer, &current_section, capacity);
+        else
+        {
+            error_code = line.append(buffer, chunk_length);
+            if (error_code == FT_ERR_SUCCESS && line_finished == FT_TRUE)
+            {
+                error_code = config_parse_line(config, line.data(), &current_section, capacity);
+                if (error_code == FT_ERR_SUCCESS)
+                    error_code = line.clear();
+            }
+        }
         if (error_code != FT_ERR_SUCCESS)
             break ;
-        if (chunk_length != 0U
-            && (buffer[chunk_length - 1U] == '\n'
-                || buffer[chunk_length - 1U] == '\r'))
-        {
-            error_code = config_parse_line(config, line.data(),
-                &current_section);
-            if (error_code != FT_ERR_SUCCESS)
-                break ;
-            error_code = line.clear();
-            if (error_code != FT_ERR_SUCCESS)
-                break ;
-        }
     }
     if (error_code == FT_ERR_SUCCESS && std::ferror(file) != 0)
         error_code = FT_ERR_IO;
     if (error_code == FT_ERR_SUCCESS && line.size() != 0U)
-        error_code = config_parse_line(config, line.data(),
-            &current_section);
+        error_code = config_parse_line(config, line.data(), &current_section, capacity);
     if (line.destroy() != FT_ERR_SUCCESS && error_code == FT_ERR_SUCCESS)
         error_code = FT_ERR_INTERNAL;
     cma_free(current_section);
@@ -416,28 +416,10 @@ static config_data *config_parse_json_internal(const char *filename)
                     return (ft_nullptr);
                 }
             }
-            if (item_pointer->key)
-            {
-                entry->key = adv_strdup(item_pointer->key);
-                if (!entry->key)
-                {
-                    config->entry_count = index + 1;
-                    config_data_free(config);
-                    json_free_groups(groups);
-                    return (ft_nullptr);
-                }
-            }
-            if (item_pointer->value)
-            {
-                entry->value = adv_strdup(item_pointer->value);
-                if (!entry->value)
-                {
-                    config->entry_count = index + 1;
-                    config_data_free(config);
-                    json_free_groups(groups);
-                    return (ft_nullptr);
-                }
-            }
+            entry->key = item_pointer->key;
+            entry->value = item_pointer->value;
+            item_pointer->key = ft_nullptr;
+            item_pointer->value = ft_nullptr;
             if (config_entry_prepare_thread_safety(entry) != FT_ERR_SUCCESS)
             {
                 config->entry_count = index + 1;

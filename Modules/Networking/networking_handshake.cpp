@@ -8,18 +8,13 @@
 
 namespace
 {
-    static const uint8_t HANDSHAKE_MAGIC[4] = {0x4cU, 0x46U, 0x54U, 0x48U};
-    static const uint8_t HANDSHAKE_VERSION = 2U;
-    static const ft_size_t HELLO_SIZE = 4U + 1U + 1U + 2U + 8U + 32U + 32U;
-    static const ft_size_t COOKIE_TIMESTAMP_SIZE = 8U;
-
-    static void wipe(void *data, ft_size_t size) noexcept
-    {
-        networking_crypto_backend backend;
-
-        (void)backend.wipe(data, size);
-        return ;
-    }
+    constexpr uint8_t HANDSHAKE_MAGIC[4] = {0x4cU, 0x46U, 0x54U, 0x48U};
+    constexpr uint8_t HANDSHAKE_VERSION = 2U;
+    constexpr ft_size_t HELLO_CONNECTION_ID_OFFSET = 8U;
+    constexpr ft_size_t HELLO_NONCE_OFFSET = HELLO_CONNECTION_ID_OFFSET + 8U;
+    constexpr ft_size_t HELLO_PUBLIC_KEY_OFFSET = HELLO_NONCE_OFFSET + 32U;
+    constexpr ft_size_t HELLO_SIZE = HELLO_PUBLIC_KEY_OFFSET + 32U;
+    constexpr ft_size_t COOKIE_TIMESTAMP_SIZE = 8U;
 
     static void write_u64(uint8_t output[8], uint64_t value) noexcept
     {
@@ -95,16 +90,16 @@ networking_handshake::~networking_handshake() noexcept
 
 void networking_handshake::clear_secret_state() noexcept
 {
-    wipe(this->_local_private_key, sizeof(this->_local_private_key));
-    wipe(this->_local_nonce, sizeof(this->_local_nonce));
-    wipe(this->_peer_nonce, sizeof(this->_peer_nonce));
-    wipe(this->_send_key, sizeof(this->_send_key));
-    wipe(this->_receive_key, sizeof(this->_receive_key));
-    wipe(this->_send_initialization_vector,
+    (void)this->_crypto_backend.wipe(this->_local_private_key, sizeof(this->_local_private_key));
+    (void)this->_crypto_backend.wipe(this->_local_nonce, sizeof(this->_local_nonce));
+    (void)this->_crypto_backend.wipe(this->_peer_nonce, sizeof(this->_peer_nonce));
+    (void)this->_crypto_backend.wipe(this->_send_key, sizeof(this->_send_key));
+    (void)this->_crypto_backend.wipe(this->_receive_key, sizeof(this->_receive_key));
+    (void)this->_crypto_backend.wipe(this->_send_initialization_vector,
         sizeof(this->_send_initialization_vector));
-    wipe(this->_receive_initialization_vector,
+    (void)this->_crypto_backend.wipe(this->_receive_initialization_vector,
         sizeof(this->_receive_initialization_vector));
-    wipe(this->_retry_cookie, sizeof(this->_retry_cookie));
+    (void)this->_crypto_backend.wipe(this->_retry_cookie, sizeof(this->_retry_cookie));
     (void)this->_crypto_backend.destroy();
     this->_keys_derived = FT_FALSE;
     this->_finished_verified = FT_FALSE;
@@ -171,8 +166,8 @@ int32_t networking_handshake::destroy() noexcept
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
     this->clear_secret_state();
-    wipe(this->_local_public_key, sizeof(this->_local_public_key));
-    wipe(this->_peer_public_key, sizeof(this->_peer_public_key));
+    (void)this->_crypto_backend.wipe(this->_local_public_key, sizeof(this->_local_public_key));
+    (void)this->_crypto_backend.wipe(this->_peer_public_key, sizeof(this->_peer_public_key));
     (void)this->_local_hello.destroy();
     (void)this->_peer_hello.destroy();
     (void)this->_transcript.destroy();
@@ -212,28 +207,28 @@ int32_t networking_handshake::become_server_for_simultaneous_open() noexcept
 
 int32_t networking_handshake::move(networking_handshake &other) noexcept
 {
-    ft_vector<uint8_t> staged_local_hello;
-    ft_vector<uint8_t> staged_peer_hello;
-    ft_vector<uint8_t> staged_transcript;
-    int32_t result;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
-    if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
+    if (other._initialised_state != FT_CLASS_STATE_INITIALISED
+        || other._local_hello.is_initialised() != FT_CLASS_STATE_INITIALISED
+        || other._peer_hello.is_initialised() != FT_CLASS_STATE_INITIALISED
+        || other._transcript.is_initialised() != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
-    result = staged_local_hello.initialize(other._local_hello);
+    (void)this->destroy();
+    // These private byte vectors have no mutex. Moving them needs no allocation.
+    int32_t result = this->_local_hello.move(other._local_hello);
     if (result == FT_ERR_SUCCESS)
-        result = staged_peer_hello.initialize(other._peer_hello);
+        result = this->_peer_hello.move(other._peer_hello);
     if (result == FT_ERR_SUCCESS)
-        result = staged_transcript.initialize(other._transcript);
+        result = this->_transcript.move(other._transcript);
     if (result != FT_ERR_SUCCESS)
     {
-        (void)staged_local_hello.destroy();
-        (void)staged_peer_hello.destroy();
-        (void)staged_transcript.destroy();
+        (void)this->_local_hello.destroy();
+        (void)this->_peer_hello.destroy();
+        (void)this->_transcript.destroy();
+        (void)other.destroy();
         return (result);
     }
-    (void)this->destroy();
     this->_role = other._role;
     this->_state = other._state;
     this->_local_connection_id = other._local_connection_id;
@@ -249,19 +244,6 @@ int32_t networking_handshake::move(networking_handshake &other) noexcept
     ft_memcpy(this->_receive_initialization_vector, other._receive_initialization_vector, 12U);
     ft_memcpy(this->_retry_cookie, other._retry_cookie, sizeof(this->_retry_cookie));
     this->_has_retry_cookie = other._has_retry_cookie;
-    result = this->_local_hello.move(staged_local_hello);
-    if (result == FT_ERR_SUCCESS)
-        result = this->_peer_hello.move(staged_peer_hello);
-    if (result == FT_ERR_SUCCESS)
-        result = this->_transcript.move(staged_transcript);
-    if (result != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        (void)staged_local_hello.destroy();
-        (void)staged_peer_hello.destroy();
-        (void)staged_transcript.destroy();
-        return (result);
-    }
     this->_keys_derived = other._keys_derived;
     this->_finished_verified = other._finished_verified;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -269,111 +251,54 @@ int32_t networking_handshake::move(networking_handshake &other) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t networking_handshake::append_u64(ft_vector<uint8_t> &buffer,
-    uint64_t value) noexcept
-{
-    uint8_t encoded[8];
-    uint32_t index;
-    int32_t result;
-
-    write_u64(encoded, value);
-    index = 0U;
-    while (index < sizeof(encoded))
-    {
-        result = buffer.push_back(encoded[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
 int32_t networking_handshake::build_local_hello() noexcept
 {
-    uint32_t index;
-    int32_t result;
-
-    this->_local_hello.clear();
-    index = 0U;
-    while (index < sizeof(HANDSHAKE_MAGIC))
-    {
-        result = this->_local_hello.push_back(HANDSHAKE_MAGIC[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
-    result = this->_local_hello.push_back(HANDSHAKE_VERSION);
-    if (result == FT_ERR_SUCCESS)
-        result = this->_local_hello.push_back(static_cast<uint8_t>(this->_role));
-    if (result == FT_ERR_SUCCESS)
-        result = this->_local_hello.push_back(0U);
-    if (result == FT_ERR_SUCCESS)
-        result = this->_local_hello.push_back(0U);
-    if (result == FT_ERR_SUCCESS)
-        result = this->append_u64(this->_local_hello,
-            this->_local_connection_id);
+    this->_local_hello.resize(HELLO_SIZE);
+    const int32_t result = this->_local_hello.get_error();
     if (result != FT_ERR_SUCCESS)
         return (result);
-    index = 0U;
-    while (index < sizeof(this->_local_nonce))
-    {
-        result = this->_local_hello.push_back(this->_local_nonce[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
-    index = 0U;
-    while (index < sizeof(this->_local_public_key))
-    {
-        result = this->_local_hello.push_back(this->_local_public_key[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
-    if (this->_local_hello.size() != HELLO_SIZE)
-        return (FT_ERR_INVALID_STATE);
+    uint8_t *bytes = this->_local_hello.begin();
+    ft_memcpy_fixed<sizeof(HANDSHAKE_MAGIC)>(bytes, HANDSHAKE_MAGIC);
+    bytes[4] = HANDSHAKE_VERSION;
+    bytes[5] = static_cast<uint8_t>(this->_role);
+    bytes[6] = 0U;
+    bytes[7] = 0U;
+    write_u64(bytes + HELLO_CONNECTION_ID_OFFSET, this->_local_connection_id);
+    ft_memcpy_fixed<sizeof(this->_local_nonce)>(bytes + HELLO_NONCE_OFFSET,
+        this->_local_nonce);
+    ft_memcpy_fixed<sizeof(this->_local_public_key)>(bytes + HELLO_PUBLIC_KEY_OFFSET,
+        this->_local_public_key);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t networking_handshake::get_local_hello(ft_vector<uint8_t> &hello) const noexcept
 {
-    ft_size_t index;
     ft_vector<uint8_t> staged_hello;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    result = staged_hello.initialize(this->_local_hello);
+    result = staged_hello.initialize();
     if (result != FT_ERR_SUCCESS)
         return (result);
+    ft_size_t output_size = HELLO_SIZE;
     if (this->_has_retry_cookie != FT_FALSE)
-    {
-        index = 0U;
-        while (index < sizeof(this->_retry_cookie))
-        {
-            result = staged_hello.push_back(this->_retry_cookie[index]);
-            if (result != FT_ERR_SUCCESS)
-            {
-                (void)staged_hello.destroy();
-                return (result);
-            }
-            index += 1U;
-        }
-    }
-    result = hello.move(staged_hello);
+        output_size += sizeof(this->_retry_cookie);
+    staged_hello.resize(output_size);
+    result = staged_hello.get_error();
     if (result != FT_ERR_SUCCESS)
-        (void)staged_hello.destroy();
-    return (result);
+        return (result);
+    uint8_t *bytes = staged_hello.begin();
+    ft_memcpy_fixed<HELLO_SIZE>(bytes, this->_local_hello.begin());
+    if (this->_has_retry_cookie != FT_FALSE)
+        ft_memcpy_fixed<sizeof(this->_retry_cookie)>(bytes + HELLO_SIZE, this->_retry_cookie);
+    return (hello.move(staged_hello));
 }
 
 int32_t networking_handshake::accept_peer_hello(const uint8_t *hello,
     ft_size_t hello_length) noexcept
 {
     uint64_t peer_connection_id;
-    uint32_t index;
-    ft_vector<uint8_t> staged_peer_hello;
-    int32_t result;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (hello == ft_nullptr || (hello_length != HELLO_SIZE
@@ -395,31 +320,19 @@ int32_t networking_handshake::accept_peer_hello(const uint8_t *hello,
         || hello[5] == static_cast<uint8_t>(this->_role)
         || hello[6] != 0U || hello[7] != 0U)
         return (FT_ERR_PERMISSION_DENIED);
-    peer_connection_id = read_u64(hello + 8U);
+    peer_connection_id = read_u64(hello + HELLO_CONNECTION_ID_OFFSET);
     if (peer_connection_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    result = staged_peer_hello.initialize();
+    this->_peer_hello.resize(HELLO_SIZE);
+    const int32_t result = this->_peer_hello.get_error();
     if (result != FT_ERR_SUCCESS)
         return (result);
-    index = 0U;
-    while (index < HELLO_SIZE)
-    {
-        result = staged_peer_hello.push_back(hello[index]);
-        if (result != FT_ERR_SUCCESS)
-        {
-            (void)staged_peer_hello.destroy();
-            return (result);
-        }
-        index += 1U;
-    }
-    result = this->_peer_hello.move(staged_peer_hello);
-    if (result != FT_ERR_SUCCESS)
-    {
-        (void)staged_peer_hello.destroy();
-        return (result);
-    }
-    ft_memcpy(this->_peer_nonce, hello + 16U, 32U);
-    ft_memcpy(this->_peer_public_key, hello + 48U, 32U);
+    uint8_t *peer_bytes = this->_peer_hello.begin();
+    ft_memcpy_fixed<HELLO_SIZE>(peer_bytes, hello);
+    ft_memcpy_fixed<sizeof(this->_peer_nonce)>(this->_peer_nonce,
+        peer_bytes + HELLO_NONCE_OFFSET);
+    ft_memcpy_fixed<sizeof(this->_peer_public_key)>(this->_peer_public_key,
+        peer_bytes + HELLO_PUBLIC_KEY_OFFSET);
     this->_peer_connection_id = peer_connection_id;
     this->_state = networking_handshake_state::PEER_HELLO_ACCEPTED;
     return (FT_ERR_SUCCESS);
@@ -427,46 +340,25 @@ int32_t networking_handshake::accept_peer_hello(const uint8_t *hello,
 
 int32_t networking_handshake::build_transcript() noexcept
 {
-    const ft_vector<uint8_t> *first;
-    const ft_vector<uint8_t> *second;
-    ft_size_t index;
-    int32_t result;
+    constexpr ft_size_t PREFIXED_HELLO_SIZE = sizeof(uint64_t) + HELLO_SIZE;
+    const ft_vector<uint8_t> *client_hello = &this->_local_hello;
+    const ft_vector<uint8_t> *server_hello = &this->_peer_hello;
 
-    if (this->_role == networking_handshake_role::CLIENT)
+    if (this->_role == networking_handshake_role::SERVER)
     {
-        first = &this->_local_hello;
-        second = &this->_peer_hello;
+        client_hello = &this->_peer_hello;
+        server_hello = &this->_local_hello;
     }
-    else
-    {
-        first = &this->_peer_hello;
-        second = &this->_local_hello;
-    }
-    this->_transcript.clear();
-    result = this->append_u64(this->_transcript,
-        first->size());
+    this->_transcript.resize(2U * PREFIXED_HELLO_SIZE);
+    const int32_t result = this->_transcript.get_error();
     if (result != FT_ERR_SUCCESS)
         return (result);
-    index = 0U;
-    while (index < first->size())
-    {
-        result = this->_transcript.push_back((*first)[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
-    result = this->append_u64(this->_transcript,
-        second->size());
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    index = 0U;
-    while (index < second->size())
-    {
-        result = this->_transcript.push_back((*second)[index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        index += 1U;
-    }
+    uint8_t *bytes = this->_transcript.begin();
+    write_u64(bytes, HELLO_SIZE);
+    ft_memcpy_fixed<HELLO_SIZE>(bytes + sizeof(uint64_t), client_hello->begin());
+    bytes += PREFIXED_HELLO_SIZE;
+    write_u64(bytes, HELLO_SIZE);
+    ft_memcpy_fixed<HELLO_SIZE>(bytes + sizeof(uint64_t), server_hello->begin());
     return (FT_ERR_SUCCESS);
 }
 
@@ -539,17 +431,17 @@ int32_t networking_handshake::verify_finished(const uint8_t finished[32]) noexce
         &this->_transcript[0], this->_transcript.size(), expected);
     if (result != FT_ERR_SUCCESS)
     {
-        wipe(expected, sizeof(expected));
+        (void)this->_crypto_backend.wipe(expected, sizeof(expected));
         return (result);
     }
     if (ft_constant_time_equal(expected, finished, sizeof(expected)) == FT_FALSE)
     {
-        wipe(expected, sizeof(expected));
+        (void)this->_crypto_backend.wipe(expected, sizeof(expected));
         this->_state = networking_handshake_state::FAILED;
         this->clear_secret_state();
         return (FT_ERR_PERMISSION_DENIED);
     }
-    wipe(expected, sizeof(expected));
+    (void)this->_crypto_backend.wipe(expected, sizeof(expected));
     this->_finished_verified = FT_TRUE;
     this->_state = networking_handshake_state::FINISHED;
     return (FT_ERR_SUCCESS);
@@ -675,10 +567,10 @@ int32_t networking_handshake::create_retry_cookie(const uint8_t secret[32],
 
     result = backend.hmac_sha256(secret, 32U, input, input_length,
         staged_cookie + COOKIE_TIMESTAMP_SIZE);
-    wipe(input, sizeof(input));
+    (void)backend.wipe(input, sizeof(input));
     if (result == FT_ERR_SUCCESS)
         ft_memcpy(cookie, staged_cookie, sizeof(staged_cookie));
-    wipe(staged_cookie, sizeof(staged_cookie));
+    (void)backend.wipe(staged_cookie, sizeof(staged_cookie));
     return (result);
 }
 
@@ -698,25 +590,22 @@ int32_t networking_handshake::verify_retry_cookie(const uint8_t secret[32],
     issued_at = read_u64(cookie);
     if (issued_at > now || now - issued_at > lifetime_milliseconds)
         return (FT_ERR_PERMISSION_DENIED);
+    networking_crypto_backend backend;
     result = cookie_mac_input(source, hello_digest, issued_at, input, input_length);
     if (result == FT_ERR_SUCCESS)
-    {
-        networking_crypto_backend backend;
-
         result = backend.hmac_sha256(secret, 32U, input, input_length, expected);
-    }
-    wipe(input, sizeof(input));
+    (void)backend.wipe(input, sizeof(input));
     if (result != FT_ERR_SUCCESS)
     {
-        wipe(expected, sizeof(expected));
+        (void)backend.wipe(expected, sizeof(expected));
         return (result);
     }
     if (ft_constant_time_equal(expected, cookie + COOKIE_TIMESTAMP_SIZE,
         sizeof(expected)) == FT_FALSE)
     {
-        wipe(expected, sizeof(expected));
+        (void)backend.wipe(expected, sizeof(expected));
         return (FT_ERR_PERMISSION_DENIED);
     }
-    wipe(expected, sizeof(expected));
+    (void)backend.wipe(expected, sizeof(expected));
     return (FT_ERR_SUCCESS);
 }

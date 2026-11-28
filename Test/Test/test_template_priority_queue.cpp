@@ -3,6 +3,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <functional>
+#include <memory>
 #include <queue>
 #include <utility>
 #include <vector>
@@ -75,6 +76,51 @@ FT_TEST(test_ft_priority_queue_custom_comparator)
     return (1);
 }
 
+FT_TEST(test_ft_priority_queue_edits_move_only_elements)
+{
+    using value_type = std::unique_ptr<int32_t>;
+    const auto compare = [](const value_type &left, const value_type &right) noexcept -> ft_bool
+    {
+        return (*left < *right);
+    };
+    ft_priority_queue<value_type, decltype(compare)> queue(0U, compare);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.initialize());
+    int32_t value = 1;
+    while (value <= 7)
+    {
+        queue.push(std::make_unique<int32_t>(value));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.get_error());
+        ++value;
+    }
+
+    const auto is_even = [](const value_type &element) noexcept -> ft_bool
+    {
+        return (*element % 2 == 0);
+    };
+    FT_ASSERT_EQ(FT_TRUE, queue.erase_if(is_even));
+    FT_ASSERT_EQ(FT_FALSE, queue.erase_if(is_even));
+    FT_ASSERT_EQ(4U, queue.size());
+    const auto update = [](value_type &element) noexcept -> ft_bool
+    {
+        if (*element != 1 && *element != 7)
+            return (FT_FALSE);
+        *element = 8 - *element;
+        return (FT_TRUE);
+    };
+    FT_ASSERT_EQ(FT_TRUE, queue.update_elements(update));
+    value = 7;
+    while (value > 0)
+    {
+        value_type element = queue.pop();
+        FT_ASSERT(element);
+        FT_ASSERT_EQ(value, *element);
+        value -= 2;
+    }
+    FT_ASSERT(queue.empty());
+    FT_ASSERT_EQ(FT_FALSE, queue.update_elements(update));
+    return (1);
+}
+
 FT_TEST(test_ft_priority_queue_error_handling_and_moves)
 {
     ft_priority_queue<int> queue_instance;
@@ -142,6 +188,28 @@ FT_TEST(test_ft_priority_queue_matches_reference_across_growth_and_duplicate_key
         expected.pop();
     }
     FT_ASSERT(actual.empty());
+    return (1);
+}
+
+FT_TEST(test_ft_priority_queue_reserve_retains_existing_heap)
+{
+    ft_priority_queue<int32_t> queue;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.initialize());
+    queue.push(5);
+    queue.push(8);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t reserve_error = queue.reserve(32U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_PRIORITY_QUEUE_NO_MEMORY, reserve_error);
+    FT_ASSERT_EQ(2U, queue.capacity());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.reserve(32U));
+    FT_ASSERT_EQ(32U, queue.capacity());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, queue.reserve(4U));
+    FT_ASSERT_EQ(32U, queue.capacity());
+    FT_ASSERT_EQ(8, queue.pop());
+    FT_ASSERT_EQ(5, queue.pop());
+    FT_ASSERT(queue.empty());
     return (1);
 }
 

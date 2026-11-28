@@ -28,9 +28,21 @@ class game_item_definition
         uint8_t         _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_item_definition &first, const game_item_definition &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
+        struct item_values
+        {
+            int32_t item_id;
+            int32_t rarity;
+            int32_t max_stack;
+            int32_t width;
+            int32_t height;
+            int32_t weight;
+            int32_t slot_requirement;
+        };
+
+        int32_t read_values(item_values &values) const noexcept;
+        void write_values(const item_values &values) noexcept;
+        int32_t copy_values(const game_item_definition &other) noexcept;
+        friend class game_data_catalog;
         static int32_t set_error(int32_t error_code) noexcept;
 
     public:
@@ -93,9 +105,6 @@ class game_recipe_blueprint
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_recipe_blueprint &first, const game_recipe_blueprint &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
 
     public:
         game_recipe_blueprint() noexcept;
@@ -146,9 +155,6 @@ class game_loadout_entry
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_loadout_entry &first, const game_loadout_entry &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
 
     public:
         game_loadout_entry() noexcept;
@@ -197,9 +203,6 @@ class game_loadout_blueprint
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_loadout_blueprint &first, const game_loadout_blueprint &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
 
     public:
         game_loadout_blueprint() noexcept;
@@ -247,9 +250,6 @@ class game_data_catalog
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_data_catalog &first, const game_data_catalog &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
 
     public:
         game_data_catalog() noexcept;

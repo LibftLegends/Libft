@@ -13,6 +13,7 @@
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
@@ -327,6 +328,42 @@ FT_TEST(test_economy_table_initialize_overwrites_existing_entries)
     return (1);
 }
 
+FT_TEST(test_economy_table_initialize_copy_cleans_up_after_catalog_failure)
+{
+    game_economy_table source;
+    game_economy_table destination;
+    game_vendor_profile vendor;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(1, register_all_records(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_vendor_profiles().enable_thread_safety());
+
+    int32_t vendor_id = 100;
+    while (vendor_id < 228)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, vendor.initialize(vendor_id, 1.30, 0.55, 0.08));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_vendor_profile(vendor));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, vendor.destroy());
+        ++vendor_id;
+    }
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(2048U));
+    const int32_t result = destination.initialize(source);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, result);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, destination.get_error());
+    FT_ASSERT_EQ(129U, source.get_vendor_profiles().size());
+    FT_ASSERT_EQ(1U, source.get_price_definitions().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(0U, destination.get_price_definitions().size());
+    FT_ASSERT_EQ(0U, destination.get_vendor_profiles().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(129U, destination.get_vendor_profiles().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.fetch_vendor_profile(227, vendor));
+    assert_vendor_profile_values(vendor, 227, 1.30, 0.55, 0.08);
+    return (1);
+}
+
 FT_TEST(test_economy_table_initialize_move_transfers_entries)
 {
     game_economy_table source;
@@ -337,8 +374,23 @@ FT_TEST(test_economy_table_initialize_move_transfers_entries)
     game_currency_rate currency;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
-    register_all_records(source);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.initialize(ft_move(source)));
+    FT_ASSERT_EQ(1, register_all_records(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_price_definitions().enable_thread_safety());
+    const auto *price_entry = source.get_price_definitions().find(4);
+    const auto *rarity_entry = source.get_rarity_bands().find(7);
+    const auto *vendor_entry = source.get_vendor_profiles().find(11);
+    const auto *currency_entry = source.get_currency_rates().find(5);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t result = moved.initialize(ft_move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT(moved.get_price_definitions().find(4) == price_entry);
+    FT_ASSERT(moved.get_rarity_bands().find(7) == rarity_entry);
+    FT_ASSERT(moved.get_vendor_profiles().find(11) == vendor_entry);
+    FT_ASSERT(moved.get_currency_rates().find(5) == currency_entry);
+    FT_ASSERT_EQ(FT_FALSE, moved.is_thread_safe());
+    FT_ASSERT_EQ(FT_FALSE, moved.get_price_definitions().is_thread_safe());
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, price.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, rarity.initialize());
@@ -353,6 +405,36 @@ FT_TEST(test_economy_table_initialize_move_transfers_entries)
     FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(0U, source.get_price_definitions().size());
+    return (1);
+}
+
+FT_TEST(test_economy_table_move_keeps_source_when_catalog_lock_fails)
+{
+    game_economy_table source;
+    game_economy_table destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(1, register_all_records(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_currency_rates().enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(1, register_all_records(destination));
+
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, source._initialised_state);
+    FT_ASSERT_EQ(1U, source.get_price_definitions().size());
+    FT_ASSERT_EQ(1U, source.get_rarity_bands().size());
+    FT_ASSERT_EQ(1U, source.get_vendor_profiles().size());
+    FT_ASSERT_EQ(1U, source.get_currency_rates().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(1U, destination.get_currency_rates().size());
     return (1);
 }
 

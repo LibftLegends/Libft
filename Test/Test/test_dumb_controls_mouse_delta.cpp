@@ -23,6 +23,25 @@ static ft_dumb_mouse_delta test_dumb_platform_mouse_delta(void)
 #undef ft_dumb_platform_control_is_down
 #undef ft_dumb_platform_mouse_delta
 
+FT_TEST(test_dumb_controls_pressed_tracks_down_transitions)
+{
+    g_test_dumb_control_down[FT_DUMB_CONTROL_JUMP] = FT_FALSE;
+    ft_dumb_controls_poll();
+    FT_ASSERT_EQ(FT_FALSE, ft_dumb_control_was_pressed(FT_DUMB_CONTROL_JUMP));
+    g_test_dumb_control_down[FT_DUMB_CONTROL_JUMP] = FT_TRUE;
+    ft_dumb_controls_poll();
+    FT_ASSERT_EQ(FT_TRUE, ft_dumb_control_is_down(FT_DUMB_CONTROL_JUMP));
+    FT_ASSERT_EQ(FT_TRUE, ft_dumb_control_was_pressed(FT_DUMB_CONTROL_JUMP));
+    ft_dumb_controls_poll();
+    FT_ASSERT_EQ(FT_TRUE, ft_dumb_control_is_down(FT_DUMB_CONTROL_JUMP));
+    FT_ASSERT_EQ(FT_FALSE, ft_dumb_control_was_pressed(FT_DUMB_CONTROL_JUMP));
+    g_test_dumb_control_down[FT_DUMB_CONTROL_JUMP] = FT_FALSE;
+    ft_dumb_controls_poll();
+    FT_ASSERT_EQ(FT_FALSE, ft_dumb_control_is_down(FT_DUMB_CONTROL_JUMP));
+    FT_ASSERT_EQ(FT_FALSE, ft_dumb_control_was_pressed(FT_DUMB_CONTROL_JUMP));
+    return (1);
+}
+
 FT_TEST(test_dumb_controls_mouse_delta_is_refreshed_on_each_poll)
 {
     ft_dumb_mouse_delta mouse_delta;

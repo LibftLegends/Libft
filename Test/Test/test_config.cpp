@@ -727,3 +727,105 @@ FT_TEST(test_config_merge_prefers_override_entries)
     config_data_free(merged);
     return (1);
 }
+
+FT_TEST(test_config_indexed_merge_preserves_duplicates_and_null_sections)
+{
+    config_data *base = create_test_config(18U);
+    config_data *overrides = create_test_config(4U);
+    FT_ASSERT(base != ft_nullptr && overrides != ft_nullptr);
+    ft_size_t index = 0U;
+    while (index < base->entry_count)
+    {
+        base->entries[index].key = adv_strdup("same");
+        base->entries[index].value = adv_strdup("base");
+        FT_ASSERT(base->entries[index].key != ft_nullptr);
+        FT_ASSERT(base->entries[index].value != ft_nullptr);
+        index += 1U;
+    }
+    base->entries[1].section = adv_strdup("");
+    FT_ASSERT(base->entries[1].section != ft_nullptr);
+    index = 0U;
+    while (index < overrides->entry_count)
+    {
+        overrides->entries[index].key = adv_strdup("same");
+        FT_ASSERT(overrides->entries[index].key != ft_nullptr);
+        index += 1U;
+    }
+    overrides->entries[0].value = adv_strdup("earlier");
+    overrides->entries[1].section = adv_strdup("");
+    overrides->entries[1].value = adv_strdup("empty section");
+    overrides->entries[3].section = adv_strdup("appended");
+    overrides->entries[3].value = adv_strdup("new");
+    FT_ASSERT(overrides->entries[0].value != ft_nullptr);
+    FT_ASSERT(overrides->entries[1].section != ft_nullptr);
+    FT_ASSERT(overrides->entries[1].value != ft_nullptr);
+    FT_ASSERT(overrides->entries[3].section != ft_nullptr);
+    FT_ASSERT(overrides->entries[3].value != ft_nullptr);
+
+    config_data *merged = config_merge(base, overrides);
+    FT_ASSERT(merged != ft_nullptr);
+    FT_ASSERT_EQ(19U, merged->entry_count);
+    FT_ASSERT_EQ(ft_nullptr, merged->entries[0].section);
+    FT_ASSERT_EQ(ft_nullptr, merged->entries[0].value);
+    FT_ASSERT_EQ(0, ft_strcmp("", merged->entries[1].section));
+    FT_ASSERT_EQ(0, ft_strcmp("empty section", merged->entries[1].value));
+    FT_ASSERT_EQ(0, ft_strcmp("base", merged->entries[2].value));
+    FT_ASSERT_EQ(0, ft_strcmp("appended", merged->entries[18].section));
+    FT_ASSERT_EQ(0, ft_strcmp("new", merged->entries[18].value));
+    config_data_free(merged);
+    config_data_free(overrides);
+    config_data_free(base);
+    return (1);
+}
+
+FT_TEST(test_config_json_writer_appends_to_interleaved_groups_in_order)
+{
+    const char *filename = "config_interleaved_round_trip.json";
+    config_data *source = create_test_config(4U);
+    FT_ASSERT(source != ft_nullptr);
+    const char *sections[4] = {"alpha", "beta", "alpha", "beta"};
+    const char *keys[4] = {"first", "second", "third", "fourth"};
+    ft_size_t index = 0U;
+    while (index < source->entry_count)
+    {
+        config_entry &entry = source->entries[index];
+        entry.section = adv_strdup(sections[index]);
+        entry.key = adv_strdup(keys[index]);
+        entry.value = adv_strdup(keys[index]);
+        FT_ASSERT(entry.section != ft_nullptr && entry.key != ft_nullptr
+            && entry.value != ft_nullptr);
+        index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config_write_file(source, filename));
+    config_data_free(source);
+    config_data *parsed = config_load_file(filename);
+    cleanup_file(filename);
+    FT_ASSERT(parsed != ft_nullptr);
+    FT_ASSERT_EQ(4U, parsed->entry_count);
+    FT_ASSERT_EQ(0, ft_strcmp("first", parsed->entries[0].key));
+    FT_ASSERT_EQ(0, ft_strcmp("third", parsed->entries[1].key));
+    FT_ASSERT_EQ(0, ft_strcmp("second", parsed->entries[2].key));
+    FT_ASSERT_EQ(0, ft_strcmp("fourth", parsed->entries[3].key));
+    config_data_free(parsed);
+    return (1);
+}
+
+FT_TEST(test_config_merge_can_proceed_when_its_optional_index_cannot_be_allocated)
+{
+    config_data *base = create_test_config(17U);
+    config_data *overrides = create_test_config(17U);
+    FT_ASSERT(base != ft_nullptr && overrides != ft_nullptr);
+    overrides->entries[16].value = adv_strdup("last override");
+    FT_ASSERT(overrides->entries[16].value != ft_nullptr);
+    cma_set_alloc_limit(20U * sizeof(config_entry));
+    config_data *merged = config_merge(base, overrides);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(merged != ft_nullptr);
+    FT_ASSERT_EQ(17U, merged->entry_count);
+    FT_ASSERT_EQ(0, ft_strcmp("last override", merged->entries[0].value));
+    FT_ASSERT_EQ(ft_nullptr, merged->entries[1].value);
+    config_data_free(merged);
+    config_data_free(overrides);
+    config_data_free(base);
+    return (1);
+}

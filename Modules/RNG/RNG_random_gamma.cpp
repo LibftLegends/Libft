@@ -1,28 +1,7 @@
 #include "rng.hpp"
 #include "rng_internal.hpp"
-#include "../Errno/errno.hpp"
-#include <random>
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
 
 float ft_random_gamma(float shape, float scale)
 {
-    float sample_value;
-    std::gamma_distribution<float> distribution;
-    int32_t lock_error;
-    int32_t unlock_error;
-
-    ft_init_random_engine();
-    if (shape <= 0.0f || scale <= 0.0f)
-        return (0.0f);
-    distribution = std::gamma_distribution<float>(shape, scale);
-    lock_error = rng_lock_random_engine_mutex();
-    if (lock_error != FT_ERR_SUCCESS)
-        return (0.0f);
-    sample_value = distribution(g_random_engine);
-    unlock_error = rng_unlock_random_engine_mutex();
-    if (unlock_error != FT_ERR_SUCCESS)
-        return (0.0f);
-    return (sample_value);
+    return (rng_sample_gamma(shape, scale));
 }

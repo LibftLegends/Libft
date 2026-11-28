@@ -58,30 +58,20 @@ FT_TEST(test_ft_log_set_level_updates_global_threshold)
 
     previous_level = g_level;
     ft_log_set_level(LOG_LEVEL_ERROR);
-    FT_ASSERT_EQ(LOG_LEVEL_ERROR, g_level);
+    FT_ASSERT_EQ(LOG_LEVEL_ERROR, g_level.load(std::memory_order_relaxed));
     g_level = previous_level;
     return (1);
 }
 
 FT_TEST(test_ft_log_alloc_logging_without_global_logger)
 {
-    ft_logger *previous_logger;
-
-    previous_logger = g_logger;
-    FT_ASSERT(previous_logger == ft_nullptr);
-    g_logger = ft_nullptr;
     ft_log_set_alloc_logging(true);
     FT_ASSERT_EQ(false, ft_log_get_alloc_logging());
-    g_logger = previous_logger;
     return (1);
 }
 
 FT_TEST(test_ft_log_global_helpers_forward_to_logger)
 {
-    ft_logger  *previous_logger;
-
-    previous_logger = g_logger;
-    FT_ASSERT(previous_logger == ft_nullptr);
     {
         ft_logger logger_instance;
 
@@ -102,9 +92,187 @@ FT_TEST(test_ft_log_global_helpers_forward_to_logger)
         ft_log_set_api_logging(false);
         FT_ASSERT_EQ(false, logger_instance.get_api_logging());
 
-        g_logger = previous_logger;
         FT_ASSERT_EQ(FT_ERR_SUCCESS, logger_instance.destroy());
     }
+    return (1);
+}
+
+FT_TEST(test_logger_global_registration_survives_move)
+{
+    ft_logger original;
+    ft_logger moved;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original.enable_thread_safety());
+    original.set_global();
+    ft_log_set_api_logging(FT_TRUE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(original));
+    FT_ASSERT_EQ(FT_TRUE, moved.is_thread_safe());
+    FT_ASSERT_EQ(FT_TRUE, ft_log_get_api_logging());
+    ft_log_set_api_logging(FT_FALSE);
+    FT_ASSERT_EQ(FT_FALSE, moved.get_api_logging());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.destroy());
+    FT_ASSERT_EQ(FT_FALSE, ft_log_get_api_logging());
+    return (1);
+}
+
+static int32_t logger_count_lifecycle_message(const char *, void *user_data)
+{
+    auto *count = static_cast<uint32_t *>(user_data);
+    *count += 1U;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t logger_fail_emission(const char *, void *)
+{
+    return (FT_ERR_IO);
+}
+
+FT_TEST(test_logger_emission_reports_first_sink_failure_and_continues)
+{
+    ft_log_close();
+    ft_logger logger;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, logger.initialize());
+    uint32_t delivered = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(logger_fail_emission, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(logger_count_lifecycle_message, &delivered));
+    logger.info("format %u", 1U);
+    const int32_t text_error = logger.get_error();
+    logger.structured_info("structured message", ft_nullptr, 0U);
+    const int32_t structured_error = logger.get_error();
+    logger.structured_info("missing fields", ft_nullptr, 1U);
+    const int32_t argument_error = logger.get_error();
+    logger.debug("filtered message");
+    const int32_t filtered_error = logger.get_error();
+    ft_log_remove_sink(logger_fail_emission, ft_nullptr);
+    ft_log_remove_sink(logger_count_lifecycle_message, &delivered);
+    FT_ASSERT_EQ(FT_ERR_IO, text_error);
+    FT_ASSERT_EQ(FT_ERR_IO, structured_error);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, argument_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filtered_error);
+    FT_ASSERT_EQ(2U, delivered);
+    return (1);
+}
+
+FT_TEST(test_logger_configuration_reports_operation_errors)
+{
+    ft_log_close();
+    ft_logger logger;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, logger.initialize());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.set_file(ft_nullptr, 512U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_error());
+    FT_ASSERT_EQ(-1, ft_log_set_file(ft_nullptr, 512U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, logger.set_rotation(512U, 1U, 0U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, logger.get_error());
+    FT_ASSERT_EQ(-1, ft_log_set_rotation(512U, 1U, 0U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_async_metrics(ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_remote_health(ft_nullptr, 0U, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.push_context(ft_nullptr, 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_error());
+    FT_ASSERT_EQ(ft_nullptr, logger.make_context_guard(ft_nullptr, 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, logger.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_IP_FORMAT, logger.set_remote_sink("invalid", 80U, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_IP_FORMAT, logger.get_error());
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, ft_log_set_remote_sink("invalid", 80U, FT_FALSE));
+#if defined(_WIN32) || defined(_WIN64)
+    FT_ASSERT_EQ(FT_ERR_UNSUPPORTED_TYPE, logger.set_syslog("libft"));
+    FT_ASSERT_EQ(FT_ERR_UNSUPPORTED_TYPE, logger.get_error());
+#endif
+    s_log_async_metrics metrics;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, logger.get_async_metrics(&metrics));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, logger.get_error());
+    return (1);
+}
+
+FT_TEST(test_logger_copy_and_move_preserve_shared_sinks)
+{
+    ft_log_enable_async(FT_FALSE);
+    ft_log_set_level(LOG_LEVEL_INFO);
+    ft_logger source;
+    ft_logger copy;
+    ft_logger moved;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.initialize());
+    source.set_global();
+    uint32_t count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(logger_count_lifecycle_message, &count));
+    const int32_t copy_result = copy.initialize(source);
+    const ft_bool copy_is_thread_safe = copy.is_thread_safe();
+    const int32_t copy_destroy_result = copy.destroy();
+    ft_log_info("after closing a copied Logger");
+    const uint32_t after_copy = count;
+    const uint32_t move_result = moved.move(source);
+    ft_log_info("after moving the registered Logger");
+    const int32_t moved_destroy_result = moved.destroy();
+    ft_log_remove_sink(logger_count_lifecycle_message, &count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy_result);
+    FT_ASSERT_EQ(FT_TRUE, copy_is_thread_safe);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy_destroy_result);
+    FT_ASSERT_EQ(1U, after_copy);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, move_result);
+    FT_ASSERT_EQ(2U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_destroy_result);
+    return (1);
+}
+
+FT_TEST(test_logger_failed_configuration_preserves_existing_runtime)
+{
+    ft_log_enable_async(FT_FALSE);
+    ft_log_set_level(LOG_LEVEL_INFO);
+    uint32_t count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(logger_count_lifecycle_message, &count));
+    ft_logger logger;
+    const int32_t initialize_error = logger.initialize("", 512U, LOG_LEVEL_ERROR);
+    const int32_t reported_error = logger.get_error();
+    ft_log_info("after a failed Logger configuration");
+    ft_log_remove_sink(logger_count_lifecycle_message, &count);
+    FT_ASSERT_NEQ(FT_ERR_SUCCESS, initialize_error);
+    FT_ASSERT_NEQ(FT_ERR_SUCCESS, reported_error);
+    FT_ASSERT_EQ(1U, count);
+    return (1);
+}
+
+FT_TEST(test_logger_global_logging_during_logger_replacement)
+{
+    std::atomic<ft_bool> stop{FT_FALSE};
+    std::atomic<uint32_t> calls{0U};
+    std::thread reader([&stop, &calls]()
+    {
+        while (stop.load(std::memory_order_acquire) == FT_FALSE)
+        {
+            ft_log_set_api_logging(FT_TRUE);
+            (void)ft_log_get_api_logging();
+            logger_report_sink_error(FT_ERR_IO);
+            calls.fetch_add(1U, std::memory_order_release);
+        }
+        return ;
+    });
+    uint32_t iteration = 0U;
+    ft_bool valid = FT_TRUE;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (iteration < 256U && std::chrono::steady_clock::now() < deadline)
+    {
+        ft_logger logger;
+        if (logger.initialize() != FT_ERR_SUCCESS)
+            valid = FT_FALSE;
+        logger.set_global();
+        const uint32_t previous_calls = calls.load(std::memory_order_acquire);
+        while (calls.load(std::memory_order_acquire) == previous_calls
+            && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        if (logger.destroy() != FT_ERR_SUCCESS)
+            valid = FT_FALSE;
+        iteration += 1U;
+    }
+    stop.store(FT_TRUE, std::memory_order_release);
+    reader.join();
+    FT_ASSERT_EQ(FT_TRUE, valid);
+    FT_ASSERT_EQ(256U, iteration);
+    FT_ASSERT(calls.load(std::memory_order_relaxed) >= iteration);
+    FT_ASSERT_EQ(FT_FALSE, ft_log_get_api_logging());
     return (1);
 }
 

@@ -64,12 +64,17 @@ struct card_game_replay_result
 
 class card_game_replay
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
         card_game_replay_header _header;
         uint32_t _event_count;
         uint32_t _event_capacity;
         card_game_replay_event *_events;
+        uint64_t _session_id;
         ft_bool _has_result;
         card_game_replay_result _result;
 
@@ -79,7 +84,11 @@ class card_game_replay
         card_game_replay &operator=(card_game_replay &&other) = delete;
 
         int32_t validate_event(const card_game_replay_event &event) const noexcept;
+        int32_t initialize_with_capacity(const card_game_replay_header &header,
+            uint32_t capacity) noexcept;
         int32_t grow_events() noexcept;
+        void write_serialized_header(uint8_t *output) const noexcept;
+        int32_t write_serialized_file(int32_t descriptor) const noexcept;
 
     public:
         card_game_replay() noexcept;

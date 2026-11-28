@@ -1,13 +1,7 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
 
 double math_rad2deg(double radians)
 {
-    const double pi_value = 3.14159265358979323846;
-
-    return (radians * 180.0 / pi_value);
+    constexpr double DEGREES_PER_RADIAN = 180.0 / 3.14159265358979323846;
+    return (radians * DEGREES_PER_RADIAN);
 }

@@ -99,8 +99,8 @@ static int collect_response(int socket_fd, ft_string &response)
         bytes_received = nw_recv(socket_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received <= 0)
             break;
-        buffer[bytes_received] = '\0';
-        response.append(buffer);
+        if (response.append(buffer, static_cast<ft_size_t>(bytes_received)) != FT_ERR_SUCCESS)
+            return (0);
     }
     if (response.empty())
         return (0);
@@ -401,8 +401,11 @@ FT_TEST(test_networking_http_server_keep_alive_multiple_requests)
     ft_socket client_socket;
     ft_string request_string;
     ft_string response;
-    const char *first_response;
-    const char *second_response;
+    const char expected_response[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: keep-alive\r\n\r\nA\0B"
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nGET";
+    const char binary_body[] = {'A', '\0', 'B'};
+    constexpr ft_size_t DELIMITER_OFFSET = 1021U;
     uint16_t server_port;
     ft_bool thread_started;
     ft_bool client_initialized;
@@ -436,8 +439,13 @@ FT_TEST(test_networking_http_server_keep_alive_multiple_requests)
     client_configuration._port = server_port;
     FT_TEST_REQUIRE(client_socket.initialize(client_configuration) == FT_ERR_SUCCESS);
     client_initialized = FT_TRUE;
-    request_string = "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";
-    request_string.append("GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    request_string = "POST /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\nContent-Length: 3\r\nX-Padding: ";
+    while (request_string.size() < DELIMITER_OFFSET)
+        FT_TEST_REQUIRE(request_string.append('x') == FT_ERR_SUCCESS);
+    FT_TEST_REQUIRE(request_string.append("\r\n\r\n") == FT_ERR_SUCCESS);
+    FT_TEST_REQUIRE(request_string.append(binary_body, sizeof(binary_body)) == FT_ERR_SUCCESS);
+    FT_TEST_REQUIRE(request_string.append(
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n") == FT_ERR_SUCCESS);
     FT_TEST_REQUIRE(client_socket.send_all(request_string.c_str(), request_string.size(), 0)
         == static_cast<ssize_t>(request_string.size()));
     FT_TEST_REQUIRE(collect_response(client_socket.get_file_descriptor(), response) == 1);
@@ -447,11 +455,9 @@ FT_TEST(test_networking_http_server_keep_alive_multiple_requests)
         thread_started = FT_FALSE;
     }
     FT_TEST_REQUIRE(context.result == FT_ERR_SUCCESS);
-    first_response = ft_strnstr(response.c_str(), "Connection: keep-alive", response.size());
-    FT_TEST_REQUIRE(first_response != ft_nullptr);
-    second_response = ft_strnstr(response.c_str() + (first_response - response.c_str()) + 1,
-        "Connection: close", response.size() - (first_response - response.c_str()) - 1);
-    FT_TEST_REQUIRE(second_response != ft_nullptr);
+    FT_TEST_REQUIRE(response.size() == sizeof(expected_response) - 1U);
+    FT_TEST_REQUIRE(ft_memcmp(response.c_str(), expected_response,
+        sizeof(expected_response) - 1U) == 0);
     test_passed = FT_TRUE;
 cleanup:
     if (response_initialized == FT_TRUE)

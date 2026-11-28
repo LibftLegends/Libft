@@ -155,3 +155,39 @@ FT_TEST(test_dumb_render_shader_reports_invalid_inputs)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, render_window_instance.destroy());
     return (1);
 }
+
+FT_TEST(test_dumb_render_clear_and_put_pixel_preserve_framebuffer_bounds)
+{
+    ft_render_window window;
+    uint32_t pixels[8] = {11U, 0U, 0U, 0U, 0U, 0U, 0U, 22U};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.initialize());
+    window._framebuffer = {3, 2, pixels + 1};
+    window._is_initialised = FT_TRUE;
+    const int32_t repeated_status = window.clear(0x66666666U);
+    const ft_bool repeated_ok = pixels[1] == 0x66666666U && pixels[6] == 0x66666666U;
+    const int32_t mixed_status = window.clear(0x11223344U);
+    const int32_t put_status = window.put_pixel(2, 1, 7U);
+    const int32_t bounds_status = window.put_pixel(3, 1, 8U);
+    window._framebuffer.pixels = ft_nullptr;
+    const int32_t missing_status = window.clear(0U);
+    window._is_initialised = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.destroy());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, repeated_status);
+    FT_ASSERT(repeated_ok);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mixed_status);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, put_status);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, bounds_status);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, missing_status);
+    FT_ASSERT_EQ(11U, pixels[0]);
+    FT_ASSERT_EQ(22U, pixels[7]);
+    ft_size_t index = 1;
+    while (index < 6)
+    {
+        FT_ASSERT_EQ(0x11223344U, pixels[index]);
+        ++index;
+    }
+    FT_ASSERT_EQ(7U, pixels[6]);
+    return (1);
+}

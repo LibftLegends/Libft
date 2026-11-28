@@ -6,6 +6,7 @@
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/vector.hpp"
@@ -310,6 +311,35 @@ FT_TEST(test_networking_quic_encrypt_roundtrip)
             static_cast<int>(decrypted_payload[index]));
         index++;
     }
+    unsigned char large_payload[64] = {0xA5};
+    plaintext.payload = large_payload;
+    plaintext.payload_length = sizeof(large_payload);
+    ft_vector<unsigned char> allocation_output;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, allocation_output.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const ft_bool encrypted_with_limit = client_session.encrypt_datagram(
+        plaintext, allocation_output);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_FALSE, encrypted_with_limit);
+    FT_ASSERT_EQ(0U, allocation_output.size());
+    FT_ASSERT(client_session.encrypt_datagram(plaintext, ciphertext));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const ft_bool decrypted_with_limit = server_session.decrypt_datagram(
+        ciphertext, associated_data, sizeof(associated_data), allocation_output);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_FALSE, decrypted_with_limit);
+    FT_ASSERT_EQ(0U, allocation_output.size());
+    FT_ASSERT(server_session.decrypt_datagram(ciphertext, associated_data,
+        sizeof(associated_data), ciphertext));
+    FT_ASSERT_EQ(sizeof(large_payload), ciphertext.size());
+    FT_ASSERT_EQ(0, ft_memcmp(ciphertext.begin(), large_payload,
+        sizeof(large_payload)));
+    plaintext.payload = ft_nullptr;
+    plaintext.payload_length = 0U;
+    FT_ASSERT(client_session.encrypt_datagram(plaintext, ciphertext));
+    FT_ASSERT(server_session.decrypt_datagram(ciphertext, associated_data,
+        sizeof(associated_data), decrypted_payload));
+    FT_ASSERT_EQ(0U, decrypted_payload.size());
     quic_feature_configuration echoed_configuration;
 
     FT_ASSERT(client_session.get_feature_configuration(echoed_configuration));
@@ -327,4 +357,28 @@ FT_TEST(test_networking_quic_encrypt_roundtrip)
     FT_ASSERT(networking_quic_disable_experimental());
     return (1);
 }
+
+#ifdef LIBFT_TEST_BUILD
+FT_TEST(test_networking_quic_nonce_xors_sequence_into_trailing_bytes)
+{
+    quic_experimental_session session;
+    ft_vector<unsigned char> base_iv;
+    unsigned char nonce[EVP_MAX_IV_LENGTH];
+    const unsigned char expected[] = {
+        0xA5, 0xA5, 0xA5, 0xA5, 0xA4, 0xA7,
+        0xA6, 0xA1, 0xA0, 0xA3, 0xA2, 0xAD
+    };
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, base_iv.initialize());
+    base_iv.resize(sizeof(expected), 0xA5U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, base_iv.get_error());
+    FT_ASSERT_EQ(sizeof(expected), session.prepare_nonce(
+        UINT64_C(0x0102030405060708), base_iv, nonce));
+    FT_ASSERT_EQ(0, ft_memcmp(expected, nonce, sizeof(expected)));
+    FT_ASSERT_EQ(sizeof(expected), session.prepare_nonce(0U, base_iv, nonce));
+    FT_ASSERT_EQ(0, ft_memcmp(base_iv.begin(), nonce, sizeof(expected)));
+    return (1);
+}
+#endif
 #endif

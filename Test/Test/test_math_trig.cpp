@@ -1,5 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Math/math.hpp"
+#include <cmath>
+#include <limits>
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
@@ -101,5 +103,33 @@ FT_TEST(test_ft_tan_recovers_after_invalid_argument)
     FT_ASSERT(math_isnan(ft_tan(math_deg2rad(90.0))));
     result = ft_tan(0.0);
     FT_ASSERT(math_fabs(result) < 0.000001);
+    return (1);
+}
+
+FT_TEST(test_math_trig_large_finite_angles)
+{
+    constexpr double ANGLE = 1e30;
+    const double sine = ft_sin(ANGLE);
+    const double cosine = math_cos(-ANGLE);
+    const double tangent = ft_tan(ANGLE);
+
+    FT_ASSERT(sine >= -1.0 && sine <= 1.0);
+    FT_ASSERT(cosine >= -1.0 && cosine <= 1.0);
+    FT_ASSERT(std::isfinite(tangent));
+    FT_ASSERT(math_fabs(sine * sine + cosine * cosine - 1.0) < 1e-12);
+    FT_ASSERT(math_fabs(tangent * cosine - sine) < 1e-12);
+    return (1);
+}
+
+FT_TEST(test_math_trig_nonfinite_angles)
+{
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double invalid = std::numeric_limits<double>::quiet_NaN();
+    FT_ASSERT(math_isnan(ft_sin(infinity)));
+    FT_ASSERT(math_isnan(math_cos(-infinity)));
+    FT_ASSERT(math_isnan(ft_tan(infinity)));
+    FT_ASSERT(math_isnan(ft_sin(invalid)));
+    FT_ASSERT(math_isnan(math_cos(invalid)));
+    FT_ASSERT(math_isnan(ft_tan(invalid)));
     return (1);
 }

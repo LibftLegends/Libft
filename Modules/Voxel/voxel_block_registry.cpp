@@ -4,6 +4,7 @@
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../Buffer/byte_buffer.hpp"
@@ -12,12 +13,13 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstdio>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <pthread.h>
 
-static const uint32_t VOXEL_RUNTIME_BLOCK_ID_BASE =
+static constexpr uint32_t VOXEL_RUNTIME_BLOCK_ID_BASE =
     static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT);
 
 voxel_runtime_block::voxel_runtime_block() noexcept
@@ -34,8 +36,12 @@ voxel_runtime_block::~voxel_runtime_block() noexcept
 
 static voxel_runtime_block *g_voxel_runtime_blocks[
     VOXEL_RUNTIME_BLOCK_CAPACITY] = {};
+// The registry mutex protects both the ID slots and the sorted live names.
+static voxel_runtime_block *g_voxel_runtime_name_order[VOXEL_RUNTIME_BLOCK_CAPACITY] = {};
+static uint32_t g_voxel_runtime_name_count = 0U;
+static uint32_t g_voxel_runtime_first_free = 0U;
 
-static const char *const VOXEL_BUILTIN_BLOCK_NAMES[] =
+static constexpr const char *VOXEL_BUILTIN_BLOCK_NAMES[] =
 {
     "voxel:air", "voxel:grass", "voxel:dirt",
     "voxel:stone", "voxel:shrub", "voxel:oak_log",
@@ -74,6 +80,72 @@ static_assert(sizeof(VOXEL_BUILTIN_BLOCK_NAMES)
         / sizeof(VOXEL_BUILTIN_BLOCK_NAMES[0])
         == VOXEL_BUILTIN_BLOCK_COUNT,
     "voxel built-in names must cover every built-in block id");
+
+static constexpr ft_bool voxel_builtin_name_less(const char *left, const char *right) noexcept
+{
+    while (*left == *right && *left != '\0')
+    {
+        ++left;
+        ++right;
+    }
+    return (static_cast<uint8_t>(*left) < static_cast<uint8_t>(*right));
+}
+
+static constexpr std::array<uint32_t, VOXEL_BUILTIN_BLOCK_COUNT>
+voxel_make_builtin_name_order() noexcept
+{
+    std::array<uint32_t, VOXEL_BUILTIN_BLOCK_COUNT> order = {};
+    uint32_t block_id = 0U;
+    while (block_id < VOXEL_BUILTIN_BLOCK_COUNT)
+    {
+        uint32_t position = block_id;
+        while (position != 0U && voxel_builtin_name_less(VOXEL_BUILTIN_BLOCK_NAMES[block_id],
+                VOXEL_BUILTIN_BLOCK_NAMES[order[position - 1U]]))
+        {
+            order[position] = order[position - 1U];
+            --position;
+        }
+        order[position] = block_id;
+        ++block_id;
+    }
+    return (order);
+}
+
+static constexpr auto VOXEL_BUILTIN_NAME_ORDER = voxel_make_builtin_name_order();
+
+static constexpr ft_bool voxel_builtin_names_are_unique() noexcept
+{
+    uint32_t index = 1U;
+    while (index < VOXEL_BUILTIN_BLOCK_COUNT)
+    {
+        if (voxel_builtin_name_less(VOXEL_BUILTIN_BLOCK_NAMES[VOXEL_BUILTIN_NAME_ORDER[index - 1U]],
+                VOXEL_BUILTIN_BLOCK_NAMES[VOXEL_BUILTIN_NAME_ORDER[index]]) == FT_FALSE)
+            return (FT_FALSE);
+        ++index;
+    }
+    return (FT_TRUE);
+}
+
+static_assert(voxel_builtin_names_are_unique(), "voxel built-in names must be unique");
+
+static uint32_t voxel_find_builtin_block_name(const char *name) noexcept
+{
+    uint32_t first = 0U;
+    uint32_t last = VOXEL_BUILTIN_BLOCK_COUNT;
+    while (first < last)
+    {
+        const uint32_t middle = first + (last - first) / 2U;
+        const uint32_t block_id = VOXEL_BUILTIN_NAME_ORDER[middle];
+        const int32_t comparison = std::strcmp(name, VOXEL_BUILTIN_BLOCK_NAMES[block_id]);
+        if (comparison == 0)
+            return (block_id);
+        if (comparison < 0)
+            last = middle;
+        else
+            first = middle + 1U;
+    }
+    return (VOXEL_BUILTIN_BLOCK_COUNT);
+}
 
 static ft_bool voxel_block_name_is_valid(const char *name) noexcept
 {
@@ -373,14 +445,20 @@ int32_t voxel_acquire_block(uint32_t block_id,
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t voxel_runtime_read_asset(uint8_t *destination,
+    ft_size_t length, void *user_data) noexcept
+{
+    su_file *file_stream = static_cast<su_file *>(user_data);
+    if (su_fread(destination, 1U, length, file_stream) != length)
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
 static int32_t voxel_runtime_load_asset(const char *path,
     ft_byte_buffer &asset_data) noexcept
 {
     su_file *file_stream;
     int64_t file_size_long;
-    ft_size_t file_size;
-    ft_size_t read_count;
-    void *temporary_data;
     int32_t error_code;
 
     if (path == ft_nullptr || path[0] == '\0')
@@ -401,29 +479,11 @@ static int32_t voxel_runtime_load_asset(const char *path,
     if (error_code == FT_ERR_SUCCESS
         && su_fseek(file_stream, 0, SEEK_SET) != 0)
         error_code = FT_ERR_IO;
-    file_size = 0U;
-    temporary_data = ft_nullptr;
     if (error_code == FT_ERR_SUCCESS)
-    {
-        file_size = static_cast<ft_size_t>(file_size_long);
-        if (file_size > 0U)
-            temporary_data = std::malloc(file_size);
-        if (file_size > 0U && temporary_data == ft_nullptr)
-            error_code = FT_ERR_NO_MEMORY;
-    }
-    if (error_code == FT_ERR_SUCCESS && file_size > 0U)
-    {
-        read_count = su_fread(temporary_data, 1, file_size, file_stream);
-        if (read_count != file_size)
-            error_code = FT_ERR_IO;
-    }
+        error_code = asset_data.initialize_from_reader(
+            static_cast<ft_size_t>(file_size_long), voxel_runtime_read_asset, file_stream);
     if (su_fclose(file_stream) != 0 && error_code == FT_ERR_SUCCESS)
         error_code = FT_ERR_IO;
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = asset_data.initialize(file_size, FT_TRUE);
-    if (error_code == FT_ERR_SUCCESS && file_size > 0U)
-        error_code = asset_data.append(temporary_data, file_size);
-    std::free(temporary_data);
     return (error_code);
 }
 
@@ -445,6 +505,37 @@ ft_bool voxel_runtime_block_is_known(uint32_t block_id) noexcept
     return (FT_TRUE);
 }
 
+static uint32_t voxel_runtime_name_position_locked(const char *name) noexcept
+{
+    uint32_t first = 0U;
+    uint32_t last = g_voxel_runtime_name_count;
+    while (first < last)
+    {
+        const uint32_t middle = first + (last - first) / 2U;
+        if (std::strcmp(g_voxel_runtime_name_order[middle]->name.c_str(), name) < 0)
+            first = middle + 1U;
+        else
+            last = middle;
+    }
+    return (first);
+}
+
+static ft_bool voxel_runtime_name_matches_locked(uint32_t position, const char *name) noexcept
+{
+    return (position < g_voxel_runtime_name_count
+        && std::strcmp(g_voxel_runtime_name_order[position]->name.c_str(), name) == 0);
+}
+
+static int32_t voxel_find_registration_slot_locked(const char *name, uint32_t &position) noexcept
+{
+    position = voxel_runtime_name_position_locked(name);
+    if (voxel_runtime_name_matches_locked(position, name) == FT_TRUE)
+        return (FT_ERR_ALREADY_EXISTS);
+    if (g_voxel_runtime_first_free == VOXEL_RUNTIME_BLOCK_CAPACITY)
+        return (FT_ERR_OUT_OF_RANGE);
+    return (FT_ERR_SUCCESS);
+}
+
 static int32_t voxel_register_block_internal(
     const voxel_block_registration &registration, const char *asset_root,
     uint32_t *block_id_out) noexcept
@@ -452,8 +543,7 @@ static int32_t voxel_register_block_internal(
     voxel_runtime_block *created_block;
     void *memory_pointer;
     pt_mutex *mutex_pointer;
-    uint32_t existing_index;
-    uint32_t index;
+    uint32_t name_position;
     uint32_t asset_index;
     ft_string *joined_asset_path;
     const char *asset_path;
@@ -477,14 +567,8 @@ static int32_t voxel_register_block_internal(
     if (registration.metadata.is_ore == FT_TRUE
         && registration.metadata.can_host_ore == FT_TRUE)
         return (FT_ERR_INVALID_ARGUMENT);
-    existing_index = 0U;
-    while (existing_index < static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT))
-    {
-        if (std::strcmp(VOXEL_BUILTIN_BLOCK_NAMES[existing_index],
-                registration.name) == 0)
-            return (FT_ERR_ALREADY_EXISTS);
-        existing_index += 1U;
-    }
+    if (voxel_find_builtin_block_name(registration.name) != VOXEL_BUILTIN_BLOCK_COUNT)
+        return (FT_ERR_ALREADY_EXISTS);
     asset_index = 0U;
     while (asset_index < VOXEL_BLOCK_ASSET_FACE_COUNT)
     {
@@ -498,37 +582,15 @@ static int32_t voxel_register_block_internal(
         return (FT_ERR_NO_MEMORY);
     if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
         return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
-    existing_index = 0U;
-    while (existing_index < VOXEL_RUNTIME_BLOCK_CAPACITY)
-    {
-        if (g_voxel_runtime_blocks[existing_index] != ft_nullptr
-            && std::strcmp(
-                g_voxel_runtime_blocks[existing_index]->name.c_str(),
-                registration.name) == 0)
-        {
-            (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-            return (FT_ERR_ALREADY_EXISTS);
-        }
-        existing_index += 1U;
-    }
-    index = 0U;
-    while (index < VOXEL_RUNTIME_BLOCK_CAPACITY
-        && g_voxel_runtime_blocks[index] != ft_nullptr)
-        index += 1U;
-    if (index == VOXEL_RUNTIME_BLOCK_CAPACITY)
-    {
-        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-        return (FT_ERR_OUT_OF_RANGE);
-    }
+    error_code = voxel_find_registration_slot_locked(registration.name, name_position);
+    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    // Keep file I/O outside the registry lock and recheck the slot at publication.
     memory_pointer = std::malloc(sizeof(voxel_runtime_block));
     if (memory_pointer == ft_nullptr)
-    {
-        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
         return (FT_ERR_NO_MEMORY);
-    }
     created_block = new (memory_pointer) voxel_runtime_block();
-    created_block->block_id = VOXEL_RUNTIME_BLOCK_ID_BASE + index;
-    created_block->registry_owned = FT_TRUE;
     created_block->metadata = registration.metadata;
     error_code = created_block->name.initialize(registration.name);
     asset_index = 0U;
@@ -563,16 +625,42 @@ static int32_t voxel_register_block_internal(
         }
         asset_index += 1U;
     }
-    if (error_code != FT_ERR_SUCCESS)
+    if (error_code == FT_ERR_SUCCESS)
     {
-        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-        voxel_runtime_destroy_block(created_block, asset_index);
-        return (error_code);
+        error_code = pt_mutex_lock_if_not_null(mutex_pointer);
+        if (error_code == FT_ERR_SUCCESS)
+        {
+            error_code = voxel_find_registration_slot_locked(
+                created_block->name.c_str(), name_position);
+            if (error_code == FT_ERR_SUCCESS)
+            {
+                const uint32_t index = g_voxel_runtime_first_free;
+                created_block->block_id = VOXEL_RUNTIME_BLOCK_ID_BASE + index;
+                created_block->registry_owned = FT_TRUE;
+                g_voxel_runtime_blocks[index] = created_block;
+                const uint32_t tail_count = g_voxel_runtime_name_count - name_position;
+                if (tail_count != 0U)
+                    (void)ft_memmove(g_voxel_runtime_name_order + name_position + 1U,
+                        g_voxel_runtime_name_order + name_position,
+                        tail_count * sizeof(g_voxel_runtime_name_order[0]));
+                g_voxel_runtime_name_order[name_position] = created_block;
+                ++g_voxel_runtime_name_count;
+                do
+                {
+                    ++g_voxel_runtime_first_free;
+                }
+                while (g_voxel_runtime_first_free < VOXEL_RUNTIME_BLOCK_CAPACITY
+                    && g_voxel_runtime_blocks[g_voxel_runtime_first_free] != ft_nullptr);
+                *block_id_out = created_block->block_id;
+            }
+            (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        }
+        else
+            error_code = FT_ERR_SYS_MUTEX_LOCK_FAILED;
     }
-    g_voxel_runtime_blocks[index] = created_block;
-    *block_id_out = created_block->block_id;
-    (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-    return (FT_ERR_SUCCESS);
+    if (error_code != FT_ERR_SUCCESS)
+        voxel_runtime_destroy_block(created_block, asset_index);
+    return (error_code);
 }
 
 int32_t voxel_register_block(const voxel_block_registration &registration,
@@ -605,7 +693,17 @@ int32_t voxel_unregister_block(uint32_t block_id) noexcept
         (void)pt_mutex_unlock_if_not_null(mutex_pointer);
         return (FT_ERR_NOT_FOUND);
     }
+    const uint32_t position = voxel_runtime_name_position_locked(block_pointer->name.c_str());
+    --g_voxel_runtime_name_count;
+    const uint32_t tail_count = g_voxel_runtime_name_count - position;
+    if (tail_count != 0U)
+        (void)ft_memmove(g_voxel_runtime_name_order + position,
+            g_voxel_runtime_name_order + position + 1U,
+            tail_count * sizeof(g_voxel_runtime_name_order[0]));
+    g_voxel_runtime_name_order[g_voxel_runtime_name_count] = ft_nullptr;
     g_voxel_runtime_blocks[index] = ft_nullptr;
+    if (index < g_voxel_runtime_first_free)
+        g_voxel_runtime_first_free = index;
     block_pointer->registry_owned = FT_FALSE;
     references = block_pointer->handle_references.load(
         std::memory_order_relaxed);
@@ -641,39 +739,28 @@ const char *voxel_get_block_name(uint32_t block_id) noexcept
 int32_t voxel_find_block_id_by_name(const char *name,
     uint32_t *block_id_out) noexcept
 {
-    uint32_t index;
     pt_mutex *mutex_pointer;
 
     if (block_id_out == ft_nullptr
         || voxel_block_name_is_valid(name) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
-    index = 0U;
-    while (index < static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT))
+    const uint32_t builtin_id = voxel_find_builtin_block_name(name);
+    if (builtin_id != VOXEL_BUILTIN_BLOCK_COUNT)
     {
-        if (std::strcmp(name, VOXEL_BUILTIN_BLOCK_NAMES[index]) == 0)
-        {
-            *block_id_out = index;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
+        *block_id_out = builtin_id;
+        return (FT_ERR_SUCCESS);
     }
     mutex_pointer = voxel_runtime_get_mutex();
     if (mutex_pointer == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
     if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
         return (FT_ERR_SYS_MUTEX_LOCK_FAILED);
-    index = 0U;
-    while (index < VOXEL_RUNTIME_BLOCK_CAPACITY)
+    const uint32_t position = voxel_runtime_name_position_locked(name);
+    if (voxel_runtime_name_matches_locked(position, name) == FT_TRUE)
     {
-        if (g_voxel_runtime_blocks[index] != ft_nullptr
-            && std::strcmp(g_voxel_runtime_blocks[index]->name.c_str(),
-                name) == 0)
-        {
-            *block_id_out = VOXEL_RUNTIME_BLOCK_ID_BASE + index;
-            (void)pt_mutex_unlock_if_not_null(mutex_pointer);
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
+        *block_id_out = g_voxel_runtime_name_order[position]->block_id;
+        (void)pt_mutex_unlock_if_not_null(mutex_pointer);
+        return (FT_ERR_SUCCESS);
     }
     (void)pt_mutex_unlock_if_not_null(mutex_pointer);
     return (FT_ERR_NOT_FOUND);
@@ -723,11 +810,14 @@ void voxel_runtime_reset_for_tests(void) noexcept
         return ;
     if (pt_mutex_lock_if_not_null(mutex_pointer) != FT_ERR_SUCCESS)
         return ;
+    g_voxel_runtime_first_free = 0U;
+    g_voxel_runtime_name_count = 0U;
     index = 0U;
     while (index < VOXEL_RUNTIME_BLOCK_CAPACITY)
     {
         block_pointer = g_voxel_runtime_blocks[index];
         g_voxel_runtime_blocks[index] = ft_nullptr;
+        g_voxel_runtime_name_order[index] = ft_nullptr;
         if (block_pointer != ft_nullptr)
         {
             block_pointer->registry_owned = FT_FALSE;

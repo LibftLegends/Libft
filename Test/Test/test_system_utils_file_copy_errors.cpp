@@ -1,4 +1,5 @@
 #include "../test_internal.hpp"
+#include "../../Modules/Compatebility/compatebility_internal.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/system_utils.hpp"
@@ -45,5 +46,18 @@ FT_TEST(test_su_copy_file_missing_source_sets_error)
     if (destination_file != ft_nullptr)
         std::fclose(destination_file);
     std::remove(destination_path);
+    return (1);
+}
+
+FT_TEST(test_su_copy_file_rejects_directory_source)
+{
+    const char *source = "su_copy_file_directory_source";
+    const char *destination = "su_copy_file_directory_output";
+    int32_t error = FT_ERR_SUCCESS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_file_create_directory(source, 0755, &error));
+    const int32_t copied = su_copy_file(source, destination);
+    (void)std::remove(destination);
+    (void)cmp_file_remove_directory(source);
+    FT_ASSERT_EQ(-1, copied);
     return (1);
 }

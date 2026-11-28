@@ -146,13 +146,14 @@ int32_t cmp_cross_process_open_mapping(const cross_process_message &message, cmp
         return (cmp_map_system_error_to_ft(errno));
     }
     mapping_pointer = MapViewOfFile(mapping_handle, FILE_MAP_ALL_ACCESS, 0, 0, static_cast<SIZE_T>(message.remote_memory_size));
-    CloseHandle(mapping_handle);
     if (mapping_pointer == ft_nullptr)
     {
         windows_error = GetLastError();
+        CloseHandle(mapping_handle);
         errno = static_cast<int32_t>(windows_error);
         return (cmp_map_system_error_to_ft(errno));
     }
+    CloseHandle(mapping_handle);
     if (VirtualQuery(mapping_pointer, &memory_information,
         sizeof(memory_information)) != sizeof(memory_information)
         || memory_information.RegionSize < static_cast<SIZE_T>(
@@ -218,38 +219,22 @@ int32_t cmp_cross_process_lock_mutex(const cross_process_message &message, cmp_c
         errno = EINVAL;
         return (cmp_map_system_error_to_ft(errno));
     }
-    int32_t attempt_count = 0;
-    ft_bool mutex_locked = FT_FALSE;
+    constexpr DWORD MUTEX_TIMEOUT_MS = 200;
     mutex_state->owner_recovered = FT_FALSE;
-    while (attempt_count < 5)
+    const DWORD wait_result = WaitForSingleObject(shared_mutex_handle, MUTEX_TIMEOUT_MS);
+    if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_ABANDONED)
     {
-        DWORD wait_result = WaitForSingleObject(shared_mutex_handle, 0);
-        if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_ABANDONED)
-        {
-            mutex_locked = FT_TRUE;
-            if (wait_result == WAIT_ABANDONED)
-                mutex_state->owner_recovered = FT_TRUE;
-            break ;
-        }
-        if (wait_result == WAIT_TIMEOUT)
-        {
-            attempt_count += 1;
-            if (attempt_count >= 5)
-                break ;
-            Sleep(50);
-            continue;
-        }
-        DWORD windows_error = GetLastError();
-        errno = static_cast<int32_t>(windows_error);
-        return (cmp_map_system_error_to_ft(errno));
+        mutex_state->owner_recovered = wait_result == WAIT_ABANDONED;
+        mutex_state->platform_mutex = shared_mutex_handle;
+        return (FT_ERR_SUCCESS);
     }
-    if (mutex_locked == FT_FALSE)
+    if (wait_result == WAIT_TIMEOUT)
     {
         errno = ETIMEDOUT;
         return (cmp_map_system_error_to_ft(errno));
     }
-    mutex_state->platform_mutex = shared_mutex_handle;
-    return (FT_ERR_SUCCESS);
+    errno = static_cast<int32_t>(GetLastError());
+    return (cmp_map_system_error_to_ft(errno));
 }
 
 int32_t cmp_cross_process_unlock_mutex(const cross_process_message &message, cmp_cross_process_mapping *mapping, cmp_cross_process_mutex_state *mutex_state)

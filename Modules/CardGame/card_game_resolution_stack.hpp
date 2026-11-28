@@ -31,13 +31,18 @@ struct card_game_resolution_entry
 
 class card_game_resolution_stack
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
         uint32_t _capacity;
         card_game_resolution_order _order;
         card_game_resolution_admission _admission;
         ft_bool _resolving;
         uint64_t _next_sequence;
+        uint64_t _highest_entry_id;
         uint32_t _count;
         uint32_t _deferred_count;
         card_game_resolution_entry *_entries;
@@ -50,11 +55,7 @@ class card_game_resolution_stack
         card_game_resolution_stack &operator=(
             card_game_resolution_stack &&other) = delete;
 
-        int32_t append_entry(card_game_resolution_entry *entries,
-            uint32_t *count, const card_game_resolution_entry &entry) noexcept;
         ft_bool contains_entry(uint64_t entry_id) const noexcept;
-        int32_t remove_entry(uint32_t index,
-            card_game_resolution_entry *entry) noexcept;
 
     public:
         card_game_resolution_stack() noexcept;

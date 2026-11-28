@@ -69,8 +69,13 @@ struct card_game_pending_choice_view
 
 class card_game_choice_ledger
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
+        ft_bool _sequential_ids;
         uint32_t _count;
         uint32_t _next_id;
         card_game_choice _choices[FT_CARD_GAME_MAX_CHOICES];
@@ -102,6 +107,8 @@ class card_game_choice_ledger
             card_game_choice_snapshot *destination) noexcept;
         int32_t apply_snapshot(
             const card_game_choice_snapshot &snapshot) noexcept;
+        int32_t append_state_hash(uint64_t &hash) const noexcept;
+        ft_bool matches_snapshot(const card_game_choice_snapshot &snapshot) const noexcept;
         static ft_bool snapshots_equal(
             const card_game_choice_snapshot &first,
             const card_game_choice_snapshot &second) noexcept;

@@ -58,6 +58,7 @@ voxel_biome voxel_get_biome(int32_t world_block_x, int32_t world_block_z,
     const char *seed_string = ft_nullptr) noexcept;
 voxel_biome_profile voxel_get_biome_profile(voxel_biome biome) noexcept;
 
+// Keep runtime blocks registered while reading borrowed metadata or use a block handle.
 const voxel_block_metadata &voxel_get_block_metadata(
     uint32_t block_id) noexcept;
 ft_bool voxel_block_is_known(uint32_t block_id) noexcept;
@@ -81,6 +82,7 @@ int32_t voxel_unregister_block(uint32_t block_id) noexcept;
 int32_t voxel_register_block_from_root(
     const voxel_block_registration &registration, const char *asset_root,
     uint32_t *block_id_out) noexcept;
+// Runtime names and asset views are borrowed and require synchronization with unregister.
 const char *voxel_get_block_name(uint32_t block_id) noexcept;
 int32_t voxel_find_block_id_by_name(const char *name,
     uint32_t *block_id_out) noexcept;

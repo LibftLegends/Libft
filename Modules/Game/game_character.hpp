@@ -17,6 +17,7 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/mutex.hpp"
 #include <cstdint>
+#include <string>
 
 #define FT_DAMAGE_PHYSICAL 0
 #define FT_DAMAGE_MAGICAL 1
@@ -42,6 +43,11 @@ class game_character
 #else
     private:
 #endif
+        struct equipped_modifier_snapshot
+        {
+            game_item_modifier_value values[4];
+        };
+
         int32_t _hit_points;
         int32_t _physical_armor;
         int32_t _magic_armor;
@@ -83,16 +89,54 @@ class game_character
         static thread_local int32_t _last_error;
         mutable pt_recursive_mutex          *_mutex;
         uint8_t _initialised_state;
+        equipped_modifier_snapshot _equipped_modifiers[EQUIP_OFF_HAND + 1];
+
+        static constexpr int32_t game_character::* MODIFIER_STAT_FIELDS[] = {
+            &game_character::_physical_armor, &game_character::_might,
+            &game_character::_agility, &game_character::_endurance,
+            &game_character::_reason, &game_character::_insigh,
+            &game_character::_presence, &game_character::_hit_points,
+            &game_character::_magic_armor};
+        static constexpr ft_size_t MODIFIER_STAT_COUNT =
+            sizeof(MODIFIER_STAT_FIELDS) / sizeof(MODIFIER_STAT_FIELDS[0]);
 
         static int32_t set_error(int32_t error_code) noexcept;
+        int32_t validate_move_source() const noexcept;
         int32_t     lock_internal(ft_bool *lock_acquired) const noexcept;
         void    unlock_internal(ft_bool lock_acquired) const noexcept;
         void    apply_modifier(const game_item_modifier &mod, int32_t sign) noexcept;
         void    apply_modifier_internal(const game_item_modifier &mod, int32_t sign) noexcept;
+        void    apply_modifier_value(int32_t modifier_identifier, int32_t modifier_value,
+            int32_t sign) noexcept;
+        void    write_modifier_stat(ft_size_t index, int32_t value) noexcept;
+        static void accumulate_equipment_modifiers(const equipped_modifier_snapshot &modifiers,
+            int32_t sign, int64_t (&deltas)[MODIFIER_STAT_COUNT], uint32_t &touched) noexcept;
+        int32_t stage_equipment_stats(int64_t (&deltas)[MODIFIER_STAT_COUNT],
+            uint32_t touched) const noexcept;
+        void    commit_equipment_stats(const int64_t (&values)[MODIFIER_STAT_COUNT],
+            uint32_t touched) noexcept;
+        int32_t read_equipment_snapshot(int32_t slot, ft_sharedptr<game_item> &item,
+            equipped_modifier_snapshot &modifiers) const noexcept;
+        int32_t capture_checkpoint_item(int32_t slot,
+            game_inventory_item_snapshot &snapshot, ft_bool &present) const noexcept;
+        int32_t append_checkpoint_character(std::string &output) const;
+        friend int32_t game_character_save_snapshot(ft_string &output,
+            const game_character &character, const game_inventory &inventory) noexcept;
+        int32_t replace_equipment_slot(int32_t slot, const ft_sharedptr<game_item> *item,
+            const equipped_modifier_snapshot *saved_modifiers, ft_bool update_stats) noexcept;
+        friend json_group *serialize_equipment(const game_character &character);
+        friend int32_t deserialize_equipment(game_character &character, json_group *group,
+            ft_bool stats_already_applied);
         int64_t apply_skill_modifiers(int64_t damage) const noexcept;
-        int64_t apply_skill_modifiers_internal(int64_t damage) const noexcept;
+        int32_t apply_skill_modifiers_internal(int64_t &damage) const noexcept;
+        void    apply_hit_point_damage(int64_t damage) noexcept;
         ft_bool    handle_component_error(int32_t error) noexcept;
         ft_bool    check_internal_errors() noexcept;
+        struct counter_metric;
+        static const counter_metric COINS_METRIC;
+        static const counter_metric VALOR_METRIC;
+        static const counter_metric EXPERIENCE_METRIC;
+        void change_counter(int32_t &counter, int64_t delta, const counter_metric &metric) noexcept;
         void    emit_game_metric(const char *event_name, const char *attribute,
                 int64_t delta_value, int64_t total_value,
                 const char *unit) const noexcept;
@@ -109,6 +153,7 @@ class game_character
         virtual ~game_character() noexcept;
         int32_t initialize() noexcept;
         int32_t destroy() noexcept;
+        // Moving requires exclusive access to both characters and their components.
         int32_t move(game_character &other) noexcept;
         game_character(const game_character &other) noexcept = delete;
         game_character &operator=(const game_character &other) noexcept = delete;
@@ -211,6 +256,7 @@ class game_character
         game_skill *get_skill(int32_t id) noexcept;
         const game_skill *get_skill(int32_t id) const noexcept;
         int32_t add_skill(const game_skill &skill) noexcept;
+        // Successful non-tail removal invalidates pointers borrowed from get_skill().
         void remove_skill(int32_t id) noexcept;
 
         ft_map<int32_t, game_buff>       &get_buffs() noexcept;
@@ -243,6 +289,7 @@ class game_character
         void unequip_item(int32_t slot) noexcept;
         ft_sharedptr<game_item> *get_equipped_item(int32_t slot) noexcept;
         ft_sharedptr<game_item> *get_equipped_item(int32_t slot) const noexcept;
+        int32_t read_equipped_item(int32_t slot, ft_sharedptr<game_item> &item) const noexcept;
 
         int32_t get_level() const noexcept;
 

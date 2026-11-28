@@ -212,14 +212,20 @@ int32_t json_write_to_backend(ft_document_sink &sink, json_group *groups)
     JSON_WRITER_SUCCESS_RETURN(FT_ERR_SUCCESS);
 }
 
-char *json_write_to_string(json_group *groups)
+char *json_write_to_string_with_length(const json_group *groups, ft_size_t &length)
 {
-    ft_size_t length;
     char *output;
     const int32_t error = json_write_buffer(groups, output, length);
     if (error != FT_ERR_SUCCESS)
         JSON_WRITER_ERROR_RETURN(error, ft_nullptr);
     JSON_WRITER_SUCCESS_RETURN(output);
+}
+
+char *json_write_to_string(json_group *groups)
+{
+    ft_size_t length;
+
+    return (json_write_to_string_with_length(groups, length));
 }
 
 int32_t json_document_write_to_file(const char *file_path, const json_document &document)

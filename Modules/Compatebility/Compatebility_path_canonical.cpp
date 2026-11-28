@@ -8,25 +8,13 @@
 # include <cstdlib>
 #endif
 
-static char *cmp_path_duplicate_c_string(const char *source)
+static char *cmp_path_copy_canonical(const char *source, ft_size_t length)
 {
-    char *output;
-    ft_size_t size;
-    ft_size_t index;
-
-    if (source == ft_nullptr)
-        return (ft_nullptr);
-    size = ft_strlen_size_t(source);
-    output = static_cast<char *>(cma_malloc(size + 1));
+    char *output = static_cast<char *>(cma_malloc(length + 1));
     if (output == ft_nullptr)
         return (ft_nullptr);
-    index = 0;
-    while (index < size)
-    {
-        output[index] = source[index];
-        index++;
-    }
-    output[size] = '\0';
+    (void)ft_memcpy(output, source, length + 1);
+    cmp_normalize_slashes(output);
     return (output);
 }
 
@@ -59,10 +47,9 @@ int32_t cmp_path_canonical(const char *path, char **output_path)
         return (cmp_file_error_to_errno(static_cast<int32_t>(path_error)));
     if (written_size >= sizeof(resolved_path))
         return (FT_ERR_PATH_TOO_LONG);
-    canonical_path = cmp_path_duplicate_c_string(resolved_path);
+    canonical_path = cmp_path_copy_canonical(resolved_path, written_size);
     if (canonical_path == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    cmp_normalize_slashes(canonical_path);
     *output_path = canonical_path;
     return (FT_ERR_SUCCESS);
 }
@@ -80,11 +67,10 @@ int32_t cmp_path_canonical(const char *path, char **output_path)
     system_path = realpath(path, ft_nullptr);
     if (system_path == ft_nullptr)
         return (FT_ERR_NOT_FOUND);
-    canonical_path = cmp_path_duplicate_c_string(system_path);
+    canonical_path = cmp_path_copy_canonical(system_path, ft_strlen_size_t(system_path));
     free(system_path);
     if (canonical_path == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    cmp_normalize_slashes(canonical_path);
     *output_path = canonical_path;
     return (FT_ERR_SUCCESS);
 }

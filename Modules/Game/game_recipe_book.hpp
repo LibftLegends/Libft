@@ -1,7 +1,6 @@
 #ifndef GAME_RECIPE_BOOK_HPP
 # define GAME_RECIPE_BOOK_HPP
 
-#include "../Template/map.hpp"
 #include "../Template/vector.hpp"
 #include "../Buffer/byte_buffer.hpp"
 #include <stdint.h>
@@ -32,9 +31,21 @@ class game_recipe_book
 #else
     private:
 #endif
-        ft_map<uint32_t, uint8_t> _catalogue;
+        struct catalogue_entry
+        {
+            uint32_t recipe_id;
+            ft_bool known;
+        };
+
+        ft_vector<catalogue_entry> _catalogue;
         ft_vector<game_recipe_unlock_record> _unlock_events;
+        ft_vector<game_recipe_unlock_record> _event_index;
+        uint64_t _revision;
+        uint32_t _quarantined_count;
         uint8_t _initialised_state;
+        const catalogue_entry *find_recipe(uint32_t recipe_id) const noexcept;
+        catalogue_entry *find_recipe(uint32_t recipe_id) noexcept;
+        void rebuild_cached_state() noexcept;
 
     public:
         game_recipe_book() noexcept;

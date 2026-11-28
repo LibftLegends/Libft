@@ -8,6 +8,7 @@
 #include "../PThread/recursive_mutex.hpp"
 #if defined(_WIN32) || defined(_WIN64)
 # include <windows.h>
+# include <bcrypt.h>
 # include <wincrypt.h>
 
 #ifdef LIBFT_TEST_BUILD
@@ -51,15 +52,11 @@ static int32_t cmp_rng_windows_error(DWORD last_error)
     return (FT_ERR_INVALID_ARGUMENT);
 }
 
-int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
+static int32_t cmp_rng_windows_legacy(unsigned char *buffer, DWORD length)
 {
     HCRYPTPROV crypt_provider = 0;
     int32_t error_code;
 
-    if (buffer == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (length > static_cast<ft_size_t>(UINT32_MAX))
-        return (FT_ERR_OUT_OF_RANGE);
 #ifdef LIBFT_TEST_BUILD
     if (g_cmp_rng_windows_acquire_error != 0U)
     {
@@ -86,7 +83,7 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
         return (error_code);
     }
 #endif
-    if (CryptGenRandom(crypt_provider, static_cast<DWORD>(length), buffer) == 0)
+    if (CryptGenRandom(crypt_provider, length, buffer) == 0)
     {
         error_code = cmp_rng_windows_error(GetLastError());
         CryptReleaseContext(crypt_provider, 0);
@@ -107,6 +104,39 @@ int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
     }
 #endif
     return (FT_ERR_SUCCESS);
+}
+
+static decltype(&BCryptGenRandom) cmp_rng_windows_generator()
+{
+    // Keep the system DLL loaded while the cached function pointer is in use.
+    const HMODULE module = LoadLibraryExW(L"bcrypt.dll", ft_nullptr,
+        LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (module == ft_nullptr)
+        return (ft_nullptr);
+    const auto generator = reinterpret_cast<decltype(&BCryptGenRandom)>(
+        reinterpret_cast<void *>(GetProcAddress(module, "BCryptGenRandom")));
+    if (generator == ft_nullptr)
+        FreeLibrary(module);
+    return (generator);
+}
+
+int32_t cmp_rng_secure_bytes(unsigned char *buffer, ft_size_t length)
+{
+    if (buffer == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (length > static_cast<ft_size_t>(UINT32_MAX))
+        return (FT_ERR_OUT_OF_RANGE);
+#ifdef LIBFT_TEST_BUILD
+    if (g_cmp_rng_windows_acquire_error != 0U
+        || g_cmp_rng_windows_generate_error != 0U
+        || g_cmp_rng_windows_release_error != 0U)
+        return (cmp_rng_windows_legacy(buffer, static_cast<DWORD>(length)));
+#endif
+    static const auto generate = cmp_rng_windows_generator();
+    if (generate != ft_nullptr && generate(ft_nullptr, buffer,
+            static_cast<ULONG>(length), BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0)
+        return (FT_ERR_SUCCESS);
+    return (cmp_rng_windows_legacy(buffer, static_cast<DWORD>(length)));
 }
 
 #else

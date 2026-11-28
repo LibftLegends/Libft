@@ -181,9 +181,7 @@ int32_t card_game_engine::zone_move_instance(uint32_t player_id,
     uint32_t source_zone_id, uint32_t destination_zone_id,
     uint32_t instance_id) noexcept
 {
-    card_game_deck_card card;
-    uint32_t source_index;
-    uint32_t source_count;
+    card_game_zone_entry card;
     uint32_t type_id;
     ft_bool source_owned = FT_FALSE;
     ft_bool destination_owned = FT_FALSE;
@@ -193,20 +191,10 @@ int32_t card_game_engine::zone_move_instance(uint32_t player_id,
     if (this->_initialised_state != 2U || player_id >= FT_CARD_GAME_MAX_PLAYERS
         || instance_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    source_count = this->_zone_store.size(player_id, source_zone_id);
-    source_index = 0U;
-    while (source_index < source_count)
-    {
-        result = this->zone_inspect(player_id, source_zone_id, source_index,
-            &card);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        if (card.instance_id == instance_id)
-            break ;
-        source_index += 1U;
-    }
-    if (source_index >= source_count)
-        return (FT_ERR_NOT_FOUND);
+    result = this->_zone_store.inspect_instance(player_id, source_zone_id,
+        instance_id, &card);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (this->find_card_type_id(card.card_id, &type_id) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     zone_index = 0U;

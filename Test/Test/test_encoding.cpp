@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Encoding/encoding.hpp"
+#include "../../Modules/Encoding/encoding_internal.hpp"
 #include "../../Modules/Compression/compression.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/basic.hpp"
@@ -10,6 +11,33 @@
 #include "../../Modules/Errno/errno.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_encoding_base64url_caller_buffer_checks_capacity)
+{
+    const uint8_t bytes[] = {0xfbU, 0xffU};
+    char encoded[4] = {'x', 'x', 'x', '\0'};
+    uint8_t decoded[3] = {0xa5U, 0xa5U, 0xa5U};
+    ft_size_t decoded_size = 1U;
+
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, encoding_base64url_encode_into(bytes,
+        sizeof(bytes), FT_FALSE, encoded, sizeof(encoded) - 1U));
+    FT_ASSERT_EQ(0, ft_strcmp(encoded, "xxx"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoding_base64url_encode_into(bytes,
+        sizeof(bytes), FT_FALSE, encoded, sizeof(encoded)));
+    FT_ASSERT_EQ(0, ft_strcmp(encoded, "-_8"));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        encoding_base64url_decode_into(encoded, 3U, decoded, 1U, &decoded_size));
+    FT_ASSERT_EQ(0U, decoded_size);
+    FT_ASSERT_EQ(0xa5U, decoded[0]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        encoding_base64url_decode_into("-_8=", 4U, decoded, 2U, &decoded_size));
+    FT_ASSERT_EQ(2U, decoded_size);
+    FT_ASSERT_EQ(0, ft_memcmp(bytes, decoded, sizeof(bytes)));
+    FT_ASSERT_EQ(0xa5U, decoded[2]);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        encoding_base64url_decode_into("+/8=", 4U, decoded, 2U, &decoded_size));
+    return (1);
+}
 
 FT_TEST(test_encoding_base64_roundtrip)
 {

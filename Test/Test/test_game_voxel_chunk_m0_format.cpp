@@ -1,4 +1,5 @@
 #include "../../Modules/Game/game_voxel_chunk.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 FT_TEST(test_game_voxel_chunk_biome_id_defaults_to_zero_and_is_settable)
@@ -162,6 +163,108 @@ FT_TEST(test_game_voxel_chunk_override_batches_preserve_format)
     return (1);
 }
 
+FT_TEST(test_game_voxel_chunk_override_membership_survives_growth_copy_and_load)
+{
+    game_voxel_chunk source;
+    game_voxel_chunk copied;
+    game_voxel_chunk restored;
+    ft_byte_buffer bytes;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    uint32_t index = 0U;
+    while (index < 300U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.write_block(index % 16U, index / 256U,
+            (index / 16U) % 16U, 42U));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.initialize(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bytes.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.serialize(bytes));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(bytes));
+    FT_ASSERT_EQ(FT_TRUE, restored.is_block_player_modified(11, 1, 2));
+    FT_ASSERT_EQ(FT_FALSE, restored.is_block_player_modified(12, 1, 2));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.write_block(0, 0, 0, GAME_VOXEL_AIR_BLOCK));
+    FT_ASSERT_EQ(FT_FALSE, restored.is_block_player_modified(0, 0, 0));
+    FT_ASSERT_EQ(FT_TRUE, restored.is_block_player_modified(1, 0, 0));
+    game_voxel_block_override first;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_player_override(0U, &first));
+    FT_ASSERT_EQ(1U, first.local_index);
+    index = 7U;
+    while (index < 300U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.write_block(index % 16U, index / 256U,
+            (index / 16U) % 16U, GAME_VOXEL_AIR_BLOCK));
+        index += 7U;
+    }
+    index = 0U;
+    while (index < 300U)
+    {
+        const ft_bool expected = (index % 7U != 0U);
+        FT_ASSERT_EQ(expected, restored.is_block_player_modified(index % 16U, index / 256U,
+            (index / 16U) % 16U));
+        ++index;
+    }
+    while (index < 620U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.write_block(index % 16U, index / 256U,
+            (index / 16U) % 16U, 42U));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bytes.clear());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.serialize(bytes));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.deserialize(bytes));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.get_player_override(0U, &first));
+    FT_ASSERT_EQ(1U, first.local_index);
+    const uint32_t last_index = copied.get_player_override_count() - 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.get_player_override(last_index, &first));
+    FT_ASSERT_EQ(619U, first.local_index);
+    FT_ASSERT_EQ(FT_FALSE, copied.is_block_player_modified(7, 0, 0));
+    return (1);
+}
+
+FT_TEST(test_game_voxel_chunk_compaction_preserves_indices_and_order)
+{
+    uint32_t removed = 16U;
+    while (removed <= 64U)
+    {
+        game_voxel_chunk chunk;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+        uint32_t index = 0U;
+        while (index < 256U)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(index % 16U, 0, index / 16U, 42U));
+            ++index;
+        }
+        index = 0U;
+        while (index < removed)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(index % 16U, 0,
+                    index / 16U, GAME_VOXEL_AIR_BLOCK));
+            ++index;
+        }
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+        const int32_t result = chunk.write_block(0, 0, 0, 87U);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+        FT_ASSERT_EQ(257U - removed, chunk.get_player_override_count());
+        game_voxel_block_override entry;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.get_player_override(256U - removed, &entry));
+        FT_ASSERT_EQ(0U, entry.local_index);
+        FT_ASSERT_EQ(87U, entry.current_block_id);
+        FT_ASSERT_EQ(FT_FALSE, chunk.is_block_player_modified(1, 0, 0));
+        index = removed;
+        while (index < 256U)
+        {
+            FT_ASSERT_EQ(FT_TRUE, chunk.is_block_player_modified(index % 16U, 0, index / 16U));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.get_player_override(index - removed, &entry));
+            FT_ASSERT_EQ(index, entry.local_index);
+            ++index;
+        }
+        removed *= 4U;
+    }
+    return (1);
+}
+
 FT_TEST(test_game_voxel_chunk_migrates_version_four_history)
 {
     game_voxel_chunk source_chunk;
@@ -185,13 +288,21 @@ FT_TEST(test_game_voxel_chunk_migrates_version_four_history)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append_u32_le(4U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(serialized_data + 8U,
         legacy_prefix_size - 8U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append_u32_le(0U));
+    uint8_t old_journal[48]{};
+    old_journal[0] = 1U;
+    old_journal[47] = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append_u32_le(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(old_journal, sizeof(old_journal)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append_u32_le(0x11223344U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.deserialize(legacy));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.read_block(3, 4, 5,
         &block_id));
     FT_ASSERT_EQ(77U, block_id);
     FT_ASSERT_EQ(0U, restored_chunk.get_player_override_count());
     FT_ASSERT_EQ(0U, restored_chunk.get_revision());
+    uint32_t following_value = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.read_u32_le(&following_value));
+    FT_ASSERT_EQ(0x11223344U, following_value);
     return (1);
 }
 

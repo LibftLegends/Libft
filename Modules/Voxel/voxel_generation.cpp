@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <algorithm>
+#include <cmath>
 #include "voxel_api.hpp"
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
@@ -35,6 +36,8 @@ static const int32_t VOXEL_CAVE_SURFACE_MARGIN = 7;
 static const int32_t VOXEL_CAVE_CELL_SIZE = 12;
 static const int32_t VOXEL_COLUMN_CACHE_COUNT =
     GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH;
+static constexpr int32_t VOXEL_HEIGHT_SAMPLE_WIDTH = GAME_VOXEL_CHUNK_WIDTH + 2;
+static constexpr int32_t VOXEL_HEIGHT_SAMPLE_DEPTH = GAME_VOXEL_CHUNK_DEPTH + 2;
 static const uint8_t VOXEL_SURFACE_WATER_NONE = 0U;
 static const uint8_t VOXEL_SURFACE_WATER_RIVER = 1U;
 static const uint8_t VOXEL_SURFACE_WATER_LAKE = 2U;
@@ -76,6 +79,25 @@ struct voxel_column_cache
     uint32_t tree_chance_percent;
 };
 
+struct voxel_cross_chunk_callbacks
+{
+    ft_bool features_enabled;
+    voxel_cross_chunk_block_writer writer;
+    void *writer_data;
+    voxel_cross_chunk_block_reader reader;
+    void *reader_data;
+};
+
+static voxel_cross_chunk_callbacks voxel_get_cross_chunk_callbacks(
+    const voxel_generation_config &config) noexcept
+{
+    return (voxel_cross_chunk_callbacks{
+        config.allow_cross_chunk_features,
+        config.cross_chunk_block_writer, config.cross_chunk_block_writer_user_data,
+        config.cross_chunk_block_reader, config.cross_chunk_block_reader_user_data
+    });
+}
+
 static int32_t voxel_sample_height(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
     const voxel_generation_config &config) noexcept;
@@ -83,6 +105,21 @@ static int32_t voxel_sample_height(uint64_t seed_value,
 static void voxel_sample_biomes(const voxel_generation_config &config,
     uint64_t seed_value, int32_t world_block_x, int32_t world_block_z,
     voxel_biome_sample *sample) noexcept;
+
+static void voxel_prepare_height_samples(uint64_t seed_value,
+    int32_t origin_x, int32_t origin_z, const voxel_generation_config &config,
+    voxel_column_cache *columns, int32_t *heights) noexcept;
+
+static int32_t voxel_weighted_height(const int32_t *center) noexcept
+{
+    constexpr int32_t STRIDE = VOXEL_HEIGHT_SAMPLE_WIDTH;
+    const int32_t north = center[-STRIDE - 1] + 2 * center[-STRIDE]
+        + center[-STRIDE + 1];
+    const int32_t middle = 2 * (center[-1] + 2 * center[0] + center[1]);
+    const int32_t south = center[STRIDE - 1] + 2 * center[STRIDE]
+        + center[STRIDE + 1];
+    return ((north + middle + south) / 16);
+}
 
 static int32_t voxel_estimate_slope(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
@@ -116,26 +153,20 @@ static ft_bool voxel_surface_water_neighbor_matches(uint64_t seed_value,
 static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
     uint32_t previous_mask) noexcept;
 
-static ft_bool voxel_underground_lake_geometry_is_valid(
-    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
-    int32_t local_z, int32_t world_block_origin_x,
-    int32_t world_block_origin_z,
-    const voxel_generation_config &config) noexcept;
-
 static int32_t voxel_read_generation_block(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_y, int32_t local_z,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const voxel_generation_config &config, uint32_t *block_id) noexcept
+    const voxel_cross_chunk_callbacks &callbacks, uint32_t *block_id) noexcept
 {
     if (local_x >= 0 && local_x < GAME_VOXEL_CHUNK_WIDTH
         && local_y >= 0 && local_y < GAME_VOXEL_CHUNK_HEIGHT
         && local_z >= 0 && local_z < GAME_VOXEL_CHUNK_DEPTH)
         return (chunk.read_block(local_x, local_y, local_z, block_id));
-    if (config.cross_chunk_block_reader == ft_nullptr)
+    if (callbacks.reader == ft_nullptr)
         return (FT_ERR_OUT_OF_RANGE);
-    return (config.cross_chunk_block_reader(world_block_origin_x + local_x,
+    return (callbacks.reader(world_block_origin_x + local_x,
         local_y, world_block_origin_z + local_z, block_id,
-        config.cross_chunk_block_reader_user_data));
+        callbacks.reader_data));
 }
 
 static ft_bool voxel_underground_lake_vertical_bounds_are_valid(
@@ -163,25 +194,26 @@ static ft_bool voxel_underground_lake_vertical_bounds_are_valid(
 static int32_t voxel_write_generation_block(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_y, int32_t local_z,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const voxel_generation_config &config, uint32_t block_id) noexcept
+    const voxel_cross_chunk_callbacks &callbacks, uint32_t block_id) noexcept
 {
     if (local_x >= 0 && local_x < GAME_VOXEL_CHUNK_WIDTH
         && local_y >= 0 && local_y < GAME_VOXEL_CHUNK_HEIGHT
         && local_z >= 0 && local_z < GAME_VOXEL_CHUNK_DEPTH)
         return (chunk.write_generated_block(local_x, local_y, local_z,
             block_id));
-    if (config.cross_chunk_block_writer == ft_nullptr)
+    if (callbacks.writer == ft_nullptr)
         return (FT_ERR_OUT_OF_RANGE);
-    return (config.cross_chunk_block_writer(world_block_origin_x + local_x,
+    return (callbacks.writer(world_block_origin_x + local_x,
         local_y, world_block_origin_z + local_z, block_id,
-        config.cross_chunk_block_writer_user_data));
+        callbacks.writer_data));
 }
 
 static ft_bool voxel_underground_lake_geometry_is_valid(
     game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
     int32_t local_z, int32_t world_block_origin_x,
     int32_t world_block_origin_z,
-    const voxel_generation_config &config) noexcept
+    const voxel_generation_config &config,
+    const voxel_cross_chunk_callbacks &callbacks) noexcept
 {
     int32_t offset;
     int32_t level;
@@ -199,7 +231,7 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
             {
                 if (voxel_read_generation_block(chunk, local_x + x,
                         local_y - 1 - offset, local_z + z,
-                        world_block_origin_x, world_block_origin_z, config,
+                        world_block_origin_x, world_block_origin_z, callbacks,
                         &block_id) != FT_ERR_SUCCESS
                     || voxel_block_is_solid(block_id) == FT_FALSE)
                     return (FT_FALSE);
@@ -227,7 +259,7 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
                     if (voxel_read_generation_block(chunk, local_x + x,
                             local_y + level, local_z + z,
                             world_block_origin_x, world_block_origin_z,
-                            config, &block_id) != FT_ERR_SUCCESS
+                            callbacks, &block_id) != FT_ERR_SUCCESS
                         || voxel_block_is_solid(block_id) == FT_FALSE)
                         return (FT_FALSE);
                 }
@@ -249,7 +281,7 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
             {
                 if (voxel_read_generation_block(chunk, local_x + x,
                         local_y + level, local_z + z, world_block_origin_x,
-                        world_block_origin_z, config, &block_id)
+                        world_block_origin_z, callbacks, &block_id)
                         != FT_ERR_SUCCESS
                     || block_id != VOXEL_GENERATOR_AIR_BLOCK)
                     return (FT_FALSE);
@@ -269,7 +301,7 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
                 if (voxel_read_generation_block(chunk, local_x + x,
                         local_y + static_cast<int32_t>(config.fluids
                             .underground_lake_depth), local_z + z,
-                        world_block_origin_x, world_block_origin_z, config,
+                        world_block_origin_x, world_block_origin_z, callbacks,
                         &block_id) != FT_ERR_SUCCESS
                     || block_id != VOXEL_GENERATOR_AIR_BLOCK)
                     return (FT_FALSE);
@@ -291,7 +323,7 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
                 if (voxel_read_generation_block(chunk, local_x + x,
                         local_y + static_cast<int32_t>(config.fluids
                             .underground_lake_depth) + offset, local_z + z,
-                        world_block_origin_x, world_block_origin_z, config,
+                        world_block_origin_x, world_block_origin_z, callbacks,
                         &block_id) != FT_ERR_SUCCESS
                     || voxel_block_is_solid(block_id) == FT_FALSE)
                     return (FT_FALSE);
@@ -302,35 +334,6 @@ static ft_bool voxel_underground_lake_geometry_is_valid(
         offset += 1;
     }
     return (FT_TRUE);
-}
-
-static int32_t voxel_stage_clear_chunk(game_voxel_chunk &chunk) noexcept
-{
-    int32_t local_x;
-    int32_t local_y;
-    int32_t local_z;
-    int32_t error_code;
-
-    local_z = 0;
-    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
-    {
-        local_x = 0;
-        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
-        {
-            local_y = 0;
-            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
-            {
-                error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                    GAME_VOXEL_AIR_BLOCK);
-                if (error_code != FT_ERR_SUCCESS)
-                    return (error_code);
-                local_y += 1;
-            }
-            local_x += 1;
-        }
-        local_z += 1;
-    }
-    return (FT_ERR_SUCCESS);
 }
 
 static void voxel_stage_prepare_columns(uint64_t seed_value,
@@ -348,6 +351,12 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
     double tree_chance;
     double mountain_weight;
     double snow_weight;
+    int32_t heights[VOXEL_HEIGHT_SAMPLE_WIDTH * VOXEL_HEIGHT_SAMPLE_DEPTH];
+    // A custom selector can observe call order through its user data.
+    const ft_bool cache_heights = config.biome_selector == ft_nullptr;
+    if (cache_heights != FT_FALSE)
+        voxel_prepare_height_samples(seed_value, world_block_origin_x, world_block_origin_z,
+            config, column_cache, heights);
 
     /* Surface water is sampled per column.  The second pass removes detached
      * candidates, including candidates on a chunk border.  Border columns
@@ -364,8 +373,9 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
         {
             column_index = (local_z * GAME_VOXEL_CHUNK_WIDTH) + local_x;
             world_block_x = world_block_origin_x + local_x;
-            voxel_sample_biomes(config, seed_value, world_block_x,
-                world_block_z, &column_cache[column_index].biome_sample);
+            if (cache_heights == FT_FALSE)
+                voxel_sample_biomes(config, seed_value, world_block_x,
+                    world_block_z, &column_cache[column_index].biome_sample);
             column_cache[column_index].biome = column_cache[column_index]
                 .biome_sample.biome_indices[0];
             column_cache[column_index].biome_profile.surface_height = 0;
@@ -404,9 +414,17 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
                     snow_weight += sampled_weight;
                 sample_index += 1U;
             }
-            column_cache[column_index].column_height
-                = voxel_smooth_heightfield(seed_value, world_block_x,
-                    world_block_z, config);
+            if (cache_heights != FT_FALSE)
+            {
+                const int32_t *center = heights
+                    + (local_z + 1) * VOXEL_HEIGHT_SAMPLE_WIDTH + local_x + 1;
+                column_cache[column_index].column_height = voxel_weighted_height(center);
+                column_cache[column_index].slope_height = std::abs(center[1] - center[-1])
+                    + std::abs(center[VOXEL_HEIGHT_SAMPLE_WIDTH] - center[-VOXEL_HEIGHT_SAMPLE_WIDTH]);
+            }
+            else
+                column_cache[column_index].column_height = voxel_smooth_heightfield(
+                    seed_value, world_block_x, world_block_z, config);
             column_cache[column_index].surface_water_kind =
                 voxel_surface_water_kind(seed_value, world_block_x,
                     world_block_z, config);
@@ -466,9 +484,9 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
             {
                 column_cache[column_index].surface_water_depth = 0U;
             }
-            column_cache[column_index].slope_height
-                = voxel_estimate_slope(seed_value, world_block_x,
-                    world_block_z, config);
+            if (cache_heights == FT_FALSE)
+                column_cache[column_index].slope_height = voxel_estimate_slope(
+                    seed_value, world_block_x, world_block_z, config);
             column_cache[column_index].deep_block_id = config.biomes[
                 column_cache[column_index].biome].deep_block_id;
             column_cache[column_index].can_place_shrubs = FT_FALSE;
@@ -564,7 +582,7 @@ static void voxel_stage_prepare_columns(uint64_t seed_value,
 static ft_bool voxel_can_place_tree_with_writer(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
     const voxel_tree_template &tree_template,
-    const voxel_generation_config &config) noexcept
+    const voxel_cross_chunk_callbacks &callbacks) noexcept
 {
     uint32_t block_index;
     int32_t target_x;
@@ -584,8 +602,8 @@ static ft_bool voxel_can_place_tree_with_writer(game_voxel_chunk &chunk,
             || target_y < 0 || target_y >= GAME_VOXEL_CHUNK_HEIGHT
             || target_z < 0 || target_z >= GAME_VOXEL_CHUNK_DEPTH)
         {
-            if (config.allow_cross_chunk_features == FT_FALSE
-                || config.cross_chunk_block_writer == ft_nullptr)
+            if (callbacks.features_enabled == FT_FALSE
+                || callbacks.writer == ft_nullptr)
                 return (FT_FALSE);
         }
         else
@@ -604,7 +622,7 @@ static int32_t voxel_place_tree_with_writer(game_voxel_chunk &chunk,
     int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
     int32_t world_block_origin_x, int32_t world_block_origin_z,
     const voxel_tree_template &tree_template,
-    const voxel_generation_config &config) noexcept
+    const voxel_cross_chunk_callbacks &callbacks) noexcept
 {
     uint32_t block_index;
     int32_t target_x;
@@ -624,16 +642,62 @@ static int32_t voxel_place_tree_with_writer(game_voxel_chunk &chunk,
             error_code = chunk.write_generated_block(target_x, target_y, target_z,
                 tree_template.blocks[block_index].block_id);
         else
-            error_code = config.cross_chunk_block_writer(
+            error_code = callbacks.writer(
                 world_block_origin_x + target_x, target_y,
                 world_block_origin_z + target_z,
                 tree_template.blocks[block_index].block_id,
-                config.cross_chunk_block_writer_user_data);
+                callbacks.writer_data);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
         block_index += 1U;
     }
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t voxel_apply_tree_template(game_voxel_chunk &chunk,
+    int32_t local_origin_x, int32_t local_origin_y, int32_t local_origin_z,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    const voxel_tree_template &tree_template,
+    const voxel_cross_chunk_callbacks &callbacks) noexcept
+{
+    constexpr uint32_t LOCAL_BATCH_CAPACITY = 64U;
+    game_voxel_generated_block blocks[LOCAL_BATCH_CAPACITY];
+
+    if (tree_template.blocks == ft_nullptr || tree_template.block_count == 0U)
+        return (FT_ERR_SUCCESS);
+    if (tree_template.block_count <= LOCAL_BATCH_CAPACITY)
+    {
+        uint32_t index = 0U;
+        while (index < tree_template.block_count)
+        {
+            const voxel_tree_template_block &block = tree_template.blocks[index];
+            const int64_t target_x = static_cast<int64_t>(local_origin_x) + block.offset_x;
+            const int64_t target_y = static_cast<int64_t>(local_origin_y) + block.offset_y;
+            const int64_t target_z = static_cast<int64_t>(local_origin_z) + block.offset_z;
+            if (target_x < 0 || target_x >= GAME_VOXEL_CHUNK_WIDTH
+                || target_y < 0 || target_y >= GAME_VOXEL_CHUNK_HEIGHT
+                || target_z < 0 || target_z >= GAME_VOXEL_CHUNK_DEPTH)
+            {
+                if (callbacks.features_enabled == FT_FALSE
+                    || callbacks.writer == ft_nullptr)
+                    return (FT_ERR_SUCCESS);
+                break ;
+            }
+            blocks[index] = {static_cast<int32_t>(target_x),
+                static_cast<int32_t>(target_y), static_cast<int32_t>(target_z),
+                block.block_id};
+            index += 1U;
+        }
+        if (index == tree_template.block_count)
+            return (chunk.write_generated_blocks_if(blocks, index,
+                voxel_block_is_replaceable));
+    }
+    if (voxel_can_place_tree_with_writer(chunk, local_origin_x, local_origin_y,
+            local_origin_z, tree_template, callbacks) == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    return (voxel_place_tree_with_writer(chunk, local_origin_x, local_origin_y,
+        local_origin_z, world_block_origin_x, world_block_origin_z,
+        tree_template, callbacks));
 }
 
 static int32_t voxel_region_cross_chunk_block_writer(int32_t world_block_x,
@@ -1013,18 +1077,14 @@ static const voxel_tree_template *voxel_sample_tree_template(
     return (tree_template);
 }
 
-static int32_t voxel_smooth_biome_height(uint64_t seed_value,
+static int32_t voxel_height_from_biomes(uint64_t seed_value,
     int32_t world_block_x, int32_t world_block_z,
-    const voxel_biome_definition &biome_definition,
+    const voxel_biome_sample &sample,
     const voxel_generation_config &config) noexcept
 {
-    voxel_biome_sample sample;
     int32_t height;
     uint32_t index;
 
-    (void)biome_definition;
-    voxel_sample_biomes(config, seed_value, world_block_x, world_block_z,
-        &sample);
     height = 0;
     index = 0U;
     while (index < sample.count)
@@ -1067,20 +1127,21 @@ static int32_t voxel_estimate_slope(uint64_t seed_value,
     return (slope_x + slope_z);
 }
 
-static int32_t voxel_sample_height(uint64_t seed_value, int32_t world_block_x,
-    int32_t world_block_z, const voxel_generation_config &config) noexcept
+struct voxel_height_range
 {
-    uint32_t biome;
+    int32_t minimum;
+    int32_t maximum;
+};
+
+static voxel_height_range voxel_height_range_for_config(
+    const voxel_generation_config &config) noexcept
+{
     uint32_t biome_index;
     int32_t minimum_height;
     int32_t maximum_height;
     int32_t candidate_minimum;
     int32_t candidate_maximum;
-    int32_t height;
 
-    biome = voxel_select_biome(config, seed_value, world_block_x, world_block_z);
-    height = voxel_smooth_biome_height(seed_value, world_block_x,
-        world_block_z, config.biomes[biome], config);
     minimum_height = config.biomes[0].profile.surface_height
         - config.biomes[0].profile.height_variation
         - (config.biomes[0].profile.height_variation / 2);
@@ -1102,11 +1163,46 @@ static int32_t voxel_sample_height(uint64_t seed_value, int32_t world_block_x,
             maximum_height = candidate_maximum;
         biome_index += 1U;
     }
-    if (height < minimum_height)
-        return (minimum_height);
-    if (height > maximum_height)
-        return (maximum_height);
-    return (height);
+    return (voxel_height_range{minimum_height, maximum_height});
+}
+
+static int32_t voxel_sample_height(uint64_t seed_value, int32_t world_block_x,
+    int32_t world_block_z, const voxel_generation_config &config) noexcept
+{
+    if (config.biome_selector != ft_nullptr)
+        (void)voxel_select_biome(config, seed_value, world_block_x, world_block_z);
+    voxel_biome_sample sample;
+    voxel_sample_biomes(config, seed_value, world_block_x, world_block_z, &sample);
+    const int32_t height = voxel_height_from_biomes(seed_value, world_block_x, world_block_z, sample, config);
+    const voxel_height_range range = voxel_height_range_for_config(config);
+    return (std::clamp(height, range.minimum, range.maximum));
+}
+
+static void voxel_prepare_height_samples(uint64_t seed_value,
+    int32_t origin_x, int32_t origin_z, const voxel_generation_config &config,
+    voxel_column_cache *columns, int32_t *heights) noexcept
+{
+    const voxel_height_range range = voxel_height_range_for_config(config);
+    int32_t z = -1;
+    while (z <= GAME_VOXEL_CHUNK_DEPTH)
+    {
+        int32_t x = -1;
+        while (x <= GAME_VOXEL_CHUNK_WIDTH)
+        {
+            voxel_biome_sample border_sample;
+            voxel_biome_sample *sample = &border_sample;
+            if (x >= 0 && x < GAME_VOXEL_CHUNK_WIDTH && z >= 0 && z < GAME_VOXEL_CHUNK_DEPTH)
+                sample = &columns[z * GAME_VOXEL_CHUNK_WIDTH + x].biome_sample;
+            voxel_sample_biomes(config, seed_value, origin_x + x, origin_z + z, sample);
+            const int32_t height = voxel_height_from_biomes(seed_value, origin_x + x,
+                origin_z + z, *sample, config);
+            heights[(z + 1) * VOXEL_HEIGHT_SAMPLE_WIDTH + x + 1]
+                = std::clamp(height, range.minimum, range.maximum);
+            x += 1;
+        }
+        z += 1;
+    }
+    return ;
 }
 
 static int32_t voxel_smooth_heightfield(uint64_t seed_value,
@@ -1154,11 +1250,35 @@ static ft_bool voxel_should_place_feature(uint64_t seed_value,
 {
     uint64_t feature_seed;
 
+    if (threshold == 0U)
+        return (FT_FALSE);
+    if (threshold >= 100U)
+        return (FT_TRUE);
     feature_seed = voxel_feature_seed(seed_value, world_block_x,
         world_block_z, salt);
     if ((feature_seed % 100U) < threshold)
         return (FT_TRUE);
     return (FT_FALSE);
+}
+
+static int32_t voxel_write_snow_cap(game_voxel_chunk &chunk, int32_t local_x,
+    int32_t column_height, int32_t local_z, const voxel_layer_config &layers,
+    game_voxel_generated_column_block *column_blocks) noexcept
+{
+    if (column_height < 0)
+        return (FT_ERR_SUCCESS);
+    if (column_height >= GAME_VOXEL_CHUNK_HEIGHT)
+        return (FT_ERR_OUT_OF_RANGE);
+    const uint32_t count = std::min(layers.snow_cap_depth,
+        static_cast<uint32_t>(column_height + 1));
+    uint32_t index = 0U;
+    while (index < count)
+    {
+        column_blocks[index] = {column_height - static_cast<int32_t>(index),
+            layers.snow_cap_block_id};
+        index += 1U;
+    }
+    return (chunk.write_generated_column(local_x, local_z, column_blocks, count));
 }
 
 static uint32_t voxel_ground_cover_block_for_biome(uint32_t biome,
@@ -1209,158 +1329,166 @@ static double voxel_cave_noise(uint64_t seed_value,
         world_block_z - (world_block_y * 7), scale));
 }
 
-static ft_bool voxel_should_carve_cave(uint64_t seed_value,
-    int32_t world_block_x, int32_t world_block_y, int32_t world_block_z,
-    int32_t surface_height,
-    const voxel_generation_config &config) noexcept
-{
-    double primary_noise;
-    double detail_noise;
-    double ravine_detail_threshold;
-    int32_t cave_surface_margin;
-    int32_t cell_x;
-    int32_t cell_y;
-    int32_t cell_z;
-    int32_t offset_x;
-    int32_t offset_y;
-    int32_t offset_z;
-    int32_t candidate_cell_x;
-    int32_t candidate_cell_y;
-    int32_t candidate_cell_z;
-    int32_t center_x;
-    int32_t center_y;
-    int32_t center_z;
-    int32_t distance_x;
-    int32_t distance_y;
-    int32_t distance_z;
-    int32_t radius;
-    int32_t height_range;
-    uint64_t candidate_seed;
-    ft_bool large_cave;
-    ft_bool cavern_room;
-    ft_bool entrance_candidate;
+static constexpr int32_t VOXEL_CAVE_CACHE_WIDTH =
+    (GAME_VOXEL_CHUNK_WIDTH - 1 + VOXEL_CAVE_CELL_SIZE - 1) / VOXEL_CAVE_CELL_SIZE + 3;
+static constexpr int32_t VOXEL_CAVE_CACHE_DEPTH =
+    (GAME_VOXEL_CHUNK_DEPTH - 1 + VOXEL_CAVE_CELL_SIZE - 1) / VOXEL_CAVE_CELL_SIZE + 3;
+static constexpr int32_t VOXEL_CAVE_CACHE_HEIGHT =
+    (GAME_VOXEL_CHUNK_HEIGHT - 1) / VOXEL_CAVE_CELL_SIZE + 3;
 
-    if (world_block_y < config.underground_structures.minimum_height
-        || world_block_y > surface_height)
-        return (FT_FALSE);
-    if (config.underground_structures.enable_ravines == FT_TRUE)
+struct voxel_cave_room
+{
+    int64_t center_x;
+    int64_t center_z;
+    int32_t center_y;
+    uint8_t radius;
+    ft_bool entrance;
+};
+
+struct voxel_cave_room_cache
+{
+    int32_t first_x;
+    int32_t first_z;
+    voxel_cave_room rooms[VOXEL_CAVE_CACHE_HEIGHT][VOXEL_CAVE_CACHE_DEPTH][VOXEL_CAVE_CACHE_WIDTH];
+};
+
+static void voxel_prepare_cave_rooms(voxel_cave_room_cache &cache,
+    uint64_t seed, int32_t origin_x, int32_t origin_z,
+    const voxel_underground_structure_config &config) noexcept
+{
+    cache.first_x = voxel_floor_div(origin_x, VOXEL_CAVE_CELL_SIZE) - 1;
+    cache.first_z = voxel_floor_div(origin_z, VOXEL_CAVE_CELL_SIZE) - 1;
+    const uint64_t height_range = static_cast<uint64_t>(
+        static_cast<int64_t>(config.maximum_height) - config.minimum_height + 1);
+    int32_t y = 0;
+    while (y < VOXEL_CAVE_CACHE_HEIGHT)
     {
-        cave_surface_margin = VOXEL_CAVE_SURFACE_MARGIN;
-        if (config.underground_structures.ravine_depth > 0U)
-            cave_surface_margin = static_cast<int32_t>(
-                config.underground_structures.ravine_depth);
-        if (world_block_y >= config.underground_structures.minimum_height
-            && world_block_y <= config.underground_structures.maximum_height
-            && world_block_y < surface_height - cave_surface_margin)
+        int32_t z = 0;
+        while (z < VOXEL_CAVE_CACHE_DEPTH)
         {
-            primary_noise = voxel_cave_noise(seed_value, world_block_x,
-                world_block_y, world_block_z, VOXEL_CAVE_PRIMARY_SCALE,
-                VOXEL_CAVE_PRIMARY_SALT);
-            detail_noise = voxel_cave_noise(seed_value, world_block_x,
-                world_block_y, world_block_z, VOXEL_CAVE_DETAIL_SCALE,
-                VOXEL_CAVE_DETAIL_SALT);
-            ravine_detail_threshold = -0.12
-                + (static_cast<double>(config.underground_structures
-                    .ravine_width) * 0.04);
-            if (voxel_should_place_feature(seed_value, world_block_x,
-                    world_block_z, UINT64_C(0xD1CEB00C),
-                    config.underground_structures.ravine_chance_percent)
-                    == FT_TRUE
-                && primary_noise > 0.34
-                && detail_noise > ravine_detail_threshold)
-                return (FT_TRUE);
-        }
-    }
-    if (config.underground_structures.enable_cave_rooms == FT_FALSE
-        || config.underground_structures.cave_room_chance_percent == 0U
-        || config.underground_structures.cave_small_radius == 0U)
-        return (FT_FALSE);
-    cell_x = voxel_floor_div(world_block_x, VOXEL_CAVE_CELL_SIZE);
-    cell_y = voxel_floor_div(world_block_y, VOXEL_CAVE_CELL_SIZE);
-    cell_z = voxel_floor_div(world_block_z, VOXEL_CAVE_CELL_SIZE);
-    offset_x = -1;
-    while (offset_x <= 1)
-    {
-        offset_y = -1;
-        while (offset_y <= 1)
-        {
-            offset_z = -1;
-            while (offset_z <= 1)
+            int32_t x = 0;
+            while (x < VOXEL_CAVE_CACHE_WIDTH)
             {
-                candidate_cell_x = cell_x + offset_x;
-                candidate_cell_y = cell_y + offset_y;
-                candidate_cell_z = cell_z + offset_z;
-                candidate_seed = voxel_mix_u64(seed_value
-                    ^ static_cast<uint64_t>(static_cast<int64_t>(
-                        candidate_cell_x)) * UINT64_C(0x9E3779B97F4A7C15)
-                    ^ static_cast<uint64_t>(static_cast<int64_t>(
-                        candidate_cell_y)) * UINT64_C(0xC2B2AE3D27D4EB4F)
-                    ^ static_cast<uint64_t>(static_cast<int64_t>(
-                        candidate_cell_z)) * UINT64_C(0x165667B19E3779F9)
+                voxel_cave_room &room = cache.rooms[y][z][x];
+                const int32_t cell_x = cache.first_x + x;
+                const int32_t cell_y = y - 1;
+                const int32_t cell_z = cache.first_z + z;
+                const uint64_t candidate = voxel_mix_u64(seed
+                    ^ static_cast<uint64_t>(cell_x) * UINT64_C(0x9E3779B97F4A7C15)
+                    ^ static_cast<uint64_t>(cell_y) * UINT64_C(0xC2B2AE3D27D4EB4F)
+                    ^ static_cast<uint64_t>(cell_z) * UINT64_C(0x165667B19E3779F9)
                     ^ UINT64_C(0xCA7E700D));
-                if ((candidate_seed % 100U)
-                    < config.underground_structures.cave_room_chance_percent)
+                room.radius = 0U;
+                if (candidate % 100U < config.cave_room_chance_percent)
                 {
-                    center_x = candidate_cell_x * VOXEL_CAVE_CELL_SIZE
-                        + 2 + static_cast<int32_t>((candidate_seed >> 8)
-                            % (VOXEL_CAVE_CELL_SIZE - 4));
-                    center_z = candidate_cell_z * VOXEL_CAVE_CELL_SIZE
-                        + 2 + static_cast<int32_t>((candidate_seed >> 16)
-                            % (VOXEL_CAVE_CELL_SIZE - 4));
-                    height_range = config.underground_structures.maximum_height
-                        - config.underground_structures.minimum_height + 1;
-                    if (height_range < 1)
-                        height_range = 1;
-                    center_y = config.underground_structures.minimum_height
-                        + static_cast<int32_t>((candidate_seed >> 24)
-                            % static_cast<uint64_t>(height_range));
-                    large_cave = ((candidate_seed >> 32) % 100U
-                        < config.underground_structures
-                            .cave_large_chance_percent);
-                    cavern_room = (config.underground_structures
-                        .enable_cavern_rooms == FT_TRUE
-                        && ((candidate_seed >> 48) % 100U
-                            < config.underground_structures
-                                .cavern_room_chance_percent));
-                    if (cavern_room == FT_TRUE)
-                        radius = static_cast<int32_t>(config
-                            .underground_structures.cavern_room_radius);
-                    else if (large_cave == FT_TRUE)
-                        radius = static_cast<int32_t>(config
-                            .underground_structures.cave_large_radius);
+                    room.center_x = static_cast<int64_t>(cell_x) * VOXEL_CAVE_CELL_SIZE + 2
+                        + static_cast<int32_t>((candidate >> 8U) % (VOXEL_CAVE_CELL_SIZE - 4));
+                    room.center_z = static_cast<int64_t>(cell_z) * VOXEL_CAVE_CELL_SIZE + 2
+                        + static_cast<int32_t>((candidate >> 16U) % (VOXEL_CAVE_CELL_SIZE - 4));
+                    room.center_y = static_cast<int32_t>(config.minimum_height
+                        + static_cast<int64_t>((candidate >> 24U) % height_range));
+                    if (config.enable_cavern_rooms == FT_TRUE
+                        && (candidate >> 48U) % 100U < config.cavern_room_chance_percent)
+                        room.radius = static_cast<uint8_t>(config.cavern_room_radius);
+                    else if ((candidate >> 32U) % 100U < config.cave_large_chance_percent)
+                        room.radius = static_cast<uint8_t>(config.cave_large_radius);
                     else
-                        radius = static_cast<int32_t>(config
-                            .underground_structures.cave_small_radius);
-                    distance_x = world_block_x - center_x;
-                    distance_y = world_block_y - center_y;
-                    distance_z = world_block_z - center_z;
-                    if (distance_x * distance_x + distance_y * distance_y
-                        + distance_z * distance_z <= radius * radius
-                        && world_block_y < surface_height
-                            - VOXEL_CAVE_SURFACE_MARGIN)
-                        return (FT_TRUE);
-                    entrance_candidate = ((candidate_seed >> 40) % 100U
-                        < config.underground_structures
-                            .cave_entrance_chance_percent);
-                    if (entrance_candidate == FT_TRUE
-                        && world_block_y <= surface_height
-                        && world_block_y >= center_y
-                        && world_block_y < surface_height
-                        && (distance_x * distance_x + distance_z * distance_z
-                            <= static_cast<int32_t>(config
-                                .underground_structures.cave_entrance_radius)
-                                * static_cast<int32_t>(config
-                                    .underground_structures
-                                    .cave_entrance_radius)))
-                        return (FT_TRUE);
+                        room.radius = static_cast<uint8_t>(config.cave_small_radius);
+                    room.entrance = ((candidate >> 40U) % 100U < config.cave_entrance_chance_percent);
                 }
-                offset_z += 1;
+                x += 1;
             }
-            offset_y += 1;
+            z += 1;
         }
-        offset_x += 1;
+        y += 1;
+    }
+    return ;
+}
+
+static ft_bool voxel_should_carve_ravine(uint64_t seed,
+    int32_t x, int32_t y, int32_t z, int32_t surface_height,
+    const voxel_underground_structure_config &config) noexcept
+{
+    if (y < config.minimum_height || y > config.maximum_height)
+        return (FT_FALSE);
+    int32_t surface_margin = VOXEL_CAVE_SURFACE_MARGIN;
+    if (config.ravine_depth > 0U)
+        surface_margin = static_cast<int32_t>(config.ravine_depth);
+    if (y < surface_height - surface_margin && voxel_cave_noise(seed, x, y, z,
+            VOXEL_CAVE_PRIMARY_SCALE, VOXEL_CAVE_PRIMARY_SALT) > 0.34)
+    {
+        const double threshold = -0.12 + static_cast<double>(config.ravine_width) * 0.04;
+        if (voxel_cave_noise(seed, x, y, z, VOXEL_CAVE_DETAIL_SCALE,
+                VOXEL_CAVE_DETAIL_SALT) > threshold)
+            return (FT_TRUE);
     }
     return (FT_FALSE);
+}
+
+static void voxel_mark_room_column(ft_bool *carved, const voxel_cave_room &room,
+    int32_t x, int32_t z, int32_t first_y, int32_t last_y, int32_t room_ceiling,
+    uint32_t entrance_radius) noexcept
+{
+    if (room.radius == 0U)
+        return ;
+    const int64_t delta_x = x - room.center_x;
+    const int64_t delta_z = z - room.center_z;
+    const int64_t planar_distance = delta_x * delta_x + delta_z * delta_z;
+    const int64_t radius_squared_at_column = room.radius * room.radius - planar_distance;
+    if (radius_squared_at_column >= 0 && first_y <= room_ceiling)
+    {
+        const int32_t vertical_radius = static_cast<int32_t>(
+            std::sqrt(static_cast<double>(radius_squared_at_column)));
+        const int64_t first_room_y = std::max<int64_t>(first_y,
+            static_cast<int64_t>(room.center_y) - vertical_radius);
+        const int64_t last_room_y = std::min<int64_t>(std::min(last_y, room_ceiling),
+            static_cast<int64_t>(room.center_y) + vertical_radius);
+        if (first_room_y <= last_room_y)
+            std::fill(carved + first_room_y, carved + last_room_y + 1, FT_TRUE);
+    }
+    if (room.entrance == FT_TRUE
+        && planar_distance <= entrance_radius * entrance_radius)
+    {
+        const int32_t first_entrance_y = std::max(first_y, room.center_y);
+        if (first_entrance_y <= last_y)
+            std::fill(carved + first_entrance_y, carved + last_y + 1, FT_TRUE);
+    }
+    return ;
+}
+
+static void voxel_prepare_cave_column(ft_bool *carved, const voxel_cave_room_cache &cache,
+    int32_t x, int32_t z, int32_t surface_height,
+    const voxel_underground_structure_config &config) noexcept
+{
+    const int32_t minimum_y = std::max(VOXEL_BEDROCK_FLOOR_Y + 1, config.minimum_height);
+    const int32_t maximum_y = surface_height - 1;
+    if (minimum_y > maximum_y)
+        return ;
+    const int32_t first_x = voxel_floor_div(x, VOXEL_CAVE_CELL_SIZE) - 1 - cache.first_x;
+    const int32_t first_z = voxel_floor_div(z, VOXEL_CAVE_CELL_SIZE) - 1 - cache.first_z;
+    const int32_t last_room = maximum_y / VOXEL_CAVE_CELL_SIZE + 2;
+    const int32_t room_ceiling = surface_height - VOXEL_CAVE_SURFACE_MARGIN - 1;
+    int32_t index_y = minimum_y / VOXEL_CAVE_CELL_SIZE;
+    while (index_y <= last_room)
+    {
+        // The room is considered from its own vertical cell and the adjacent cells.
+        const int32_t first_y = std::max(minimum_y, (index_y - 2) * VOXEL_CAVE_CELL_SIZE);
+        const int32_t last_y = std::min(maximum_y, (index_y + 1) * VOXEL_CAVE_CELL_SIZE - 1);
+        int32_t index_z = first_z;
+        while (index_z < first_z + 3)
+        {
+            int32_t index_x = first_x;
+            while (index_x < first_x + 3)
+            {
+                voxel_mark_room_column(carved, cache.rooms[index_y][index_z][index_x],
+                    x, z, first_y, last_y, room_ceiling, config.cave_entrance_radius);
+                index_x += 1;
+            }
+            index_z += 1;
+        }
+        index_y += 1;
+    }
+    return ;
 }
 
 static uint8_t voxel_surface_water_kind(uint64_t seed_value,
@@ -1449,6 +1577,14 @@ static uint32_t voxel_surface_water_max_depth(uint8_t water_kind,
     if (water_kind == VOXEL_SURFACE_WATER_RIVER)
         return (config.fluids.surface_river_depth);
     return (config.fluids.surface_lake_depth);
+}
+
+static ft_bool voxel_surface_water_accepts_block(int32_t y, uint32_t block_id,
+    const void *user_data) noexcept
+{
+    if (y == *static_cast<const int32_t *>(user_data))
+        return (voxel_block_is_solid(block_id));
+    return (block_id == VOXEL_GENERATOR_AIR_BLOCK || voxel_block_is_liquid(block_id) == FT_TRUE);
 }
 
 static ft_bool voxel_surface_water_candidate_is_valid(uint64_t seed_value,
@@ -1559,153 +1695,30 @@ static ft_bool voxel_stage_dependencies_are_met(uint32_t requested_mask,
     return (FT_TRUE);
 }
 
-static ft_bool voxel_is_enclosed_underground_lake_site(
-    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
-    int32_t local_z, int32_t world_block_origin_x,
-    int32_t world_block_origin_z,
-    const voxel_generation_config &config) noexcept
+static ft_bool voxel_underground_lake_can_clear_ceiling(
+    const game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
+    int32_t local_z, uint32_t lake_depth, ft_bool has_reader) noexcept
 {
-    if (voxel_underground_lake_geometry_is_valid(chunk, local_x, local_y,
-            local_z, world_block_origin_x, world_block_origin_z,
-            config) == FT_FALSE)
-        return (FT_FALSE);
-    if (config.cross_chunk_block_reader != ft_nullptr)
+    if (has_reader == FT_TRUE || lake_depth != 1U)
         return (FT_TRUE);
-    if (config.fluids.underground_lake_depth != 1U)
-        return (FT_TRUE);
-    int32_t boundary_z = -2;
-    while (boundary_z <= 2)
+    // The shared geometry check already validated the lower perimeter.
+    int32_t z = -2;
+    while (z <= 2)
     {
-        int32_t boundary_x = -2;
-        while (boundary_x <= 2)
+        int32_t x = -2;
+        while (x <= 2)
         {
-            if (std::abs(boundary_x) == 2 || std::abs(boundary_z) == 2)
+            if (std::abs(x) == 2 || std::abs(z) == 2)
             {
-                uint32_t boundary_block;
-                if (chunk.read_block(local_x + boundary_x, local_y,
-                        local_z + boundary_z, &boundary_block)
-                        != FT_ERR_SUCCESS
-                    || voxel_block_is_solid(boundary_block) == FT_FALSE)
+                uint32_t block_id;
+                if (chunk.read_block(local_x + x, local_y + 1, local_z + z,
+                        &block_id) != FT_ERR_SUCCESS
+                    || voxel_block_is_solid(block_id) == FT_FALSE)
                     return (FT_FALSE);
             }
-            boundary_x += 1;
+            x += 1;
         }
-        boundary_z += 1;
-    }
-    int32_t offset_z = -1;
-    while (offset_z <= 1)
-    {
-        int32_t offset_x = -1;
-        while (offset_x <= 1)
-        {
-            uint32_t block_id;
-            uint32_t upper_block_id;
-            if (chunk.read_block(local_x + offset_x, local_y,
-                    local_z + offset_z, &block_id) != FT_ERR_SUCCESS
-                || chunk.read_block(local_x + offset_x, local_y + 1,
-                    local_z + offset_z, &upper_block_id) != FT_ERR_SUCCESS
-                || block_id != VOXEL_GENERATOR_AIR_BLOCK
-                || upper_block_id != VOXEL_GENERATOR_AIR_BLOCK)
-                return (FT_FALSE);
-            offset_x += 1;
-        }
-        offset_z += 1;
-    }
-    offset_z = -1;
-    while (offset_z <= 1)
-    {
-        int32_t offset_x = -1;
-        while (offset_x <= 1)
-        {
-            uint32_t floor_block;
-            uint32_t roof_block;
-            if (chunk.read_block(local_x + offset_x, local_y - 1,
-                    local_z + offset_z, &floor_block) != FT_ERR_SUCCESS
-                || chunk.read_block(local_x + offset_x, local_y + 2,
-                    local_z + offset_z, &roof_block) != FT_ERR_SUCCESS
-                || voxel_block_is_solid(floor_block) == FT_FALSE
-                || voxel_block_is_solid(roof_block) == FT_FALSE)
-                return (FT_FALSE);
-            offset_x += 1;
-        }
-        offset_z += 1;
-    }
-    return (FT_TRUE);
-}
-
-static ft_bool voxel_can_create_underground_lake_site(
-    game_voxel_chunk &chunk, int32_t local_x, int32_t local_y,
-    int32_t local_z, int32_t world_block_origin_x,
-    int32_t world_block_origin_z,
-    const voxel_generation_config &config) noexcept
-{
-    if (voxel_underground_lake_geometry_is_valid(chunk, local_x, local_y,
-            local_z, world_block_origin_x, world_block_origin_z,
-            config) == FT_FALSE)
-        return (FT_FALSE);
-    if (config.cross_chunk_block_reader != ft_nullptr)
-        return (FT_TRUE);
-    if (config.fluids.underground_lake_depth != 1U)
-        return (FT_TRUE);
-    int32_t offset_z = -2;
-    while (offset_z <= 2)
-    {
-        int32_t offset_x = -2;
-        while (offset_x <= 2)
-        {
-            if (std::abs(offset_x) == 2 || std::abs(offset_z) == 2)
-            {
-                uint32_t wall_block;
-                uint32_t upper_wall_block;
-                if (chunk.read_block(local_x + offset_x, local_y,
-                        local_z + offset_z, &wall_block) != FT_ERR_SUCCESS
-                    || chunk.read_block(local_x + offset_x, local_y + 1,
-                        local_z + offset_z, &upper_wall_block) != FT_ERR_SUCCESS
-                    || voxel_block_is_solid(wall_block) == FT_FALSE
-                    || voxel_block_is_solid(upper_wall_block) == FT_FALSE)
-                    return (FT_FALSE);
-            }
-            offset_x += 1;
-        }
-        offset_z += 1;
-    }
-    offset_z = -1;
-    while (offset_z <= 1)
-    {
-        int32_t offset_x = -1;
-        while (offset_x <= 1)
-        {
-            uint32_t lower_block;
-            uint32_t upper_block;
-            if (chunk.read_block(local_x + offset_x, local_y,
-                    local_z + offset_z, &lower_block) != FT_ERR_SUCCESS
-                || chunk.read_block(local_x + offset_x, local_y + 1,
-                    local_z + offset_z, &upper_block) != FT_ERR_SUCCESS
-                || lower_block != VOXEL_GENERATOR_AIR_BLOCK
-                || upper_block != VOXEL_GENERATOR_AIR_BLOCK)
-                return (FT_FALSE);
-            offset_x += 1;
-        }
-        offset_z += 1;
-    }
-    offset_z = -1;
-    while (offset_z <= 1)
-    {
-        int32_t offset_x = -1;
-        while (offset_x <= 1)
-        {
-            uint32_t floor_block;
-            uint32_t roof_block;
-            if (chunk.read_block(local_x + offset_x, local_y - 1,
-                    local_z + offset_z, &floor_block) != FT_ERR_SUCCESS
-                || chunk.read_block(local_x + offset_x, local_y + 2,
-                    local_z + offset_z, &roof_block) != FT_ERR_SUCCESS
-                || voxel_block_is_solid(floor_block) == FT_FALSE
-                || voxel_block_is_solid(roof_block) == FT_FALSE)
-                return (FT_FALSE);
-            offset_x += 1;
-        }
-        offset_z += 1;
+        z += 1;
     }
     return (FT_TRUE);
 }
@@ -1730,15 +1743,16 @@ static ft_bool voxel_block_is_ore_host(uint32_t block_id,
 static int32_t voxel_find_surface_height(const game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept
 {
+    uint32_t column[GAME_VOXEL_CHUNK_HEIGHT];
+    if (chunk.copy_region(column, GAME_VOXEL_CHUNK_HEIGHT,
+            static_cast<uint32_t>(local_x), static_cast<uint32_t>(local_z),
+            1U, 1U) != FT_ERR_SUCCESS)
+        return (-1);
     int32_t local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
-    uint32_t block_id;
 
     while (local_y >= 0)
     {
-        if (chunk.read_block(local_x, local_y, local_z, &block_id)
-            != FT_ERR_SUCCESS)
-            return (-1);
-        if (voxel_block_is_solid(block_id) == FT_TRUE)
+        if (voxel_block_is_solid(column[local_y]) == FT_TRUE)
             return (local_y);
         local_y -= 1;
     }
@@ -1780,15 +1794,19 @@ static int32_t voxel_place_ore_vein(game_voxel_chunk &chunk,
                 &block_id);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
+            if (voxel_block_is_ore_host(block_id, config) == FT_FALSE
+                && (ore_rule.allow_ore_replacement == FT_FALSE
+                    || voxel_block_is_ore(block_id) == FT_FALSE))
+            {
+                vein_index += 1U;
+                continue ;
+            }
             target_surface = voxel_find_surface_height(chunk,
                 target_x, target_z);
             target_depth = target_surface - target_y;
             if (target_surface >= 0
                 && target_depth >= ore_rule.minimum_depth
-                && target_depth <= ore_rule.maximum_depth
-                && (voxel_block_is_ore_host(block_id, config) == FT_TRUE
-                    || (ore_rule.allow_ore_replacement == FT_TRUE
-                        && voxel_block_is_ore(block_id) == FT_TRUE)))
+                && target_depth <= ore_rule.maximum_depth)
             {
                 error_code = chunk.write_generated_block(target_x, target_y, target_z,
                     ore_rule.block_id);
@@ -1900,18 +1918,16 @@ int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
         world_block_origin_z, seed_string, config));
 }
 
-static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
-    int32_t world_block_origin_x, int32_t world_block_origin_z,
-    const char *seed_string,
-    const voxel_generation_config &requested_config,
-    ft_bool configuration_validated, ft_bool signature_precomputed,
-    uint32_t precomputed_signature, ft_bool coordinate_seed_overridden,
-    uint64_t coordinate_seed, uint32_t requested_stage_mask) noexcept
+static int32_t voxel_generate_chunk_stages(game_voxel_chunk &chunk,
+    const voxel_generation_config &config,
+    const voxel_cross_chunk_callbacks &callbacks,
+    const game_voxel_generation_metadata &generation_metadata,
+    uint32_t requested_stage_mask) noexcept
 {
-    voxel_generation_config config;
+    const int32_t world_block_origin_x = generation_metadata.world_block_origin_x;
+    const int32_t world_block_origin_z = generation_metadata.world_block_origin_z;
+    const uint64_t seed_value = generation_metadata.seed_value;
 
-    if (config.initialize(requested_config) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
     int32_t local_x;
     int32_t local_y;
     int32_t local_z;
@@ -1923,65 +1939,30 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
     uint32_t biome;
     voxel_biome_profile biome_profile;
     uint32_t deep_block_id;
-    uint64_t seed_value;
-    uint32_t configuration_signature;
     ft_bool place_shrub;
     ft_bool mountain_active;
     const voxel_tree_template *tree_template;
     uint64_t tree_feature_seed;
     uint32_t feature_index;
-    uint64_t feature_seed;
     const voxel_feature_rule *feature_rule;
-    game_voxel_generation_metadata generation_metadata;
     voxel_column_cache column_cache[VOXEL_COLUMN_CACHE_COUNT];
     int32_t column_index;
     int32_t feature_margin;
-    uint32_t previous_stage_mask;
-    const uint32_t all_stage_mask = VOXEL_STAGE_BASE_TERRAIN
-        | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
-        | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES
-        | VOXEL_STAGE_ORES;
-
-    if (chunk.is_generation_protected() == FT_TRUE)
-        return (FT_ERR_SUCCESS);
-    if (requested_stage_mask == 0U || (requested_stage_mask & ~all_stage_mask) != 0U)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (configuration_validated == FT_FALSE
-        && voxel_generation_config_is_valid(config) == FT_FALSE)
-        return (FT_ERR_INVALID_ARGUMENT);
-
-    seed_value = voxel_seed_value(seed_string);
-    if (coordinate_seed_overridden == FT_TRUE)
-        seed_value = voxel_mix_u64(seed_value ^ coordinate_seed);
-    if (signature_precomputed == FT_TRUE)
-        configuration_signature = precomputed_signature;
-    else
-        configuration_signature = voxel_generation_config_signature(config);
-    previous_stage_mask = 0U;
-    if (chunk.generation_metadata_matches(seed_value, world_block_origin_x,
-            world_block_origin_z, configuration_signature) == FT_TRUE
-        && chunk.get_generation_metadata().generator_version == VOXEL_GENERATOR_VERSION)
-    {
-        previous_stage_mask = chunk.get_generation_metadata().completed_stage_mask;
-        if ((previous_stage_mask & requested_stage_mask) == requested_stage_mask)
-        {
-            chunk.clear_dirty();
-            return (FT_ERR_SUCCESS);
-        }
-    }
-    if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U)
-    {
-        error_code = voxel_stage_clear_chunk(chunk);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        previous_stage_mask = 0U;
-    }
-    if (voxel_stage_dependencies_are_met(requested_stage_mask,
-            previous_stage_mask) == FT_FALSE)
-        return (FT_ERR_INVALID_OPERATION);
     voxel_stage_prepare_columns(seed_value, world_block_origin_x,
         world_block_origin_z, config, column_cache);
     /* Stage: base voxel, caves, voxel-aware layers, and fluids. */
+    game_voxel_generated_column_block column_blocks[2U * GAME_VOXEL_CHUNK_HEIGHT];
+    const auto &underground = config.underground_structures;
+    const ft_bool carve_caves = (requested_stage_mask & VOXEL_STAGE_CAVES) != 0U;
+    voxel_cave_room_cache cave_rooms;
+    const voxel_cave_room_cache *room_cache = ft_nullptr;
+    if (carve_caves == FT_TRUE && underground.enable_cave_rooms == FT_TRUE
+        && underground.cave_room_chance_percent != 0U && underground.cave_small_radius != 0U)
+    {
+        voxel_prepare_cave_rooms(cave_rooms, seed_value,
+            world_block_origin_x, world_block_origin_z, underground);
+        room_cache = &cave_rooms;
+    }
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
     {
@@ -2006,19 +1987,27 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 && column_height > biome_profile.surface_height
                     + biome_profile.height_variation + 4)
                 mountain_active = FT_TRUE;
+            uint32_t column_count = 0U;
+            const ft_bool ravine_column = carve_caves == FT_TRUE && underground.enable_ravines == FT_TRUE
+                && voxel_should_place_feature(seed_value, world_block_x, world_block_z,
+                    UINT64_C(0xD1CEB00C), underground.ravine_chance_percent) == FT_TRUE;
+            ft_bool cave_column[GAME_VOXEL_CHUNK_HEIGHT];
+            if (room_cache != ft_nullptr)
+            {
+                std::fill_n(cave_column, column_height + 1, FT_FALSE);
+                voxel_prepare_cave_column(cave_column, *room_cache, world_block_x,
+                    world_block_z, column_height, underground);
+            }
             local_y = 0;
             while (local_y <= column_height)
             {
-                if ((requested_stage_mask & VOXEL_STAGE_CAVES) != 0U
-                    && local_y > VOXEL_BEDROCK_FLOOR_Y
-                    && voxel_should_carve_cave(seed_value, world_block_x,
-                        local_y, world_block_z, column_height, config)
-                    == FT_TRUE)
+                if (carve_caves == FT_TRUE && local_y > VOXEL_BEDROCK_FLOOR_Y
+                    && ((room_cache != ft_nullptr && cave_column[local_y] == FT_TRUE)
+                        || (ravine_column == FT_TRUE
+                            && voxel_should_carve_ravine(seed_value, world_block_x,
+                                local_y, world_block_z, column_height, underground) == FT_TRUE)))
                 {
-                    error_code = chunk.write_generated_block(local_x, local_y,
-                        local_z, VOXEL_GENERATOR_AIR_BLOCK);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
+                    column_blocks[column_count++] = {local_y, VOXEL_GENERATOR_AIR_BLOCK};
                     local_y += 1;
                     continue ;
                 }
@@ -2047,10 +2036,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     && local_y >= column_height
                         - biome_profile.topsoil_depth)
                     block_id = deep_block_id;
-                error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                    block_id);
-                if (error_code != FT_ERR_SUCCESS)
-                    return (error_code);
+                column_blocks[column_count++] = {local_y, block_id};
                 local_y += 1;
             }
             if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U
@@ -2058,28 +2044,29 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 && column_cache[column_index].has_surface_water == FT_FALSE
                 && column_height < config.sea_level)
             {
+                const int64_t beach_end = static_cast<int64_t>(column_height)
+                    - config.layers.beach_depth;
+                const int32_t beach_bottom = static_cast<int32_t>(std::max<int64_t>(-1, beach_end));
+                const int32_t underwater_bottom = static_cast<int32_t>(
+                    std::max<int64_t>(-1, beach_end - config.layers.underwater_depth));
                 local_y = column_height;
-                while (local_y >= 0 && local_y > column_height
-                    - static_cast<int32_t>(config.layers.beach_depth))
+                while (local_y > beach_bottom)
                 {
-                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                        config.layers.beach_block_id);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
+                    column_blocks[column_count++] = {local_y, config.layers.beach_block_id};
                     local_y -= 1;
                 }
-                local_y = column_height
-                    - static_cast<int32_t>(config.layers.beach_depth);
-                while (local_y >= 0 && local_y > column_height
-                    - static_cast<int32_t>(config.layers.beach_depth)
-                    - static_cast<int32_t>(config.layers.underwater_depth))
+                local_y = beach_bottom;
+                while (local_y > underwater_bottom)
                 {
-                    error_code = chunk.write_generated_block(local_x, local_y, local_z,
-                        config.layers.underwater_block_id);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
+                    column_blocks[column_count++] = {local_y, config.layers.underwater_block_id};
                     local_y -= 1;
                 }
+            }
+            if (column_count != 0U)
+            {
+                error_code = chunk.write_generated_column(local_x, local_z, column_blocks, column_count);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
             }
             local_x += 1;
         }
@@ -2097,74 +2084,37 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             {
                 column_index = local_z * GAME_VOXEL_CHUNK_WIDTH + local_x;
                 column_height = column_cache[column_index].column_height;
-				if (column_cache[column_index].has_surface_water == FT_TRUE
-					&& column_height >= 0
-					&& column_height < column_cache[column_index]
-						.surface_water_level)
-				{
-					uint32_t bed_block;
-					ft_bool water_column_is_valid;
-					if (chunk.read_block(local_x, column_height, local_z,
-							&bed_block) != FT_ERR_SUCCESS
-						|| voxel_block_is_solid(bed_block) == FT_FALSE)
-					{
-						column_cache[column_index].has_surface_water = FT_FALSE;
-					}
-					else
-					{
-						/* Preflight the complete column before writing anything.
-						 * A solid block above the depression must reject the
-						 * candidate instead of leaving a partially filled pond. */
-						water_column_is_valid = FT_TRUE;
-						local_y = column_height + 1;
-						while (local_y <= column_cache[column_index]
-								.surface_water_level
-							&& local_y < GAME_VOXEL_CHUNK_HEIGHT)
-						{
-							uint32_t existing_block;
-
-							if (chunk.read_block(local_x, local_y, local_z,
-									&existing_block) != FT_ERR_SUCCESS
-								|| (existing_block != VOXEL_GENERATOR_AIR_BLOCK
-									&& voxel_block_is_liquid(existing_block)
-										== FT_FALSE))
-							{
-								water_column_is_valid = FT_FALSE;
-								break ;
-							}
-							local_y += 1;
-						}
-						if (water_column_is_valid == FT_FALSE)
-						{
-							column_cache[column_index].has_surface_water = FT_FALSE;
-							local_x += 1;
-							continue ;
-						}
-						local_y = column_height + 1;
-						while (local_y <= column_cache[column_index]
-                                .surface_water_level
-                            && local_y < GAME_VOXEL_CHUNK_HEIGHT)
-                        {
-                            uint32_t existing_block;
-                            if (chunk.read_block(local_x, local_y, local_z,
-                                    &existing_block) != FT_ERR_SUCCESS
-                                || (existing_block
-                                    != VOXEL_GENERATOR_AIR_BLOCK
-                                    && voxel_block_is_liquid(existing_block)
-                                        == FT_FALSE))
-                                break ;
-                            block_id = VOXEL_GENERATOR_WATER_BLOCK;
-                            if (local_y == config.sea_level
-                                && column_cache[column_index].biome
-                                    == VOXEL_BIOME_SNOW)
-                                block_id = VOXEL_GENERATOR_ICE_BLOCK;
-                            error_code = chunk.write_generated_block(local_x,
-                                local_y, local_z, block_id);
-                            if (error_code != FT_ERR_SUCCESS)
-                                return (error_code);
-                            local_y += 1;
-                        }
+                if (column_cache[column_index].has_surface_water == FT_TRUE
+                    && column_height >= 0
+                    && column_height < column_cache[column_index].surface_water_level)
+                {
+                    if (column_height >= GAME_VOXEL_CHUNK_HEIGHT)
+                    {
+                        column_cache[column_index].has_surface_water = FT_FALSE;
+                        local_x += 1;
+                        continue ;
                     }
+                    const int32_t top = std::min<int32_t>(GAME_VOXEL_CHUNK_HEIGHT - 1,
+                        column_cache[column_index].surface_water_level);
+                    uint32_t water_count = 0U;
+                    local_y = column_height + 1;
+                    while (local_y <= top)
+                    {
+                        block_id = VOXEL_GENERATOR_WATER_BLOCK;
+                        if (local_y == config.sea_level
+                            && column_cache[column_index].biome == VOXEL_BIOME_SNOW)
+                            block_id = VOXEL_GENERATOR_ICE_BLOCK;
+                        column_blocks[water_count++] = {local_y, block_id};
+                        local_y += 1;
+                    }
+                    const game_voxel_generated_column_check check = {
+                        column_height, top, voxel_surface_water_accepts_block, &column_height
+                    };
+                    error_code = chunk.write_generated_column(local_x, local_z,
+                        column_blocks, water_count, &check,
+                        &column_cache[column_index].has_surface_water);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
                 }
                 local_x += 1;
             }
@@ -2209,21 +2159,17 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                             config.fluids.underground_lake_chance_percent) == FT_TRUE
                     )
                     {
-                        const ft_bool can_create_lake =
-                            voxel_can_create_underground_lake_site(chunk,
-                            local_x, local_y, local_z, world_block_origin_x,
-                            world_block_origin_z, config);
-                        const ft_bool is_enclosed_lake =
-                            voxel_is_enclosed_underground_lake_site(chunk,
-                            local_x, local_y, local_z, world_block_origin_x,
-                            world_block_origin_z, config);
-                        if (can_create_lake == FT_FALSE
-                            && is_enclosed_lake == FT_FALSE)
+                        if (voxel_underground_lake_geometry_is_valid(chunk,
+                                local_x, local_y, local_z, world_block_origin_x,
+                                world_block_origin_z, config, callbacks) == FT_FALSE)
                         {
                             local_y += 1;
                             continue ;
                         }
-                        if (can_create_lake == FT_TRUE)
+                        if (voxel_underground_lake_can_clear_ceiling(
+                                chunk, local_x, local_y, local_z,
+                                config.fluids.underground_lake_depth,
+                                callbacks.reader != ft_nullptr) == FT_TRUE)
                         {
                             int32_t clear_z = -1;
                             while (clear_z <= 1)
@@ -2236,7 +2182,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                                             + static_cast<int32_t>(config.fluids
                                                 .underground_lake_depth),
                                         local_z + clear_z, world_block_origin_x,
-                                        world_block_origin_z, config,
+                                        world_block_origin_z, callbacks,
                                         VOXEL_GENERATOR_AIR_BLOCK);
                                     if (error_code != FT_ERR_SUCCESS)
                                         return (error_code);
@@ -2259,7 +2205,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                                         chunk, local_x + fill_x,
                                         local_y + fill_depth, local_z + fill_z,
                                         world_block_origin_x,
-                                        world_block_origin_z, config,
+                                        world_block_origin_z, callbacks,
                                         VOXEL_GENERATOR_WATER_BLOCK);
                                     if (error_code != FT_ERR_SUCCESS)
                                         return (error_code);
@@ -2283,8 +2229,10 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
      * border columns.  Tree and shrub placement keeps its interior margin,
      * but excluding the border here makes valid snow disappear until a
      * neighboring chunk happens to be present. */
-    if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-        && config.layers.enable_snow_caps == FT_TRUE)
+    const ft_bool decorate = (requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U;
+    const ft_bool place_snow_caps = config.layers.enable_snow_caps == FT_TRUE
+        && config.layers.snow_cap_depth != 0U;
+    if (decorate == FT_TRUE && place_snow_caps == FT_TRUE)
     {
         local_z = 0;
         while (local_z < GAME_VOXEL_CHUNK_DEPTH)
@@ -2298,16 +2246,10 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     && column_cache[column_index].can_place_snow == FT_TRUE
                     && column_height >= config.layers.snow_cap_minimum_height)
                 {
-                    local_y = column_height;
-                    while (local_y >= 0 && local_y > column_height
-                        - static_cast<int32_t>(config.layers.snow_cap_depth))
-                    {
-                        error_code = chunk.write_generated_block(local_x,
-                            local_y, local_z, config.layers.snow_cap_block_id);
-                        if (error_code != FT_ERR_SUCCESS)
-                            return (error_code);
-                        local_y -= 1;
-                    }
+                    error_code = voxel_write_snow_cap(chunk, local_x,
+                        column_height, local_z, config.layers, column_blocks);
+                    if (error_code != FT_ERR_SUCCESS)
+                        return (error_code);
                 }
                 local_x += 1;
             }
@@ -2316,11 +2258,11 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
     }
     /* Stage: biome decorations and configured structures. */
     feature_margin = 2;
-    if (config.allow_cross_chunk_features == FT_TRUE
-        && config.cross_chunk_block_writer != ft_nullptr)
+    if (callbacks.features_enabled == FT_TRUE && callbacks.writer != ft_nullptr)
         feature_margin = 0;
     local_z = feature_margin;
-    while (local_z + feature_margin < GAME_VOXEL_CHUNK_DEPTH)
+    while (decorate == FT_TRUE
+        && local_z + feature_margin < GAME_VOXEL_CHUNK_DEPTH)
     {
         world_block_z = world_block_origin_z + local_z;
         local_x = feature_margin;
@@ -2340,8 +2282,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     + column_cache[column_index].biome_profile.height_variation
                     + 4)
                 mountain_active = FT_TRUE;
-            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-                && config.layers.enable_snow_caps == FT_TRUE
+            if (place_snow_caps == FT_TRUE
                 && column_cache[column_index].has_surface_water == FT_FALSE
                 && column_cache[column_index].can_place_snow == FT_TRUE
                 && column_height >= config.layers.snow_cap_minimum_height
@@ -2352,19 +2293,12 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                             0xD1B54A32D192ED03), world_block_x,
                             world_block_z, config.detail_noise_scale) > -0.35)))
             {
-                local_y = column_height;
-                while (local_y >= 0 && local_y > column_height
-                    - static_cast<int32_t>(config.layers.snow_cap_depth))
-                {
-                    error_code = chunk.write_generated_block(local_x, local_y,
-                        local_z, config.layers.snow_cap_block_id);
-                    if (error_code != FT_ERR_SUCCESS)
-                        return (error_code);
-                    local_y -= 1;
-                }
+                error_code = voxel_write_snow_cap(chunk, local_x,
+                    column_height, local_z, config.layers, column_blocks);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
             }
-            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-                && column_cache[column_index].has_surface_water == FT_TRUE)
+            if (column_cache[column_index].has_surface_water == FT_TRUE)
             {
                 const int32_t water_level =
                     column_cache[column_index].surface_water_level;
@@ -2407,8 +2341,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                 }
             }
             bool paper_reed_placed = false;
-            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-                && column_cache[column_index].has_surface_water == FT_FALSE
+            if (column_cache[column_index].has_surface_water == FT_FALSE
                 && column_height + 1 < GAME_VOXEL_CHUNK_HEIGHT
                 && voxel_should_place_feature(seed_value, world_block_x,
                     world_block_z, VOXEL_FEATURE_PAPER_REED_SALT, 12U)
@@ -2461,8 +2394,7 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                     paper_reed_placed = true;
                 }
             }
-            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-                && paper_reed_placed == false
+            if (paper_reed_placed == false
                 && place_shrub == FT_TRUE
                 && column_cache[column_index].has_surface_water == FT_FALSE
                 && column_height + VOXEL_FEATURE_SHRUB_HEIGHT_OFFSET
@@ -2485,9 +2417,9 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                         return (error_code);
                 }
             }
-            if ((requested_stage_mask & VOXEL_STAGE_DECORATION) != 0U
-                && paper_reed_placed == false
-                && column_cache[column_index].can_place_trees == FT_TRUE)
+            if (paper_reed_placed == false
+                && column_cache[column_index].can_place_trees == FT_TRUE
+                && column_cache[column_index].tree_chance_percent != 0U)
             {
                 if (column_cache[column_index].has_surface_water == FT_TRUE)
                 {
@@ -2503,15 +2435,12 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                         column_cache[column_index].biome_sample,
                         tree_feature_seed);
                     column_height = column_cache[column_index].column_height;
-                    if (tree_template != ft_nullptr
-                        && voxel_can_place_tree_with_writer(chunk, local_x,
-                            column_height + 1, local_z, *tree_template,
-                            config) == FT_TRUE)
+                    if (tree_template != ft_nullptr)
                     {
-                        error_code = voxel_place_tree_with_writer(chunk,
+                        error_code = voxel_apply_tree_template(chunk,
                             local_x, column_height + 1, local_z,
                             world_block_origin_x, world_block_origin_z,
-                            *tree_template, config);
+                            *tree_template, callbacks);
                         if (error_code != FT_ERR_SUCCESS)
                             return (error_code);
                     }
@@ -2522,13 +2451,16 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
         local_z += 4;
     }
     feature_index = 0U;
-    while (feature_index < config.feature_count
+    while ((requested_stage_mask & VOXEL_STAGE_STRUCTURES) != 0U
+        && feature_index < config.feature_count
         && feature_index < VOXEL_MAX_FEATURE_RULES)
     {
         feature_rule = &config.features[feature_index];
-        if ((requested_stage_mask & VOXEL_STAGE_STRUCTURES) != 0U
-            && feature_rule->template_data != ft_nullptr)
+        if (feature_rule->template_data != ft_nullptr
+            && feature_rule->chance_percent != 0U)
         {
+            const uint64_t feature_salt = VOXEL_FEATURE_TREE_SALT
+                ^ static_cast<uint64_t>(feature_index + 1U);
             local_z = feature_margin;
             while (local_z + feature_margin < GAME_VOXEL_CHUNK_DEPTH)
             {
@@ -2547,22 +2479,15 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
                             || (column_cache[column_index].has_surface_water
                                 == FT_FALSE)))
                     {
-                        feature_seed = voxel_feature_seed(seed_value,
-                            world_block_origin_x + local_x,
-                            world_block_origin_z + local_z,
-                            VOXEL_FEATURE_TREE_SALT
-                                ^ static_cast<uint64_t>(feature_index + 1U));
-                        if ((feature_seed % 100U)
-                            < feature_rule->chance_percent
-                            && voxel_can_place_tree_with_writer(chunk,
-                                local_x, column_height + 1, local_z,
-                                *feature_rule->template_data, config)
-                                == FT_TRUE)
+                        if (voxel_should_place_feature(seed_value,
+                                world_block_origin_x + local_x,
+                                world_block_origin_z + local_z, feature_salt,
+                                feature_rule->chance_percent) == FT_TRUE)
                         {
-                            error_code = voxel_place_tree_with_writer(chunk,
+                            error_code = voxel_apply_tree_template(chunk,
                                 local_x, column_height + 1, local_z,
                                 world_block_origin_x, world_block_origin_z,
-                                *feature_rule->template_data, config);
+                                *feature_rule->template_data, callbacks);
                             if (error_code != FT_ERR_SUCCESS)
                                 return (error_code);
                         }
@@ -2583,18 +2508,76 @@ static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
             return (error_code);
     }
     chunk.clear_dirty();
-    generation_metadata.seed_value = seed_value;
-    generation_metadata.world_block_origin_x = world_block_origin_x;
-    generation_metadata.world_block_origin_z = world_block_origin_z;
-    generation_metadata.configuration_signature = configuration_signature;
-    generation_metadata.completed_stage_mask = previous_stage_mask
-        | requested_stage_mask;
-    generation_metadata.generator_version = VOXEL_GENERATOR_VERSION;
-    generation_metadata.valid = FT_TRUE;
-    error_code = chunk.set_generation_metadata(generation_metadata);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (FT_ERR_SUCCESS);
+    return (chunk.set_generation_metadata(generation_metadata));
+}
+
+static int32_t voxel_generate_chunk_from_config(game_voxel_chunk &chunk,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    const char *seed_string, const voxel_generation_config &config,
+    const voxel_cross_chunk_callbacks &callbacks, ft_bool configuration_validated,
+    uint32_t precomputed_signature, ft_bool coordinate_seed_overridden,
+    uint64_t coordinate_seed, uint32_t requested_stage_mask) noexcept
+{
+    constexpr uint32_t ALL_STAGES = VOXEL_STAGE_BASE_TERRAIN
+        | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
+        | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES;
+    if (chunk.is_generation_protected() == FT_TRUE)
+        return (FT_ERR_SUCCESS);
+    if (requested_stage_mask == 0U || (requested_stage_mask & ~ALL_STAGES) != 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (configuration_validated == FT_FALSE
+        && voxel_generation_config_is_valid(config) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+
+    uint64_t seed_value = voxel_seed_value(seed_string);
+    if (coordinate_seed_overridden == FT_TRUE)
+        seed_value = voxel_mix_u64(seed_value ^ coordinate_seed);
+    uint32_t configuration_signature = precomputed_signature;
+    if (configuration_validated == FT_FALSE)
+        configuration_signature = voxel_generation_config_signature(config);
+    uint32_t previous_stage_mask = 0U;
+    if (chunk.generation_metadata_matches(seed_value, world_block_origin_x,
+            world_block_origin_z, configuration_signature) == FT_TRUE
+        && chunk.get_generation_metadata().generator_version == VOXEL_GENERATOR_VERSION)
+    {
+        previous_stage_mask = chunk.get_generation_metadata().completed_stage_mask;
+        if ((previous_stage_mask & requested_stage_mask) == requested_stage_mask)
+        {
+            chunk.clear_dirty();
+            return (FT_ERR_SUCCESS);
+        }
+    }
+    if ((requested_stage_mask & VOXEL_STAGE_BASE_TERRAIN) != 0U)
+    {
+        const int32_t error_code = chunk.clear_generated_blocks();
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        previous_stage_mask = 0U;
+    }
+    if (voxel_stage_dependencies_are_met(requested_stage_mask, previous_stage_mask) == FT_FALSE)
+        return (FT_ERR_INVALID_OPERATION);
+    const game_voxel_generation_metadata generation_metadata = {
+        seed_value, world_block_origin_x, world_block_origin_z,
+        configuration_signature, previous_stage_mask | requested_stage_mask,
+        VOXEL_GENERATOR_VERSION, FT_TRUE
+    };
+    return (voxel_generate_chunk_stages(chunk, config, callbacks, generation_metadata,
+        requested_stage_mask));
+}
+
+static int32_t voxel_generate_chunk_snapshot(game_voxel_chunk &chunk,
+    int32_t world_block_origin_x, int32_t world_block_origin_z,
+    const char *seed_string, const voxel_generation_config &requested_config,
+    ft_bool coordinate_seed_overridden, uint64_t coordinate_seed,
+    uint32_t requested_stage_mask) noexcept
+{
+    voxel_generation_config config;
+    if (config.initialize(requested_config) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (voxel_generate_chunk_from_config(chunk, world_block_origin_x,
+        world_block_origin_z, seed_string, config,
+        voxel_get_cross_chunk_callbacks(config), FT_FALSE, 0U,
+        coordinate_seed_overridden, coordinate_seed, requested_stage_mask));
 }
 
 int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
@@ -2602,8 +2585,8 @@ int32_t voxel_generate_chunk(game_voxel_chunk &chunk,
     const char *seed_string, const voxel_generation_config &config) noexcept
 {
     return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
-        world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U,
-        FT_FALSE, 0U, VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        world_block_origin_z, seed_string, config, FT_FALSE, 0U,
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
         | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
         | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
@@ -2614,8 +2597,7 @@ int32_t voxel_generate_chunk_with_stage_mask(
     const voxel_generation_config &config, uint32_t stage_mask) noexcept
 {
     return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
-        world_block_origin_z, seed_string, config, FT_FALSE, FT_FALSE, 0U,
-        FT_FALSE, 0U, stage_mask));
+        world_block_origin_z, seed_string, config, FT_FALSE, 0U, stage_mask));
 }
 
 int32_t voxel_generate_chunk_with_context(game_voxel_chunk &chunk,
@@ -2624,8 +2606,9 @@ int32_t voxel_generate_chunk_with_context(game_voxel_chunk &chunk,
 {
     if (context.is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_OPERATION);
-    return (voxel_generate_chunk_snapshot(chunk, world_block_origin_x,
-        world_block_origin_z, seed_string, context.config(), FT_TRUE, FT_TRUE,
+    return (voxel_generate_chunk_from_config(chunk, world_block_origin_x,
+        world_block_origin_z, seed_string, context.config(),
+        voxel_get_cross_chunk_callbacks(context.config()), FT_TRUE,
         context.configuration_signature(), FT_FALSE, 0U,
         VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
         | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
@@ -2638,7 +2621,7 @@ int32_t voxel_generate_chunk_at_world_coordinate(game_voxel_chunk &chunk,
     if (coordinate.is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     return (voxel_generate_chunk_snapshot(chunk, 0, 0, seed_string, config,
-        FT_FALSE, FT_FALSE, 0U, FT_TRUE, coordinate.hash(),
+        FT_TRUE, coordinate.hash(),
         VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS
         | VOXEL_STAGE_DECORATION | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }
@@ -2661,7 +2644,6 @@ int32_t voxel_generate_chunk_in_region_with_context(
     int32_t world_block_origin_z, const char *seed_string,
     const voxel_generation_context &context) noexcept
 {
-    voxel_generation_config region_config;
     game_voxel_chunk *chunk;
     int32_t error_code;
 
@@ -2672,22 +2654,14 @@ int32_t voxel_generate_chunk_in_region_with_context(
             GAME_VOXEL_CHUNK_DEPTH), &chunk);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (region_config.initialize(context.config()) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (region_config.set_cross_chunk_features_enabled(FT_TRUE)
-            != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (region_config.set_cross_chunk_writer(
-            &voxel_region_cross_chunk_block_writer, &region)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (region_config.set_cross_chunk_reader(
-            &voxel_region_cross_chunk_block_reader, &region)
-        != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_ARGUMENT);
-    return (voxel_generate_chunk_snapshot(*chunk, world_block_origin_x,
-        world_block_origin_z, seed_string, region_config, FT_TRUE, FT_FALSE,
-        0U, FT_FALSE, 0U, VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+    const voxel_cross_chunk_callbacks callbacks = {
+        FT_TRUE, voxel_region_cross_chunk_block_writer, &region,
+        voxel_region_cross_chunk_block_reader, &region
+    };
+    return (voxel_generate_chunk_from_config(*chunk, world_block_origin_x,
+        world_block_origin_z, seed_string, context.config(), callbacks, FT_TRUE,
+        context.region_configuration_signature(), FT_FALSE, 0U,
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
         | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
         | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES));
 }

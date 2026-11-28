@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <new>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -1076,29 +1077,29 @@ int32_t game_crafting::register_recipe(int32_t recipe_id,
     const std::vector<game_crafting_byproduct> &byproducts,
     ft_bool initially_unlocked) noexcept
 {
-    ft_sharedptr<game_item> owned_definition;
-    game_crafting_output output = {};
+    game_crafting_output_snapshot output = {};
+    game_inventory_item_snapshot definition;
     ft_size_t byproduct_index;
     ft_bool lock_acquired;
     int32_t result;
 
     if (!output_definition || output_quantity <= 0
-        || output_definition->get_instance_id() != 0U
-        || output_definition->get_max_stack() <= 0
+        || output_definition->_initialised_state != FT_CLASS_STATE_INITIALISED
         || byproducts.size() > GAME_CRAFTING_MAX_BYPRODUCTS
         || (initially_unlocked != FT_TRUE && initially_unlocked != FT_FALSE))
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-    result = owned_definition.initialize(new (std::nothrow) game_item());
+    result = output_definition->capture_inventory_fields(0, definition);
     if (result != FT_ERR_SUCCESS)
         return (this->set_error(result));
-    if (!owned_definition)
-        return (this->set_error(FT_ERR_NO_MEMORY));
-    result = owned_definition->initialize(*output_definition);
-    if (result != FT_ERR_SUCCESS)
-        return (this->set_error(result));
-    output.item_definition = owned_definition;
-    output.quantity = output_quantity;
-    output.byproduct_count = byproducts.size();
+    if (definition.instance_id != 0U || definition.max_stack <= 0)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    output.primary = {definition.item_id, output_quantity, definition.max_stack,
+        definition.rarity, definition.width, definition.height,
+        definition.modifier1_id, definition.modifier1_value,
+        definition.modifier2_id, definition.modifier2_value,
+        definition.modifier3_id, definition.modifier3_value,
+        definition.modifier4_id, definition.modifier4_value, definition.instance_id};
+    output.byproduct_count = static_cast<uint32_t>(byproducts.size());
     byproduct_index = 0U;
     while (byproduct_index < byproducts.size())
     {
@@ -1108,7 +1109,11 @@ int32_t game_crafting::register_recipe(int32_t recipe_id,
             || source.max_stack <= 0 || source.instance_id != 0U
             || source.width <= 0 || source.height <= 0)
             return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-        output.byproducts[byproduct_index] = source;
+        output.byproducts[byproduct_index] = {source.item_id, source.quantity, source.max_stack,
+            source.rarity, source.width, source.height,
+            source.modifier1_id, source.modifier1_value, source.modifier2_id, source.modifier2_value,
+            source.modifier3_id, source.modifier3_value, source.modifier4_id, source.modifier4_value,
+            source.instance_id};
         byproduct_index++;
     }
     lock_acquired = FT_FALSE;
@@ -1123,8 +1128,7 @@ int32_t game_crafting::register_recipe(int32_t recipe_id,
         this->unlock_internal(lock_acquired);
         return (result);
     }
-    this->_recipe_outputs.insert(recipe_id,
-        static_cast<game_crafting_output &&>(output));
+    this->_recipe_outputs.insert(recipe_id, output);
     result = this->_recipe_outputs.get_error();
     if (result != FT_ERR_SUCCESS)
     {
@@ -1290,6 +1294,106 @@ int32_t game_crafting::set_recipe_station(int32_t recipe_id,
     return (this->set_error(result));
 }
 
+struct game_crafting_query_stack
+{
+    int32_t slot;
+    int32_t item_id;
+    int32_t rarity;
+    int32_t remaining;
+};
+
+static int32_t game_crafting_allocate_query(
+    const ft_vector<game_crafting_ingredient> &ingredients, int32_t batch_count,
+    std::vector<game_crafting_query_stack> &stacks, game_crafting_query_result &query,
+    ft_vector<game_crafting_missing_ingredient> &missing)
+{
+    ft_vector<game_crafting_missing_ingredient> groups;
+    int32_t result = groups.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    const ft_size_t ingredient_count = ingredients.size();
+    ft_size_t index = 0U;
+    while (index < ingredient_count)
+    {
+        const game_crafting_ingredient &ingredient = ingredients[index++];
+        game_crafting_missing_ingredient group = {};
+        group.item_id = ingredient.get_item_id();
+        group.rarity = ingredient.get_rarity();
+        group.alternative_count = ingredient.get_alternative_count();
+        const int32_t ingredient_count_per_craft = ingredient.get_count();
+        if (group.item_id <= 0 || ingredient_count_per_craft <= 0
+            || group.rarity < -1 || group.alternative_count == 0U
+            || group.alternative_count > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
+            return (FT_ERR_CONFIGURATION);
+        if (ingredient_count_per_craft > INT32_MAX / batch_count)
+            return (FT_ERR_OUT_OF_RANGE);
+        group.required_units = ingredient_count_per_craft * batch_count;
+        uint32_t alternative_index = 0U;
+        while (alternative_index < group.alternative_count)
+        {
+            const int32_t item_id = ingredient.get_alternative_item_id(alternative_index);
+            if (item_id <= 0)
+                return (FT_ERR_CONFIGURATION);
+            group.alternative_item_ids[alternative_index++] = item_id;
+        }
+        result = groups.push_back(group);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+    }
+
+    int32_t pass = 0;
+    while (pass < 2)
+    {
+        auto *group = groups.begin();
+        const auto *group_end = groups.end();
+        while (group != group_end)
+        {
+            const ft_bool wildcard = group->rarity == -1;
+            const ft_bool wildcard_pass = pass == 1;
+            if (wildcard == wildcard_pass)
+            {
+                int32_t remaining = group->required_units;
+                const int32_t *alternatives = group->alternative_item_ids;
+                const int32_t *alternatives_end = alternatives + group->alternative_count;
+                auto stack = stacks.begin();
+                while (stack != stacks.end() && remaining > 0)
+                {
+                    if (stack->remaining > 0 && (wildcard == FT_TRUE || stack->rarity == group->rarity)
+                        && std::find(alternatives, alternatives_end, stack->item_id) != alternatives_end)
+                    {
+                        const int32_t consumed = std::min(stack->remaining, remaining);
+                        stack->remaining -= consumed;
+                        remaining -= consumed;
+                    }
+                    ++stack;
+                }
+                group->available_units = group->required_units - remaining;
+                group->missing_units = remaining;
+            }
+            ++group;
+        }
+        ++pass;
+    }
+    const auto *group = groups.begin();
+    const auto *group_end = groups.end();
+    while (group != group_end)
+    {
+        if (group->missing_units > 0)
+        {
+            result = missing.push_back(*group);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+            ++query.missing_group_count;
+            if (query.missing_units > INT32_MAX - group->missing_units)
+                query.missing_units = INT32_MAX;
+            else
+                query.missing_units += group->missing_units;
+        }
+        ++group;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t game_crafting::query_recipe_at_station(int32_t recipe_id,
     const game_inventory &inventory, int32_t station_id,
     game_crafting_query_result *query_result,
@@ -1297,13 +1401,7 @@ int32_t game_crafting::query_recipe_at_station(int32_t recipe_id,
 {
     const Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
     const Pair<int32_t, ft_bool> *unlock_entry;
-    const Pair<int32_t, ft_sharedptr<game_item>> *item_entry;
-    ft_vector<game_crafting_missing_ingredient> all_groups;
-    ft_size_t index;
-    ft_size_t item_index;
-    ft_size_t item_count;
-    int32_t remaining;
-    std::vector<int32_t> unallocated_units;
+    std::vector<game_crafting_query_stack> stacks;
     ft_bool crafting_locked;
     ft_bool inventory_locked;
     int32_t result;
@@ -1363,143 +1461,80 @@ int32_t game_crafting::query_recipe_at_station(int32_t recipe_id,
         query_result->known = FT_FALSE;
         return (result);
     }
-    result = all_groups.initialize();
     if (result == FT_ERR_SUCCESS && inventory._next_slot < 0)
         result = FT_ERR_INVALID_STATE;
     if (result == FT_ERR_SUCCESS)
     {
-        try
-        {
-            unallocated_units.assign(
-                static_cast<std::size_t>(inventory._next_slot), 0);
-        }
-        catch (const std::bad_alloc &)
-        {
-            result = FT_ERR_NO_MEMORY;
-        }
-    }
-    item_count = inventory._items.size();
-    item_entry = inventory._items.end() - item_count;
-    item_index = 0U;
-    while (result == FT_ERR_SUCCESS && item_index < item_count)
-    {
-        const int32_t slot = item_entry->key;
-
-        if (slot < 0 || static_cast<std::size_t>(slot)
-            >= unallocated_units.size())
-            result = FT_ERR_INVALID_STATE;
-        else if (item_entry->value)
-            unallocated_units[static_cast<std::size_t>(slot)] =
-                item_entry->value->get_stack_size();
-        item_entry++;
-        item_index++;
-    }
-    index = 0U;
-    while (result == FT_ERR_SUCCESS && index < recipe_entry->value.size())
-    {
-        game_crafting_missing_ingredient group = {};
-        const game_crafting_ingredient &ingredient = recipe_entry->value[index];
-        const uint32_t alternative_count = ingredient.get_alternative_count();
-
-        group.item_id = ingredient.get_item_id();
-        group.rarity = ingredient.get_rarity();
-        group.alternative_count = alternative_count;
-        group.required_units = ingredient.get_count();
-        if (group.item_id <= 0 || group.required_units <= 0
-            || group.rarity < -1 || alternative_count == 0U
-            || alternative_count > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
-        {
-            result = FT_ERR_CONFIGURATION;
-            break ;
-        }
-        uint32_t alternative_index = 0U;
-        while (alternative_index < alternative_count)
-        {
-            group.alternative_item_ids[alternative_index] =
-                ingredient.get_alternative_item_id(alternative_index);
-            if (group.alternative_item_ids[alternative_index] <= 0)
-            {
-                result = FT_ERR_CONFIGURATION;
-                break ;
-            }
-            ++alternative_index;
-        }
+        const ft_size_t occupied = inventory._items.size();
+        result = inventory._items.get_error();
         if (result == FT_ERR_SUCCESS)
-            result = all_groups.push_back(group);
-        index++;
-    }
-    /* Allocate rarity-specific requirements before wildcard requirements.
-     * Each inventory slot has one remaining-unit count shared by all groups. */
-    for (int32_t pass = 0; pass < 2 && result == FT_ERR_SUCCESS; ++pass)
-    {
-        index = 0U;
-        while (index < all_groups.size() && result == FT_ERR_SUCCESS)
         {
-            game_crafting_missing_ingredient &group = all_groups[index];
-            const game_crafting_ingredient &ingredient =
-                recipe_entry->value[index];
-            const ft_bool wildcard = group.rarity == -1
-                ? FT_TRUE : FT_FALSE;
-
-            if ((pass == 0 && wildcard == FT_TRUE)
-                || (pass == 1 && wildcard == FT_FALSE))
+            try
             {
-                ++index;
-                continue;
+                if (occupied > stacks.max_size())
+                    result = FT_ERR_OUT_OF_RANGE;
+                else
+                    stacks.reserve(static_cast<std::size_t>(occupied));
             }
-            remaining = group.required_units;
-            item_entry = inventory._items.end() - item_count;
-            item_index = 0U;
-            while (item_index < item_count && remaining > 0)
+            catch (const std::bad_alloc &)
             {
-                const int32_t slot = item_entry->key;
-
-                if (item_entry->value
-                    && (wildcard == FT_TRUE
-                        || item_entry->value->get_rarity() == group.rarity)
-                    && ingredient.matches_item_id(
-                        item_entry->value->get_item_id()) == FT_TRUE)
-                {
-                    const int32_t available_units =
-                        unallocated_units[static_cast<std::size_t>(slot)];
-                    const int32_t consumed = available_units < remaining
-                        ? available_units : remaining;
-
-                    unallocated_units[static_cast<std::size_t>(slot)]
-                        -= consumed;
-                    group.available_units += consumed;
-                    remaining -= consumed;
-                }
-                ++item_entry;
-                ++item_index;
+                result = FT_ERR_NO_MEMORY;
             }
-            group.missing_units = remaining;
-            ++index;
         }
     }
     if (result == FT_ERR_SUCCESS)
     {
-        index = 0U;
-        while (index < all_groups.size() && result == FT_ERR_SUCCESS)
+        using item_entry = Pair<int32_t, ft_sharedptr<game_item>>;
+        result = inventory._items.visit_entries([&](const item_entry &entry) noexcept -> int32_t
         {
-            const game_crafting_missing_ingredient &group = all_groups[index];
-            if (group.missing_units > 0)
+            if (entry.key < 0 || entry.key >= inventory._next_slot)
+                return (FT_ERR_INVALID_STATE);
+            const game_item *item = entry.value.get();
+            if (item == ft_nullptr)
+                return (FT_ERR_SUCCESS);
+            ft_bool item_locked = FT_FALSE;
+            if (item->_mutex != ft_nullptr)
             {
-                result = missing_groups->push_back(group);
-                if (result == FT_ERR_SUCCESS)
-                {
-                    query_result->missing_group_count++;
-                    if (query_result->missing_units
-                        > FT_INT32_MAX - group.missing_units)
-                        query_result->missing_units = FT_INT32_MAX;
-                    else
-                        query_result->missing_units += group.missing_units;
-                }
+                const int32_t lock_error = item->lock_internal(&item_locked);
+                if (lock_error != FT_ERR_SUCCESS)
+                    return (lock_error);
             }
-            index++;
-        }
+            const game_crafting_query_stack snapshot = {entry.key, item->_item_id, item->_rarity, item->_stack_size};
+            if (item_locked == FT_TRUE)
+                item->unlock_internal(item_locked);
+            if (snapshot.remaining < 0)
+                return (FT_ERR_INVALID_STATE);
+            if (snapshot.remaining == 0)
+                return (FT_ERR_SUCCESS);
+            try
+            {
+                stacks.push_back(snapshot);
+            }
+            catch (const std::bad_alloc &)
+            {
+                return (FT_ERR_NO_MEMORY);
+            }
+            catch (const std::length_error &)
+            {
+                return (FT_ERR_OUT_OF_RANGE);
+            }
+            return (FT_ERR_SUCCESS);
+        });
     }
     inventory.unlock(inventory_locked);
+    if (result == FT_ERR_SUCCESS && stacks.size() > 1U)
+    {
+        const auto in_slot_order = [](const game_crafting_query_stack &left, const game_crafting_query_stack &right)
+        {
+            return (left.slot < right.slot);
+        };
+        const auto begin = stacks.begin();
+        const auto end = stacks.end();
+        if (!std::is_sorted(begin, end, in_slot_order))
+            std::sort(begin, end, in_slot_order);
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = game_crafting_allocate_query(recipe_entry->value, 1, stacks, *query_result, *missing_groups);
     this->unlock_internal(crafting_locked);
     if (result != FT_ERR_SUCCESS)
     {
@@ -1533,17 +1568,7 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
     const Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
     const Pair<int32_t, ft_bool> *unlock_entry;
     const Pair<int32_t, int32_t> *required_station;
-    ft_vector<game_crafting_missing_ingredient> all_groups;
-    std::vector<std::size_t> item_order;
-    std::vector<int32_t> remaining_stack_sizes;
-    std::vector<uint64_t> instance_ids;
-    uint64_t calculated_slots = 0U;
-    int64_t calculated_weight = 0;
-    int32_t maximum_slot = -1;
-    ft_size_t index;
-    ft_size_t item_index;
-    uint32_t alternative_index;
-    int32_t remaining;
+    std::vector<game_crafting_query_stack> stacks;
     int32_t result;
     ft_bool crafting_locked = FT_FALSE;
 
@@ -1570,87 +1595,80 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
         || inventory_snapshot.current_weight < 0
         || inventory_snapshot.next_slot < 0)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    uint64_t calculated_slots = 0U;
+    int64_t calculated_weight = 0;
+    std::size_t physical_count = 0U;
     try
     {
-        item_order.resize(inventory_snapshot.items.size());
-        remaining_stack_sizes.resize(inventory_snapshot.items.size());
-        instance_ids.reserve(inventory_snapshot.items.size());
+        stacks.reserve(inventory_snapshot.items.size());
+        auto item = inventory_snapshot.items.begin();
+        while (item != inventory_snapshot.items.end())
+        {
+            if (item->slot < 0 || item->slot >= inventory_snapshot.next_slot
+                || item->item_id <= 0 || item->stack_size <= 0
+                || item->max_stack <= 0 || item->stack_size > item->max_stack
+                || item->width <= 0 || item->height <= 0
+                || (item->instance_id != 0U
+                    && (item->stack_size != 1 || item->max_stack != 1)))
+                return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+            if (calculated_weight > INT32_MAX - item->stack_size)
+                return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+            calculated_weight += item->stack_size;
+            const uint64_t item_slots = static_cast<uint64_t>(item->width) * item->height;
+            if (calculated_slots > UINT64_MAX - item_slots)
+                return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+            calculated_slots += item_slots;
+            stacks.push_back({item->slot, item->item_id, item->rarity, item->stack_size});
+            if (item->instance_id != 0U)
+                ++physical_count;
+            ++item;
+        }
+        if (calculated_weight != inventory_snapshot.current_weight
+#if USE_INVENTORY_SLOTS
+            || calculated_slots != inventory_snapshot.used_slots
+            || (inventory_snapshot.capacity != 0U && calculated_slots > inventory_snapshot.capacity)
+#endif
+            || (inventory_snapshot.weight_limit != 0 && calculated_weight > inventory_snapshot.weight_limit))
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+        const auto same_slot = [](const game_crafting_query_stack &left,
+                                 const game_crafting_query_stack &right)
+        {
+            return (left.slot == right.slot);
+        };
+        const auto in_slot_order = [](const game_crafting_query_stack &left,
+                                     const game_crafting_query_stack &right)
+        {
+            return (left.slot < right.slot);
+        };
+        if (!std::is_sorted(stacks.begin(), stacks.end(), in_slot_order))
+            std::sort(stacks.begin(), stacks.end(), in_slot_order);
+        if (std::adjacent_find(stacks.begin(), stacks.end(), same_slot) != stacks.end())
+            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+
+        if (physical_count > 1U)
+        {
+            std::vector<uint64_t> instance_ids;
+            instance_ids.reserve(physical_count);
+            item = inventory_snapshot.items.begin();
+            while (item != inventory_snapshot.items.end())
+            {
+                if (item->instance_id != 0U)
+                    instance_ids.push_back(item->instance_id);
+                ++item;
+            }
+            if (!std::is_sorted(instance_ids.begin(), instance_ids.end()))
+                std::sort(instance_ids.begin(), instance_ids.end());
+            if (std::adjacent_find(instance_ids.begin(), instance_ids.end()) != instance_ids.end())
+                return (this->set_error(FT_ERR_ALREADY_EXISTS));
+        }
     }
     catch (const std::bad_alloc &)
     {
         return (this->set_error(FT_ERR_NO_MEMORY));
     }
-    index = 0U;
-    while (index < inventory_snapshot.items.size())
+    catch (const std::length_error &)
     {
-        item_order[index] = index;
-        ++index;
-    }
-    std::sort(item_order.begin(), item_order.end(),
-        [&inventory_snapshot](std::size_t left_index,
-            std::size_t right_index)
-        {
-            return (inventory_snapshot.items[left_index].slot
-                < inventory_snapshot.items[right_index].slot);
-        });
-    item_index = 0U;
-    while (item_index < item_order.size())
-    {
-        const game_inventory_item_snapshot &item =
-            inventory_snapshot.items[item_order[item_index]];
-        uint64_t item_slots;
-
-        if (item.slot < 0 || item.slot >= inventory_snapshot.next_slot
-            || item.item_id <= 0 || item.stack_size <= 0
-            || item.max_stack <= 0 || item.stack_size > item.max_stack
-            || item.width <= 0 || item.height <= 0
-            || (item.instance_id != 0U
-                && (item.stack_size != 1 || item.max_stack != 1))
-            || (item_index > 0U
-                && inventory_snapshot.items[item_order[item_index - 1U]].slot
-                    == item.slot))
-            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-        if (calculated_weight > FT_INT32_MAX - item.stack_size)
-            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-        calculated_weight += item.stack_size;
-        item_slots = static_cast<uint64_t>(item.width)
-            * static_cast<uint64_t>(item.height);
-        if (calculated_slots > UINT64_MAX - item_slots)
-            return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-        calculated_slots += item_slots;
-        if (item.slot > maximum_slot)
-            maximum_slot = item.slot;
-        remaining_stack_sizes[item_index] = item.stack_size;
-        if (item.instance_id != 0U)
-        {
-            try
-            {
-                instance_ids.push_back(item.instance_id);
-            }
-            catch (const std::bad_alloc &)
-            {
-                return (this->set_error(FT_ERR_NO_MEMORY));
-            }
-        }
-        ++item_index;
-    }
-    if (calculated_weight != inventory_snapshot.current_weight
-#if USE_INVENTORY_SLOTS
-        || calculated_slots != static_cast<uint64_t>(inventory_snapshot.used_slots)
-        || (inventory_snapshot.capacity != 0U
-            && calculated_slots > static_cast<uint64_t>(inventory_snapshot.capacity))
-#endif
-        || inventory_snapshot.next_slot <= maximum_slot
-        || (inventory_snapshot.weight_limit != 0
-            && calculated_weight > inventory_snapshot.weight_limit))
-        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-    std::sort(instance_ids.begin(), instance_ids.end());
-    index = 1U;
-    while (index < instance_ids.size())
-    {
-        if (instance_ids[index] == instance_ids[index - 1U])
-            return (this->set_error(FT_ERR_ALREADY_EXISTS));
-        ++index;
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
     }
     result = this->lock_internal(&crafting_locked);
     if (result != FT_ERR_SUCCESS)
@@ -1674,106 +1692,8 @@ int32_t game_crafting::query_recipe_at_station_snapshot(int32_t recipe_id,
         this->unlock_internal(crafting_locked);
         return (this->set_error(FT_ERR_SUCCESS));
     }
-    result = all_groups.initialize();
-    index = 0U;
-    while (result == FT_ERR_SUCCESS
-        && index < recipe_entry->value.size())
-    {
-        game_crafting_missing_ingredient group = {};
-        const game_crafting_ingredient &ingredient = recipe_entry->value[index];
-        const uint32_t alternative_count = ingredient.get_alternative_count();
-
-        group.item_id = ingredient.get_item_id();
-        group.rarity = ingredient.get_rarity();
-        group.alternative_count = alternative_count;
-        const int32_t ingredient_count = ingredient.get_count();
-        if (group.item_id <= 0 || ingredient_count <= 0
-            || group.rarity < -1 || alternative_count == 0U
-            || alternative_count
-                > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
-            result = FT_ERR_CONFIGURATION;
-        else if (ingredient_count > FT_INT32_MAX / batch_count)
-            result = FT_ERR_OUT_OF_RANGE;
-        else
-            group.required_units = ingredient_count * batch_count;
-        alternative_index = 0U;
-        while (result == FT_ERR_SUCCESS
-            && alternative_index < alternative_count)
-        {
-            group.alternative_item_ids[alternative_index] =
-                ingredient.get_alternative_item_id(alternative_index);
-            if (group.alternative_item_ids[alternative_index] <= 0)
-                result = FT_ERR_CONFIGURATION;
-            ++alternative_index;
-        }
-        if (result == FT_ERR_SUCCESS)
-            result = all_groups.push_back(group);
-        ++index;
-    }
-    int32_t pass = 0;
-    while (result == FT_ERR_SUCCESS && pass < 2)
-    {
-        index = 0U;
-        while (result == FT_ERR_SUCCESS && index < all_groups.size())
-        {
-            game_crafting_missing_ingredient &group = all_groups[index];
-            const game_crafting_ingredient &ingredient =
-                recipe_entry->value[index];
-            const ft_bool wildcard = group.rarity == -1
-                ? FT_TRUE : FT_FALSE;
-
-            if ((pass == 0 && wildcard == FT_TRUE)
-                || (pass == 1 && wildcard == FT_FALSE))
-            {
-                ++index;
-                continue ;
-            }
-            remaining = group.required_units;
-            item_index = 0U;
-            while (item_index < item_order.size() && remaining > 0)
-            {
-                const game_inventory_item_snapshot &item =
-                    inventory_snapshot.items[item_order[item_index]];
-
-                if ((wildcard == FT_TRUE || item.rarity == group.rarity)
-                    && ingredient.matches_item_id(item.item_id) == FT_TRUE)
-                {
-                    const int32_t available_units =
-                        remaining_stack_sizes[item_index];
-                    const int32_t consumed = available_units < remaining
-                        ? available_units : remaining;
-
-                    remaining_stack_sizes[item_index] -= consumed;
-                    group.available_units += consumed;
-                    remaining -= consumed;
-                }
-                ++item_index;
-            }
-            group.missing_units = remaining;
-            ++index;
-        }
-        ++pass;
-    }
-    index = 0U;
-    while (result == FT_ERR_SUCCESS && index < all_groups.size())
-    {
-        const game_crafting_missing_ingredient &group = all_groups[index];
-
-        if (group.missing_units > 0)
-        {
-            result = missing_groups->push_back(group);
-            if (result == FT_ERR_SUCCESS)
-            {
-                ++query_result->missing_group_count;
-                if (query_result->missing_units
-                    > FT_INT32_MAX - group.missing_units)
-                    query_result->missing_units = FT_INT32_MAX;
-                else
-                    query_result->missing_units += group.missing_units;
-            }
-        }
-        ++index;
-    }
+    result = game_crafting_allocate_query(recipe_entry->value, batch_count,
+        stacks, *query_result, *missing_groups);
     this->unlock_internal(crafting_locked);
     if (result != FT_ERR_SUCCESS)
     {
@@ -1805,24 +1725,17 @@ static int32_t game_crafting_clone_item(
     return ((*destination)->initialize(*source));
 }
 
-static ft_bool game_crafting_items_equal(const game_item &left,
-    const game_item &right) noexcept
+static ft_bool game_crafting_snapshots_equal(const game_inventory_item_snapshot &left,
+    const game_inventory_item_snapshot &right) noexcept
 {
-    return (left.get_item_id() == right.get_item_id()
-        && left.get_stack_size() == right.get_stack_size()
-        && left.get_max_stack() == right.get_max_stack()
-        && left.get_rarity() == right.get_rarity()
-        && left.get_width() == right.get_width()
-        && left.get_height() == right.get_height()
-        && left.get_modifier1_id() == right.get_modifier1_id()
-        && left.get_modifier1_value() == right.get_modifier1_value()
-        && left.get_modifier2_id() == right.get_modifier2_id()
-        && left.get_modifier2_value() == right.get_modifier2_value()
-        && left.get_modifier3_id() == right.get_modifier3_id()
-        && left.get_modifier3_value() == right.get_modifier3_value()
-        && left.get_modifier4_id() == right.get_modifier4_id()
-        && left.get_modifier4_value() == right.get_modifier4_value()
-        && left.get_instance_id() == right.get_instance_id());
+    return (left.slot == right.slot && left.item_id == right.item_id
+        && left.instance_id == right.instance_id && left.stack_size == right.stack_size
+        && left.max_stack == right.max_stack && left.rarity == right.rarity
+        && left.width == right.width && left.height == right.height
+        && left.modifier1_id == right.modifier1_id && left.modifier1_value == right.modifier1_value
+        && left.modifier2_id == right.modifier2_id && left.modifier2_value == right.modifier2_value
+        && left.modifier3_id == right.modifier3_id && left.modifier3_value == right.modifier3_value
+        && left.modifier4_id == right.modifier4_id && left.modifier4_value == right.modifier4_value);
 }
 
 int32_t game_crafting::prepare_craft(const game_inventory &inventory, int32_t recipe_id,
@@ -1839,84 +1752,74 @@ int32_t game_crafting::prepare_craft_at_station(const game_inventory &inventory,
         batch_count, prepared, FT_TRUE, ft_nullptr));
 }
 
+static int32_t game_crafting_scale_output(const game_crafting_output_snapshot &definition,
+    int32_t batch_count, game_crafting_output_snapshot &snapshot) noexcept
+{
+    if (definition.primary.quantity > INT32_MAX / batch_count
+        || definition.byproduct_count > GAME_CRAFTING_MAX_BYPRODUCTS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    uint32_t index = 0U;
+    while (index < definition.byproduct_count)
+    {
+        if (definition.byproducts[index].quantity > INT32_MAX / batch_count)
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+    }
+    snapshot = definition;
+    snapshot.primary.quantity *= batch_count;
+    index = 0U;
+    while (index < snapshot.byproduct_count)
+        snapshot.byproducts[index++].quantity *= batch_count;
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t game_crafting::query_recipe_output_snapshot(int32_t recipe_id,
     int32_t batch_count, game_crafting_output_snapshot *output_out) const noexcept
 {
-    const Pair<int32_t, game_crafting_output> *output_entry;
-    game_crafting_output_snapshot snapshot = {};
-    ft_bool crafting_locked = FT_FALSE;
-    int32_t result;
-
     if (output_out == ft_nullptr || batch_count <= 0)
-        return (FT_ERR_INVALID_ARGUMENT);
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_crafting::query_recipe_output_snapshot");
-    result = this->lock_internal(&crafting_locked);
+    ft_bool crafting_locked = FT_FALSE;
+    int32_t result = this->lock_internal(&crafting_locked);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    const auto *entry = this->_recipe_outputs.find(recipe_id);
+    if (entry == this->_recipe_outputs.end())
+        result = FT_ERR_NOT_FOUND;
+    else
+        result = game_crafting_scale_output(entry->value, batch_count, *output_out);
+    this->unlock_internal(crafting_locked);
+    return (this->set_error(result));
+}
+
+int32_t game_crafting::stage_product(game_inventory &staged,
+    const game_crafting_product_snapshot &product) noexcept
+{
+    ft_sharedptr<game_item> item;
+    int32_t result = item.initialize(new (std::nothrow) game_item());
     if (result != FT_ERR_SUCCESS)
         return (result);
-    output_entry = this->_recipe_outputs.find(recipe_id);
-    if (output_entry == this->_recipe_outputs.end())
-        result = FT_ERR_NOT_FOUND;
-    else if (!output_entry->value.item_definition
-        || output_entry->value.quantity > FT_INT32_MAX / batch_count)
-        result = FT_ERR_INVALID_ARGUMENT;
-    for (ft_size_t index = 0U; result == FT_ERR_SUCCESS
-        && index < output_entry->value.byproduct_count; ++index)
-    {
-        if (output_entry->value.byproducts[index].quantity
-            > FT_INT32_MAX / batch_count)
-            result = FT_ERR_INVALID_ARGUMENT;
-    }
-    if (result == FT_ERR_SUCCESS)
-    {
-        const ft_sharedptr<game_item> &definition =
-            output_entry->value.item_definition;
-        game_crafting_product_snapshot &primary = snapshot.primary;
-        primary.item_id = definition->get_item_id();
-        primary.quantity = output_entry->value.quantity * batch_count;
-        primary.max_stack = definition->get_max_stack();
-        primary.rarity = definition->get_rarity();
-        primary.width = definition->get_width();
-        primary.height = definition->get_height();
-        primary.modifier1_id = definition->get_modifier1_id();
-        primary.modifier1_value = definition->get_modifier1_value();
-        primary.modifier2_id = definition->get_modifier2_id();
-        primary.modifier2_value = definition->get_modifier2_value();
-        primary.modifier3_id = definition->get_modifier3_id();
-        primary.modifier3_value = definition->get_modifier3_value();
-        primary.modifier4_id = definition->get_modifier4_id();
-        primary.modifier4_value = definition->get_modifier4_value();
-        primary.instance_id = definition->get_instance_id();
-        snapshot.byproduct_count = static_cast<uint32_t>(
-            output_entry->value.byproduct_count);
-        for (ft_size_t index = 0U; index < output_entry->value.byproduct_count;
-            ++index)
-        {
-            const game_crafting_byproduct &source =
-                output_entry->value.byproducts[index];
-            game_crafting_product_snapshot &destination =
-                snapshot.byproducts[index];
-            destination.item_id = source.item_id;
-            destination.quantity = source.quantity * batch_count;
-            destination.max_stack = source.max_stack;
-            destination.rarity = source.rarity;
-            destination.width = source.width;
-            destination.height = source.height;
-            destination.modifier1_id = source.modifier1_id;
-            destination.modifier1_value = source.modifier1_value;
-            destination.modifier2_id = source.modifier2_id;
-            destination.modifier2_value = source.modifier2_value;
-            destination.modifier3_id = source.modifier3_id;
-            destination.modifier3_value = source.modifier3_value;
-            destination.modifier4_id = source.modifier4_id;
-            destination.modifier4_value = source.modifier4_value;
-            destination.instance_id = source.instance_id;
-        }
-    }
-    this->unlock_internal(crafting_locked);
-    if (result == FT_ERR_SUCCESS)
-        *output_out = snapshot;
-    return (result);
+    if (!item)
+        return (FT_ERR_NO_MEMORY);
+    result = item->initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    item->set_item_id(product.item_id);
+    item->set_max_stack(product.max_stack);
+    item->set_stack_size(product.quantity);
+    item->set_rarity(product.rarity);
+    item->set_width(product.width);
+    item->set_height(product.height);
+    item->set_modifier1_id(product.modifier1_id);
+    item->set_modifier1_value(product.modifier1_value);
+    item->set_modifier2_id(product.modifier2_id);
+    item->set_modifier2_value(product.modifier2_value);
+    item->set_modifier3_id(product.modifier3_id);
+    item->set_modifier3_value(product.modifier3_value);
+    item->set_modifier4_id(product.modifier4_id);
+    item->set_modifier4_value(product.modifier4_value);
+    return (staged.add_item_in_place(item));
 }
 
 int32_t game_crafting::prepare_processing_at_station(
@@ -1930,6 +1833,155 @@ int32_t game_crafting::prepare_processing_at_station(
         batch_count, prepared, FT_FALSE, output_out));
 }
 
+int32_t game_crafting::consume_ingredients(game_inventory &staged,
+    const ft_vector<game_crafting_ingredient> &ingredients, int32_t batch_count,
+    ft_bool prepared_order) noexcept
+{
+    using item_entry = Pair<int32_t, ft_sharedptr<game_item>>;
+    struct debit_entry
+    {
+        item_entry *entry;
+        ft_size_t storage_index;
+        ft_bool exhausted;
+    };
+
+    const ft_size_t item_count = staged._items.size();
+    ft_vector<debit_entry> slots;
+    int32_t result = slots.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    slots.reserve(item_count);
+    if (slots.get_error() != FT_ERR_SUCCESS)
+        return (slots.get_error());
+    item_entry *end = staged._items.end();
+    item_entry *entry = end;
+    if (item_count != 0U)
+        entry -= item_count;
+    ft_bool ascending = FT_TRUE;
+    int32_t previous_slot = -1;
+    ft_size_t storage_index = 0U;
+    while (entry != end)
+    {
+        if (entry->key >= 0 && entry->key < staged._next_slot && entry->value)
+        {
+            if (prepared_order == FT_TRUE && entry->key < previous_slot)
+                ascending = FT_FALSE;
+            previous_slot = entry->key;
+            result = slots.push_back({entry, storage_index, FT_FALSE});
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+        }
+        ++entry;
+        ++storage_index;
+    }
+    if (ascending == FT_FALSE)
+    {
+        std::sort(slots.begin(), slots.end(), [](const debit_entry &left, const debit_entry &right)
+        {
+            return (left.entry->key < right.entry->key);
+        });
+    }
+    ft_bool removed_any = FT_FALSE;
+    const ft_size_t ingredient_count = ingredients.size();
+    const ft_size_t slot_count = slots.size();
+    int32_t pass = 0;
+    const int32_t pass_count = 1 + static_cast<int32_t>(prepared_order);
+    while (pass < pass_count)
+    {
+        ft_size_t ingredient_index = 0U;
+        while (ingredient_index < ingredient_count)
+        {
+            const game_crafting_ingredient &ingredient = ingredients[ingredient_index++];
+            const int32_t rarity = ingredient.get_rarity();
+            if (prepared_order == FT_TRUE
+                && ((pass == 0 && rarity == -1) || (pass == 1 && rarity != -1)))
+                continue ;
+            const int32_t per_craft = ingredient.get_count();
+            if (per_craft < 0 || per_craft > FT_INT32_MAX / batch_count)
+                return (FT_ERR_INVALID_ARGUMENT);
+            if (prepared_order == FT_TRUE)
+            {
+                const uint32_t alternative_count = ingredient.get_alternative_count();
+                if (per_craft == 0 || alternative_count == 0U
+                    || alternative_count > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
+                    return (FT_ERR_INVALID_ARGUMENT);
+            }
+
+            int32_t remaining = per_craft * batch_count;
+            int32_t primary_item_id = 0;
+            if (prepared_order == FT_FALSE)
+                primary_item_id = ingredient.get_item_id();
+            ft_size_t cursor = 0U;
+            while (cursor < slot_count && remaining > 0)
+            {
+                debit_entry &debit = slots[cursor++];
+                if (debit.exhausted == FT_TRUE)
+                    continue ;
+                game_item *item = debit.entry->value.get();
+                const int32_t item_id = item->get_item_id();
+                if ((prepared_order == FT_TRUE
+                        && ingredient.matches_item_id(item_id) == FT_FALSE)
+                    || (prepared_order == FT_FALSE && primary_item_id != item_id)
+                    || (rarity != -1 && item->get_rarity() != rarity))
+                    continue ;
+                const int32_t stack_size = item->get_stack_size();
+                int32_t consumed = stack_size;
+                if (consumed > remaining)
+                    consumed = remaining;
+                const int64_t weight = static_cast<int64_t>(staged._current_weight) - consumed;
+                const int64_t pending = static_cast<int64_t>(remaining) - consumed;
+                if (weight < INT32_MIN || weight > INT32_MAX || pending > INT32_MAX)
+                    return (FT_ERR_OUT_OF_RANGE);
+                item->sub_from_stack(consumed);
+                result = item->get_error();
+                if (result != FT_ERR_SUCCESS)
+                    return (result);
+                staged._current_weight = static_cast<int32_t>(weight);
+                remaining = static_cast<int32_t>(pending);
+                if (consumed == stack_size)
+                {
+                    debit.exhausted = FT_TRUE;
+                    removed_any = FT_TRUE;
+#if USE_INVENTORY_SLOTS
+                    const int64_t area = static_cast<int64_t>(item->get_width()) * item->get_height();
+                    if (area >= 0 && static_cast<uint64_t>(area) <= staged._used_slots)
+                        staged._used_slots -= static_cast<ft_size_t>(area);
+#endif
+                }
+            }
+            if (remaining > 0)
+                return (FT_ERR_GAME_GENERAL_ERROR);
+        }
+        ++pass;
+    }
+    if (removed_any == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    if (ascending == FT_FALSE)
+    {
+        std::sort(slots.begin(), slots.end(), [](const debit_entry &left, const debit_entry &right)
+        {
+            return (left.storage_index < right.storage_index);
+        });
+    }
+    const auto *next = slots.begin();
+    const auto *slot_end = slots.end();
+    return (staged._items.erase_if(
+        [&next, slot_end](const item_entry &, ft_size_t index) noexcept -> ft_bool
+        {
+            if (next == slot_end || next->storage_index != index)
+                return (FT_FALSE);
+            const ft_bool exhausted = next->exhausted;
+            ++next;
+            return (exhausted);
+        },
+        [](item_entry &target, item_entry &source) noexcept
+        {
+            target.key = source.key;
+            target.value.swap(source.value);
+            return ;
+        }));
+}
+
 int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
     int32_t recipe_id, int32_t station_id, int32_t batch_count,
     game_crafting_prepared *prepared, ft_bool include_outputs,
@@ -1937,13 +1989,10 @@ int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
 {
     Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
     Pair<int32_t, ft_bool> *unlock_entry;
-    Pair<int32_t, game_crafting_output> *output_entry;
     game_inventory staged;
     game_crafting_prepared candidate;
-    ft_size_t index;
     ft_size_t item_count;
     ft_size_t byproduct_index;
-    const Pair<int32_t, ft_sharedptr<game_item>> *entry;
     ft_bool crafting_locked;
     ft_bool inventory_locked;
     game_crafting_output_snapshot output_snapshot = {};
@@ -1979,20 +2028,13 @@ int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
         && (unlock_entry == this->_unlocked_recipes.end()
             || unlock_entry->value != FT_TRUE))
         result = FT_ERR_INVALID_STATE;
-    output_entry = this->_recipe_outputs.find(recipe_id);
-    if (result == FT_ERR_SUCCESS && output_entry == this->_recipe_outputs.end())
-        result = FT_ERR_NOT_FOUND;
-    if (result == FT_ERR_SUCCESS
-        && output_entry->value.quantity > FT_INT32_MAX / batch_count)
-        result = FT_ERR_INVALID_ARGUMENT;
-    byproduct_index = 0U;
-    while (result == FT_ERR_SUCCESS
-        && byproduct_index < output_entry->value.byproduct_count)
+    const auto *output_entry = this->_recipe_outputs.find(recipe_id);
+    if (result == FT_ERR_SUCCESS)
     {
-        if (output_entry->value.byproducts[byproduct_index].quantity
-            > FT_INT32_MAX / batch_count)
-            result = FT_ERR_INVALID_ARGUMENT;
-        byproduct_index++;
+        if (output_entry == this->_recipe_outputs.end())
+            result = FT_ERR_NOT_FOUND;
+        else
+            result = game_crafting_scale_output(output_entry->value, batch_count, output_snapshot);
     }
     if (result != FT_ERR_SUCCESS)
     {
@@ -2014,32 +2056,44 @@ int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
         this->unlock_internal(crafting_locked);
         return (this->set_error(result));
     }
-    index = 0U;
     item_count = inventory._items.size();
-    entry = inventory._items.end() - item_count;
-    while (index < item_count && result == FT_ERR_SUCCESS)
+    result = inventory._items.get_error();
+    if (result == FT_ERR_SUCCESS)
     {
-        ft_sharedptr<game_item> expected_copy;
-        ft_sharedptr<game_item> staged_copy;
-
-        if (entry->value)
+        candidate._expected_items.reserve(item_count);
+        result = candidate._expected_items.get_error();
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        using item_entry = Pair<int32_t, ft_sharedptr<game_item>>;
+        result = inventory._items.visit_entries([&](const item_entry &entry) noexcept -> int32_t
         {
-            result = game_crafting_clone_item(entry->value, &expected_copy);
-            if (result == FT_ERR_SUCCESS)
-                result = game_crafting_clone_item(entry->value, &staged_copy);
-            if (result == FT_ERR_SUCCESS)
-            {
-                candidate._expected_items.insert(entry->key, expected_copy);
-                result = candidate._expected_items.get_error();
-            }
-            if (result == FT_ERR_SUCCESS)
-            {
-                staged._items.insert(entry->key, staged_copy);
-                result = staged._items.get_error();
-            }
-        }
-        entry++;
-        index++;
+            if (!entry.value)
+                return (FT_ERR_SUCCESS);
+            ft_sharedptr<game_item> staged_copy;
+            int32_t capture_error = game_crafting_clone_item(entry.value, &staged_copy);
+            game_inventory_item_snapshot snapshot;
+            if (capture_error == FT_ERR_SUCCESS)
+                capture_error = staged_copy->capture_inventory_fields(entry.key, snapshot);
+            if (capture_error == FT_ERR_SUCCESS)
+                capture_error = candidate._expected_items.push_back(snapshot);
+            if (capture_error != FT_ERR_SUCCESS)
+                return (capture_error);
+            staged._items.insert(entry.key, ft_move(staged_copy));
+            return (staged._items.get_error());
+        });
+    }
+    if (result == FT_ERR_SUCCESS && candidate._expected_items.size() > 1U)
+    {
+        const auto in_slot_order = [](const game_inventory_item_snapshot &left,
+                                     const game_inventory_item_snapshot &right)
+        {
+            return (left.slot < right.slot);
+        };
+        auto *begin = candidate._expected_items.begin();
+        auto *end = candidate._expected_items.end();
+        if (!std::is_sorted(begin, end, in_slot_order))
+            std::sort(begin, end, in_slot_order);
     }
     staged._used_slots = inventory._used_slots;
     staged._current_weight = inventory._current_weight;
@@ -2058,167 +2112,17 @@ int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
         candidate._result_current_weight = inventory._current_weight;
         candidate._result_next_slot = inventory._next_slot;
     }
-    for (int32_t pass = 0; pass < 2 && result == FT_ERR_SUCCESS; ++pass)
-    {
-        index = 0U;
-        while (result == FT_ERR_SUCCESS
-            && index < recipe_entry->value.size())
-        {
-            game_crafting_ingredient &ingredient =
-                recipe_entry->value[index];
-            const int32_t per_craft = ingredient.get_count();
-            const int32_t ingredient_rarity = ingredient.get_rarity();
-            int32_t remaining;
-            int32_t slot;
-
-            if ((pass == 0 && ingredient_rarity == -1)
-                || (pass == 1 && ingredient_rarity != -1))
-            {
-                ++index;
-                continue;
-            }
-            if (per_craft <= 0 || per_craft > FT_INT32_MAX / batch_count
-                || ingredient.get_alternative_count() == 0U
-                || ingredient.get_alternative_count()
-                    > game_crafting_ingredient::MAX_ALTERNATIVE_ITEM_IDS)
-            {
-                result = FT_ERR_INVALID_ARGUMENT;
-                break ;
-            }
-            remaining = per_craft * batch_count;
-            slot = 0;
-            while (slot < staged._next_slot && remaining > 0)
-            {
-                Pair<int32_t, ft_sharedptr<game_item>> *item_entry =
-                    staged._items.find(slot);
-
-                if (item_entry != staged._items.end() && item_entry->value
-                    && ingredient.matches_item_id(
-                        item_entry->value->get_item_id()) == FT_TRUE
-                    && (ingredient_rarity == -1
-                        || item_entry->value->get_rarity()
-                            == ingredient_rarity))
-                {
-                    int32_t consumed = item_entry->value->get_stack_size();
-                    if (consumed > remaining)
-                        consumed = remaining;
-                    item_entry->value->sub_from_stack(consumed);
-                    staged._current_weight -= consumed;
-                    remaining -= consumed;
-                    if (item_entry->value->get_stack_size() == 0)
-                        staged.remove_item(slot);
-                }
-                ++slot;
-            }
-            if (remaining > 0)
-                result = FT_ERR_GAME_GENERAL_ERROR;
-            ++index;
-        }
-    }
     if (result == FT_ERR_SUCCESS)
+        result = consume_ingredients(staged, recipe_entry->value, batch_count, FT_TRUE);
+    if (result == FT_ERR_SUCCESS && include_outputs == FT_TRUE)
     {
-        const ft_sharedptr<game_item> &definition =
-            output_entry->value.item_definition;
-        output_snapshot.primary.item_id = definition->get_item_id();
-        output_snapshot.primary.quantity =
-            output_entry->value.quantity * batch_count;
-        output_snapshot.primary.max_stack = definition->get_max_stack();
-        output_snapshot.primary.rarity = definition->get_rarity();
-        output_snapshot.primary.width = definition->get_width();
-        output_snapshot.primary.height = definition->get_height();
-        output_snapshot.primary.modifier1_id = definition->get_modifier1_id();
-        output_snapshot.primary.modifier1_value =
-            definition->get_modifier1_value();
-        output_snapshot.primary.modifier2_id = definition->get_modifier2_id();
-        output_snapshot.primary.modifier2_value =
-            definition->get_modifier2_value();
-        output_snapshot.primary.modifier3_id = definition->get_modifier3_id();
-        output_snapshot.primary.modifier3_value =
-            definition->get_modifier3_value();
-        output_snapshot.primary.modifier4_id = definition->get_modifier4_id();
-        output_snapshot.primary.modifier4_value =
-            definition->get_modifier4_value();
-        output_snapshot.primary.instance_id = definition->get_instance_id();
-        output_snapshot.byproduct_count = static_cast<uint32_t>(
-            output_entry->value.byproduct_count);
+        candidate._primary_output_slot = staged._next_slot;
+        candidate._primary_output_item_id = output_snapshot.primary.item_id;
+        candidate._primary_output_quantity = output_snapshot.primary.quantity;
+        result = stage_product(staged, output_snapshot.primary);
         byproduct_index = 0U;
-        while (byproduct_index < output_entry->value.byproduct_count)
-        {
-            const game_crafting_byproduct &source =
-                output_entry->value.byproducts[byproduct_index];
-            game_crafting_product_snapshot &destination =
-                output_snapshot.byproducts[byproduct_index];
-
-            destination.item_id = source.item_id;
-            destination.quantity = source.quantity * batch_count;
-            destination.max_stack = source.max_stack;
-            destination.rarity = source.rarity;
-            destination.width = source.width;
-            destination.height = source.height;
-            destination.modifier1_id = source.modifier1_id;
-            destination.modifier1_value = source.modifier1_value;
-            destination.modifier2_id = source.modifier2_id;
-            destination.modifier2_value = source.modifier2_value;
-            destination.modifier3_id = source.modifier3_id;
-            destination.modifier3_value = source.modifier3_value;
-            destination.modifier4_id = source.modifier4_id;
-            destination.modifier4_value = source.modifier4_value;
-            destination.instance_id = source.instance_id;
-            ++byproduct_index;
-        }
-    }
-    if (result == FT_ERR_SUCCESS && include_outputs != FT_FALSE)
-    {
-        ft_sharedptr<game_item> output_copy;
-        result = game_crafting_clone_item(output_entry->value.item_definition,
-            &output_copy);
-        if (result == FT_ERR_SUCCESS)
-        {
-            output_copy->set_stack_size(output_entry->value.quantity * batch_count);
-            candidate._primary_output_slot = staged._next_slot;
-            candidate._primary_output_item_id =
-                output_entry->value.item_definition->get_item_id();
-            candidate._primary_output_quantity =
-                output_entry->value.quantity * batch_count;
-            result = staged.add_item(output_copy);
-        }
-    }
-    byproduct_index = 0U;
-    while (result == FT_ERR_SUCCESS && include_outputs != FT_FALSE
-        && byproduct_index < output_entry->value.byproduct_count)
-    {
-        const game_crafting_byproduct &byproduct =
-            output_entry->value.byproducts[byproduct_index];
-        ft_sharedptr<game_item> byproduct_copy;
-
-        result = byproduct_copy.initialize(new (std::nothrow) game_item());
-        if (result == FT_ERR_SUCCESS && !byproduct_copy)
-            result = FT_ERR_NO_MEMORY;
-        if (result == FT_ERR_SUCCESS)
-            result = byproduct_copy->initialize();
-        if (result == FT_ERR_SUCCESS)
-        {
-            byproduct_copy->set_item_id(byproduct.item_id);
-            byproduct_copy->set_max_stack(byproduct.max_stack);
-            byproduct_copy->set_stack_size(byproduct.quantity * batch_count);
-            byproduct_copy->set_rarity(byproduct.rarity);
-            byproduct_copy->set_width(byproduct.width);
-            byproduct_copy->set_height(byproduct.height);
-            byproduct_copy->set_modifier1_id(byproduct.modifier1_id);
-            byproduct_copy->set_modifier1_value(byproduct.modifier1_value);
-            byproduct_copy->set_modifier2_id(byproduct.modifier2_id);
-            byproduct_copy->set_modifier2_value(byproduct.modifier2_value);
-            byproduct_copy->set_modifier3_id(byproduct.modifier3_id);
-            byproduct_copy->set_modifier3_value(byproduct.modifier3_value);
-            byproduct_copy->set_modifier4_id(byproduct.modifier4_id);
-            byproduct_copy->set_modifier4_value(byproduct.modifier4_value);
-            result = byproduct_copy->get_error();
-        }
-        if (result == FT_ERR_SUCCESS)
-        {
-            result = staged.add_item(byproduct_copy);
-        }
-        byproduct_index++;
+        while (result == FT_ERR_SUCCESS && byproduct_index < output_snapshot.byproduct_count)
+            result = stage_product(staged, output_snapshot.byproducts[byproduct_index++]);
     }
     if (result == FT_ERR_SUCCESS)
     {
@@ -2232,7 +2136,7 @@ int32_t game_crafting::prepare_craft_internal(const game_inventory &inventory,
     if (result == FT_ERR_SUCCESS)
     {
         candidate._ready = FT_TRUE;
-        result = prepared->_expected_items.move_from(candidate._expected_items);
+        result = prepared->_expected_items.move(candidate._expected_items);
         if (result == FT_ERR_SUCCESS)
             result = prepared->_result_items.move_from(candidate._result_items);
         if (result == FT_ERR_SUCCESS)
@@ -2278,19 +2182,17 @@ int32_t game_crafting::commit_processing_inputs(game_inventory &inventory,
 int32_t game_crafting::commit_craft(game_inventory &inventory,
     game_crafting_prepared *prepared, uint64_t output_instance_id) noexcept
 {
-    ft_size_t index;
-    ft_size_t count;
-    const Pair<int32_t, ft_sharedptr<game_item>> *expected;
     Pair<int32_t, ft_sharedptr<game_item>> *primary_output;
     Pair<int32_t, ft_sharedptr<game_item>> *existing;
-    ft_bool inventory_locked;
+    game_item *assigned_output = ft_nullptr;
+    ft_bool inventory_locked = FT_FALSE;
+    ft_bool map_locked = FT_FALSE;
     int32_t result;
 
     if (prepared == ft_nullptr
         || prepared->_initialised_state != FT_CLASS_STATE_INITIALISED
         || prepared->_ready != FT_TRUE)
         return (this->set_error(FT_ERR_INVALID_ARGUMENT));
-    inventory_locked = FT_FALSE;
     result = inventory.lock(&inventory_locked);
     if (result != FT_ERR_SUCCESS)
         return (this->set_error(result));
@@ -2299,25 +2201,45 @@ int32_t game_crafting::commit_craft(game_inventory &inventory,
         || inventory._weight_limit != prepared->_expected_weight_limit
         || inventory._current_weight != prepared->_expected_current_weight
         || inventory._next_slot != prepared->_expected_next_slot
-        || inventory._revision != prepared->_expected_revision
-        || inventory._items.size() != prepared->_expected_items.size())
+        || inventory._revision != prepared->_expected_revision)
+        result = FT_ERR_INVALID_STATE;
+    if (result == FT_ERR_SUCCESS)
+        result = inventory._items.lock(&map_locked);
+    const ft_size_t expected_count = prepared->_expected_items.size();
+    if (result == FT_ERR_SUCCESS && inventory._items.size() != expected_count)
         result = FT_ERR_INVALID_STATE;
     if (result == FT_ERR_SUCCESS
         && inventory._revision == std::numeric_limits<uint64_t>::max())
         result = FT_ERR_OUT_OF_RANGE;
-    index = 0U;
-    count = prepared->_expected_items.size();
-    expected = prepared->_expected_items.end() - count;
-    while (result == FT_ERR_SUCCESS && index < count)
+    const auto *expected_begin = prepared->_expected_items.begin();
+    const auto *expected_end = prepared->_expected_items.end();
+    if (result == FT_ERR_SUCCESS && expected_count != 0U)
     {
-        const Pair<int32_t, ft_sharedptr<game_item>> *actual =
-            inventory._items.find(expected->key);
-        if (actual == inventory._items.end() || !actual->value
-            || !expected->value
-            || game_crafting_items_equal(*actual->value, *expected->value) != FT_TRUE)
-            result = FT_ERR_INVALID_STATE;
-        expected++;
-        index++;
+        const auto *actual_end = inventory._items.end();
+        const auto *actual = actual_end - expected_count;
+        const auto *in_order = expected_begin;
+        while (actual != actual_end && result == FT_ERR_SUCCESS)
+        {
+            const auto *expected = in_order++;
+            if (expected->slot != actual->key)
+            {
+                expected = std::lower_bound(expected_begin, expected_end, actual->key,
+                    [](const game_inventory_item_snapshot &item, int32_t slot)
+                    {
+                        return (item.slot < slot);
+                    });
+            }
+            if (expected == expected_end || expected->slot != actual->key || !actual->value)
+                result = FT_ERR_INVALID_STATE;
+            else
+            {
+                game_inventory_item_snapshot snapshot;
+                result = actual->value->capture_inventory_fields(actual->key, snapshot);
+                if (result == FT_ERR_SUCCESS && !game_crafting_snapshots_equal(snapshot, *expected))
+                    result = FT_ERR_INVALID_STATE;
+            }
+            ++actual;
+        }
     }
     if (result == FT_ERR_SUCCESS && output_instance_id != 0U)
     {
@@ -2331,19 +2253,15 @@ int32_t game_crafting::commit_craft(game_inventory &inventory,
             || primary_output->value->get_stack_size() != 1
             || primary_output->value->get_instance_id() != 0U)
             result = FT_ERR_INVALID_ARGUMENT;
-        index = 0U;
-        count = prepared->_expected_items.size();
-        expected = prepared->_expected_items.end() - count;
-        while (result == FT_ERR_SUCCESS && index < count)
+        const auto *expected = expected_begin;
+        while (result == FT_ERR_SUCCESS && expected != expected_end)
         {
-            if (expected->value
-                && expected->value->get_instance_id() == output_instance_id)
+            if (expected->instance_id == output_instance_id)
                 result = FT_ERR_ALREADY_EXISTS;
-            expected++;
-            index++;
+            ++expected;
         }
-        index = 0U;
-        count = prepared->_result_items.size();
+        ft_size_t index = 0U;
+        const ft_size_t count = prepared->_result_items.size();
         existing = prepared->_result_items.end() - count;
         while (result == FT_ERR_SUCCESS && index < count)
         {
@@ -2355,7 +2273,12 @@ int32_t game_crafting::commit_craft(game_inventory &inventory,
             index++;
         }
         if (result == FT_ERR_SUCCESS)
+        {
             primary_output->value->set_instance_id(output_instance_id);
+            result = primary_output->value->get_error();
+            if (result == FT_ERR_SUCCESS)
+                assigned_output = primary_output->value.get();
+        }
     }
     if (result == FT_ERR_SUCCESS)
         result = inventory._items.move_from(prepared->_result_items);
@@ -2369,174 +2292,97 @@ int32_t game_crafting::commit_craft(game_inventory &inventory,
         inventory._next_slot = prepared->_result_next_slot;
         prepared->_ready = FT_FALSE;
     }
+    else if (assigned_output != ft_nullptr)
+        assigned_output->set_instance_id(0U);
+    if (map_locked == FT_TRUE)
+        (void)inventory._items.unlock(map_locked);
     inventory.unlock(inventory_locked);
     return (this->set_error(result));
 }
 
 int32_t game_crafting::craft_item(game_inventory &inventory, int32_t recipe_id,
-    const ft_sharedptr<game_item> &result) noexcept
+    const ft_sharedptr<game_item> &output) noexcept
 {
-    Pair<int32_t, ft_vector<game_crafting_ingredient>> *recipe_entry;
-    Pair<int32_t, ft_bool> *unlock_entry;
-    ft_vector<game_crafting_ingredient> *ingredients;
-    game_inventory staged_inventory;
-    ft_size_t ingredient_index;
-    ft_size_t source_item_count;
-    ft_size_t source_item_index;
-    Pair<int32_t, ft_sharedptr<game_item>> *source_item;
-    ft_bool inventory_lock_acquired;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    if (!result)
-    {
-        this->set_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
+    if (!output)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_crafting::craft_item");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool crafting_locked = FT_FALSE;
+    int32_t result = this->lock_internal(&crafting_locked);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    const auto *recipe = this->_recipes.find(recipe_id);
+    if (recipe == this->_recipes.end())
     {
-        this->set_error(lock_error);
-        return (lock_error);
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(FT_ERR_NOT_FOUND));
     }
-    recipe_entry = this->_recipes.find(recipe_id);
-    if (recipe_entry == this->_recipes.end())
+    const auto *unlocked = this->_unlocked_recipes.find(recipe_id);
+    if (unlocked == this->_unlocked_recipes.end() || unlocked->value != FT_TRUE)
     {
-        this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
-    unlock_entry = this->_unlocked_recipes.find(recipe_id);
-    if (unlock_entry == this->_unlocked_recipes.end()
-        || unlock_entry->value != FT_TRUE)
-    {
-        this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (this->_recipe_stations.find(recipe_id) != this->_recipe_stations.end())
     {
-        this->unlock_internal(lock_acquired);
+        this->unlock_internal(crafting_locked);
         return (this->set_error(FT_ERR_PERMISSION_DENIED));
-    }
-    ingredients = &recipe_entry->value;
-
-    inventory_lock_acquired = FT_FALSE;
-    lock_error = inventory.lock(&inventory_lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->unlock_internal(lock_acquired);
-        this->set_error(lock_error);
-        return (lock_error);
     }
     if (this->_recipe_outputs.find(recipe_id) != this->_recipe_outputs.end())
     {
-        this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    lock_error = staged_inventory.initialize(inventory._capacity,
-        inventory._weight_limit);
-    if (lock_error != FT_ERR_SUCCESS)
+
+    ft_bool inventory_locked = FT_FALSE;
+    result = inventory.lock(&inventory_locked);
+    if (result != FT_ERR_SUCCESS)
     {
-        inventory.unlock(inventory_lock_acquired);
-        this->unlock_internal(lock_acquired);
-        this->set_error(lock_error);
-        return (lock_error);
+        this->unlock_internal(crafting_locked);
+        return (this->set_error(result));
     }
-    source_item_count = inventory._items.size();
-    source_item = inventory._items.end() - source_item_count;
-    source_item_index = 0;
-    while (source_item_index < source_item_count)
+    game_inventory staged;
+    if (inventory._revision == std::numeric_limits<uint64_t>::max())
+        result = FT_ERR_OUT_OF_RANGE;
+    if (result == FT_ERR_SUCCESS)
+        result = staged.initialize(inventory._capacity, inventory._weight_limit);
+    if (result == FT_ERR_SUCCESS)
+        result = staged._items.copy_from(inventory._items);
+    if (result == FT_ERR_SUCCESS)
     {
-        if (source_item->value)
+        staged._used_slots = inventory._used_slots;
+        staged._current_weight = inventory._current_weight;
+        staged._next_slot = inventory._next_slot;
+        const ft_size_t item_count = staged._items.size();
+        auto *end = staged._items.end();
+        auto *entry = end;
+        if (item_count != 0U)
+            entry -= item_count;
+        while (result == FT_ERR_SUCCESS && entry != end)
         {
-            ft_sharedptr<game_item> item_copy(new game_item());
-            if (!item_copy)
-                lock_error = FT_ERR_NO_MEMORY;
-            else
-                lock_error = item_copy->initialize(*source_item->value);
-            if (lock_error == FT_ERR_SUCCESS)
-                lock_error = staged_inventory.add_item(item_copy);
-            if (lock_error != FT_ERR_SUCCESS)
+            if (entry->value)
             {
-                inventory.unlock(inventory_lock_acquired);
-                this->unlock_internal(lock_acquired);
-                this->set_error(lock_error);
-                return (lock_error);
+                ft_sharedptr<game_item> copy;
+                result = game_crafting_clone_item(entry->value, &copy);
+                if (result == FT_ERR_SUCCESS)
+                    result = entry->value.move(copy);
             }
+            ++entry;
         }
-        source_item++;
-        source_item_index++;
     }
-    ingredient_index = 0;
-    while (ingredient_index < ingredients->size())
+    if (result == FT_ERR_SUCCESS)
+        result = consume_ingredients(staged, recipe->value, 1, FT_FALSE);
+    if (result == FT_ERR_SUCCESS)
+        result = staged.add_item_in_place(output);
+    if (result == FT_ERR_SUCCESS)
+        result = inventory._items.move_from(staged._items);
+    if (result == FT_ERR_SUCCESS)
     {
-        game_crafting_ingredient &ingredient = (*ingredients)[ingredient_index];
-        int32_t remaining;
-        int32_t slot_index;
-
-        remaining = ingredient.get_count();
-        if (remaining < 0)
-        {
-            inventory.unlock(inventory_lock_acquired);
-            this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_INVALID_ARGUMENT);
-            return (FT_ERR_INVALID_ARGUMENT);
-        }
-        slot_index = 0;
-        while (slot_index < staged_inventory._next_slot && remaining > 0)
-        {
-            Pair<int32_t, ft_sharedptr<game_item>> *item_entry;
-
-            item_entry = staged_inventory._items.find(slot_index);
-            if (item_entry != staged_inventory._items.end()
-                && item_entry->value
-                && item_entry->value->get_item_id() == ingredient.get_item_id()
-                && (ingredient.get_rarity() == -1
-                    || item_entry->value->get_rarity() == ingredient.get_rarity()))
-            {
-                int32_t remove_count;
-
-                remove_count = item_entry->value->get_stack_size();
-                if (remove_count > remaining)
-                    remove_count = remaining;
-                item_entry->value->sub_from_stack(remove_count);
-                remaining -= remove_count;
-                if (item_entry->value->get_stack_size() == 0)
-                    staged_inventory.remove_item(item_entry->key);
-            }
-            slot_index++;
-        }
-        if (remaining > 0)
-        {
-            inventory.unlock(inventory_lock_acquired);
-            this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        }
-        ingredient_index++;
+        inventory._used_slots = staged._used_slots;
+        inventory._current_weight = staged._current_weight;
+        inventory._next_slot = staged._next_slot;
+        result = inventory.bump_revision();
     }
-    lock_error = staged_inventory.add_item(result);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        inventory.unlock(inventory_lock_acquired);
-        this->unlock_internal(lock_acquired);
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    lock_error = inventory._items.move_from(staged_inventory._items);
-    if (lock_error == FT_ERR_SUCCESS)
-    {
-        inventory._capacity = staged_inventory._capacity;
-        inventory._used_slots = staged_inventory._used_slots;
-        inventory._current_weight = staged_inventory._current_weight;
-        inventory._next_slot = staged_inventory._next_slot;
-    }
-    inventory.unlock(inventory_lock_acquired);
-    this->unlock_internal(lock_acquired);
-    this->set_error(lock_error);
-    return (lock_error);
+    inventory.unlock(inventory_locked);
+    this->unlock_internal(crafting_locked);
+    return (this->set_error(result));
 }

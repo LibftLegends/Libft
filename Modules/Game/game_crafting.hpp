@@ -156,7 +156,7 @@ struct game_crafting_query_result
 class game_crafting_prepared
 {
     friend class game_crafting;
-    ft_map<int32_t, ft_sharedptr<game_item>> _expected_items;
+    ft_vector<game_inventory_item_snapshot> _expected_items;
     ft_map<int32_t, ft_sharedptr<game_item>> _result_items;
     ft_size_t _expected_capacity;
     ft_size_t _expected_used_slots;
@@ -196,7 +196,7 @@ class game_crafting
     #endif
         ft_map<int32_t, ft_vector<game_crafting_ingredient>> _recipes;
         ft_map<int32_t, ft_bool> _unlocked_recipes;
-        ft_map<int32_t, game_crafting_output> _recipe_outputs;
+        ft_map<int32_t, game_crafting_output_snapshot> _recipe_outputs;
         ft_map<int32_t, int32_t> _recipe_stations;
         static const uint32_t MAXIMUM_ITEM_TAGS = 64U;
         static const uint32_t MAXIMUM_TAG_MEMBERS = 8U;
@@ -212,6 +212,11 @@ class game_crafting
 
         int32_t  lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        static int32_t consume_ingredients(game_inventory &staged,
+            const ft_vector<game_crafting_ingredient> &ingredients, int32_t batch_count,
+            ft_bool prepared_order) noexcept;
+        static int32_t stage_product(game_inventory &staged,
+            const game_crafting_product_snapshot &product) noexcept;
         int32_t prepare_craft_internal(const game_inventory &inventory,
             int32_t recipe_id, int32_t station_id, int32_t batch_count,
             game_crafting_prepared *prepared, ft_bool include_outputs,

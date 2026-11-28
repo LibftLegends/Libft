@@ -1,396 +1,225 @@
 #include "config.hpp"
-#include "../Basic/class_nullptr.hpp"
-#include "../Errno/errno.hpp"
-#include "../CMA/CMA.hpp"
-#include "../Basic/basic.hpp"
+#include "config_entries_internal.hpp"
 #include "../Advanced/advanced.hpp"
-#include <cstdint>
 #include "../PThread/pthread_internal.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <functional>
 
-static int32_t config_lock_if_enabled(const config_data *config,
-    ft_bool *lock_acquired)
+static ft_bool config_keys_equal(const char *left, const char *right)
 {
-    int32_t lock_result;
-
-    if (!config)
-        return (FT_ERR_SUCCESS);
-    lock_result = pt_mutex_lock_if_not_null(config->mutex);
-    if (lock_result == FT_ERR_SUCCESS && lock_acquired)
-    {
-        if (config->mutex != ft_nullptr)
-            *lock_acquired = FT_TRUE;
-    }
-    return (lock_result);
+    return (left == right || (left != ft_nullptr && right != ft_nullptr
+        && ft_strcmp(left, right) == 0));
 }
 
-static void config_unlock_guard(const config_data *config, ft_bool lock_acquired)
+static uint64_t config_hash_key(uint64_t hash, const char *text)
 {
-    if (!config || lock_acquired == FT_FALSE)
-        return ;
-    (void)pt_mutex_unlock_if_not_null(config->mutex);
-    return ;
+    constexpr uint64_t HASH_MULTIPLIER = 1099511628211ULL;
+    if (text == ft_nullptr)
+        return ((hash ^ 1U) * HASH_MULTIPLIER);
+    while (*text != '\0')
+    {
+        hash = (hash ^ static_cast<uint8_t>(*text)) * HASH_MULTIPLIER;
+        text += 1U;
+    }
+    return (hash * HASH_MULTIPLIER);
 }
 
-static void config_add_lock_target(const config_data **lock_targets,
-    ft_size_t *lock_count, const config_data *candidate_target)
+static ft_size_t *config_make_merge_index(ft_size_t entry_count, ft_size_t &slot_count)
 {
-    ft_size_t index;
-
-    if (!lock_targets || !lock_count || !candidate_target)
-        return ;
-    index = 0;
-    while (index < *lock_count)
-    {
-        if (lock_targets[index] == candidate_target)
-            return ;
-        ++index;
-    }
-    lock_targets[*lock_count] = candidate_target;
-    *lock_count = *lock_count + 1;
-    return ;
-}
-
-static void config_sort_lock_targets(const config_data **lock_targets,
-    ft_size_t lock_count)
-{
-    ft_size_t index_outer;
-
-    if (!lock_targets)
-        return ;
-    index_outer = 0;
-    while (index_outer < lock_count)
-    {
-        ft_size_t index_inner;
-
-        index_inner = index_outer + 1;
-        while (index_inner < lock_count)
-        {
-            if (reinterpret_cast<uintptr_t>(lock_targets[index_inner])
-                < reinterpret_cast<uintptr_t>(lock_targets[index_outer]))
-            {
-                const config_data *temporary_target;
-
-                temporary_target = lock_targets[index_outer];
-                lock_targets[index_outer] = lock_targets[index_inner];
-                lock_targets[index_inner] = temporary_target;
-            }
-            ++index_inner;
-        }
-        ++index_outer;
-    }
-    return ;
-}
-
-static void config_unlock_targets_reverse(const config_data **lock_targets,
-    ft_bool *lock_acquired, ft_size_t lock_count)
-{
-    if (!lock_targets || !lock_acquired)
-        return ;
-    while (lock_count > 0)
-    {
-        --lock_count;
-        if (lock_acquired[lock_count] == FT_TRUE)
-            config_unlock_guard(lock_targets[lock_count], FT_TRUE);
-    }
-    return ;
-}
-
-static int32_t config_lock_targets_in_order(const config_data **lock_targets,
-    ft_bool *lock_acquired, ft_size_t lock_count)
-{
-    ft_size_t index;
-    int32_t lock_error;
-
-    if (!lock_targets || !lock_acquired)
-        return (FT_ERR_INVALID_ARGUMENT);
-    index = 0;
-    while (index < lock_count)
-    {
-        lock_error = config_lock_if_enabled(lock_targets[index],
-                &lock_acquired[index]);
-        if (lock_error != FT_ERR_SUCCESS)
-        {
-            config_unlock_targets_reverse(lock_targets, lock_acquired, index);
-            return (lock_error);
-        }
-        ++index;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static void config_free_entry_contents_unlocked(config_entry *entry)
-{
-    if (!entry)
-        return ;
-    if (entry->section)
-        cma_free(entry->section);
-    if (entry->key)
-        cma_free(entry->key);
-    if (entry->value)
-        cma_free(entry->value);
-    entry->section = ft_nullptr;
-    entry->key = ft_nullptr;
-    entry->value = ft_nullptr;
-    return ;
-}
-
-static void config_free_entry_contents(config_entry *entry)
-{
-    if (!entry)
-    {
-        return ;
-    }
-    ft_bool entry_locked;
-    if (config_entry_lock(entry, &entry_locked) != FT_ERR_SUCCESS)
-        return ;
-    config_free_entry_contents_unlocked(entry);
-    config_entry_unlock(entry, entry_locked);
-    return ;
-}
-
-static int32_t config_duplicate_entry(const config_entry *source, config_entry *destination)
-{
-    config_entry *mutable_source;
-    ft_bool source_locked;
-
-    if (!source || !destination)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    destination->mutex = ft_nullptr;
-    destination->section = ft_nullptr;
-    destination->key = ft_nullptr;
-    destination->value = ft_nullptr;
-    mutable_source = const_cast<config_entry*>(source);
-    if (config_entry_lock(mutable_source, &source_locked) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (source->section)
-    {
-        destination->section = adv_strdup(source->section);
-        if (!destination->section)
-        {
-            config_entry_unlock(mutable_source, source_locked);
-            config_free_entry_contents(destination);
-            return (FT_ERR_NO_MEMORY);
-        }
-    }
-    if (source->key)
-    {
-        destination->key = adv_strdup(source->key);
-        if (!destination->key)
-        {
-            config_entry_unlock(mutable_source, source_locked);
-            config_free_entry_contents(destination);
-            return (FT_ERR_NO_MEMORY);
-        }
-    }
-    if (source->value)
-    {
-        destination->value = adv_strdup(source->value);
-        if (!destination->value)
-        {
-            config_entry_unlock(mutable_source, source_locked);
-            config_free_entry_contents(destination);
-            return (FT_ERR_NO_MEMORY);
-        }
-    }
-    config_entry_unlock(mutable_source, source_locked);
-    return (FT_ERR_SUCCESS);
-}
-
-static ft_bool config_strings_equal(const char *left, const char *right)
-{
-    if (!left && !right)
-        return (FT_TRUE);
-    if (!left || !right)
-        return (FT_FALSE);
-    if (ft_strcmp(left, right) == 0)
-        return (FT_TRUE);
-    return (FT_FALSE);
-}
-
-static config_entry *config_find_matching_entry(config_data *config, const config_entry *entry)
-{
-    ft_size_t index;
-
-    if (!config || !entry)
-    {
+    if (entry_count < 16U || entry_count > SIZE_MAX / sizeof(ft_size_t) / 4U)
         return (ft_nullptr);
-    }
-    index = 0;
-    while (index < config->entry_count)
-    {
-        config_entry *candidate = &config->entries[index];
-        ft_bool candidate_locked;
-        ft_bool matches;
-        if (config_entry_lock(candidate, &candidate_locked) != FT_ERR_SUCCESS)
-            return (ft_nullptr);
-        matches = config_strings_equal(candidate->section, entry->section)
-            && config_strings_equal(candidate->key, entry->key);
-        config_entry_unlock(candidate, candidate_locked);
-        if (matches)
-        {
-            return (candidate);
-        }
-        ++index;
-    }
-    return (ft_nullptr);
+    slot_count = 32U;
+    while (slot_count < entry_count * 2U)
+        slot_count *= 2U;
+    return (static_cast<ft_size_t *>(adv_calloc(slot_count, sizeof(ft_size_t))));
 }
 
-static int32_t config_append_entry(config_data *destination, const config_entry *source)
+static ft_size_t config_find_merge_slot(const config_data &result,
+    const config_entry &source, const ft_size_t *slots, ft_size_t slot_count)
 {
-    config_entry copy;
-    config_entry *new_entries;
-    config_entry *target;
-
-    if (!destination || !source)
+    uint64_t hash = config_hash_key(14695981039346656037ULL, source.section);
+    hash = config_hash_key(hash, source.key);
+    const ft_size_t mask = slot_count - 1U;
+    ft_size_t slot = hash & mask;
+    while (slots[slot] != 0U)
     {
-        return (FT_ERR_INVALID_ARGUMENT);
+        const config_entry &candidate = result.entries[slots[slot] - 1U];
+        if (config_keys_equal(candidate.section, source.section)
+            && config_keys_equal(candidate.key, source.key))
+            break ;
+        slot = (slot + 1U) & mask;
     }
-    if (config_duplicate_entry(source, &copy) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    new_entries = static_cast<config_entry*>(cma_realloc(destination->entries,
-            sizeof(config_entry) * (destination->entry_count + 1)));
-    if (!new_entries)
+    return (slot);
+}
+
+static ft_size_t config_find_merge_entry(const config_data &result,
+    const config_entry &source)
+{
+    ft_size_t index = 0U;
+    while (index < result.entry_count)
     {
-        config_free_entry_contents(&copy);
+        const config_entry &entry = result.entries[index];
+        if (config_keys_equal(entry.section, source.section)
+            && config_keys_equal(entry.key, source.key))
+            break ;
+        index += 1U;
+    }
+    return (index);
+}
+
+static int32_t config_append_copy(config_data &result, ft_size_t &capacity,
+    const config_entry &source)
+{
+    int32_t error = config_reserve_entries(result, capacity, result.entry_count + 1U);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    config_entry &copy = result.entries[result.entry_count];
+    copy = {};
+    result.entry_count += 1U;
+    if (source.section != ft_nullptr)
+        copy.section = adv_strdup(source.section);
+    if (source.key != ft_nullptr)
+        copy.key = adv_strdup(source.key);
+    if (source.value != ft_nullptr)
+        copy.value = adv_strdup(source.value);
+    if ((source.section != ft_nullptr && copy.section == ft_nullptr)
+        || (source.key != ft_nullptr && copy.key == ft_nullptr)
+        || (source.value != ft_nullptr && copy.value == ft_nullptr))
         return (FT_ERR_NO_MEMORY);
-    }
-    destination->entries = new_entries;
-    target = &destination->entries[destination->entry_count];
-    target->mutex = ft_nullptr;
-    target->section = copy.section;
-    target->key = copy.key;
-    target->value = copy.value;
-    copy.section = ft_nullptr;
-    copy.key = ft_nullptr;
-    copy.value = ft_nullptr;
-    if (config_entry_prepare_thread_safety(target) != FT_ERR_SUCCESS)
+    return (config_entry_prepare_thread_safety(&copy));
+}
+
+static int32_t config_merge_override(config_data &result, ft_size_t &capacity,
+    const config_entry &source, ft_size_t *slots, ft_size_t slot_count)
+{
+    ft_size_t slot = 0U;
+    ft_size_t index = result.entry_count;
+    if (slots == ft_nullptr)
+        index = config_find_merge_entry(result, source);
+    else
     {
-        config_free_entry_contents_unlocked(target);
-        return (FT_ERR_INTERNAL);
+        slot = config_find_merge_slot(result, source, slots, slot_count);
+        if (slots[slot] != 0U)
+            index = slots[slot] - 1U;
     }
-    destination->entry_count++;
+    if (index == result.entry_count)
+    {
+        int32_t error = config_append_copy(result, capacity, source);
+        if (error == FT_ERR_SUCCESS && slots != ft_nullptr)
+            slots[slot] = index + 1U;
+        return (error);
+    }
+    char *value = ft_nullptr;
+    if (source.value != ft_nullptr)
+    {
+        value = adv_strdup(source.value);
+        if (value == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    cma_free(result.entries[index].value);
+    result.entries[index].value = value;
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t config_copy_entries(config_data *destination, const config_data *source)
+static int32_t config_merge_entries(config_data &result, ft_size_t &capacity,
+    const config_data &source, ft_bool is_override, ft_size_t *slots, ft_size_t slot_count)
 {
-    ft_size_t index;
-
-    if (!source)
-        return (FT_ERR_SUCCESS);
-    if (source->entry_count && !source->entries)
+    ft_size_t index = 0U;
+    while (index < source.entry_count)
     {
-        return (FT_ERR_INVALID_STATE);
-    }
-    index = 0;
-    while (index < source->entry_count)
-    {
-        if (config_append_entry(destination, &source->entries[index]) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-        ++index;
+        config_entry *entry = &source.entries[index];
+        ft_bool locked = FT_FALSE;
+        int32_t error = config_entry_lock(entry, &locked);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        if (is_override == FT_TRUE)
+            error = config_merge_override(result, capacity, *entry, slots, slot_count);
+        else
+        {
+            const ft_size_t result_index = result.entry_count;
+            error = config_append_copy(result, capacity, *entry);
+            if (error == FT_ERR_SUCCESS && slots != ft_nullptr)
+            {
+                const ft_size_t slot = config_find_merge_slot(result, *entry, slots, slot_count);
+                // Preserve duplicate base entries and index the first match.
+                if (slots[slot] == 0U)
+                    slots[slot] = result_index + 1U;
+            }
+        }
+        config_entry_unlock(entry, locked);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        index += 1U;
     }
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t config_build_merge(config_data &result, const config_data *base_config,
+    const config_data *override_config)
+{
+    ft_size_t base_count = 0U;
+    ft_size_t override_count = 0U;
+    if (base_config != ft_nullptr)
+        base_count = base_config->entry_count;
+    if (override_config != ft_nullptr)
+        override_count = override_config->entry_count;
+    if ((base_count != 0U && base_config->entries == ft_nullptr)
+        || (override_count != 0U && override_config->entries == ft_nullptr)
+        || base_count > SIZE_MAX / sizeof(config_entry)
+        || override_count > SIZE_MAX / sizeof(config_entry) - base_count)
+        return (FT_ERR_INVALID_STATE);
+    ft_size_t capacity = 0U;
+    int32_t error = config_reserve_entries(result, capacity, base_count);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    ft_size_t slot_count = 0U;
+    ft_size_t *slots = ft_nullptr;
+    // The index is optional. A failed allocation keeps the linear lookup available.
+    if (override_count != 0U)
+        slots = config_make_merge_index(base_count + override_count, slot_count);
+    if (base_count != 0U)
+        error = config_merge_entries(result, capacity, *base_config, FT_FALSE, slots, slot_count);
+    if (error == FT_ERR_SUCCESS && override_count != 0U)
+        error = config_merge_entries(result, capacity, *override_config, FT_TRUE, slots, slot_count);
+    cma_free(slots);
+    return (error);
 }
 
 config_data *config_merge(const config_data *base_config, const config_data *override_config)
 {
-    config_data *result;
-    ft_size_t index;
-    const config_data *lock_targets[3];
-    ft_bool lock_acquired[3];
-    ft_size_t lock_count;
-    int32_t lock_error;
-
-    lock_acquired[0] = FT_FALSE;
-    lock_acquired[1] = FT_FALSE;
-    lock_acquired[2] = FT_FALSE;
-    lock_count = 0;
-    if (!base_config && !override_config)
+    if (base_config == ft_nullptr && override_config == ft_nullptr)
+        return (ft_nullptr);
+    pt_mutex *first = ft_nullptr;
+    pt_mutex *second = ft_nullptr;
+    if (base_config != ft_nullptr)
+        first = base_config->mutex;
+    if (override_config != ft_nullptr)
+        second = override_config->mutex;
+    if (first == second)
+        second = ft_nullptr;
+    else if (first == ft_nullptr || (second != ft_nullptr
+        && std::less<const pt_mutex *>{}(second, first)))
     {
+        pt_mutex *previous_first = first;
+        first = second;
+        second = previous_first;
+    }
+    if (pt_mutex_lock_if_not_null(first) != FT_ERR_SUCCESS)
+        return (ft_nullptr);
+    if (pt_mutex_lock_if_not_null(second) != FT_ERR_SUCCESS)
+    {
+        (void)pt_mutex_unlock_if_not_null(first);
         return (ft_nullptr);
     }
-    result = config_data_create();
-    if (!result)
-        return (ft_nullptr);
-    config_add_lock_target(lock_targets, &lock_count, result);
-    config_add_lock_target(lock_targets, &lock_count, base_config);
-    config_add_lock_target(lock_targets, &lock_count, override_config);
-    config_sort_lock_targets(lock_targets, lock_count);
-    lock_error = config_lock_targets_in_order(lock_targets, lock_acquired,
-            lock_count);
-    if (lock_error != FT_ERR_SUCCESS)
+    config_data *result = config_data_create();
+    int32_t error = FT_ERR_NO_MEMORY;
+    if (result != ft_nullptr)
+        error = config_build_merge(*result, base_config, override_config);
+    (void)pt_mutex_unlock_if_not_null(second);
+    (void)pt_mutex_unlock_if_not_null(first);
+    if (error != FT_ERR_SUCCESS)
     {
         config_data_free(result);
         return (ft_nullptr);
     }
-    if (override_config && override_config->entry_count && !override_config->entries)
-    {
-        config_unlock_targets_reverse(lock_targets, lock_acquired, lock_count);
-        config_data_free(result);
-        return (ft_nullptr);
-    }
-    if (config_copy_entries(result, base_config) != FT_ERR_SUCCESS)
-    {
-        config_unlock_targets_reverse(lock_targets, lock_acquired, lock_count);
-        config_data_free(result);
-        return (ft_nullptr);
-    }
-    if (!override_config)
-    {
-        config_unlock_targets_reverse(lock_targets, lock_acquired, lock_count);
-        return (result);
-    }
-    index = 0;
-    while (index < override_config->entry_count)
-    {
-        const config_entry *override_entry = &override_config->entries[index];
-        config_entry *existing = config_find_matching_entry(result, override_entry);
-        if (existing)
-        {
-            config_entry replacement;
-            ft_bool existing_locked;
-
-            if (config_duplicate_entry(override_entry, &replacement) != FT_ERR_SUCCESS)
-            {
-                config_unlock_targets_reverse(lock_targets, lock_acquired,
-                    lock_count);
-                config_data_free(result);
-                return (ft_nullptr);
-            }
-            if (config_entry_lock(existing, &existing_locked) != FT_ERR_SUCCESS)
-            {
-                config_free_entry_contents(&replacement);
-                config_unlock_targets_reverse(lock_targets, lock_acquired,
-                    lock_count);
-                config_data_free(result);
-                return (ft_nullptr);
-            }
-            config_free_entry_contents_unlocked(existing);
-            existing->section = replacement.section;
-            existing->key = replacement.key;
-            existing->value = replacement.value;
-            replacement.section = ft_nullptr;
-            replacement.key = ft_nullptr;
-            replacement.value = ft_nullptr;
-            config_entry_unlock(existing, existing_locked);
-        }
-        else
-        {
-            if (config_append_entry(result, override_entry) != FT_ERR_SUCCESS)
-            {
-                config_unlock_targets_reverse(lock_targets, lock_acquired,
-                    lock_count);
-                config_data_free(result);
-                return (ft_nullptr);
-            }
-        }
-        ++index;
-    }
-    config_unlock_targets_reverse(lock_targets, lock_acquired, lock_count);
     return (result);
 }

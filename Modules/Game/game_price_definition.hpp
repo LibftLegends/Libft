@@ -28,6 +28,9 @@ class game_price_definition
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t copy_values(const game_price_definition &other) noexcept;
+
+        friend class game_economy_table;
 
     public:
         game_price_definition() noexcept;

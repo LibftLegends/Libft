@@ -1,6 +1,27 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Template/map.hpp"
+#include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+
+FT_TEST(test_ft_map_lookup_accepts_borrowed_string_key)
+{
+    ft_map<ft_string, uint32_t> values;
+    ft_string key;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, key.initialize("callback_long"));
+    values.insert(key, 12U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.get_error());
+    FT_ASSERT(values.find_as("callback") == values.end());
+    Pair<ft_string, uint32_t> *entry = values.find_as("callback_long");
+    FT_ASSERT(entry != values.end());
+    FT_ASSERT_EQ(12U, entry->value);
+    const ft_map<ft_string, uint32_t> &read_only = values;
+    FT_ASSERT(read_only.find_as("callback_longer") == read_only.end());
+    const Pair<ft_string, uint32_t> *read_only_entry = read_only.find_as("callback_long");
+    FT_ASSERT(read_only_entry != read_only.end());
+    FT_ASSERT_EQ(12U, read_only_entry->value);
+    return (1);
+}
 
 FT_TEST(test_ft_map_integral_lookup_and_removal_preserve_insertion_order)
 {
@@ -40,6 +61,7 @@ FT_TEST(test_ft_map_integral_lookup_and_removal_preserve_insertion_order)
 struct map_growth_test_value
 {
     static inline uint32_t fail_on_value = 0U;
+    static inline int32_t failure_error = FT_ERR_NO_MEMORY;
     static inline uint32_t live_copies = 0U;
     uint32_t value;
     ft_bool tracks_lifecycle;
@@ -59,7 +81,7 @@ struct map_growth_test_value
     int32_t initialize(const map_growth_test_value &source)
     {
         if (source.value == fail_on_value)
-            return (FT_ERR_NO_MEMORY);
+            return (failure_error);
         this->value = source.value;
         this->tracks_lifecycle = FT_TRUE;
         ++live_copies;
@@ -80,10 +102,15 @@ FT_TEST(test_ft_map_growth_failure_keeps_existing_entries)
     FT_ASSERT_EQ(2U, live_copies_before_growth);
     source.value = 30U;
     map_growth_test_value::fail_on_value = 20U;
+    map_growth_test_value::failure_error = FT_ERR_SYS_MUTEX_LOCK_FAILED;
     values.insert(3U, source);
     const int32_t insert_error = values.get_error();
+    values.insert(3U, ft_move(source));
+    const int32_t move_insert_error = values.get_error();
     map_growth_test_value::fail_on_value = 0U;
-    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, insert_error);
+    map_growth_test_value::failure_error = FT_ERR_NO_MEMORY;
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, insert_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, move_insert_error);
     FT_ASSERT_EQ(live_copies_before_growth, map_growth_test_value::live_copies);
     FT_ASSERT_EQ(2U, values.size());
     FT_ASSERT_EQ(10U, values.at(1U).value);
@@ -91,6 +118,48 @@ FT_TEST(test_ft_map_growth_failure_keeps_existing_entries)
     values.insert(3U, source);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, values.get_error());
     FT_ASSERT_EQ(30U, values.at(3U).value);
+    return (1);
+}
+
+FT_TEST(test_ft_map_transactional_remove_preserves_order_on_copy_failure)
+{
+    ft_map<uint32_t, map_growth_test_value> values(5U);
+    map_growth_test_value source;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.initialize());
+    uint32_t index = 1U;
+    while (index <= 4U)
+    {
+        source.value = index * 10U;
+        values.insert(index, source);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, values.get_error());
+        ++index;
+    }
+    const auto *original = values.find(1U);
+    const uint32_t original_count = map_growth_test_value::live_copies;
+    map_growth_test_value::fail_on_value = 40U;
+    map_growth_test_value::failure_error = FT_ERR_SYS_MUTEX_LOCK_FAILED;
+    const int32_t error = values.remove_transactional(2U);
+    map_growth_test_value::fail_on_value = 0U;
+    map_growth_test_value::failure_error = FT_ERR_NO_MEMORY;
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, error);
+    FT_ASSERT_EQ(original_count, map_growth_test_value::live_copies);
+    FT_ASSERT_EQ(4U, values.size());
+    FT_ASSERT(values.find(1U) == original);
+    FT_ASSERT_EQ(20U, values.at(2U).value);
+    FT_ASSERT_EQ(30U, values.at(3U).value);
+    FT_ASSERT_EQ(40U, values.at(4U).value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.remove_transactional(2U));
+    FT_ASSERT_EQ(original_count - 1U, map_growth_test_value::live_copies);
+    FT_ASSERT_EQ(5U, values.capacity());
+    FT_ASSERT_EQ(3U, values.size());
+    const auto *begin = values.end() - values.size();
+    FT_ASSERT_EQ(1U, begin[0].key);
+    FT_ASSERT_EQ(3U, begin[1].key);
+    FT_ASSERT_EQ(4U, begin[2].key);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.remove_transactional(99U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.remove_transactional(4U));
+    FT_ASSERT(values.find(1U) == begin);
+    FT_ASSERT_EQ(2U, values.size());
     return (1);
 }
 
@@ -125,5 +194,32 @@ FT_TEST(test_ft_map_copy_reports_entry_failure_and_keeps_destination)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.copy_from(source));
     FT_ASSERT_EQ(2U, destination.size());
     FT_ASSERT_EQ(20U, destination.at(2U).value);
+    return (1);
+}
+FT_TEST(test_template_map_visit_value_reports_absent_and_callback_errors)
+{
+    ft_map<int32_t, int32_t> map;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map.initialize());
+    map.insert(4, 6);
+    uint32_t calls = 0U;
+    const auto edit = [&calls](int32_t &value) noexcept -> int32_t
+    {
+        ++calls;
+        value += 1;
+        return (FT_ERR_OUT_OF_RANGE);
+    };
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, map.visit_value(9, edit));
+    FT_ASSERT_EQ(0U, calls);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, map.visit_value(4, edit));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, map.get_error());
+    const auto &read_only = map;
+    int32_t observed = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_only.visit_value(4, [&observed](const int32_t &value) noexcept
+    {
+        observed = value;
+        return (FT_ERR_SUCCESS);
+    }));
+    FT_ASSERT_EQ(1U, calls);
+    FT_ASSERT_EQ(7, observed);
     return (1);
 }

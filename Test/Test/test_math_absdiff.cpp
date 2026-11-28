@@ -85,3 +85,17 @@ FT_TEST(test_math_absdiff_zero_inputs)
     FT_ASSERT_EQ(static_cast<int64_t>(0), long_difference);
     return (1);
 }
+
+FT_TEST(test_math_absdiff_mixed_signs_near_signed_max)
+{
+    FT_ASSERT_EQ(INT32_MAX - 1, math_absdiff(INT32_MIN, -2));
+    FT_ASSERT_EQ(INT32_MAX - 1, math_absdiff(1, INT32_MIN + 3));
+    FT_ASSERT_EQ(INT32_MAX, math_absdiff(INT32_MIN, INT32_MAX));
+
+    const int64_t minimum = INT64_MIN;
+    const int64_t maximum = INT64_MAX;
+    FT_ASSERT_EQ(maximum - 1, math_absdiff(minimum, static_cast<int64_t>(-2)));
+    FT_ASSERT_EQ(maximum - 1, math_absdiff(static_cast<int64_t>(1), minimum + 3));
+    FT_ASSERT_EQ(maximum, math_absdiff(maximum, minimum));
+    return (1);
+}

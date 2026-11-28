@@ -17,6 +17,8 @@ int32_t json_update_item_checked(json_group *group, const char *key, ft_bool val
 int32_t json_update_item_checked(json_group *group, const char *key, const ft_big_number &value);
 
 int32_t json_write_buffer(const json_group *groups, char *&output, ft_size_t &length);
+// The caller owns the returned CMA buffer. Length excludes the terminator.
+char *json_write_to_string_with_length(const json_group *groups, ft_size_t &length);
 int32_t json_write_to_descriptor(int32_t descriptor, const json_group *groups);
 int32_t json_document_serialize_buffer(const json_document &document,
     char *&output, ft_size_t &length) noexcept;

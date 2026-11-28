@@ -4,6 +4,8 @@
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Template/function.hpp"
 #include "../../Modules/Template/shared_ptr.hpp"
+#include <memory>
+#include <new>
 
 static void make_behavior_action(ft_sharedptr<game_behavior_node> &action,
     int32_t status)
@@ -355,5 +357,164 @@ FT_TEST(test_game_behavior_composite_requires_initialization)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.destroy());
     sequence.clear_children();
     FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED, sequence.get_error());
+    return (1);
+}
+
+FT_TEST(test_game_behavior_sequence_propagates_child_storage_lock_failure)
+{
+    game_behavior_sequence sequence;
+    game_behavior_context context;
+    ft_sharedptr<game_behavior_node> child;
+    make_behavior_action(child, FT_BEHAVIOR_STATUS_SUCCESS);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.initialize());
+    sequence.add_child(child);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.get_children().enable_thread_safety());
+
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t tick_status = sequence.tick(context);
+    const int32_t tick_error = sequence.get_error();
+    sequence.add_child(child);
+    const int32_t add_error = sequence.get_error();
+    sequence.clear_children();
+    const int32_t clear_error = sequence.get_error();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_FAILURE, tick_status);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, tick_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, add_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, clear_error);
+    FT_ASSERT_EQ(1U, sequence.get_children().size());
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_SUCCESS, sequence.tick(context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.get_error());
+    return (1);
+}
+
+FT_TEST(test_game_behavior_callback_can_replace_itself_during_a_tick)
+{
+    game_behavior_tree_action action;
+    game_behavior_context context;
+    auto lifetime = std::make_shared<uint32_t>(0U);
+    std::weak_ptr<uint32_t> observer(lifetime);
+    ft_bool retained = FT_FALSE;
+    action.set_callback(ft_function<int32_t(game_behavior_context &)>(
+        [lifetime, &action, &observer, &retained](game_behavior_context &)
+        {
+            action.set_callback(ft_function<int32_t(game_behavior_context &)>(
+                [](game_behavior_context &) { return (FT_BEHAVIOR_STATUS_RUNNING); }));
+            retained = !observer.expired();
+            return (FT_BEHAVIOR_STATUS_SUCCESS);
+        }));
+    lifetime.reset();
+
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_SUCCESS, action.tick(context));
+    FT_ASSERT_EQ(FT_TRUE, retained);
+    FT_ASSERT(observer.expired());
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_RUNNING, action.tick(context));
+    return (1);
+}
+
+struct behavior_callback_copy_failure
+{
+    const ft_bool &fail_copy;
+
+    explicit behavior_callback_copy_failure(const ft_bool &flag) noexcept
+        : fail_copy(flag)
+    {
+        return ;
+    }
+
+    behavior_callback_copy_failure(const behavior_callback_copy_failure &other)
+        : fail_copy(other.fail_copy)
+    {
+        if (this->fail_copy)
+            throw std::bad_alloc();
+        return ;
+    }
+
+    int32_t operator()(game_behavior_context &) const noexcept
+    {
+        return (FT_BEHAVIOR_STATUS_RUNNING);
+    }
+};
+
+FT_TEST(test_game_behavior_callback_copy_failure_preserves_previous_callback)
+{
+    game_behavior_tree_action action;
+    game_behavior_context context;
+    action.set_callback(ft_function<int32_t(game_behavior_context &)>(
+        [](game_behavior_context &) { return (FT_BEHAVIOR_STATUS_SUCCESS); }));
+    ft_bool fail_copy = FT_FALSE;
+    const ft_function<int32_t(game_behavior_context &)> replacement{
+        behavior_callback_copy_failure(fail_copy)};
+    fail_copy = FT_TRUE;
+    action.set_callback(replacement);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, action.get_error());
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_SUCCESS, action.tick(context));
+    return (1);
+}
+
+FT_TEST(test_game_behavior_tree_retains_active_root_during_replacement)
+{
+    game_behavior_tree tree;
+    game_behavior_context context;
+    ft_sharedptr<game_behavior_node> root;
+    ft_sharedptr<game_behavior_node> empty;
+    auto lifetime = std::make_shared<uint32_t>(0U);
+    std::weak_ptr<uint32_t> observer(lifetime);
+    ft_bool retained = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tree.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, empty.initialize());
+    auto *leaf = new game_behavior_tree_action();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root.initialize(leaf));
+    leaf->set_callback(ft_function<int32_t(game_behavior_context &)>(
+        [lifetime, &tree, &empty, &observer, &retained](game_behavior_context &)
+        {
+            tree.set_root(empty);
+            retained = !observer.expired();
+            return (FT_BEHAVIOR_STATUS_SUCCESS);
+        }));
+    lifetime.reset();
+    tree.set_root(root);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root.destroy());
+
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_SUCCESS, tree.tick(context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tree.get_error());
+    FT_ASSERT_EQ(FT_TRUE, retained);
+    FT_ASSERT(observer.expired());
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_FAILURE, tree.tick(context));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, tree.get_error());
+    return (1);
+}
+
+FT_TEST(test_game_behavior_sequence_retains_child_during_clear)
+{
+    game_behavior_sequence sequence;
+    game_behavior_context context;
+    ft_sharedptr<game_behavior_node> child;
+    auto lifetime = std::make_shared<uint32_t>(0U);
+    std::weak_ptr<uint32_t> observer(lifetime);
+    ft_bool retained = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.initialize());
+    auto *leaf = new game_behavior_tree_action();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child.initialize(leaf));
+    leaf->set_callback(ft_function<int32_t(game_behavior_context &)>(
+        [lifetime, &sequence, &observer, &retained](game_behavior_context &)
+        {
+            sequence.clear_children();
+            retained = !observer.expired();
+            return (FT_BEHAVIOR_STATUS_SUCCESS);
+        }));
+    lifetime.reset();
+    sequence.add_child(child);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child.destroy());
+
+    FT_ASSERT_EQ(FT_BEHAVIOR_STATUS_SUCCESS, sequence.tick(context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sequence.get_error());
+    FT_ASSERT_EQ(FT_TRUE, retained);
+    FT_ASSERT(observer.expired());
+    FT_ASSERT_EQ(0U, sequence.get_children().size());
     return (1);
 }

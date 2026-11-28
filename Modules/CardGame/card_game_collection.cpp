@@ -14,8 +14,7 @@ static uint64_t card_game_collection_random(uint64_t *random_state) noexcept
 
 card_game_collection_engine::card_game_collection_engine() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _set_entry_count(0U),
-      _product_count(0U), _collection_count(0U), _set_entries(), _products(),
-      _collection()
+      _product_count(0U), _set_entries(), _products(), _quantities()
 {
     return ;
 }
@@ -32,7 +31,6 @@ int32_t card_game_collection_engine::initialize() noexcept
         return (FT_ERR_ALREADY_INITIALISED);
     this->_set_entry_count = 0U;
     this->_product_count = 0U;
-    this->_collection_count = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -41,7 +39,6 @@ int32_t card_game_collection_engine::destroy() noexcept
 {
     this->_set_entry_count = 0U;
     this->_product_count = 0U;
-    this->_collection_count = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -101,6 +98,7 @@ int32_t card_game_collection_engine::register_set_entry(
     if (this->_set_entry_count >= FT_CARD_GAME_MAX_SET_ENTRIES)
         return (FT_ERR_FULL);
     this->_set_entries[this->_set_entry_count] = entry;
+    this->_quantities[this->_set_entry_count] = 0U;
     this->_set_entry_count += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -166,216 +164,102 @@ int32_t card_game_collection_engine::get_product(uint32_t product_id,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_collection_engine::choose_printing(
-    const card_game_product_slot &slot, uint64_t *random_state,
-    const uint32_t *excluded_printing_ids, uint32_t excluded_count,
-    uint32_t *printing_id) const noexcept
-{
-    uint32_t index;
-    uint32_t eligible_count;
-    uint64_t total_weight;
-    uint64_t selected_weight;
-    uint64_t running_weight;
-
-    if (random_state == ft_nullptr || printing_id == ft_nullptr
-        || *random_state == 0U
-        || (excluded_count != 0U && excluded_printing_ids == ft_nullptr))
-        return (FT_ERR_INVALID_ARGUMENT);
-    eligible_count = 0U;
-    total_weight = 0U;
-    index = 0U;
-    while (index < this->_set_entry_count)
-    {
-        ft_bool excluded;
-        uint32_t excluded_index;
-
-        excluded = FT_FALSE;
-        excluded_index = 0U;
-        while (excluded_index < excluded_count)
-        {
-            if (excluded_printing_ids[excluded_index]
-                == this->_set_entries[index].printing_id)
-                excluded = FT_TRUE;
-            excluded_index += 1U;
-        }
-        if (excluded == FT_FALSE
-            && this->_set_entries[index].set_id == slot.set_id
-            && (this->_set_entries[index].rarity_mask & slot.rarity_mask) != 0U
-            && (slot.treatment_id == 0U
-                || slot.treatment_id == this->_set_entries[index].treatment_id)
-            && (this->_set_entries[index].forced_rarity_mask == 0U
-                || (this->_set_entries[index].forced_rarity_mask
-                    & slot.rarity_mask) != 0U))
-        {
-            total_weight += static_cast<uint64_t>(
-                this->_set_entries[index].selection_weight)
-                * slot.selection_weight;
-            eligible_count += 1U;
-        }
-        index += 1U;
-    }
-    if (eligible_count == 0U || total_weight == 0U)
-        return (FT_ERR_NOT_FOUND);
-    selected_weight = card_game_collection_random(random_state) % total_weight;
-    running_weight = 0U;
-    index = 0U;
-    while (index < this->_set_entry_count)
-    {
-        ft_bool excluded;
-        uint32_t excluded_index;
-
-        excluded = FT_FALSE;
-        excluded_index = 0U;
-        while (excluded_index < excluded_count)
-        {
-            if (excluded_printing_ids[excluded_index]
-                == this->_set_entries[index].printing_id)
-                excluded = FT_TRUE;
-            excluded_index += 1U;
-        }
-        if (excluded == FT_FALSE
-            && this->_set_entries[index].set_id == slot.set_id
-            && (this->_set_entries[index].rarity_mask & slot.rarity_mask) != 0U
-            && (slot.treatment_id == 0U
-                || slot.treatment_id == this->_set_entries[index].treatment_id)
-            && (this->_set_entries[index].forced_rarity_mask == 0U
-                || (this->_set_entries[index].forced_rarity_mask
-                    & slot.rarity_mask) != 0U))
-        {
-            running_weight += static_cast<uint64_t>(
-                this->_set_entries[index].selection_weight)
-                * slot.selection_weight;
-            if (selected_weight < running_weight)
-            {
-                *printing_id = this->_set_entries[index].printing_id;
-                return (FT_ERR_SUCCESS);
-            }
-        }
-        index += 1U;
-    }
-    return (FT_ERR_INTERNAL);
-}
-
-int32_t card_game_collection_engine::add_collection(uint32_t printing_id) noexcept
-{
-    uint32_t index;
-
-    if (this->find_set_entry(printing_id, &index) != FT_ERR_SUCCESS)
-        return (FT_ERR_NOT_FOUND);
-    index = 0U;
-    while (index < this->_collection_count)
-    {
-        if (this->_collection[index].printing_id == printing_id)
-        {
-            if (this->_collection[index].quantity == UINT32_MAX)
-                return (FT_ERR_FULL);
-            this->_collection[index].quantity += 1U;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
-    }
-    if (this->_collection_count >= FT_CARD_GAME_MAX_SET_ENTRIES)
-        return (FT_ERR_FULL);
-    this->_collection[this->_collection_count].printing_id = printing_id;
-    this->_collection[this->_collection_count].quantity = 1U;
-    this->_collection_count += 1U;
-    return (FT_ERR_SUCCESS);
-}
-
 int32_t card_game_collection_engine::open_product(uint32_t product_id,
     uint64_t *random_state, card_game_pack_result *result) noexcept
 {
     uint32_t product_index;
-    uint32_t slot_index;
-    uint32_t card_index;
-    uint32_t prior_index;
-    uint32_t collection_index;
-    uint32_t slot_selected[FT_CARD_GAME_MAX_PACK_ENTRIES];
-    uint32_t slot_selected_count;
-    uint32_t excluded_count;
-    ft_bool candidate_duplicate;
-    card_game_pack_result candidate;
-    int32_t error_code;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || random_state == ft_nullptr || result == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = this->find_product(product_id, &product_index);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
+    const int32_t status = this->find_product(product_id, &product_index);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+
+    static_assert(FT_CARD_GAME_MAX_PACK_ENTRIES <= UINT8_MAX,
+        "pack increments must fit in a byte");
+    card_game_pack_result candidate{};
     candidate.product_id = product_id;
-    candidate.entry_count = 0U;
-    slot_index = 0U;
-    while (slot_index < this->_products[product_index].slot_count)
+    uint32_t selected_indexes[FT_CARD_GAME_MAX_PACK_ENTRIES];
+    uint64_t weights[FT_CARD_GAME_MAX_SET_ENTRIES];
+    uint32_t eligible_indexes[FT_CARD_GAME_MAX_SET_ENTRIES];
+    const card_game_product_definition &product = this->_products[product_index];
+    uint32_t slot_index = 0U;
+    while (slot_index < product.slot_count)
     {
-        card_index = 0U;
-        slot_selected_count = 0U;
-        while (card_index < this->_products[product_index].slots[slot_index]
-            .card_count)
+        const card_game_product_slot &slot = product.slots[slot_index];
+        uint32_t eligible_count = 0U;
+        uint64_t total_weight = 0U;
+        uint32_t printing_index = 0U;
+        while (printing_index < this->_set_entry_count)
+        {
+            const card_game_set_entry &entry = this->_set_entries[printing_index];
+            if (entry.set_id == slot.set_id
+                && (entry.rarity_mask & slot.rarity_mask) != 0U
+                && (slot.treatment_id == 0U || slot.treatment_id == entry.treatment_id)
+                && (entry.forced_rarity_mask == 0U
+                    || (entry.forced_rarity_mask & slot.rarity_mask) != 0U))
+            {
+                const uint64_t weight = static_cast<uint64_t>(entry.selection_weight)
+                    * slot.selection_weight;
+                total_weight += weight;
+                weights[eligible_count] = weight;
+                eligible_indexes[eligible_count] = printing_index;
+                ++eligible_count;
+            }
+            ++printing_index;
+        }
+        uint32_t draw_index = 0U;
+        while (draw_index < slot.card_count)
         {
             if (candidate.entry_count >= FT_CARD_GAME_MAX_PACK_ENTRIES)
                 return (FT_ERR_FULL);
-            excluded_count = 0U;
-            if (this->_products[product_index].slots[slot_index]
-                .allow_duplicates == FT_FALSE)
-                excluded_count = slot_selected_count;
-            error_code = this->choose_printing(
-                this->_products[product_index].slots[slot_index], random_state,
-                slot_selected, excluded_count,
-                &candidate.printing_ids[candidate.entry_count]);
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
-            candidate.entry_count += 1U;
-            if (slot_selected_count < FT_CARD_GAME_MAX_PACK_ENTRIES)
+            if (*random_state == 0U)
+                return (FT_ERR_INVALID_ARGUMENT);
+            if (total_weight == 0U)
+                return (FT_ERR_NOT_FOUND);
+            const uint64_t selected_weight = card_game_collection_random(random_state)
+                % total_weight;
+            uint64_t running_weight = 0U;
+            uint32_t selected = 0U;
+            while (selected < eligible_count)
             {
-                slot_selected[slot_selected_count] =
-                    candidate.printing_ids[candidate.entry_count - 1U];
-                slot_selected_count += 1U;
+                running_weight += weights[selected];
+                if (selected_weight < running_weight)
+                    break ;
+                ++selected;
             }
-            card_index += 1U;
+            if (selected == eligible_count)
+                return (FT_ERR_INTERNAL);
+            const uint32_t index = eligible_indexes[selected];
+            candidate.printing_ids[candidate.entry_count] = this->_set_entries[index].printing_id;
+            selected_indexes[candidate.entry_count] = index;
+            ++candidate.entry_count;
+            if (slot.allow_duplicates == FT_FALSE)
+            {
+                total_weight -= weights[selected];
+                weights[selected] = 0U;
+            }
+            ++draw_index;
         }
-        slot_index += 1U;
+        ++slot_index;
+    }
+
+    uint8_t increments[FT_CARD_GAME_MAX_SET_ENTRIES]{};
+    uint32_t card_index = 0U;
+    while (card_index < candidate.entry_count)
+    {
+        const uint32_t index = selected_indexes[card_index];
+        ++increments[index];
+        if (this->_quantities[index] > UINT32_MAX - increments[index])
+            return (FT_ERR_FULL);
+        ++card_index;
     }
     card_index = 0U;
     while (card_index < candidate.entry_count)
     {
-        if (this->find_set_entry(candidate.printing_ids[card_index],
-            &collection_index) != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-        collection_index = 0U;
-        while (collection_index < this->_collection_count
-            && this->_collection[collection_index].printing_id
-                != candidate.printing_ids[card_index])
-            collection_index += 1U;
-        if (collection_index < this->_collection_count)
-        {
-            if (this->_collection[collection_index].quantity == UINT32_MAX)
-                return (FT_ERR_FULL);
-        }
-        else
-        {
-            candidate_duplicate = FT_FALSE;
-            prior_index = 0U;
-            while (prior_index < card_index)
-            {
-                if (candidate.printing_ids[prior_index]
-                    == candidate.printing_ids[card_index])
-                    candidate_duplicate = FT_TRUE;
-                prior_index += 1U;
-            }
-            if (candidate_duplicate == FT_FALSE
-                && this->_collection_count >= FT_CARD_GAME_MAX_SET_ENTRIES)
-                return (FT_ERR_FULL);
-        }
-        card_index += 1U;
-    }
-    card_index = 0U;
-    while (card_index < candidate.entry_count)
-    {
-        error_code = this->add_collection(candidate.printing_ids[card_index]);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        card_index += 1U;
+        ++this->_quantities[selected_indexes[card_index]];
+        ++card_index;
     }
     *result = candidate;
     return (FT_ERR_SUCCESS);
@@ -391,17 +275,7 @@ int32_t card_game_collection_engine::get_collection(uint32_t printing_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->find_set_entry(printing_id, &index) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_FOUND);
-    index = 0U;
-    while (index < this->_collection_count)
-    {
-        if (this->_collection[index].printing_id == printing_id)
-        {
-            *quantity = this->_collection[index].quantity;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
-    }
-    *quantity = 0U;
+    *quantity = this->_quantities[index];
     return (FT_ERR_SUCCESS);
 }
 

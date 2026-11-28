@@ -5,6 +5,7 @@
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Game/game_behavior_action.hpp"
 #include "../../Modules/Game/game_behavior_profile.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -52,7 +53,12 @@ FT_TEST(test_behavior_table_move_semantics)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fetched.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fetched.get_error());
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.initialize(ft_move(source)));
+    const auto *entry = source.get_profiles().find(20);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t move_result = moved.initialize(ft_move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, move_result);
+    FT_ASSERT(moved.get_profiles().find(20) == entry);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.fetch_profile(20, fetched));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_error());

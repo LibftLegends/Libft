@@ -5,15 +5,18 @@
 #include "../Printf/printf.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno_internal.hpp"
+#include <atomic>
 #include <new>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
 thread_local int32_t game_map3d::_last_error = FT_ERR_SUCCESS;
+static std::atomic<uint64_t> g_next_map_route_identity{1U};
 
 game_map3d::game_map3d()
     : _data(ft_nullptr), _width(0), _height(0), _depth(0),
+      _route_identity(0U), _route_revision(0U),
       _initial_value(0), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
@@ -72,11 +75,6 @@ int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t dept
         errno_abort_lifecycle(this->_initialised_state, "game_map3d::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_width = width;
-    this->_height = height;
-    this->_depth = depth;
-    this->_initial_value = value;
-    this->_data = ft_nullptr;
     allocation_error = this->allocate(width, height, depth, value);
     if (allocation_error != FT_ERR_SUCCESS)
     {
@@ -84,6 +82,9 @@ int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t dept
         this->set_error(allocation_error);
         return (allocation_error);
     }
+    this->_route_identity = g_next_map_route_identity.fetch_add(1U, std::memory_order_relaxed);
+    this->_route_revision = 0U;
+    this->_initial_value = value;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -91,75 +92,53 @@ int32_t game_map3d::initialize(ft_size_t width, ft_size_t height, ft_size_t dept
 
 int32_t game_map3d::move(game_map3d &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-
     if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
         return (FT_ERR_SUCCESS);
-    }
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
-        errno_abort_lifecycle(other._initialised_state, "game_map3d::move", "source object is uninitialised");
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
+        errno_abort_lifecycle(other._initialised_state, "game_map3d::move",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
+    const int32_t source_error = other.get_error();
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(FT_ERR_SUCCESS);
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
-    }
-    initialize_error = this->initialize(other._width, other._height, other._depth,
-            other._initial_value);
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    this->deallocate();
+
     this->_data = other._data;
     this->_width = other._width;
     this->_height = other._height;
     this->_depth = other._depth;
     this->_initial_value = other._initial_value;
+    this->_mutex = other._mutex;
+    this->_route_identity = g_next_map_route_identity.fetch_add(1U, std::memory_order_relaxed);
+    this->_route_revision = 0U;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._data = ft_nullptr;
-    other._width = 0;
-    other._height = 0;
-    other._depth = 0;
+    other._width = 0U;
+    other._height = 0U;
+    other._depth = 0U;
     other._initial_value = 0;
+    other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_map3d::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t disable_error = this->disable_thread_safety();
     this->deallocate();
-    disable_error = this->disable_thread_safety();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
-    return (disable_error);
+    return (this->set_error(disable_error));
 }
 
 int32_t game_map3d::enable_thread_safety() noexcept
@@ -260,6 +239,18 @@ void game_map3d::unlock(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+int32_t game_map3d::read_route_version(uint64_t &identity, uint64_t &revision) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    identity = this->_route_identity;
+    revision = this->_route_revision;
+    this->unlock(lock_acquired);
+    return (FT_ERR_SUCCESS);
+}
+
 void game_map3d::resize(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value)
 {
     ft_bool lock_acquired;
@@ -274,11 +265,9 @@ void game_map3d::resize(ft_size_t width, ft_size_t height, ft_size_t depth, int3
         this->set_error(lock_error);
         return ;
     }
-    this->deallocate();
-    this->_width = width;
-    this->_height = height;
-    this->_depth = depth;
     allocation_error = this->allocate(width, height, depth, value);
+    if (allocation_error == FT_ERR_SUCCESS)
+        ++this->_route_revision;
     (void)this->unlock_internal(lock_acquired);
     this->set_error(allocation_error);
     return ;
@@ -307,7 +296,7 @@ int32_t game_map3d::get(ft_size_t x, ft_size_t y, ft_size_t z) const
     }
     int32_t value;
 
-    value = this->_data[z][y][x];
+    value = this->_data[(z * this->_height + y) * this->_width + x];
     (void)this->unlock_internal(lock_acquired);
         this->set_error(FT_ERR_SUCCESS);
     return (value);
@@ -328,7 +317,12 @@ void game_map3d::set(ft_size_t x, ft_size_t y, ft_size_t z, int32_t value)
     }
     if (this->_data != ft_nullptr && x < this->_width && y < this->_height
         && z < this->_depth)
-        this->_data[z][y][x] = value;
+    {
+        int32_t &cell = this->_data[(z * this->_height + y) * this->_width + x];
+        if ((cell == 0) != (value == 0))
+            ++this->_route_revision;
+        cell = value;
+    }
     else
     {
 
@@ -374,11 +368,10 @@ void game_map3d::toggle_obstacle(ft_size_t x, ft_size_t y, ft_size_t z,
         this->set_error(FT_ERR_OUT_OF_RANGE);
         return ;
     }
-    if (this->_data[z][y][x] == 0)
-        this->_data[z][y][x] = 1;
-    else
-        this->_data[z][y][x] = 0;
-    new_value = this->_data[z][y][x];
+    int32_t &cell = this->_data[(z * this->_height + y) * this->_width + x];
+    new_value = cell == 0;
+    cell = new_value;
+    ++this->_route_revision;
     (void)this->unlock_internal(lock_acquired);
         this->set_error(FT_ERR_SUCCESS);
     if (listener != ft_nullptr)
@@ -448,92 +441,51 @@ ft_size_t game_map3d::get_depth() const
 
 int32_t game_map3d::allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value)
 {
-    ft_size_t index_depth;
+    constexpr ft_size_t MAX_CELLS = SIZE_MAX / sizeof(int32_t);
+    ft_size_t cell_count = 0U;
+    if (width != 0U && height != 0U && depth != 0U)
+    {
+        if (width > MAX_CELLS / height || width * height > MAX_CELLS / depth)
+            return (FT_ERR_OUT_OF_RANGE);
+        cell_count = width * height * depth;
+    }
+    ft_size_t old_cell_count = 0U;
+    if (this->_data != ft_nullptr)
+        old_cell_count = this->_width * this->_height * this->_depth;
 
+    int32_t *cells = this->_data;
+    if (cell_count != old_cell_count)
+    {
+        cells = ft_nullptr;
+        if (cell_count != 0U)
+        {
+            cells = static_cast<int32_t *>(cma_malloc(cell_count * sizeof(int32_t)));
+            if (cells == ft_nullptr)
+                return (FT_ERR_NO_MEMORY);
+        }
+    }
+    ft_size_t index = 0U;
+    while (index < cell_count)
+    {
+        cells[index] = value;
+        ++index;
+    }
+    if (cells != this->_data && this->_data != ft_nullptr)
+        cma_free(this->_data);
+    this->_data = cells;
     this->_width = width;
     this->_height = height;
     this->_depth = depth;
-    this->_data = ft_nullptr;
-    if (width == 0 || height == 0 || depth == 0)
-        return (FT_ERR_SUCCESS);
-    this->_data = static_cast<int32_t ***>(cma_malloc(sizeof(int32_t **) * depth));
-    if (this->_data == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    index_depth = 0;
-    while (index_depth < depth)
-    {
-        this->_data[index_depth] = ft_nullptr;
-        index_depth += 1;
-    }
-    index_depth = 0;
-    while (index_depth < depth)
-    {
-        ft_size_t index_height;
-
-        this->_data[index_depth] = static_cast<int32_t **>(cma_malloc(sizeof(int32_t *) * height));
-        if (this->_data[index_depth] == ft_nullptr)
-        {
-            this->deallocate();
-            return (FT_ERR_NO_MEMORY);
-        }
-        index_height = 0;
-        while (index_height < height)
-        {
-            ft_size_t index_width;
-
-            this->_data[index_depth][index_height] = static_cast<int32_t *>(
-                    cma_malloc(sizeof(int32_t) * width));
-            if (this->_data[index_depth][index_height] == ft_nullptr)
-            {
-                this->deallocate();
-                return (FT_ERR_NO_MEMORY);
-            }
-            index_width = 0;
-            while (index_width < width)
-            {
-                this->_data[index_depth][index_height][index_width] = value;
-                index_width += 1;
-            }
-            index_height += 1;
-        }
-        index_depth += 1;
-    }
     return (FT_ERR_SUCCESS);
 }
 
 void game_map3d::deallocate()
 {
-    ft_size_t index_depth;
-
-    if (this->_data == ft_nullptr)
-    {
-        this->_width = 0;
-        this->_height = 0;
-        this->_depth = 0;
-        return ;
-    }
-    index_depth = 0;
-    while (index_depth < this->_depth)
-    {
-        ft_size_t index_height;
-
-        if (this->_data[index_depth] != ft_nullptr)
-        {
-            index_height = 0;
-            while (index_height < this->_height)
-            {
-                if (this->_data[index_depth][index_height] != ft_nullptr)
-                    cma_free(this->_data[index_depth][index_height]);
-                index_height += 1;
-            }
-            cma_free(this->_data[index_depth]);
-        }
-        index_depth += 1;
-    }
-    cma_free(this->_data);
+    if (this->_data != ft_nullptr)
+        cma_free(this->_data);
     this->_data = ft_nullptr;
-    this->_width = 0;
-    this->_height = 0;
-    this->_depth = 0;
+    this->_width = 0U;
+    this->_height = 0U;
+    this->_depth = 0U;
     return ;
 }

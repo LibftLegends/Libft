@@ -1,22 +1,12 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
+#include <cmath>
 
 double ft_tan(double value)
 {
-    double sin_value;
-    double cos_value;
-    double epsilon;
+    constexpr double POLE_TOLERANCE = 1e-10;
 
-    epsilon = 0.0000000001;
-    sin_value = ft_sin(value);
-    cos_value = math_cos(value);
-    if (math_fabs(cos_value) < epsilon)
-    {
+    const double cosine = math_cos(value);
+    if (std::fabs(cosine) < POLE_TOLERANCE)
         return (math_nan());
-    }
-    return (sin_value / cos_value);
+    return (ft_sin(value) / cosine);
 }

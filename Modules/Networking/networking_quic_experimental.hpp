@@ -47,9 +47,9 @@ class quic_experimental_session
         ft_bool     ensure_feature_enabled() const noexcept;
         ft_bool     ensure_configured() const noexcept;
         ft_bool     derive_keys(SSL *ssl_session, ft_bool outbound) noexcept;
-        ft_bool     prepare_nonce(uint64_t sequence_number,
+        ft_size_t   prepare_nonce(uint64_t sequence_number,
                         const ft_vector<unsigned char> &base_iv,
-                        ft_vector<unsigned char> &out_nonce) noexcept;
+                        unsigned char (&out_nonce)[EVP_MAX_IV_LENGTH]) noexcept;
 
         SSL                             *_ssl_session;
         ft_bool                         _outbound;

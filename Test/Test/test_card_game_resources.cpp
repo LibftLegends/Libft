@@ -133,6 +133,10 @@ FT_TEST(test_card_game_allowances_pass_predicate_context)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_predicate(9U,
         card_game_resource_test_context, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_predicate(4U,
+        card_game_resource_test_creature_only, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, ledger.register_predicate(9U,
+        card_game_resource_test_creature_only, ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U, 0U, 0U,
         9U, 42U, &matching_allowance));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U, 0U, 0U,
@@ -145,6 +149,42 @@ FT_TEST(test_card_game_allowances_pass_predicate_context)
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, ledger.consume(non_matching_allowance,
         1U, 1U, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_allowances_preserve_order_and_errors_after_compaction)
+{
+    card_game_allowance_ledger ledger;
+    uint32_t expired = 0U;
+    uint32_t middle = 0U;
+    uint32_t last = 0U;
+    uint32_t consumed = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 3U,
+        0U, 0U, 0U, 0U, &expired));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U,
+        0U, 0U, 0U, 0U, &middle));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.grant(1U, 1U, 0U, 1U, 0U,
+        0U, 0U, 0U, 0U, &last));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.reset_epoch(3U));
+    card_game_action_allowance allowance{};
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, ledger.get(expired, &allowance));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.consume_first(1U, 1U, 0U, 3U, &consumed));
+    FT_ASSERT_EQ(last, consumed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.consume(middle, 1U, 1U, 0U, 3U));
+
+    card_game_action_allowance entries[3]{};
+    entries[0].allowance_id = 6U;
+    entries[0].maximum_uses = 1U;
+    entries[1] = entries[0];
+    entries[1].allowance_id = 1U;
+    entries[1].predicate_id = 99U;
+    entries[2] = entries[0];
+    const card_game_allowance_snapshot snapshot{3U, 7U, entries};
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    entries[0].predicate_id = 99U;
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, ledger.apply_snapshot(snapshot));
+    FT_ASSERT_EQ(2U, ledger.size());
     return (1);
 }
 
@@ -309,6 +349,47 @@ FT_TEST(test_card_game_resources_snapshot_rejects_next_unit_collision)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         card_game_resource_ledger::release_snapshot(&snapshot));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_snapshot_preserves_unsorted_records)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_ledger moved;
+    card_game_resource_pool pools[] = {
+        {1U, 2U, 7U, 30U, 3U, 1U, 3U},
+        {2U, 1U, 7U, 30U, 5U, 0U, 0U}
+    };
+    card_game_resource_unit units[] = {
+        {9U, 1U, 7U, 2U, 0U, 0U, 0U, FT_FALSE, FT_FALSE, 0U},
+        {4U, 2U, 7U, 3U, 0U, 0U, 0U, FT_TRUE, FT_TRUE, 1U},
+        {2U, 1U, 7U, 3U, 0U, 0U, 0U, FT_FALSE, FT_FALSE, 0U}
+    };
+    const card_game_resource_snapshot snapshot{2U, 3U, 10U, pools, units};
+    card_game_payment_plan plan{};
+    const card_game_resource_requirement requirement{7U, 4U, 0U, 0U};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.apply_snapshot(snapshot));
+    units[2].unit_id = 9U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    units[2].unit_id = 2U;
+    units[2].amount = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    units[2].amount = 3U;
+    units[2].resource_type_id = 8U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    units[2].resource_type_id = 7U;
+    pools[1].owner_id = 2U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ledger.apply_snapshot(snapshot));
+    pools[1].owner_id = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(ledger));
+    card_game_resource_snapshot restored{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_snapshot(&restored));
+    FT_ASSERT(card_game_resource_ledger::snapshots_equal(snapshot, restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_resource_ledger::release_snapshot(&restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.create_payment_plan(1U, requirement, &plan));
+    FT_ASSERT_EQ(2U, plan.count);
     return (1);
 }
 
@@ -628,5 +709,72 @@ FT_TEST(test_card_game_resources_indefinite_lock_preserves_scheduled_lock)
     FT_ASSERT_EQ(1U, pool.locked_amount);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.destroy());
     (void)unit_id;
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_lock_rejects_id_exhaustion_before_splitting)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_pool pools[] = {{1U, 1U, 1U, 10U, 6U, 2U, 0U}};
+    card_game_resource_unit units[] = {
+        {1U, 1U, 1U, 3U, 0U, 0U, 4U, FT_FALSE, FT_FALSE, 1U},
+        {2U, 1U, 1U, 3U, 0U, 0U, 4U, FT_FALSE, FT_FALSE, 1U}
+    };
+    const card_game_resource_snapshot incoming{1U, 2U, UINT32_MAX - 1U,
+        pools, units};
+    card_game_resource_snapshot after{};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.apply_snapshot(incoming));
+    FT_ASSERT_EQ(FT_ERR_FULL, ledger.lock_units_until(1U, 1U, 3U, 5U));
+    FT_ASSERT_EQ(FT_ERR_FULL, ledger.lock_units(1U, 1U, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_snapshot(&after));
+    FT_ASSERT(card_game_resource_ledger::snapshots_equal(incoming, after));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_resource_ledger::release_snapshot(&after));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units_until(1U, 1U, 2U, 5U));
+    card_game_resource_unit split{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_unit(UINT32_MAX - 1U, &split));
+    FT_ASSERT_EQ(2U, split.locked_amount);
+    FT_ASSERT_EQ(FT_ERR_FULL, ledger.lock_units_until(1U, 1U, 1U, 5U));
+    return (1);
+}
+
+FT_TEST(test_card_game_resources_spend_and_refresh_keep_pool_totals)
+{
+    card_game_resource_ledger ledger;
+    card_game_resource_pool pool{};
+    uint32_t pool_id;
+    uint32_t temporary_id;
+    uint32_t regular_id;
+    uint32_t other_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(1U, 2U, 20U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.register_pool(2U, 2U, 20U, &pool_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 2U, 10U, 0U, 4U,
+        FT_TRUE, &temporary_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(1U, 2U, 5U, 0U, 0U,
+        FT_FALSE, &regular_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_units(2U, 2U, 7U, 0U, 0U,
+        FT_FALSE, &other_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.lock_units_until(1U, 2U, 3U, 4U));
+    const card_game_payment_plan payment{3U, 9U,
+        {{temporary_id, 2U}, {regular_id, 5U}, {temporary_id, 2U}}};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.spend(payment));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 2U, &pool));
+    FT_ASSERT_EQ(6U, pool.current_amount);
+    FT_ASSERT_EQ(6U, pool.temporary_amount);
+    FT_ASSERT_EQ(3U, pool.locked_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.refresh(4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(1U, 2U, &pool));
+    FT_ASSERT_EQ(0U, pool.current_amount);
+    FT_ASSERT_EQ(0U, pool.temporary_amount);
+    FT_ASSERT_EQ(0U, pool.locked_amount);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_pool(2U, 2U, &pool));
+    FT_ASSERT_EQ(7U, pool.current_amount);
+    FT_ASSERT_EQ(1U, ledger.unit_count());
+    card_game_resource_unit surviving{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get_unit(other_id, &surviving));
+    FT_ASSERT_EQ(7U, surviving.amount);
     return (1);
 }

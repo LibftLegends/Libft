@@ -6,7 +6,6 @@
 #include <new>
 #include <random>
 #include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
 std::mt19937 g_random_engine;
 std::atomic<ft_bool> g_random_engine_seeded(FT_FALSE);
@@ -57,15 +56,18 @@ int32_t rng_unlock_random_engine_mutex(void)
     return (FT_ERR_SUCCESS);
 }
 
-void ft_seed_random_engine(uint32_t seed_value)
+static void rng_seed_random_engine_unlocked(uint32_t seed_value)
 {
-    int32_t lock_error;
-
-    lock_error = rng_lock_random_engine_mutex();
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
     g_random_engine.seed(static_cast<std::mt19937::result_type>(seed_value));
     g_random_engine_seeded.store(FT_TRUE, std::memory_order_release);
+    return ;
+}
+
+void ft_seed_random_engine(uint32_t seed_value)
+{
+    if (rng_lock_random_engine_mutex() != FT_ERR_SUCCESS)
+        return ;
+    rng_seed_random_engine_unlocked(seed_value);
     (void)rng_unlock_random_engine_mutex();
     return ;
 }
@@ -74,12 +76,21 @@ void ft_seed_random_engine_with_entropy(void)
 {
     if (g_random_engine_seeded.load(std::memory_order_acquire) == FT_TRUE)
         return ;
-    std::random_device random_device;
-    uint32_t seed_value;
-
-    seed_value = random_device();
-    if (g_random_engine_seeded.load(std::memory_order_acquire) == FT_TRUE)
+    if (rng_lock_random_engine_mutex() != FT_ERR_SUCCESS)
         return ;
-    ft_seed_random_engine(seed_value);
+    try
+    {
+        if (g_random_engine_seeded.load(std::memory_order_relaxed) == FT_FALSE)
+        {
+            std::random_device random_device;
+            rng_seed_random_engine_unlocked(random_device());
+        }
+    }
+    catch (...)
+    {
+        (void)rng_unlock_random_engine_mutex();
+        throw;
+    }
+    (void)rng_unlock_random_engine_mutex();
     return ;
 }

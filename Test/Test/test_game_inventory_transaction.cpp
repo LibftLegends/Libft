@@ -4,6 +4,7 @@
 #include "../../Modules/Template/shared_ptr.hpp"
 #include "../../Modules/Template/pair.hpp"
 #include "../../Modules/Errno/errno.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <atomic>
 #include <functional>
@@ -30,6 +31,109 @@ static int32_t make_transfer_item(int32_t id, int32_t count,
     output->get()->set_modifier1_id(modifier_id);
     output->get()->set_modifier1_value(modifier_value);
     return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_game_inventory_move_transfers_slots_without_allocating)
+{
+    game_inventory source;
+    game_inventory destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(32U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4U, 0));
+    int32_t index = 0;
+    while (index < 16)
+    {
+        ft_sharedptr<game_item> item;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(40 + index, 1, 1, 0, 0, &item));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    const auto *slots = source._items._data;
+    uint64_t destination_revision;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t result = destination.move(source);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT(destination._items._data == slots);
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    uint64_t actual_revision;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&actual_revision));
+    FT_ASSERT_EQ(destination_revision + 2U, actual_revision);
+    FT_ASSERT_EQ(32U, destination.get_capacity());
+    index = 0;
+    while (index < 16)
+    {
+        FT_ASSERT_EQ(1, destination.count_item(40 + index));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(0U, source.get_used());
+    return (1);
+}
+
+FT_TEST(test_game_inventory_move_leaves_source_on_map_lock_failure)
+{
+    game_inventory source;
+    game_inventory destination;
+    ft_sharedptr<game_item> item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(42, 1, 1, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source._items.enable_thread_safety());
+    const auto *slots = source._items._data;
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT(source._items._data == slots);
+    FT_ASSERT_EQ(1, source.count_item(42));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(1, destination.count_item(42));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_copy_reports_slot_allocation_failure_and_can_retry)
+{
+    game_inventory source;
+    game_inventory destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(32U, 0));
+    int32_t index = 0;
+    while (index < 16)
+    {
+        ft_sharedptr<game_item> item;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(40 + index, 1, 1, 0, 0, &item));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    const auto *slots = source._items._data;
+    const ft_size_t empty_table_bytes = destination._items._initial_capacity * sizeof(*slots);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(empty_table_bytes));
+    const int32_t copy_error = destination.initialize(source);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, copy_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, destination.get_error());
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT(destination._items._data == ft_nullptr);
+    FT_ASSERT(source._items._data == slots);
+    FT_ASSERT_EQ(16U, source.get_used());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT(destination._items._data != slots);
+    FT_ASSERT_EQ(source.get_capacity(), destination.get_capacity());
+    FT_ASSERT_EQ(16U, destination.get_used());
+    index = 0;
+    while (index < 16)
+    {
+        FT_ASSERT_EQ(1, destination.count_item(40 + index));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(1, destination.count_item(55));
+    return (1);
 }
 
 FT_TEST(test_game_inventory_remove_item_instance_requires_identity_and_revision)
@@ -61,6 +165,62 @@ FT_TEST(test_game_inventory_remove_item_instance_requires_identity_and_revision)
     FT_ASSERT_EQ(revision + 1U, after_revision);
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
         inventory.remove_item_instance(0, after_revision, instance_id));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_slot_erasure_preserves_totals_on_lock_failure)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    ft_sharedptr<game_item> retained;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(40, 1, 1, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(41, 1, 1, 0, 0, &retained));
+    item->set_instance_id(7001U);
+    retained->set_instance_id(7002U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(retained));
+    uint64_t revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    auto &items = inventory.get_items();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, items.enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    inventory.remove_item(0);
+    const int32_t map_error = inventory.get_error();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, map_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, items.disable_thread_safety());
+
+    auto *entry = items.find(0);
+    FT_ASSERT(entry != items.end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entry->value->enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t item_error = inventory.remove_item_instance(0, revision, 7001U);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, item_error);
+    uint64_t revision_after = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_after));
+    FT_ASSERT_EQ(revision, revision_after);
+    FT_ASSERT_EQ(2, inventory.get_current_weight());
+    FT_ASSERT_EQ(2U, items.size());
+#if USE_INVENTORY_SLOTS
+    FT_ASSERT_EQ(2U, inventory.get_used());
+#endif
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t retry_error = inventory.remove_item_instance(0, revision, 7001U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, retry_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_after));
+    FT_ASSERT_EQ(revision + 1U, revision_after);
+    FT_ASSERT_EQ(1, inventory.get_current_weight());
+    FT_ASSERT_EQ(1U, items.size());
+    FT_ASSERT_EQ(7002U, items.at(1)->get_instance_id());
+#if USE_INVENTORY_SLOTS
+    FT_ASSERT_EQ(1U, inventory.get_used());
+#endif
     return (1);
 }
 
@@ -139,6 +299,95 @@ FT_TEST(test_game_inventory_quantity_remove_is_atomic_and_idempotent)
         &transfer_result));
     FT_ASSERT_EQ(3, inventory.count_item(45));
     FT_ASSERT_EQ(0, destination.count_item(45));
+    return (1);
+}
+
+FT_TEST(test_game_inventory_quantity_remove_debits_lowest_sparse_slots_first)
+{
+    game_inventory inventory;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize());
+    game_inventory_snapshot snapshot = {};
+    snapshot.next_slot = 20000;
+    snapshot.used_slots = 6U;
+    snapshot.current_weight = 14;
+    snapshot.revision = 42U;
+    constexpr int32_t SLOTS[] = {9000, 50, 100, 3, 40};
+    constexpr int32_t STACKS[] = {4, 2, 5, 2, 1};
+    ft_size_t index = 0U;
+    while (index < sizeof(SLOTS) / sizeof(SLOTS[0]))
+    {
+        game_inventory_item_snapshot item = {};
+        item.slot = SLOTS[index];
+        item.item_id = 45;
+        item.max_stack = STACKS[index];
+        item.stack_size = STACKS[index];
+        item.width = 1;
+        item.height = 1;
+        if (item.slot == 3)
+            item.width = 2;
+        if (item.slot == 40)
+            item.instance_id = UINT64_MAX;
+        snapshot.items.push_back(item);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.restore_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.enable_thread_safety());
+    game_inventory_quantity_result result = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.remove_item_quantity(45, 6,
+        snapshot.revision, 12U, 9U, &result));
+    FT_ASSERT_EQ(6, result.removed_quantity);
+    FT_ASSERT_EQ(43U, result.inventory_revision);
+    game_inventory_snapshot restored = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_snapshot(restored));
+    FT_ASSERT_EQ(8, restored.current_weight);
+    FT_ASSERT_EQ(3U, restored.used_slots);
+    FT_ASSERT_EQ(3U, restored.items.size());
+    FT_ASSERT_EQ(9000, restored.items[0].slot);
+    FT_ASSERT_EQ(4, restored.items[0].stack_size);
+    FT_ASSERT_EQ(100, restored.items[1].slot);
+    FT_ASSERT_EQ(3, restored.items[1].stack_size);
+    FT_ASSERT_EQ(40, restored.items[2].slot);
+    FT_ASSERT_EQ(UINT64_MAX, restored.items[2].instance_id);
+    return (1);
+}
+
+FT_TEST(test_game_inventory_quantity_remove_plan_failure_is_atomic_and_cached)
+{
+    game_inventory inventory;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize());
+    game_inventory_snapshot snapshot = {};
+    snapshot.next_slot = 16;
+    snapshot.used_slots = 16U;
+    snapshot.current_weight = 16;
+    snapshot.revision = 42U;
+    int32_t slot = 0;
+    while (slot < snapshot.next_slot)
+    {
+        game_inventory_item_snapshot item = {};
+        item.slot = slot;
+        item.item_id = 46;
+        item.max_stack = 1;
+        item.stack_size = 1;
+        item.width = 1;
+        item.height = 1;
+        snapshot.items.push_back(item);
+        ++slot;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.restore_snapshot(snapshot));
+    game_inventory_quantity_result result = {};
+    // Allow the cache entry to allocate while rejecting growth of the removal plan.
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(256U));
+    const int32_t error = inventory.remove_item_quantity(46, 12, 42U, 12U, 1U, &result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error);
+    FT_ASSERT_EQ(0, result.removed_quantity);
+    FT_ASSERT_EQ(42U, result.inventory_revision);
+    FT_ASSERT_EQ(16, inventory.count_item(46));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY,
+        inventory.remove_item_quantity(46, 12, 42U, 12U, 1U, &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        inventory.remove_item_quantity(46, 12, 42U, 12U, 2U, &result));
+    FT_ASSERT_EQ(4, inventory.count_item(46));
     return (1);
 }
 
@@ -223,6 +472,179 @@ FT_TEST(test_game_inventory_transfer_splits_and_merges_preserving_metadata)
     FT_ASSERT_EQ(2, split->value->get_stack_size());
     FT_ASSERT_EQ(8, split->value->get_modifier1_id());
     FT_ASSERT_EQ(99, split->value->get_modifier1_value());
+    return (1);
+}
+
+FT_TEST(test_game_inventory_transfer_keeps_previous_item_handles_detached)
+{
+    game_inventory source;
+    game_inventory destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(8U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(8U, 0));
+    ft_sharedptr<game_item> moving;
+    ft_sharedptr<game_item> unrelated;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(7, 2, 4, 0, 0, &moving));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(8, 1, 4, 0, 0, &unrelated));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(moving));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(unrelated));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.add_item(unrelated));
+    uint64_t source_revision;
+    uint64_t destination_revision;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    ft_sharedptr<game_item> *old_source;
+    ft_sharedptr<game_item> *old_destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.copy_item_at_revision(1, source_revision, &old_source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.copy_item_at_revision(0, destination_revision, &old_destination));
+    const int32_t transferred = source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision);
+    (*old_source)->set_stack_size(3);
+    (*old_destination)->set_stack_size(4);
+    delete old_source;
+    delete old_destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, transferred);
+    FT_ASSERT_EQ(1, source.count_item(8));
+    FT_ASSERT_EQ(1, destination.count_item(8));
+    FT_ASSERT_EQ(1, source.count_item(7));
+    FT_ASSERT_EQ(1, destination.count_item(7));
+    return (1);
+}
+
+FT_TEST(test_game_item_stack_arithmetic_handles_integer_limits)
+{
+    game_item item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item.initialize());
+    item.set_max_stack(INT32_MAX);
+    item.set_stack_size(INT32_MAX - 1);
+    item.add_to_stack(INT32_MAX);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item.get_error());
+    FT_ASSERT_EQ(INT32_MAX, item.get_stack_size());
+    item.set_stack_size(INT32_MIN);
+    item.add_to_stack(-1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, item.get_error());
+    FT_ASSERT_EQ(INT32_MIN, item.get_stack_size());
+    item.sub_from_stack(INT32_MAX);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, item.get_error());
+    FT_ASSERT_EQ(0, item.get_stack_size());
+    item.sub_from_stack(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, item.get_error());
+    FT_ASSERT_EQ(0, item.get_stack_size());
+    return (1);
+}
+
+FT_TEST(test_game_inventory_stack_merge_checks_weight_before_mutating)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(18, 1, 4, 0, 0, &item));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    inventory.set_current_weight(INT32_MAX);
+    uint64_t revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, inventory.restore_serialized_item(item));
+    FT_ASSERT_EQ(INT32_MAX, inventory.get_current_weight());
+    FT_ASSERT_EQ(1, inventory.count_item(18));
+    uint64_t revision_after = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_after));
+    FT_ASSERT_EQ(revision, revision_after);
+    return (1);
+}
+
+FT_TEST(test_game_item_snapshot_preserves_output_on_modifier_lock_failure)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(18, 1, 4, 0, 0, &item));
+    item->set_modifier4_id(9);
+    item->set_modifier4_value(-71);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(item));
+    auto &items = inventory.get_items();
+    auto *stored = items.find(0);
+    FT_ASSERT(stored != items.end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stored->value->_modifier4.enable_thread_safety());
+
+    game_inventory_item_snapshot item_snapshot = {};
+    item_snapshot.slot = 91;
+    item_snapshot.item_id = 82;
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = stored->value->capture_inventory_fields(0, item_snapshot);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(91, item_snapshot.slot);
+    FT_ASSERT_EQ(82, item_snapshot.item_id);
+    game_inventory_snapshot snapshot = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_snapshot(snapshot));
+    FT_ASSERT_EQ(1U, snapshot.items.size());
+    FT_ASSERT_EQ(18, snapshot.items[0].item_id);
+    FT_ASSERT_EQ(9, snapshot.items[0].modifier4_id);
+    FT_ASSERT_EQ(-71, snapshot.items[0].modifier4_value);
+    return (1);
+}
+
+FT_TEST(test_game_inventory_stack_comparison_propagates_lock_failure)
+{
+    game_inventory inventory;
+    ft_sharedptr<game_item> stored;
+    ft_sharedptr<game_item> incoming;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(18, 1, 4, 3, 71, &stored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(18, 1, 4, 3, 71, &incoming));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.add_item(stored));
+    auto *entry = inventory.get_items().find(0);
+    FT_ASSERT(entry != inventory.get_items().end());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entry->value->_modifier1.enable_thread_safety());
+    uint64_t revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision));
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = inventory.restore_serialized_item(incoming);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    uint64_t revision_after = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_revision(&revision_after));
+    FT_ASSERT_EQ(revision, revision_after);
+    FT_ASSERT_EQ(1, inventory.get_current_weight());
+    FT_ASSERT_EQ(1, inventory.count_item(18));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.restore_serialized_item(incoming));
+    FT_ASSERT_EQ(2, inventory.count_item(18));
+    FT_ASSERT_EQ(1U, inventory.get_items().size());
+    return (1);
+}
+
+FT_TEST(test_game_inventory_full_transfer_reuses_only_detached_item)
+{
+    game_inventory source;
+    game_inventory destination;
+    ft_sharedptr<game_item> item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4U, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_transfer_item(18, 1, 1, 3, 71, &item));
+    item->set_instance_id(9044U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.add_item(item));
+    uint64_t source_revision = 0U;
+    uint64_t destination_revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&source_revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_revision(&destination_revision));
+    ft_sharedptr<game_item> *old_item = ft_nullptr;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.copy_item_at_revision(0, source_revision, &old_item));
+    const int32_t result = source.transfer_to(destination, 0, 1,
+        source_revision, destination_revision);
+    (*old_item)->set_modifier1_value(999);
+    delete old_item;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    game_inventory_snapshot snapshot = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_snapshot(snapshot));
+    FT_ASSERT_EQ(1U, snapshot.items.size());
+    FT_ASSERT_EQ(9044U, snapshot.items[0].instance_id);
+    FT_ASSERT_EQ(71, snapshot.items[0].modifier1_value);
+    FT_ASSERT_EQ(0, source.count_item(18));
+    FT_ASSERT_EQ(1, destination.count_item(18));
+    FT_ASSERT_EQ(0, source.get_current_weight());
+    FT_ASSERT_EQ(1, destination.get_current_weight());
     return (1);
 }
 

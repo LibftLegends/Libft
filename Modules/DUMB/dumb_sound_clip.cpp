@@ -1,15 +1,16 @@
 #include "sound_clip.hpp"
-#include "dumb_io.hpp"
-#include "../CMA/CMA.hpp"
+#include "../Compatebility/compatebility_internal.hpp"
 #include "sound_device.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include <string.h>
+#include <cstdio>
 #include <new>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+
+static constexpr ft_sound_spec DEFAULT_SOUND_CLIP_SPEC = {44100, 2, 4096, nullptr, nullptr};
 
 static int32_t create_recursive_mutex(pt_recursive_mutex **mutex_pointer)
 {
@@ -106,17 +107,12 @@ int32_t ft_sound_clip::initialize(void)
         return (FT_ERR_INVALID_STATE);
     }
     this->_data.clear();
-    this->_spec = new (std::nothrow) ft_sound_spec();
+    this->_spec = new (std::nothrow) ft_sound_spec(DEFAULT_SOUND_CLIP_SPEC);
     if (this->_spec == ft_nullptr)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_NO_MEMORY);
     }
-    this->_spec->freq = 44100;
-    this->_spec->channels = 2;
-    this->_spec->samples = 4096;
-    this->_spec->callback = ft_nullptr;
-    this->_spec->userdata = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -161,8 +157,9 @@ int32_t ft_sound_clip::initialize(const ft_sound_clip &other)
         if (destroy_error != FT_ERR_SUCCESS)
             return (destroy_error);
     }
-    if (this->initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
+    const int32_t initialize_error = this->initialize();
+    if (initialize_error != FT_ERR_SUCCESS)
+        return (initialize_error);
     lock_error = lock_ordered_mutexes(this->_mutex, other._mutex,
         &first_mutex, &second_mutex);
     if (lock_error != FT_ERR_SUCCESS)
@@ -170,7 +167,16 @@ int32_t ft_sound_clip::initialize(const ft_sound_clip &other)
         (void)this->destroy();
         return (lock_error);
     }
-    this->_data = other._data;
+    try
+    {
+        this->_data = other._data;
+    }
+    catch (const std::bad_alloc &)
+    {
+        unlock_ordered_mutexes(first_mutex, second_mutex);
+        (void)this->destroy();
+        return (FT_ERR_NO_MEMORY);
+    }
     if (other._spec != ft_nullptr && this->_spec != ft_nullptr)
         *this->_spec = *other._spec;
     unlock_ordered_mutexes(first_mutex, second_mutex);
@@ -179,64 +185,16 @@ int32_t ft_sound_clip::initialize(const ft_sound_clip &other)
 
 int32_t ft_sound_clip::initialize(ft_sound_clip &&other)
 {
-    uint32_t initialization_error;
-    uint32_t move_error;
-    uint32_t destroy_error;
-
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state,
-            "ft_sound_clip::initialize(ft_sound_clip &&) source",
-            "called with uninitialised source object");
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (this == &other)
-        return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        {
-            destroy_error = this->destroy();
-            if (destroy_error != FT_ERR_SUCCESS)
-                return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_SUCCESS);
-    }
-    if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state,
-            "ft_sound_clip::initialize(ft_sound_clip &&) source",
-            "called with source object that is not initialised");
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
-    initialization_error = this->initialize();
-    if (initialization_error != FT_ERR_SUCCESS)
-        return (initialization_error);
-    move_error = this->move(other);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        return (move_error);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->move(other));
 }
 
 int32_t ft_sound_clip::destroy(void)
 {
-    uint32_t disable_error;
-
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    this->_data.clear();
+    const uint32_t disable_error = this->disable_thread_safety();
+    std::vector<uint8_t>().swap(this->_data);
     delete this->_spec;
     this->_spec = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -245,11 +203,6 @@ int32_t ft_sound_clip::destroy(void)
 
 int32_t ft_sound_clip::move(ft_sound_clip &other)
 {
-    int32_t first_lock_error;
-    int32_t second_lock_error;
-    int32_t destroy_error;
-    pt_recursive_mutex *first_mutex;
-    pt_recursive_mutex *second_mutex;
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "ft_sound_clip::move source",
@@ -271,68 +224,34 @@ int32_t ft_sound_clip::move(ft_sound_clip &other)
             "called with source object that is not initialised");
         return (FT_ERR_INVALID_STATE);
     }
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        if (this->initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_STATE);
-    }
-    if (reinterpret_cast<uintptr_t>(this->_mutex)
-        < reinterpret_cast<uintptr_t>(other._mutex))
-    {
-        first_mutex = this->_mutex;
-        second_mutex = other._mutex;
+        const uint32_t disable_error = this->disable_thread_safety();
+        if (disable_error != FT_ERR_SUCCESS)
+        {
+            (void)this->destroy();
+            return (disable_error);
+        }
+        std::vector<uint8_t>().swap(this->_data);
     }
     else
     {
-        first_mutex = other._mutex;
-        second_mutex = this->_mutex;
+        const int32_t initialize_error = this->initialize();
+        if (initialize_error != FT_ERR_SUCCESS)
+            return (initialize_error);
     }
-    first_lock_error = pt_recursive_mutex_lock_if_not_null(first_mutex);
-    if (first_lock_error != FT_ERR_SUCCESS)
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
+    if (lock_error != FT_ERR_SUCCESS)
     {
-        this->_data.clear();
-        if (this->_spec != ft_nullptr)
-        {
-            delete this->_spec;
-            this->_spec = ft_nullptr;
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (first_lock_error);
+        (void)this->destroy();
+        return (lock_error);
     }
-    if (second_mutex != first_mutex)
-        second_lock_error = pt_recursive_mutex_lock_if_not_null(second_mutex);
-    else
-        second_lock_error = FT_ERR_SUCCESS;
-    if (second_lock_error != FT_ERR_SUCCESS)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(first_mutex);
-        this->_data.clear();
-        if (this->_spec != ft_nullptr)
-        {
-            delete this->_spec;
-            this->_spec = ft_nullptr;
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (second_lock_error);
-    }
-    this->_data.swap(other._data);
-    if (this->_spec != ft_nullptr && other._spec != ft_nullptr)
-    {
-        ft_sound_spec temporary_spec;
 
-        temporary_spec = *this->_spec;
-        *this->_spec = *other._spec;
-        *other._spec = temporary_spec;
-    }
-    if (second_mutex != first_mutex)
-        (void)pt_recursive_mutex_unlock_if_not_null(second_mutex);
-    (void)pt_recursive_mutex_unlock_if_not_null(first_mutex);
+    this->_data.swap(other._data);
+    *this->_spec = *other._spec;
+    *other._spec = DEFAULT_SOUND_CLIP_SPEC;
+    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
     return (FT_ERR_SUCCESS);
 }
 
@@ -359,76 +278,155 @@ uint32_t ft_sound_clip::teardown_thread_safety(void) noexcept
     return (destroy_recursive_mutex(&this->_mutex));
 }
 
+struct dumb_wav_payload
+{
+    int32_t sample_rate;
+    int32_t channels;
+    ft_size_t sample_offset;
+    ft_size_t sample_size;
+};
+
+static uint32_t dumb_wav_read_u16(const uint8_t *bytes)
+{
+    return (static_cast<uint32_t>(bytes[0])
+        | (static_cast<uint32_t>(bytes[1]) << 8U));
+}
+
+static uint32_t dumb_wav_read_u32(const uint8_t *bytes)
+{
+    return (dumb_wav_read_u16(bytes) | (dumb_wav_read_u16(bytes + 2) << 16U));
+}
+
+static ft_bool dumb_wav_read_at(FILE *file, ft_size_t &position,
+    ft_size_t offset, uint8_t *bytes, ft_size_t count)
+{
+    if (position != offset && cmp_file_stream_seek_absolute(file, offset) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    if (std::fread(bytes, 1, FT_UINT64_TO_NATIVE_SIZE_CAST(count), file) != count)
+        return (FT_FALSE);
+    position = offset + count;
+    return (FT_TRUE);
+}
+
+static int32_t dumb_wav_find_payload(FILE *file, ft_size_t size,
+    ft_size_t &position, dumb_wav_payload &payload)
+{
+    constexpr ft_size_t RIFF_HEADER_SIZE = 12;
+    constexpr ft_size_t CHUNK_HEADER_SIZE = 8;
+    constexpr uint32_t PCM_FORMAT = 1;
+    constexpr uint32_t PCM_BITS_PER_SAMPLE = 16;
+    uint8_t riff_header[RIFF_HEADER_SIZE];
+    if (size < RIFF_HEADER_SIZE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!dumb_wav_read_at(file, position, 0, riff_header, sizeof(riff_header)))
+        return (FT_ERR_IO);
+    if (ft_memcmp(riff_header, "RIFF", 4) != 0 || ft_memcmp(riff_header + 8, "WAVE", 4) != 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t riff_end = CHUNK_HEADER_SIZE + dumb_wav_read_u32(riff_header + 4);
+    if (riff_end < RIFF_HEADER_SIZE || riff_end > size)
+        return (FT_ERR_INVALID_ARGUMENT);
+
+    uint32_t frame_size = 0;
+    ft_size_t offset = RIFF_HEADER_SIZE;
+    while (offset < riff_end)
+    {
+        if (riff_end - offset < CHUNK_HEADER_SIZE)
+            return (FT_ERR_INVALID_ARGUMENT);
+        uint8_t chunk[CHUNK_HEADER_SIZE];
+        if (!dumb_wav_read_at(file, position, offset, chunk, sizeof(chunk)))
+            return (FT_ERR_IO);
+        const ft_size_t chunk_size = dumb_wav_read_u32(chunk + 4);
+        const ft_size_t padded_size = chunk_size + (chunk_size & 1U);
+        offset += CHUNK_HEADER_SIZE;
+        if (padded_size > riff_end - offset)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (frame_size == 0 && ft_memcmp(chunk, "fmt ", 4) == 0)
+        {
+            uint8_t format[16];
+            if (chunk_size < sizeof(format))
+                return (FT_ERR_INVALID_ARGUMENT);
+            if (!dumb_wav_read_at(file, position, offset, format, sizeof(format)))
+                return (FT_ERR_IO);
+            if (dumb_wav_read_u16(format) != PCM_FORMAT
+                || dumb_wav_read_u16(format + 14) != PCM_BITS_PER_SAMPLE)
+                return (FT_ERR_UNSUPPORTED_TYPE);
+            const uint32_t channels = dumb_wav_read_u16(format + 2);
+            const uint32_t sample_rate = dumb_wav_read_u32(format + 4);
+            frame_size = dumb_wav_read_u16(format + 12);
+            if (channels == 0 || frame_size != channels * (PCM_BITS_PER_SAMPLE / 8)
+                || sample_rate == 0 || sample_rate > FT_INT32_MAX / frame_size)
+                return (FT_ERR_INVALID_ARGUMENT);
+            payload.channels = static_cast<int32_t>(channels);
+            payload.sample_rate = static_cast<int32_t>(sample_rate);
+        }
+        else if (payload.sample_offset == 0 && ft_memcmp(chunk, "data", 4) == 0)
+        {
+            payload.sample_offset = offset;
+            payload.sample_size = chunk_size;
+        }
+        offset += padded_size;
+    }
+    if (frame_size == 0 || payload.sample_offset == 0
+        || payload.sample_size % frame_size != 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t ft_sound_clip::load_wav(const char *file_path)
 {
-    int32_t lock_error;
-    char *buffer;
-    ft_size_t size;
-    uint32_t fmt_size;
-    char *data_chunk;
-    ft_size_t data_offset;
-    uint32_t data_size;
-
-    buffer = ft_nullptr;
-    size = 0;
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_sound_clip::load_wav");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    if (ft_read_file(file_path, &buffer, &size) != FT_ERR_SUCCESS)
+
+    FILE *file = ft_nullptr;
+    if (file_path != ft_nullptr)
+        file = std::fopen(file_path, "rb");
+    if (file == ft_nullptr)
     {
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_ERR_IO);
     }
 
-    if (size < 44)
+    ft_size_t size = 0;
+    ft_size_t position = 0;
+    dumb_wav_payload payload{};
+    std::vector<uint8_t> samples;
+    int32_t result = cmp_file_stream_size(file, &size);
+    if (result == FT_ERR_SUCCESS)
+        result = dumb_wav_find_payload(file, size, position, payload);
+    if (result == FT_ERR_SUCCESS)
     {
-        cma_free(buffer);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_ARGUMENT);
+        if (payload.sample_size > samples.max_size())
+            result = FT_ERR_OUT_OF_RANGE;
+        else
+        {
+            try
+            {
+                samples.resize(FT_UINT64_TO_NATIVE_SIZE_CAST(payload.sample_size));
+                if (!samples.empty() && !dumb_wav_read_at(file, position,
+                        payload.sample_offset, samples.data(), payload.sample_size))
+                    result = FT_ERR_IO;
+            }
+            catch (const std::bad_alloc &)
+            {
+                result = FT_ERR_NO_MEMORY;
+            }
+        }
     }
-
-    if (strncmp(buffer, "RIFF", 4) != 0 || strncmp(buffer + 8, "WAVE", 4) != 0)
+    if (std::fclose(file) != 0 && result == FT_ERR_SUCCESS)
+        result = FT_ERR_IO;
+    if (result == FT_ERR_SUCCESS)
     {
-        cma_free(buffer);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_ARGUMENT);
+        if (samples.size() <= this->_data.capacity())
+            this->_data.assign(samples.begin(), samples.end());
+        else
+            this->_data.swap(samples);
+        this->_spec->channels = payload.channels;
+        this->_spec->freq = payload.sample_rate;
     }
-
-    if (strncmp(buffer + 12, "fmt ", 4) != 0)
-    {
-        cma_free(buffer);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-
-    fmt_size = *reinterpret_cast<const uint32_t *>(buffer + 16);
-    if (fmt_size < 16)
-    {
-        cma_free(buffer);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-
-    this->_spec->channels = *reinterpret_cast<const uint16_t *>(buffer + 22);
-    this->_spec->freq = *reinterpret_cast<const uint32_t *>(buffer + 24);
-
-    data_chunk = strstr(buffer, "data");
-    if (data_chunk == ft_nullptr)
-    {
-        cma_free(buffer);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-
-    data_offset = static_cast<ft_size_t>(data_chunk - buffer);
-    data_size = *reinterpret_cast<const uint32_t *>(buffer + data_offset + 4);
-
-    this->_data.assign(buffer + data_offset + 8, buffer + data_offset + 8 + data_size);
-
-    cma_free(buffer);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
+    return (result);
 }
 
 uint32_t ft_sound_clip::enable_thread_safety() noexcept

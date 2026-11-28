@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "../../Modules/Networking/networking_secure_channel.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 static int32_t networking_test_initialize_channel(
@@ -35,6 +36,44 @@ static int32_t networking_test_old_packet_is_usable(
     if (decrypted.size() != sizeof(plaintext))
         return (FT_ERR_INTERNAL);
     return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_networking_secure_channel_retries_after_output_allocation_failure)
+{
+    networking_secure_channel sender;
+    networking_secure_channel receiver;
+    ft_vector<uint8_t> ciphertext;
+    ft_vector<uint8_t> decrypted;
+    const uint8_t plaintext[96] = {0x42U, 0xA5U};
+    const uint8_t associated_data[] = {1U, 2U, 3U};
+    uint8_t tag[16];
+    const uint8_t zero_tag[16] = {};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(sender));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(receiver));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const ft_bool sealed = sender.seal(1U, associated_data, sizeof(associated_data),
+        plaintext, sizeof(plaintext), ciphertext, tag);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_FALSE, sealed);
+    FT_ASSERT_EQ(0U, ciphertext.size());
+    FT_ASSERT_EQ(0, ft_memcmp(tag, zero_tag, sizeof(tag)));
+    FT_ASSERT(sender.seal(1U, associated_data, sizeof(associated_data),
+        plaintext, sizeof(plaintext), ciphertext, tag));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const ft_bool opened = receiver.open(1U, associated_data,
+        sizeof(associated_data), ciphertext.begin(), ciphertext.size(), tag, decrypted);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_FALSE, opened);
+    FT_ASSERT_EQ(0U, decrypted.size());
+    FT_ASSERT_EQ(FT_FALSE, receiver.is_replay(1U));
+    FT_ASSERT(receiver.open(1U, associated_data, sizeof(associated_data),
+        ciphertext.begin(), ciphertext.size(), tag, decrypted));
+    FT_ASSERT_EQ(sizeof(plaintext), decrypted.size());
+    FT_ASSERT_EQ(0, ft_memcmp(plaintext, decrypted.begin(), sizeof(plaintext)));
+    FT_ASSERT_EQ(FT_TRUE, receiver.is_replay(1U));
+    return (1);
 }
 
 FT_TEST(test_networking_secure_channel_combined_rotation_is_transactional)
@@ -173,11 +212,52 @@ FT_TEST(test_networking_secure_channel_move_failure_preserves_source)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
         FT_ASSERT_EQ(0U, destination.get_send_key_epoch());
         FT_ASSERT_EQ(1U, destination.get_receive_key_epoch());
+        FT_ASSERT_EQ(FT_TRUE, source.test_secret_state_is_wiped());
+        FT_ASSERT_EQ(FT_TRUE, destination.has_receive_epoch(0U));
         FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
         failure_index += 1U;
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_failure_end());
+    return (1);
+}
+
+FT_TEST(test_networking_secure_channel_move_preserves_both_replay_windows)
+{
+    networking_secure_channel sender;
+    networking_secure_channel source;
+    networking_secure_channel destination;
+    ft_vector<uint8_t> ciphertext;
+    ft_vector<uint8_t> decrypted;
+    const uint8_t message[] = {0x42U};
+    const uint8_t destination_key[32] = {0xABU};
+    const uint8_t destination_iv[12] = {0xCDU};
+    uint8_t tag[16];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(sender));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, networking_test_initialize_channel(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(destination_key,
+        sizeof(destination_key), destination_iv, sizeof(destination_iv)));
+    FT_ASSERT(sender.seal(1U, ft_nullptr, 0U, message, sizeof(message),
+        ciphertext, tag));
+    FT_ASSERT(source.open(1U, ft_nullptr, 0U, ciphertext.begin(),
+        ciphertext.size(), tag, decrypted));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.update_receive_key_epoch(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sender.update_send_key_epoch(1U));
+    FT_ASSERT(sender.seal(1U, ft_nullptr, 0U, message, sizeof(message),
+        ciphertext, tag));
+    FT_ASSERT(source.open(1U, ft_nullptr, 0U, ciphertext.begin(),
+        ciphertext.size(), tag, decrypted));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT(source.test_secret_state_is_wiped());
+    FT_ASSERT(destination.is_replay_at_epoch(1U, 0U));
+    FT_ASSERT(destination.is_replay_at_epoch(1U, 1U));
+    FT_ASSERT(sender.seal(2U, ft_nullptr, 0U, message, sizeof(message),
+        ciphertext, tag));
+    FT_ASSERT(destination.open(2U, ft_nullptr, 0U, ciphertext.begin(),
+        ciphertext.size(), tag, decrypted));
+    FT_ASSERT_EQ(sizeof(message), decrypted.size());
+    FT_ASSERT_EQ(message[0], decrypted[0]);
     return (1);
 }
 

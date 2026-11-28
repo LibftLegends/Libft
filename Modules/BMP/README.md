@@ -21,7 +21,9 @@ encoding.
 
 The image object is intended for single-threaded lifecycle use. Callers must
 provide external synchronization when sharing an instance across threads or
-when running lifecycle operations concurrently with accessors.
+when running lifecycle operations concurrently with accessors. The pointer from
+`data()` is borrowed and can be invalidated by resizing, cropping, moving, or
+destroying the image.
 
 - `initialize(file_path, maximum_file_size)` - Load a BMP file.
 - `initialize(file_data, file_size, maximum_file_size)` - Decode an in-memory BMP.

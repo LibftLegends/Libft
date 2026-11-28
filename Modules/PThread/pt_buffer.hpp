@@ -5,7 +5,7 @@
 # include <cstring>
 # include <limits>
 # include <type_traits>
-# include "../Basic/limits.hpp"
+# include "../Basic/basic.hpp"
 # include "../Basic/class_nullptr.hpp"
 # include "../Errno/errno.hpp"
 
@@ -57,7 +57,7 @@ int pt_buffer_reserve(pt_buffer<t_type> &buffer, ft_size_t required)
     else if (buffer.capacity <= MAX_CAPACITY / 2U && required < buffer.capacity * 2U)
         new_capacity = buffer.capacity * 2U;
     void *new_data = std::realloc(buffer.data,
-        static_cast<std::size_t>(new_capacity * sizeof(t_type)));
+        ft_platform_cast<std::size_t>(new_capacity * sizeof(t_type)));
     if (new_data == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
     buffer.data = static_cast<t_type *>(new_data);
@@ -100,7 +100,7 @@ int pt_buffer_copy(pt_buffer<t_type> &dest,
         return (reserve_error);
     if (source.size != 0U && dest.data != source.data)
         std::memmove(dest.data, source.data,
-            static_cast<std::size_t>(source.size * sizeof(t_type)));
+            ft_platform_cast<std::size_t>(source.size * sizeof(t_type)));
     dest.size = source.size;
     return (FT_ERR_SUCCESS);
 }
@@ -113,7 +113,7 @@ void pt_buffer_erase(pt_buffer<t_type> &buffer, ft_size_t index)
     const ft_size_t count = buffer.size - index - 1U;
     if (count != 0U)
         std::memmove(buffer.data + index, buffer.data + index + 1U,
-            static_cast<std::size_t>(count * sizeof(t_type)));
+            ft_platform_cast<std::size_t>(count * sizeof(t_type)));
     --buffer.size;
     return ;
 }

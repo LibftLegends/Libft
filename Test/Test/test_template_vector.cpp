@@ -173,6 +173,29 @@ FT_TEST(test_ft_vector_reserve_preserves_trivial_elements_across_heap_growth)
     return (1);
 }
 
+FT_TEST(test_ft_vector_append_keeps_aliased_ranges_valid_across_growth)
+{
+    constexpr uint32_t VALUES[] = {3U, 1U, 4U, 1U, 5U, 9U};
+    ft_vector<uint32_t> vector;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.append(VALUES, 6U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.append(vector.begin() + 1U, 6U - 1U));
+    FT_ASSERT_EQ(11U, vector.size());
+    FT_ASSERT_EQ(1U, vector[6]);
+    FT_ASSERT_EQ(9U, vector[10]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.append(vector.begin() + 5U, 6U));
+    FT_ASSERT_EQ(17U, vector.size());
+    FT_ASSERT_EQ(9U, vector[11]);
+    FT_ASSERT_EQ(9U, vector[16]);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, vector.append(vector.begin() + 16U, 2U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, vector.append(ft_nullptr, 1U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, vector.append(VALUES, FT_SYSTEM_SIZE_MAX));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, vector.append(ft_nullptr, 0U));
+    FT_ASSERT_EQ(17U, vector.size());
+    return (1);
+}
+
 FT_TEST(test_ft_vector_move_method_transfers_elements_and_thread_safety)
 {
     ft_vector<int> source_vector;

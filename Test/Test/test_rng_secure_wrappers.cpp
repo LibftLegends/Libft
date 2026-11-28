@@ -11,6 +11,9 @@
 #endif
 
 #include <cerrno>
+#if defined(_WIN32) || defined(_WIN64)
+# include <windows.h>
+#endif
 
 FT_TEST(test_rng_secure_uint64_null_pointer_sets_error)
 {
@@ -24,6 +27,30 @@ FT_TEST(test_rng_secure_uint32_success_returns_value)
     uint32_t value = 0;
     if (rng_secure_uint32(&value) != FT_ERR_SUCCESS)
         return (0);
+    return (1);
+}
+
+FT_TEST(test_rng_secure_uint32_preserves_fallback_status_and_neighboring_memory)
+{
+    uint32_t values[] = {0xF8DC1279U, 0U, 0x3B2F4591U};
+    int32_t fallback_used = -1;
+#if defined(_WIN32) || defined(_WIN64)
+    cmp_force_rng_windows_acquire_failure(ERROR_ACCESS_DENIED);
+#else
+    cmp_force_rng_open_failure(EACCES);
+#endif
+    const int32_t result = rng_secure_uint32(&values[1], &fallback_used);
+#if defined(_WIN32) || defined(_WIN64)
+    cmp_clear_force_rng_windows_failures();
+#else
+    cmp_clear_force_rng_failures();
+#endif
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(1, fallback_used);
+    FT_ASSERT_EQ(0xF8DC1279U, values[0]);
+    FT_ASSERT_EQ(0x3B2F4591U, values[2]);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, rng_secure_uint32(ft_nullptr, &fallback_used));
+    FT_ASSERT_EQ(0, fallback_used);
     return (1);
 }
 

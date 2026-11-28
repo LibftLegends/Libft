@@ -5,9 +5,12 @@
 #include "../Errno/errno.hpp"
 #include "../File/open_dir.hpp"
 #include <fcntl.h>
+#include <filesystem>
+#include <utility>
 #include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#if defined(_WIN32) || defined(_WIN64)
+# include <io.h>
+#endif
 
 static ft_bool su_should_skip_directory_entry(const char *entry_name)
 {
@@ -20,74 +23,113 @@ static ft_bool su_should_skip_directory_entry(const char *entry_name)
     return (FT_FALSE);
 }
 
-static int32_t su_join_paths(const char *left_path, const char *right_path, ft_string *joined)
+static int32_t su_initialize_child_path(const char *parent, char separator, ft_string &path)
 {
-    char    separator;
-    ft_size_t  index;
-    int32_t string_error;
-
-    if (left_path == ft_nullptr || right_path == ft_nullptr || joined == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    string_error = joined->initialize(left_path);
+    const int32_t string_error = path.initialize(parent);
     if (string_error != FT_ERR_SUCCESS)
         return (string_error);
-    separator = cmp_path_separator();
-    if (joined->size() != 0)
-    {
-        if (joined->c_str()[joined->size() - 1] != separator)
-        {
-            string_error = joined->append(separator);
-            if (string_error != FT_ERR_SUCCESS)
-                return (string_error);
-        }
-    }
-    index = 0;
-    while (right_path[index] == separator)
-        index += 1;
-    string_error = joined->append(right_path + index);
-    if (string_error != FT_ERR_SUCCESS)
-        return (string_error);
+    const ft_size_t length = path.size();
+    if (length != 0U && path.c_str()[length - 1U] != separator)
+        return (path.append(separator));
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t su_copy_file_streams(su_file *source_stream, su_file *destination_stream)
+static int32_t su_set_child_path(ft_string &path, ft_size_t prefix_length, const char *name)
 {
-    char    buffer[8192];
-    ft_size_t  bytes_read;
-    ft_size_t  bytes_written;
+    const int32_t string_error = path.resize_length(prefix_length);
+    if (string_error != FT_ERR_SUCCESS)
+        return (string_error);
+    return (path.append(name));
+}
 
+static int32_t su_copy_file_descriptors(int32_t source, int32_t destination)
+{
+    char buffer[32U * 1024U];
     while (1)
     {
-        bytes_read = su_fread(buffer, 1, sizeof(buffer), source_stream);
+        const int64_t bytes_read = su_read(source, buffer, sizeof(buffer));
         if (bytes_read == 0)
             return (0);
-        bytes_written = su_fwrite(buffer, 1, bytes_read, destination_stream);
-        if (bytes_written != bytes_read)
+        if (bytes_read < 0)
+            return (-1);
+        if (su_write(destination, buffer, static_cast<ft_size_t>(bytes_read)) != bytes_read)
             return (-1);
     }
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+static ft_bool su_distinct_disk_files(HANDLE source, HANDLE destination)
+{
+    FILE_ID_INFO source_id;
+    FILE_ID_INFO destination_id;
+    if (GetFileInformationByHandleEx(source, FileIdInfo, &source_id, sizeof(source_id)) != 0
+        && GetFileInformationByHandleEx(destination, FileIdInfo, &destination_id,
+            sizeof(destination_id)) != 0)
+    {
+        return (source_id.VolumeSerialNumber != destination_id.VolumeSerialNumber
+            || ft_memcmp(source_id.FileId.Identifier, destination_id.FileId.Identifier,
+                sizeof(source_id.FileId.Identifier)) != 0);
+    }
+    BY_HANDLE_FILE_INFORMATION source_info;
+    BY_HANDLE_FILE_INFORMATION destination_info;
+    if (GetFileInformationByHandle(source, &source_info) == 0
+        || GetFileInformationByHandle(destination, &destination_info) == 0)
+        return (FT_FALSE);
+    return (source_info.dwVolumeSerialNumber != destination_info.dwVolumeSerialNumber
+        || source_info.nFileIndexHigh != destination_info.nFileIndexHigh
+        || source_info.nFileIndexLow != destination_info.nFileIndexLow);
+}
+#endif
+
+static int32_t su_prepare_copy_destination(int32_t source, int32_t destination)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    const HANDLE output = reinterpret_cast<HANDLE>(_get_osfhandle(destination));
+    const DWORD output_type = GetFileType(output);
+    if (output_type == FILE_TYPE_PIPE || output_type == FILE_TYPE_CHAR)
+        return (0);
+    if (output_type != FILE_TYPE_DISK)
+        return (-1);
+    const HANDLE input = reinterpret_cast<HANDLE>(_get_osfhandle(source));
+    if (GetFileType(input) == FILE_TYPE_DISK && su_distinct_disk_files(input, output) == FT_FALSE)
+        return (-1);
+    if (SetEndOfFile(output) == 0)
+        return (-1);
+#else
+    struct stat output;
+    if (fstat(destination, &output) != 0)
+        return (-1);
+    if (!S_ISREG(output.st_mode))
+        return (0);
+    struct stat input;
+    if (fstat(source, &input) != 0
+        || (input.st_dev == output.st_dev && input.st_ino == output.st_ino))
+        return (-1);
+    if (ftruncate(destination, 0) != 0)
+        return (-1);
+#endif
+    return (0);
+}
+
 int32_t su_copy_file(const char *source_path, const char *destination_path)
 {
-    su_file *source_stream;
-    su_file *destination_stream;
-    int32_t     result;
-
     if (source_path == ft_nullptr || destination_path == ft_nullptr)
         return (-1);
-    source_stream = su_fopen(source_path, O_RDONLY);
-    if (source_stream == ft_nullptr)
+    const int32_t source = su_open(source_path, O_RDONLY);
+    if (source < 0)
         return (-1);
-    destination_stream = su_fopen(destination_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (destination_stream == ft_nullptr)
+    const int32_t destination = su_open(destination_path, O_WRONLY | O_CREAT, 0644);
+    if (destination < 0)
     {
-        (void)su_fclose(source_stream);
+        (void)su_close(source);
         return (-1);
     }
-    result = su_copy_file_streams(source_stream, destination_stream);
-    if (su_fclose(source_stream) != 0)
+    int32_t result = su_prepare_copy_destination(source, destination);
+    if (result == 0)
+        result = su_copy_file_descriptors(source, destination);
+    if (su_close(source) != 0)
         result = -1;
-    if (su_fclose(destination_stream) != 0)
+    if (su_close(destination) != 0)
         result = -1;
     return (result);
 }
@@ -109,13 +151,18 @@ static int32_t su_ensure_directory_exists(const char *path)
 
 static int32_t su_copy_directory_contents(const char *source_path, const char *destination_path)
 {
-    file_dir     *directory_stream;
     file_dirent  *directory_entry;
     int32_t          error_code;
-    int32_t          child_is_directory;
-    int32_t          child_status;
+    ft_string source_child;
+    ft_string destination_child;
 
-    directory_stream = cmp_dir_open(source_path, &error_code);
+    const char separator = cmp_path_separator();
+    if (su_initialize_child_path(source_path, separator, source_child) != FT_ERR_SUCCESS
+        || su_initialize_child_path(destination_path, separator, destination_child) != FT_ERR_SUCCESS)
+        return (-1);
+    const ft_size_t source_prefix = source_child.size();
+    const ft_size_t destination_prefix = destination_child.size();
+    file_dir *directory_stream = cmp_dir_open(source_path, &error_code);
     if (directory_stream == ft_nullptr)
         return (-1);
     while (1)
@@ -125,16 +172,16 @@ static int32_t su_copy_directory_contents(const char *source_path, const char *d
             break ;
         if (su_should_skip_directory_entry(directory_entry->d_name))
             continue ;
-        ft_string source_child;
-        ft_string destination_child;
-
-        if (su_join_paths(source_path, directory_entry->d_name, &source_child) != FT_ERR_SUCCESS)
+        if (su_set_child_path(source_child, source_prefix, directory_entry->d_name) != FT_ERR_SUCCESS
+            || su_set_child_path(destination_child, destination_prefix,
+                directory_entry->d_name) != FT_ERR_SUCCESS)
             break ;
-        if (su_join_paths(destination_path, directory_entry->d_name, &destination_child) != FT_ERR_SUCCESS)
-            break ;
-        child_is_directory = 0;
-        child_status = cmp_directory_exists(source_child.c_str(), &child_is_directory, &error_code);
-        if (child_status != FT_ERR_SUCCESS)
+        const file_type child_type = cmp_dir_entry_type(*directory_entry);
+        int32_t child_is_directory = 0;
+        if (child_type == FILE_TYPE_DIRECTORY)
+            child_is_directory = 1;
+        else if (child_type != FILE_TYPE_REGULAR
+            && cmp_directory_exists(source_child.c_str(), &child_is_directory, &error_code) != FT_ERR_SUCCESS)
             break ;
         if (child_is_directory == 1)
         {
@@ -159,17 +206,48 @@ static int32_t su_copy_directory_contents(const char *source_path, const char *d
     return (-1);
 }
 
+static ft_bool su_valid_copy_tree_destination(const char *source, const char *destination)
+{
+    namespace fs = std::filesystem;
+    try
+    {
+        std::error_code error;
+        const fs::path source_path(source);
+        const fs::path absolute_destination = fs::absolute(destination, error);
+        if (error)
+            return (FT_FALSE);
+        fs::path ancestor = fs::weakly_canonical(absolute_destination, error);
+        if (error)
+            return (FT_FALSE);
+        while (!ancestor.empty())
+        {
+            if (fs::equivalent(source_path, ancestor, error))
+                return (FT_FALSE);
+            if (error && error != std::errc::no_such_file_or_directory)
+                return (FT_FALSE);
+            fs::path parent = ancestor.parent_path();
+            if (parent == ancestor)
+                break ;
+            ancestor = std::move(parent);
+        }
+        return (FT_TRUE);
+    }
+    catch (...)
+    {
+        return (FT_FALSE);
+    }
+}
+
 int32_t su_copy_directory_recursive(const char *source_path, const char *destination_path)
 {
-    int32_t source_is_directory;
-    int32_t source_status;
-    int32_t error_code;
-
     if (source_path == ft_nullptr || destination_path == ft_nullptr)
         return (-1);
-    source_is_directory = 0;
-    source_status = cmp_directory_exists(source_path, &source_is_directory, &error_code);
+    int32_t source_is_directory = 0;
+    int32_t error_code;
+    const int32_t source_status = cmp_directory_exists(source_path, &source_is_directory, &error_code);
     if (source_status != FT_ERR_SUCCESS || source_is_directory != 1)
+        return (-1);
+    if (su_valid_copy_tree_destination(source_path, destination_path) == FT_FALSE)
         return (-1);
     if (su_ensure_directory_exists(destination_path) != 0)
         return (-1);

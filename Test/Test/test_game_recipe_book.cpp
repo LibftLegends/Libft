@@ -104,6 +104,48 @@ FT_TEST(test_game_recipe_book_distinct_sources_do_not_duplicate_unlock)
     return (1);
 }
 
+FT_TEST(test_game_recipe_book_indexes_unsorted_recipes_and_unlocks)
+{
+    ft_vector<uint32_t> recipe_ids;
+    game_recipe_book book;
+    game_recipe_book restored;
+    ft_byte_buffer wire;
+    game_recipe_unlock_result result = {};
+    ft_bool known = FT_FALSE;
+    const game_recipe_unlock_record duplicate_seeds[] = {{90U, 1U}, {90U, UINT32_MAX}};
+    const game_recipe_unlock_record seeds[] = {{UINT64_MAX, 1U}, {9U, UINT32_MAX}};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&recipe_ids,
+        UINT32_MAX, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_ids.push_back(32U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_ids.push_back(UINT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, book.initialize(recipe_ids));
+    recipe_ids.pop_back();
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, book.initialize(recipe_ids, duplicate_seeds, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, book.initialize(recipe_ids, seeds, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, book.unlock_recipe_with_result(32U, 5U, &result));
+    FT_ASSERT_EQ(FT_TRUE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_TRUE, result.recipe_newly_known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, book.unlock_recipe_with_result(1U, 40U, &result));
+    FT_ASSERT_EQ(FT_TRUE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_FALSE, result.recipe_newly_known);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, book.unlock_recipe_with_result(32U, UINT64_MAX, &result));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe_with_result(1U, 12U, &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wire.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, book.export_book(wire));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.import_book(wire));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.is_recipe_known(UINT32_MAX, &known));
+    FT_ASSERT_EQ(FT_TRUE, known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe_with_result(32U, 5U, &result));
+    FT_ASSERT_EQ(FT_FALSE, result.event_newly_recorded);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, restored.unlock_recipe_with_result(1U, 9U, &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe_with_result(32U, 12U, &result));
+    FT_ASSERT_EQ(FT_TRUE, result.event_newly_recorded);
+    return (1);
+}
+
 FT_TEST(test_game_recipe_book_known_recipe_records_each_source_event)
 {
     ft_vector<uint32_t> recipe_ids;
@@ -173,6 +215,108 @@ FT_TEST(test_game_recipe_book_serialization_round_trip)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe(900000U, 45U,
         &newly_unlocked));
     FT_ASSERT_EQ(FT_FALSE, newly_unlocked);
+    return (1);
+}
+
+FT_TEST(test_game_recipe_book_cached_revision_matches_serialized_event_order)
+{
+    ft_vector<uint32_t> recipe_ids;
+    game_recipe_book source;
+    game_recipe_book restored;
+    ft_byte_buffer payload;
+    ft_bool newly_unlocked = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&recipe_ids, 77U, 78U));
+    const game_recipe_unlock_record initial[] = {{77U, 78U}};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(recipe_ids, initial, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.unlock_recipe(77U, 33U, &newly_unlocked));
+    uint64_t revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_revision(&revision));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.export_book(payload));
+    uint64_t expected = 14695981039346656037ULL;
+    ft_size_t index = 12U;
+    while (index < payload.size() - 4U)
+    {
+        expected = (expected ^ payload.data()[index]) * 1099511628211ULL;
+        ++index;
+    }
+    FT_ASSERT_EQ(expected, revision);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.import_book(payload));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_revision(&revision));
+    FT_ASSERT_EQ(expected, revision);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.unlock_recipe(77U, 33U, &newly_unlocked));
+    FT_ASSERT_EQ(FT_FALSE, newly_unlocked);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get_revision(&revision));
+    FT_ASSERT_EQ(expected, revision);
+    return (1);
+}
+
+FT_TEST(test_game_recipe_book_duplicate_import_preserves_cached_state)
+{
+    ft_vector<uint32_t> recipe_ids;
+    game_recipe_book invalid_book;
+    game_recipe_book live;
+    ft_byte_buffer payload;
+    ft_bool newly_unlocked = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&recipe_ids, 77U, 78U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, invalid_book.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, invalid_book.unlock_recipe(77U, 33U, &newly_unlocked));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, invalid_book.unlock_recipe(78U, 5U, &newly_unlocked));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, invalid_book._unlock_events.push_back({33U, 78U}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, invalid_book.export_book(payload));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.initialize(recipe_ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.unlock_recipe(78U, 40U, &newly_unlocked));
+    uint64_t expected = 0U;
+    uint64_t revision = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.get_revision(&expected));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, live.import_book(payload));
+    FT_ASSERT_EQ(0U, payload.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.get_revision(&revision));
+    FT_ASSERT_EQ(expected, revision);
+    ft_bool known = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.is_recipe_known(78U, &known));
+    FT_ASSERT_EQ(FT_TRUE, known);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, live.is_recipe_known(77U, &known));
+    FT_ASSERT_EQ(FT_FALSE, known);
+    return (1);
+}
+
+FT_TEST(test_game_recipe_book_wire_record_appends_and_imports_at_nonzero_offset)
+{
+    ft_vector<uint32_t> ids;
+    game_recipe_book source;
+    game_recipe_book restored;
+    ft_byte_buffer payload;
+    const uint32_t recipe_id = 0x01020304U;
+    const uint64_t event_id = 0x0102030405060708ULL;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recipe_book_test_catalogue(&ids, recipe_id, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(ids));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.initialize(ids));
+    ft_bool known = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.unlock_recipe(recipe_id, event_id, &known));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.append_u8(0xA5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.append_u8(0xACU));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.set_read_position(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.export_book(payload));
+    FT_ASSERT_EQ(1U, payload.read_position());
+    const uint8_t expected[] = {0xA5U, 0xACU, 0x42U, 0x52U, 0x42U, 0x47U,
+        1U, 0U, 0U, 0U, 1U, 0U, 0U, 0U, 8U, 7U, 6U, 5U, 4U, 3U, 2U, 1U,
+        4U, 3U, 2U, 1U};
+    FT_ASSERT_EQ(sizeof(expected) + 4U, payload.size());
+    ft_size_t index = 0U;
+    while (index < sizeof(expected))
+    {
+        FT_ASSERT_EQ(expected[index], payload.data()[index]);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, payload.set_read_position(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.import_book(payload));
+    FT_ASSERT_EQ(payload.size(), payload.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.is_recipe_known(recipe_id, &known));
+    FT_ASSERT_EQ(FT_TRUE, known);
     return (1);
 }
 

@@ -21,6 +21,66 @@ static card_game_set_entry card_game_collection_test_entry(
     return (entry);
 }
 
+FT_TEST(test_card_game_collection_weighted_draw_preserves_seeded_order)
+{
+    card_game_collection_engine engine;
+    card_game_product_definition product{};
+    card_game_pack_result pack{};
+    const uint32_t weights[] = {1U, 3U, 7U};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    uint32_t index = 0U;
+    while (index < 3U)
+    {
+        card_game_set_entry entry = card_game_collection_test_entry(index + 1U,
+            CARD_GAME_RARITY_COMMON, 0U, 0U);
+        entry.selection_weight = weights[index];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_set_entry(entry));
+        ++index;
+    }
+    product.product_id = 10U;
+    product.slot_count = 1U;
+    product.slots[0] = {1U, CARD_GAME_RARITY_COMMON, 0U, 3U, 5U, FT_FALSE};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_product(product));
+    uint64_t seed = 0x123456789abcdef1ULL;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.open_product(10U, &seed, &pack));
+    FT_ASSERT_EQ(3U, pack.entry_count);
+    FT_ASSERT_EQ(2U, pack.printing_ids[0]);
+    FT_ASSERT_EQ(1U, pack.printing_ids[1]);
+    FT_ASSERT_EQ(3U, pack.printing_ids[2]);
+    FT_ASSERT_EQ(0xdac132b57f5db5eaULL, seed);
+    return (1);
+}
+
+#ifdef LIBFT_TEST_BUILD
+FT_TEST(test_card_game_collection_pack_quantity_overflow_leaves_all_counts_unchanged)
+{
+    card_game_collection_engine engine;
+    card_game_product_definition product{};
+    card_game_pack_result pack{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_set_entry(
+        card_game_collection_test_entry(7U, CARD_GAME_RARITY_COMMON, 0U, 0U)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_set_entry(
+        card_game_collection_test_entry(9U, CARD_GAME_RARITY_RARE, 0U, 0U)));
+    product.product_id = 10U;
+    product.slot_count = 2U;
+    product.slots[0] = {1U, CARD_GAME_RARITY_COMMON, 0U, 1U, 1U, FT_TRUE};
+    product.slots[1] = {1U, CARD_GAME_RARITY_RARE, 0U, 2U, 1U, FT_TRUE};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_product(product));
+    engine._quantities[1] = UINT32_MAX - 1U;
+    pack.product_id = 99U;
+    uint64_t seed = 123U;
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.open_product(10U, &seed, &pack));
+    uint32_t quantity = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_collection(7U, &quantity));
+    FT_ASSERT_EQ(0U, quantity);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_collection(9U, &quantity));
+    FT_ASSERT_EQ(UINT32_MAX - 1U, quantity);
+    FT_ASSERT_EQ(99U, pack.product_id);
+    return (1);
+}
+#endif
+
 FT_TEST(test_card_game_collection_opens_deterministic_configured_slots)
 {
     card_game_collection_engine first;

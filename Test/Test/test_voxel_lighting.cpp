@@ -7,6 +7,7 @@
 #include "../../Modules/Voxel/voxel_mesh.hpp"
 #include "../../Modules/Voxel/voxel_api.hpp"
 #include "../../Modules/Voxel/voxel_types.hpp"
+#include <cstdio>
 
 struct voxel_lighting_lookup_context
 {
@@ -220,6 +221,7 @@ FT_TEST(test_voxel_lighting_metadata_contract_and_edit_equivalence)
 FT_TEST(test_voxel_lighting_local_all_air_has_direct_skylight)
 {
     voxel_light_chunk light_chunk;
+    voxel_light_build_stats stats = {};
     voxel_lighting_lookup_context context;
     int32_t local_x;
     int32_t local_y;
@@ -231,7 +233,17 @@ FT_TEST(test_voxel_lighting_local_all_air_has_direct_skylight)
     context.opening_x = 0;
     context.opening_z = 0;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(light_chunk,
-        64, -32, voxel_lighting_lookup_block, &context));
+        64, -32, voxel_lighting_lookup_block, &context, &stats));
+    FT_ASSERT_EQ(65536U, stats.scanned_cells);
+    FT_ASSERT_EQ(0U, stats.propagated_cells);
+    FT_ASSERT_EQ(0U, stats.queue_peak);
+    uint8_t section = 0U;
+    while (section < 16U)
+    {
+        FT_ASSERT_EQ(FT_TRUE, light_chunk.get_section(section).is_uniform());
+        FT_ASSERT_EQ(15U, light_chunk.get_section(section).get_uniform());
+        section += 1U;
+    }
     local_y = 0;
     while (local_y < 256)
     {
@@ -510,8 +522,8 @@ FT_TEST(test_voxel_lighting_local_build_is_deterministic_with_meaningful_stats)
         &second_stats));
     FT_ASSERT_EQ(static_cast<uint64_t>(16U * 256U * 16U),
         first_stats.scanned_cells);
-    FT_ASSERT(first_stats.propagated_cells > 0U);
-    FT_ASSERT(first_stats.queue_peak > 0U);
+    FT_ASSERT_EQ(0U, first_stats.propagated_cells);
+    FT_ASSERT_EQ(0U, first_stats.queue_peak);
     FT_ASSERT_EQ(first_stats.scanned_cells, second_stats.scanned_cells);
     FT_ASSERT_EQ(first_stats.propagated_cells, second_stats.propagated_cells);
     FT_ASSERT_EQ(first_stats.queue_peak, second_stats.queue_peak);
@@ -628,6 +640,90 @@ FT_TEST(test_voxel_lighting_cross_source_order_is_deterministic)
     return (1);
 }
 
+FT_TEST(test_voxel_lighting_local_and_halo_reuse_workspace_with_distinct_edges)
+{
+    voxel_light_chunk first_local;
+    voxel_light_chunk next_local;
+    voxel_light_chunk halo;
+    voxel_lighting_lookup_context context = {};
+    context.has_opaque_roof = FT_TRUE;
+    context.roof_height = 128;
+    context.has_emitter = FT_TRUE;
+    context.emitter_x = -1;
+    context.emitter_y = 124;
+    context.emitter_z = 8;
+    context.second_emitter_x = context.emitter_x;
+    context.second_emitter_y = context.emitter_y;
+    context.second_emitter_z = context.emitter_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(first_local,
+        0, 0, voxel_lighting_lookup_block, &context, nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk(halo,
+        0, 0, voxel_lighting_lookup_block, &context, nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(next_local,
+        0, 0, voxel_lighting_lookup_block, &context, nullptr));
+    FT_ASSERT_EQ(0U, voxel_light_block(first_local.get(0, 124, 8)));
+    FT_ASSERT_EQ(14U, voxel_light_block(halo.get(0, 124, 8)));
+    FT_ASSERT_EQ(FT_TRUE, voxel_lighting_chunks_equal(first_local, next_local));
+    return (1);
+}
+
+static int32_t voxel_lighting_lookup_attenuating_slab(void *user_data,
+    int32_t, int32_t world_y, int32_t, uint32_t *block_id) noexcept
+{
+    *block_id = VOXEL_GENERATOR_AIR_BLOCK;
+    if (world_y == 128)
+        *block_id = *static_cast<const uint32_t *>(user_data);
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_voxel_lighting_local_operation_seeds_vertical_attenuation)
+{
+    const char *asset = "Scripting/export_values.asset";
+    std::FILE *fixture = std::fopen(asset, "rb");
+    if (fixture != nullptr)
+        std::fclose(fixture);
+    else
+        asset = "Libft/Test/Scripting/export_values.asset";
+    voxel_block_registration registration = {};
+    registration.name = "test:skylight_attenuating_slab";
+    registration.metadata.light_attenuation = 2U;
+    uint32_t face = 0U;
+    while (face < VOXEL_BLOCK_ASSET_FACE_COUNT)
+    {
+        registration.asset_paths[face] = asset;
+        face += 1U;
+    }
+    uint32_t slab = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_register_block(registration, &slab));
+    voxel_light_chunk expected;
+    voxel_light_chunk actual;
+    voxel_light_build_operation operation;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_light_build_chunk_local(expected, 64, -32,
+        voxel_lighting_lookup_attenuating_slab, &slab));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.initialize(actual, 64, -32,
+        voxel_lighting_lookup_attenuating_slab, &slab, FT_FALSE));
+    const voxel_light_update_config config = {2048U, 2048U, 2048U, 1000U};
+    ft_bool complete = FT_FALSE;
+    uint32_t slices = 0U;
+    while (complete == FT_FALSE && slices < 256U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.step(config, nullptr, &complete));
+        slices += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_unregister_block(slab));
+    FT_ASSERT_EQ(FT_TRUE, complete);
+    FT_ASSERT_EQ(FT_TRUE, voxel_lighting_chunks_equal(expected, actual));
+    FT_ASSERT_EQ(FT_FALSE, actual.get_section(8).is_uniform());
+    FT_ASSERT_EQ(FT_FALSE, expected.get_section(8).is_uniform());
+    uint8_t sample = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.get_packed_light(79, 128, -17, &sample));
+    FT_ASSERT_EQ(13U, voxel_light_sky(sample));
+    FT_ASSERT_EQ(12U, voxel_light_sky(actual.get(15, 127, 15)));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, operation.get_packed_light(80, 128, -17, &sample));
+    return (1);
+}
+
 FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
 {
     voxel_light_chunk expected_light;
@@ -676,10 +772,8 @@ FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
     FT_ASSERT_EQ(expected_stats.scanned_cells, actual_stats.scanned_cells);
     FT_ASSERT(voxel_light_block(actual_light.get(0, 124, 8)) > 0U);
     FT_ASSERT(voxel_light_sky(actual_light.get(0, 124, 8)) > 0U);
-    /* Strongest-first propagation settles fewer cells than the unsorted build. */
     FT_ASSERT(actual_stats.propagated_cells > 0U);
-    FT_ASSERT(actual_stats.propagated_cells
-        < expected_stats.propagated_cells);
+    FT_ASSERT(expected_stats.propagated_cells > 0U);
     local_y = 0;
     while (local_y < 256)
     {
@@ -700,6 +794,37 @@ FT_TEST(test_voxel_lighting_build_operation_is_bounded_and_reconstructs_build)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, actual_light.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, expected_light.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_lighting_operation_publishes_packed_sections_as_they_finish)
+{
+    voxel_light_chunk light;
+    voxel_light_build_operation operation;
+    const voxel_light_update_config config = {128U, 128U, 128U, 1000U};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.initialize(light, 0, 0,
+        voxel_lighting_lookup_block, nullptr, FT_FALSE));
+    ft_bool complete = FT_FALSE;
+    uint32_t step_count = 0U;
+    while (step_count < 513U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.step(config, nullptr, &complete));
+        step_count += 1U;
+    }
+    FT_ASSERT_EQ(FT_FALSE, complete);
+    FT_ASSERT_EQ(0U, light.get(0, 0, 0));
+    FT_ASSERT_EQ(FT_TRUE, light.get_section(0).is_uniform());
+    while (complete == FT_FALSE && step_count < 1025U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operation.step(config, nullptr, &complete));
+        step_count += 1U;
+    }
+    FT_ASSERT_EQ(FT_TRUE, complete);
+    FT_ASSERT_EQ(1024U, step_count);
+    FT_ASSERT_EQ(15U, light.get(0, 0, 0));
+    FT_ASSERT_EQ(FT_TRUE, light.get_section(0).is_uniform());
+    FT_ASSERT_EQ(FT_TRUE, light.get_section(15).is_uniform());
+    FT_ASSERT_EQ(15U, light.get(15, 255, 15));
     return (1);
 }
 

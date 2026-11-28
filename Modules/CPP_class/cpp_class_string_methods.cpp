@@ -733,6 +733,45 @@ int32_t ft_string::assign(const char *string, ft_size_t length) noexcept
     return (this->set_error(result));
 }
 
+int32_t ft_string::assign(const ft_string &other) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_string::assign(const ft_string &) destination");
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
+        "ft_string::assign(const ft_string &) source");
+    if (this == &other)
+        return (this->set_error(FT_ERR_SUCCESS));
+
+    pt_recursive_mutex *first = this->_mutex;
+    pt_recursive_mutex *second = other._mutex;
+    if (first == second)
+        second = ft_nullptr;
+    else if (reinterpret_cast<uintptr_t>(first) > reinterpret_cast<uintptr_t>(second))
+    {
+        first = other._mutex;
+        second = this->_mutex;
+    }
+    int32_t result = pt_recursive_mutex_lock_if_not_null(first);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    result = pt_recursive_mutex_lock_if_not_null(second);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->resize_buffer(other._length);
+        if (result == FT_ERR_SUCCESS)
+        {
+            if (other._length != 0U)
+                ft_memcpy(this->_data, other._data, other._length);
+            this->_length = other._length;
+            if (this->_data != ft_nullptr)
+                this->_data[this->_length] = '\0';
+        }
+        (void)pt_recursive_mutex_unlock_if_not_null(second);
+    }
+    (void)pt_recursive_mutex_unlock_if_not_null(first);
+    return (this->set_error(result));
+}
+
 int32_t ft_string::resize_length(ft_size_t new_length) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_string::resize_length");

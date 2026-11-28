@@ -1,6 +1,6 @@
 # URI
 
-The `URI` module parses, normalizes, percent-encodes, and queries URI text. Returned strings and byte buffers are allocated and owned by the caller.
+The `URI` module parses, normalizes, percent-encodes, and queries URI text. The caller releases returned strings and byte buffers with `cma_free`.
 
 ## Types
 
@@ -17,4 +17,4 @@ The `URI` module parses, normalizes, percent-encodes, and queries URI text. Retu
 - `uri_query_get_value(const char *query, ft_size_t query_size, const char *key, ft_size_t key_size)` - Finds a query parameter by key and returns its decoded value.
 - `uri_get_error()` - Returns the URI module's last error code.
 - `uri_get_error_str()` - Returns readable text for the URI module's last error.
-- `uri_query_has_key(...)` - Tests whether a query parameter exists, including parameters whose value is empty.
+- `uri_query_has_key(...)` - Checks the first matching parameter and validates its value without allocating. A parameter can have an empty value.

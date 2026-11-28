@@ -413,9 +413,102 @@ FT_TEST(test_card_game_simulation_combat_uses_effective_stats_and_removes_dead)
     return (1);
 }
 
+FT_TEST(test_card_game_simulation_combat_applies_only_stored_damage)
+{
+    card_game_engine engine;
+    card_game_snapshot snapshot;
+    const card_game_card_definition attacker{
+        80U, CARD_GAME_CREATURE, 0U, INT32_MAX, 6, CARD_GAME_NO_EFFECT};
+    const card_game_card_definition defender{
+        81U, CARD_GAME_CREATURE, 0U, 4, INT32_MAX, CARD_GAME_NO_EFFECT};
+    uint32_t modifier_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(card_game_simulation_rules()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(attacker));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(defender));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(0U, 80U, 0U, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.play_card(1U, 81U, 0U, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_card_modifier(1U, 0U, 0, 10,
+        CARD_GAME_MODIFIER_PERMANENT, 12U, &modifier_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&snapshot));
+    snapshot.players[1U].instances[0U].damage_taken = INT32_MAX - 5;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.apply_snapshot(snapshot));
+
+    cma_set_alloc_limit(1U);
+    const int32_t result = engine.resolve_combat(0U, 0U, 1U, 0U,
+        CARD_GAME_COMBAT_ORDERED);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    card_game_card_instance instance{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(1U, 0U, &instance));
+    FT_ASSERT_EQ(INT32_MAX, instance.damage_taken);
+    FT_ASSERT_EQ(10, instance.health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U, &instance));
+    FT_ASSERT_EQ(6, instance.health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_combat(0U, 0U, 1U, 0U,
+        CARD_GAME_COMBAT_SIMULTANEOUS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U, &instance));
+    FT_ASSERT_EQ(2, instance.health);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(1U, 0U, &instance));
+    FT_ASSERT_EQ(10, instance.health);
+    return (1);
+}
+
+FT_TEST(test_card_game_simulation_expiry_preserves_live_modifier_order)
+{
+    card_game_engine source;
+    card_game_engine replica;
+    card_game_snapshot before;
+    card_game_snapshot after;
+    card_game_delta unchanged;
+    std::vector<uint8_t> bytes;
+    const card_game_card_definition card{70U, CARD_GAME_CREATURE, 0U,
+        4, 6, CARD_GAME_NO_EFFECT};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(card_game_simulation_rules()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.initialize(card_game_simulation_rules()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_card(card));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.register_card(card));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.play_card(0U, 70U, 0U, ft_nullptr));
+    uint32_t index = 0U;
+    uint32_t modifier_id;
+    while (index < 8U)
+    {
+        card_game_modifier_duration duration = CARD_GAME_MODIFIER_PERMANENT;
+        if ((index & 1U) == 0U)
+            duration = CARD_GAME_MODIFIER_UNTIL_END_TURN;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            source.add_card_modifier(0U, 0U, 1, 0, duration, 0U, &modifier_id));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_snapshot(&before));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_snapshot(&after));
+    FT_ASSERT_EQ(before.state_sequence + 5U, after.state_sequence);
+    FT_ASSERT_EQ(4U, after.modifier_count);
+    index = 0U;
+    while (index < after.modifier_count)
+    {
+        FT_ASSERT_EQ(before.modifiers[index * 2U + 1U].modifier_id,
+            after.modifiers[index].modifier_id);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(bytes));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.restore_snapshot(bytes.data(), bytes.size()));
+    after.modifiers[after.modifier_count].modifier_id ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.create_delta(after, &unchanged));
+    FT_ASSERT_EQ(FT_FALSE, unchanged.global_state_changed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.apply_delta(unchanged));
+    return (1);
+}
+
 FT_TEST(test_card_game_simulation_modifier_follows_instance_after_compaction)
 {
     card_game_engine engine;
+    card_game_snapshot legacy_snapshot;
     card_game_rules rules;
     card_game_card_definition fragile;
     card_game_card_definition durable;
@@ -424,6 +517,8 @@ FT_TEST(test_card_game_simulation_modifier_follows_instance_after_compaction)
     card_game_card_instance second_instance;
     card_game_card_instance remaining_instance;
     uint32_t modifier_id;
+    uint32_t removed_id;
+    uint32_t legacy_id;
     int32_t attack;
     int32_t health;
 
@@ -463,7 +558,14 @@ FT_TEST(test_card_game_simulation_modifier_follows_instance_after_compaction)
     FT_ASSERT(first_instance.instance_id != second_instance.instance_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_card_modifier(0U, 1U, 10, 0,
         CARD_GAME_MODIFIER_PERMANENT, 13U, &modifier_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_card_modifier(0U, 0U, 0, 0,
+        CARD_GAME_MODIFIER_PERMANENT, 14U, &removed_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_card_modifier(0U, 1U, 2, 0,
+        CARD_GAME_MODIFIER_PERMANENT, 15U, &legacy_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.end_turn());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&legacy_snapshot));
+    legacy_snapshot.modifiers[2U].target_instance_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.apply_snapshot(legacy_snapshot));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.resolve_combat(1U, 0U, 0U, 0U,
         CARD_GAME_COMBAT_ORDERED));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_instance(0U, 0U,
@@ -471,8 +573,17 @@ FT_TEST(test_card_game_simulation_modifier_follows_instance_after_compaction)
     FT_ASSERT_EQ(second_instance.instance_id, remaining_instance.instance_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_effective_instance_stats(0U, 0U,
         &attack, &health));
-    FT_ASSERT_EQ(15, attack);
+    FT_ASSERT_EQ(17, attack);
     FT_ASSERT_EQ(5, health);
+    card_game_card_modifier legacy_modifier{};
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        engine.get_card_modifier(removed_id, &legacy_modifier));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        engine.get_card_modifier(legacy_id, &legacy_modifier));
+    FT_ASSERT_EQ(0U, legacy_modifier.target_instance_index);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&legacy_snapshot));
+    FT_ASSERT_EQ(0U, legacy_snapshot.players[0U].board[0U]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.apply_snapshot(legacy_snapshot));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     return (1);
 }

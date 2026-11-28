@@ -108,14 +108,17 @@ class card_game_resource_ledger
         int32_t find_unit(uint32_t unit_id, uint32_t *index) const noexcept;
         ft_bool unit_matches(const card_game_resource_unit &unit,
             const card_game_resource_requirement &requirement) const noexcept;
-        int32_t rebuild_pool(uint32_t pool_index) noexcept;
-        int32_t split_unit_lock(uint32_t unit_index, uint32_t amount,
+        int32_t lock_units_internal(uint32_t owner_id, uint32_t resource_type_id,
+            uint32_t amount, uint64_t unlock_epoch) noexcept;
+        void split_unit_lock(uint32_t unit_index, uint32_t amount,
             uint64_t unlock_epoch) noexcept;
-        int32_t create_payment_plan_excluding(uint32_t owner_id,
+        int32_t create_payment_plan_internal(uint32_t owner_id,
             const card_game_resource_requirement &requirement,
-            const card_game_payment_unit *reserved_units,
-            uint32_t reserved_count,
+            uint32_t *reserved_amounts,
             card_game_payment_plan *plan) const noexcept;
+        int32_t create_cost_plan_components(uint32_t owner_id,
+            const card_game_resource_requirement *requirements,
+            uint32_t variable_amount, card_game_cost_plan *candidate) const noexcept;
 
     public:
         card_game_resource_ledger() noexcept;
@@ -133,6 +136,8 @@ class card_game_resource_ledger
             card_game_resource_snapshot *destination) noexcept;
         int32_t apply_snapshot(
             const card_game_resource_snapshot &snapshot) noexcept;
+        int32_t append_state_hash(uint64_t &hash) const noexcept;
+        ft_bool matches_snapshot(const card_game_resource_snapshot &snapshot) const noexcept;
         static ft_bool snapshots_equal(
             const card_game_resource_snapshot &first,
             const card_game_resource_snapshot &second) noexcept;
@@ -200,8 +205,13 @@ struct card_game_allowance_snapshot
 
 class card_game_allowance_ledger
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
+        ft_bool _sequential_ids;
         uint32_t _count;
         uint32_t _next_id;
         card_game_action_allowance _allowances[FT_CARD_GAME_MAX_ALLOWANCES];
@@ -239,6 +249,8 @@ class card_game_allowance_ledger
             card_game_allowance_snapshot *destination) noexcept;
         int32_t apply_snapshot(
             const card_game_allowance_snapshot &snapshot) noexcept;
+        int32_t append_state_hash(uint64_t &hash) const noexcept;
+        ft_bool matches_snapshot(const card_game_allowance_snapshot &snapshot) const noexcept;
         static ft_bool snapshots_equal(
             const card_game_allowance_snapshot &first,
             const card_game_allowance_snapshot &second) noexcept;

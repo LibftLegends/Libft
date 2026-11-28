@@ -57,6 +57,8 @@ class ft_websocket_server
         int32_t start(const char *ip_address, uint16_t port, int32_t address_family = AF_INET, ft_bool non_blocking = FT_FALSE);
         int32_t run_once(int32_t &client_fd, ft_string &message);
         int32_t send_text(int32_t client_fd, const ft_string &message);
+        int32_t send_text_many(const int32_t *client_descriptors, ft_size_t count,
+            const ft_string &message);
         int32_t get_port(uint16_t &port_value) const;
 };
 

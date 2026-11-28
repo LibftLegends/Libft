@@ -67,6 +67,7 @@ class game_behavior_tree_action : public game_behavior_node
         private:
     #endif
         ft_function<int32_t(game_behavior_context &)> _callback;
+        ft_function<int32_t(game_behavior_context &)> *_active_callback;
 
     public:
         game_behavior_tree_action() noexcept;
@@ -89,6 +90,8 @@ class game_behavior_composite : public game_behavior_node
         uint8_t _initialised_state;
 
         ft_bool validate_child(const ft_sharedptr<game_behavior_node> &child) const noexcept;
+        int32_t tick_children(game_behavior_context &context, int32_t stop_status,
+            int32_t completed_status) noexcept;
 
     public:
         game_behavior_composite() noexcept;

@@ -2,6 +2,7 @@
 # define CARD_GAME_INTERNAL_HPP
 
 #include "card_game.hpp"
+#include <algorithm>
 #include <new>
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -127,12 +128,22 @@ inline int32_t card_game_replay_read_u64(const uint8_t *input,
 }
 
 
+inline ft_bool card_game_snapshot_ids_are_unique(uint32_t *ids, uint32_t count) noexcept
+{
+    uint32_t index = 1U;
+    while (index < count && ids[index - 1U] < ids[index])
+        ++index;
+    if (index >= count)
+        return (FT_TRUE);
+    std::sort(ids, ids + count);
+    return (std::adjacent_find(ids, ids + count) == ids + count);
+}
+
 inline int32_t card_game_validate_player_snapshot(
     const card_game_player_snapshot &player, uint32_t player_id,
     uint32_t max_board_spaces, uint32_t max_hand_size) noexcept
 {
     uint32_t index;
-    uint32_t previous_index;
 
     if (player.board_count > max_board_spaces
         || player.board_count > FT_CARD_GAME_MAX_CARDS)
@@ -142,6 +153,7 @@ inline int32_t card_game_validate_player_snapshot(
     if (player.hand_count > max_hand_size
         || player.hand_count > FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_INVALID_ARGUMENT);
+    uint32_t ids[FT_CARD_GAME_MAX_CARDS];
     index = 0U;
     while (index < player.board_count)
     {
@@ -151,16 +163,11 @@ inline int32_t card_game_validate_player_snapshot(
             || player.instances[index].owner_id != player_id
             || player.instances[index].damage_taken < 0)
             return (FT_ERR_INVALID_ARGUMENT);
-        previous_index = 0U;
-        while (previous_index < index)
-        {
-            if (player.instances[previous_index].instance_id
-                == player.instances[index].instance_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            previous_index += 1U;
-        }
+        ids[index] = player.instances[index].instance_id;
         index += 1U;
     }
+    if (!card_game_snapshot_ids_are_unique(ids, player.board_count))
+        return (FT_ERR_INVALID_ARGUMENT);
     return (FT_ERR_SUCCESS);
 }
 
@@ -190,16 +197,22 @@ inline ft_bool card_game_player_snapshots_equal(
         || first.hand_count != second.hand_count
         || first.health != second.health
         || first.mana != second.mana
-        || ft_memcmp(first.board, second.board, sizeof(first.board)) != 0
-        || ft_memcmp(first.deck, second.deck, sizeof(first.deck)) != 0
+        || first.board_count > FT_CARD_GAME_MAX_CARDS
+        || first.deck_count > FT_CARD_GAME_MAX_CARDS
+        || first.hand_count > FT_CARD_GAME_MAX_CARDS
+        || ft_memcmp(first.board, second.board,
+            first.board_count * sizeof(*first.board)) != 0
+        || ft_memcmp(first.deck, second.deck,
+            first.deck_count * sizeof(*first.deck)) != 0
         || ft_memcmp(first.deck_instance_ids, second.deck_instance_ids,
-            sizeof(first.deck_instance_ids)) != 0
-        || ft_memcmp(first.hand, second.hand, sizeof(first.hand)) != 0
+            first.deck_count * sizeof(*first.deck_instance_ids)) != 0
+        || ft_memcmp(first.hand, second.hand,
+            first.hand_count * sizeof(*first.hand)) != 0
         || ft_memcmp(first.hand_instance_ids, second.hand_instance_ids,
-            sizeof(first.hand_instance_ids)) != 0)
+            first.hand_count * sizeof(*first.hand_instance_ids)) != 0)
         return (FT_FALSE);
     index = 0U;
-    while (index < FT_CARD_GAME_MAX_CARDS)
+    while (index < first.board_count)
     {
         if (card_game_card_instance_equal(first.instances[index],
                 second.instances[index]) == FT_FALSE)
@@ -217,12 +230,18 @@ inline int32_t card_game_copy_player_snapshot(
 {
     uint32_t deck_index;
 
-    ft_memcpy(destination->board, board,
-        sizeof(destination->board));
-    ft_memcpy(destination->instances, instances,
-        sizeof(destination->instances));
+    /* The destination is a freshly constructed, zero-initialized player snapshot. */
+    const uint32_t deck_count = deck.size();
+    if (board_count > FT_CARD_GAME_MAX_CARDS || hand_count > FT_CARD_GAME_MAX_CARDS
+        || deck_count > FT_CARD_GAME_MAX_CARDS)
+        return (FT_ERR_INVALID_STATE);
+    if (board_count != 0U)
+    {
+        ft_memcpy(destination->board, board, board_count * sizeof(*board));
+        ft_memcpy(destination->instances, instances, board_count * sizeof(*instances));
+    }
     destination->board_count = board_count;
-    destination->deck_count = deck.size();
+    destination->deck_count = deck_count;
     destination->hand_count = hand_count;
     deck_index = 0U;
     while (deck_index < hand_count)

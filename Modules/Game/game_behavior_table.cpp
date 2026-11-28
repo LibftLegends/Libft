@@ -41,7 +41,10 @@ int32_t game_behavior_table::initialize() noexcept
     }
     int32_t initialize_error = this->_profiles.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(initialize_error));
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -49,50 +52,41 @@ int32_t game_behavior_table::initialize() noexcept
 
 int32_t game_behavior_table::initialize(const game_behavior_table &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_behavior_profile> *entry;
-    const Pair<int32_t, game_behavior_profile> *entry_end;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_behavior_table::initialize(copy)",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
+
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
+        result = this->initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = this->_profiles.copy_from(other._profiles);
+        (void)other.unlock_internal(source_locked);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    count = other._profiles.size();
-    entry_end = other._profiles.end();
-    entry = entry_end - count;
-    index = 0;
-    while (index < count)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->_profiles.insert(entry->key, entry->value);
-        entry++;
-        index += 1;
+        (void)this->destroy();
+        return (this->set_error(result));
     }
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -103,36 +97,58 @@ int32_t game_behavior_table::initialize(game_behavior_table &&other) noexcept
 
 int32_t game_behavior_table::move(game_behavior_table &other) noexcept
 {
-    int32_t initialize_error;
-
     if (&other == this)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_behavior_table::move",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_behavior_table &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->_profiles.move(other._profiles);
+        (void)other.unlock_internal(source_locked);
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->_profiles.destroy();
+        return (this->set_error(result));
+    }
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_behavior_table::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (this->set_error(FT_ERR_SUCCESS));
-    this->_profiles.clear();
-    (void)this->_profiles.destroy();
-    disable_error = this->disable_thread_safety();
+    const int32_t disable_error = this->disable_thread_safety();
+    const int32_t map_error = this->_profiles.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
-    return (disable_error);
+    if (disable_error != FT_ERR_SUCCESS)
+        return (this->set_error(disable_error));
+    return (this->set_error(map_error));
 }
 
 int32_t game_behavior_table::enable_thread_safety() noexcept
@@ -236,71 +252,90 @@ const ft_map<int32_t, game_behavior_profile> &game_behavior_table::get_profiles(
 void game_behavior_table::set_profiles(
     const ft_map<int32_t, game_behavior_profile> &profiles) noexcept
 {
-    ft_bool lock_acquired;
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_behavior_profile> *entry;
-    const Pair<int32_t, game_behavior_profile> *entry_end;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_behavior_table::set_profiles");
-    int32_t lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
+        result = this->_profiles.copy_from(profiles);
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_profiles.clear();
-    count = profiles.size();
-    entry_end = profiles.end();
-    entry = entry_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_profiles.insert(entry->key, entry->value);
-        entry++;
-        index += 1;
-    }
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 int32_t game_behavior_table::register_profile(const game_behavior_profile &profile) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t profile_identifier;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_behavior_table::register_profile");
-    int32_t lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    errno_abort_if_uninitialised_or_destroyed(profile._initialised_state,
+        "game_behavior_table::register_profile source");
+    if (profile.is_thread_safe())
     {
-        this->set_error(lock_error);
-        return (lock_error);
+        game_behavior_profile snapshot;
+        const int32_t result = snapshot.initialize(profile);
+        if (result != FT_ERR_SUCCESS)
+            return (this->set_error(result));
+        return (this->register_profile_snapshot(snapshot));
     }
-    profile_identifier = profile.get_profile_id();
-    this->_profiles.insert(profile_identifier, profile);
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->register_profile_snapshot(profile));
+}
+
+int32_t game_behavior_table::register_profile_snapshot(
+    const game_behavior_profile &profile) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        ft_bool profiles_locked = FT_FALSE;
+        result = this->_profiles.lock(&profiles_locked);
+        if (result == FT_ERR_SUCCESS)
+        {
+            const int32_t profile_id = profile.get_profile_id();
+            ft_bool found = FT_FALSE;
+            result = this->_profiles.visit_value(profile_id,
+                [&profile, &found](game_behavior_profile &stored_profile) noexcept
+                {
+                    found = FT_TRUE;
+                    if (stored_profile._initialised_state != FT_CLASS_STATE_INITIALISED)
+                        return (stored_profile.initialize(profile));
+                    return (stored_profile.replace_contents_from(profile));
+                });
+            if (!found && result == FT_ERR_NOT_FOUND)
+            {
+                this->_profiles.insert(profile_id, profile);
+                result = this->_profiles.get_error();
+            }
+            (void)this->_profiles.unlock(profiles_locked);
+        }
+        (void)this->unlock_internal(lock_acquired);
+    }
+    return (this->set_error(result));
 }
 
 int32_t game_behavior_table::fetch_profile(int32_t profile_id,
     game_behavior_profile &profile) const noexcept
 {
-    const Pair<int32_t, game_behavior_profile> *entry;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_behavior_table::fetch_profile");
-    entry = this->_profiles.find(profile_id);
-    if (entry == this->_profiles.end())
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
+        result = this->_profiles.visit_value(profile_id,
+            [&profile](const game_behavior_profile &stored_profile) noexcept
+            {
+                if (profile._initialised_state != FT_CLASS_STATE_INITIALISED
+                    || stored_profile._initialised_state != FT_CLASS_STATE_INITIALISED)
+                    return (profile.initialize(stored_profile));
+                const int32_t copy_result = profile.replace_contents_from(stored_profile, FT_TRUE);
+                if (copy_result != FT_ERR_SUCCESS)
+                    (void)profile.destroy();
+                return (profile.set_error(copy_result));
+            });
+        (void)this->unlock_internal(lock_acquired);
     }
-    int32_t initialize_error = profile.initialize(entry->value);
-    this->set_error(initialize_error);
-    return (initialize_error);
+    return (this->set_error(result));
 }
-
 
 int32_t game_behavior_table::get_error() const noexcept
 {

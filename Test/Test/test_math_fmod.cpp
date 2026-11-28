@@ -70,3 +70,12 @@ FT_TEST(test_math_fmod_recovers_after_zero_modulus)
     FT_ASSERT(math_fabs(result - 1.0) < 0.000001);
     return (1);
 }
+
+FT_TEST(test_math_fmod_retains_minimum_subnormal_policy)
+{
+    const double smallest = std::numeric_limits<double>::denorm_min();
+    FT_ASSERT(math_isnan(math_fmod(1.0, -smallest)));
+    FT_ASSERT_EQ(-0.0, math_fmod(-3.0 * smallest, 2.0 * smallest));
+    FT_ASSERT_EQ(2.0 * smallest, math_fmod(2.0 * smallest, 4.0 * smallest));
+    return (1);
+}

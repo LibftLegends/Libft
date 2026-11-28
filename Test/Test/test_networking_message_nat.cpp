@@ -65,9 +65,15 @@ class networking_nat_duplicate_candidate_provider
             candidate.endpoint = this->endpoint;
             candidate.type = networking_nat_candidate_type::HOST;
             candidate.priority = 100U;
+            candidate.foundation = 1U;
             if (candidates.push_back(candidate) != FT_ERR_SUCCESS)
                 return (FT_ERR_NO_MEMORY);
+            candidate.component = 2U;
             candidate.priority = 200U;
+            if (candidates.push_back(candidate) != FT_ERR_SUCCESS)
+                return (FT_ERR_NO_MEMORY);
+            candidate.component = 1U;
+            candidate.foundation = 2U;
             return (candidates.push_back(candidate));
         }
 };
@@ -411,12 +417,16 @@ FT_TEST(test_networking_nat_deduplicates_candidates_and_enforces_limit)
     networking_nat_prepare_ipv6_endpoint(remote_candidate.endpoint, 2U,
         4000U);
     remote_candidate.type = networking_nat_candidate_type::SERVER_REFLEXIVE;
-    remote_candidate.priority = 900U;
+    remote_candidate.priority = 100U;
+    remote_candidate.foundation = 3U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.initialize());
     ticket.peer_id = 2U;
     ticket.attempt_id = 7U;
     ticket.expires_at = 100U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.signature.push_back(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.candidates.push_back(remote_candidate));
+    remote_candidate.priority = 900U;
+    remote_candidate.foundation = 4U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.candidates.push_back(remote_candidate));
     verifier.set_accept(FT_TRUE);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.initialize(1U, 50U));
@@ -426,10 +436,15 @@ FT_TEST(test_networking_nat_deduplicates_candidates_and_enforces_limit)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.get_selected_pair(selected_local,
         selected_remote));
     FT_ASSERT_EQ(200U, selected_local.priority);
+    FT_ASSERT_EQ(1U, selected_local.component);
+    FT_ASSERT_EQ(1U, selected_local.foundation);
+    FT_ASSERT_EQ(900U, selected_remote.priority);
+    FT_ASSERT_EQ(3U, selected_remote.foundation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.begin(1U, probe));
     FT_ASSERT_EQ(1U, probe.calls);
-    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, traversal.probe_next(2U, 0U, probe));
-    FT_ASSERT_EQ(1U, probe.calls);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.probe_next(2U, 0U, probe));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, traversal.probe_next(3U, 0U, probe));
+    FT_ASSERT_EQ(2U, probe.calls);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.destroy());
 
@@ -512,6 +527,70 @@ FT_TEST(test_networking_nat_selects_highest_priority_with_stable_ties)
     FT_ASSERT_EQ(0, ft_memcmp(&remote_first.endpoint.address,
         &selected_remote.endpoint.address,
         remote_first.endpoint.length));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_nat_nomination_scores_only_matching_endpoint_variants)
+{
+    networking_nat_traversal traversal;
+    networking_nat_peer_ticket ticket;
+    networking_nat_test_verifier verifier;
+    networking_nat_candidate local_candidate;
+    networking_nat_candidate remote_candidate;
+    networking_nat_candidate selected_local;
+    networking_nat_candidate selected_remote;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.initialize(1U, 50U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.initialize());
+    ticket.peer_id = 2U;
+    ticket.attempt_id = 21U;
+    ticket.expires_at = 1000U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.signature.push_back(1U));
+    const uint32_t unmatched_count = NETWORKING_NAT_MAX_CANDIDATES - 3U;
+    uint32_t index = 0U;
+    while (index < unmatched_count)
+    {
+        networking_nat_prepare_ipv6_endpoint(local_candidate.endpoint, 1U,
+            static_cast<uint16_t>(3100U + index));
+        networking_nat_prepare_ipv6_endpoint(remote_candidate.endpoint, 2U,
+            static_cast<uint16_t>(4100U + index));
+        local_candidate.priority = 2000U;
+        remote_candidate.priority = 2000U;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            traversal.add_local_candidate(local_candidate));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            ticket.candidates.push_back(remote_candidate));
+        index += 1U;
+    }
+    networking_nat_prepare_ipv6_endpoint(local_candidate.endpoint, 1U, 3000U);
+    networking_nat_prepare_ipv6_endpoint(remote_candidate.endpoint, 2U, 4000U);
+    local_candidate.priority = 100U;
+    remote_candidate.priority = 100U;
+    index = 1U;
+    while (index <= 3U)
+    {
+        local_candidate.component = index;
+        remote_candidate.component = index;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            traversal.add_local_candidate(local_candidate));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            ticket.candidates.push_back(remote_candidate));
+        local_candidate.priority = 200U;
+        remote_candidate.priority = 200U;
+        index += 1U;
+    }
+    verifier.set_accept(FT_TRUE);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.set_peer_ticket(ticket, 0U, verifier));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.mark_probe_success(
+        local_candidate.endpoint, remote_candidate.endpoint, ticket.attempt_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        traversal.get_selected_pair(selected_local, selected_remote));
+    FT_ASSERT_EQ(2U, selected_local.component);
+    FT_ASSERT_EQ(2U, selected_remote.component);
+    FT_ASSERT_EQ(200U, selected_local.priority);
+    FT_ASSERT_EQ(200U, selected_remote.priority);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, traversal.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ticket.destroy());
     return (1);

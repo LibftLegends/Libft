@@ -14,10 +14,18 @@ struct card_game_zone_entry
 
 class card_game_ordered_zone
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
+        friend class card_game_zone_store;
+        friend class card_game_engine;
+
         uint8_t _initialised_state;
         uint32_t _capacity;
         ft_bool _allow_duplicates;
+        uint8_t _head;
         uint32_t _count;
         card_game_zone_entry _cards[FT_CARD_GAME_MAX_CARDS];
 
@@ -30,7 +38,15 @@ class card_game_ordered_zone
 
         int32_t find_card(uint32_t card_instance_id,
             uint32_t *index) const noexcept;
+        int32_t find_card_definition(uint32_t card_id, uint32_t *index) const noexcept;
         int32_t append_at(uint32_t index, uint32_t card_instance_id) noexcept;
+        uint32_t storage_index(uint32_t index) const noexcept;
+        void shift_entries_right(uint32_t index) noexcept;
+        void shift_entries_left(uint32_t index) noexcept;
+        void erase_at(uint32_t index) noexcept;
+        void copy_entries_to(card_game_zone_entry *entries) const noexcept;
+        int32_t replace_entries(const card_game_zone_entry *entries,
+            uint32_t count) noexcept;
 
     public:
         card_game_ordered_zone() noexcept;

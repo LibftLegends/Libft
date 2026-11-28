@@ -16,6 +16,7 @@ typedef struct s_su_environment_snapshot
     ft_vector<ft_string> entries;
 }   t_su_environment_snapshot;
 
+// Borrowed C runtime storage. Copy it before changing the process environment.
 char    *su_getenv(const char *name);
 int32_t     su_setenv(const char *name, const char *value, int32_t overwrite);
 int32_t     su_unsetenv(const char *name);
@@ -91,6 +92,7 @@ void    su_force_file_stream_allocation_failure(ft_bool should_fail);
 su_file *su_fopen(const char *path_name);
 su_file *su_fopen(const char *path_name, int32_t flags);
 su_file *su_fopen(const char *path_name, int32_t flags, mode_t mode);
+// Wait for all users of the stream before closing it. A successful close frees it.
 int32_t     su_fclose(su_file *stream);
 ft_size_t  su_fread(void *buffer, ft_size_t size, ft_size_t count, su_file *stream);
 ft_size_t  su_fwrite(const void *buffer, ft_size_t size, ft_size_t count, su_file *stream);
@@ -102,6 +104,7 @@ void    su_file_teardown_thread_safety(su_file *stream);
 int32_t     su_file_lock(su_file *stream, ft_bool *lock_acquired);
 void    su_file_unlock(su_file *stream, ft_bool lock_acquired);
 
+// Compatibility calls. Environment wrappers always synchronize.
 int32_t     su_environment_enable_thread_safety(void);
 void    su_environment_disable_thread_safety(void);
 
@@ -136,6 +139,8 @@ int32_t     su_health_register_check(const char *name, t_su_health_check check,
             void *context);
 int32_t     su_health_unregister_check(const char *name);
 void    su_health_clear_checks(void);
+// Runs callbacks in registration order from a snapshot. Keep each context alive
+// until checks that may have captured it have returned.
 int32_t     su_health_run_checks(t_su_health_check_result *results,
             ft_size_t capacity, ft_size_t *count);
 int32_t     su_health_run_check(const char *name, t_su_health_check_result *result);

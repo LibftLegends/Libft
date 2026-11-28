@@ -51,7 +51,7 @@ static inline int32_t websocket_send_frame(int32_t socket_descriptor, unsigned c
     const unsigned char *payload, ft_size_t length, const unsigned char *mask_key)
 {
     if (socket_descriptor < 0 || (payload == ft_nullptr && length != 0)
-        || length > static_cast<ft_size_t>(SIZE_MAX) - 14U
+        || length > SIZE_MAX - 14U
         || length > static_cast<ft_size_t>(FT_LLONG_MAX))
         return (FT_ERR_INVALID_OPERATION);
     unsigned char header[14];

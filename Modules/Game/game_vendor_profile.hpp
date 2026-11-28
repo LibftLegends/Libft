@@ -28,6 +28,19 @@ class game_vendor_profile
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
+        struct profile_values
+        {
+            int32_t vendor_id;
+            double buy_markup;
+            double sell_multiplier;
+            double tax_rate;
+        };
+
+        int32_t read_values(profile_values &values) const noexcept;
+        void write_values(const profile_values &values) noexcept;
+        int32_t copy_values(const game_vendor_profile &other) noexcept;
+        friend class game_economy_table;
+
     public:
         game_vendor_profile() noexcept;
         virtual ~game_vendor_profile() noexcept;

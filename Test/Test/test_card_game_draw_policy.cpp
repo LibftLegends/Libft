@@ -229,6 +229,48 @@ FT_TEST(test_card_game_draw_policy_multi_draw_burns_each_overflow)
     return (1);
 }
 
+FT_TEST(test_card_game_draw_policy_rolls_back_batch_after_burn_zone_fills)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_card_definition card;
+    card_game_zone_definition discard;
+    card_game_zone_definition burned;
+    card_game_host_intent_definition empty_event;
+    card_game_host_intent_definition overflow_event;
+    card_game_host_intent_record intent;
+    uint64_t before_hash;
+    uint64_t after_hash;
+    uint32_t count;
+
+    card_game_draw_policy_test_setup(rules, card, discard, burned,
+        empty_event, overflow_event);
+    burned.capacity = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_draw_policy_test_configure(engine,
+        rules, card, discard, burned, empty_event, overflow_event, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_state_hash(&before_hash));
+    FT_ASSERT_EQ(FT_ERR_FULL,
+        card_game_draw_policy_test_submit_count(engine, 1U, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_state_hash(&after_hash));
+    FT_ASSERT_EQ(before_hash, after_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_command_record_count(&count));
+    FT_ASSERT_EQ(0U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_pending_host_intent_count(&count));
+    FT_ASSERT_EQ(0U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        card_game_draw_policy_test_submit_count(engine, 1U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.peek_pending_host_intent(&intent));
+    FT_ASSERT_EQ(1U, intent.sequence);
+    FT_ASSERT_EQ(overflow_event.type_id, intent.intent.type_id);
+    FT_ASSERT_EQ(2U, intent.intent.fields[1].value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
 FT_TEST(test_card_game_draw_required_discard_blocks_until_physical_discard)
 {
     card_game_engine engine;

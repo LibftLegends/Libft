@@ -245,53 +245,23 @@ ft_bool    quic_experimental_session::derive_keys(SSL *ssl_session, ft_bool outb
     return (FT_TRUE);
 }
 
-ft_bool    quic_experimental_session::prepare_nonce(uint64_t sequence_number,
+ft_size_t quic_experimental_session::prepare_nonce(uint64_t sequence_number,
         const ft_vector<unsigned char> &base_iv,
-        ft_vector<unsigned char> &out_nonce) noexcept
+        unsigned char (&out_nonce)[EVP_MAX_IV_LENGTH]) noexcept
 {
-    ft_vector<unsigned char> sequence_bytes;
-    int32_t initialise_error;
-    ft_bool result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "quic_experimental_session::prepare_nonce");
-    result = FT_FALSE;
-    if (base_iv.size() == 0)
-        return (FT_FALSE);
-    initialise_error = sequence_bytes.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    out_nonce.resize(base_iv.size(), 0);
-    sequence_bytes.resize(base_iv.size(), 0);
-    ft_size_t index;
-
-    index = 0;
-    while (index < base_iv.size())
+    const ft_size_t nonce_length = base_iv.size();
+    if (nonce_length == 0U || nonce_length > sizeof(out_nonce))
+        return (0U);
+    ft_memcpy(out_nonce, base_iv.begin(), nonce_length);
+    ft_size_t index = nonce_length;
+    while (index > 0U && sequence_number != 0U)
     {
-        ft_size_t distance_from_end;
-
-        distance_from_end = base_iv.size() - index - 1;
-        if (distance_from_end < sizeof(uint64_t))
-        {
-            uint32_t bit_shift;
-            unsigned char byte_value;
-
-            bit_shift = static_cast<uint32_t>(distance_from_end * 8);
-            byte_value = static_cast<unsigned char>((sequence_number >> bit_shift) & 0xFF);
-            sequence_bytes[index] = byte_value;
-        }
-        else
-            sequence_bytes[index] = 0;
-        index++;
+        index -= 1U;
+        out_nonce[index] ^= static_cast<unsigned char>(sequence_number & 0xFFU);
+        sequence_number >>= 8U;
     }
-    index = 0;
-    while (index < base_iv.size())
-    {
-        out_nonce[index] = base_iv[index] ^ sequence_bytes[index];
-        index++;
-    }
-    result = FT_TRUE;
-    (void)sequence_bytes.destroy();
-    return (result);
+    return (nonce_length);
 }
 
 ft_bool    quic_experimental_session::configure(SSL *ssl_session,
@@ -320,57 +290,41 @@ ft_bool    quic_experimental_session::configure(SSL *ssl_session,
 ft_bool    quic_experimental_session::encrypt_datagram(const quic_datagram_plaintext &plaintext,
         ft_vector<unsigned char> &out_ciphertext) noexcept
 {
-    ft_vector<unsigned char> nonce;
-    int32_t initialise_error;
-    ft_size_t payload_length;
-    ft_bool result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "quic_experimental_session::encrypt_datagram");
-    result = FT_FALSE;
     if (!this->ensure_feature_enabled())
         return (FT_FALSE);
     if (!this->ensure_configured())
         return (FT_FALSE);
     if (this->_send_sequence == UINT64_MAX)
         return (FT_FALSE);
-    initialise_error = nonce.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (FT_FALSE);
     if (out_ciphertext.is_initialised() != FT_CLASS_STATE_INITIALISED)
     {
-        initialise_error = out_ciphertext.initialize();
-        if (initialise_error != FT_ERR_SUCCESS)
+        if (out_ciphertext.initialize() != FT_ERR_SUCCESS)
             return (FT_FALSE);
     }
-    payload_length = plaintext.payload_length;
-    if (plaintext.payload_length > 0 && plaintext.payload == ft_nullptr)
-        goto cleanup;
+    const ft_size_t payload_length = plaintext.payload_length;
+    if (payload_length > FT_SYSTEM_SIZE_MAX - QUIC_EXPERIMENTAL_TAG_LENGTH
+        || (payload_length > 0U && plaintext.payload == ft_nullptr))
+        return (FT_FALSE);
     if (plaintext.associated_data_length > 0 && plaintext.associated_data == ft_nullptr)
-        goto cleanup;
-    if (!this->prepare_nonce(this->_send_sequence, this->_send_iv, nonce))
-        goto cleanup;
-    ft_size_t ciphertext_size;
-
-    ciphertext_size = payload_length + QUIC_EXPERIMENTAL_TAG_LENGTH;
-    out_ciphertext.resize(ciphertext_size, 0);
-    unsigned char *ciphertext_pointer;
-    unsigned char *tag_pointer;
-
-    ciphertext_pointer = out_ciphertext.begin();
-    tag_pointer = ciphertext_pointer;
-    if (payload_length > 0)
-        tag_pointer = ciphertext_pointer + payload_length;
+        return (FT_FALSE);
+    unsigned char nonce[EVP_MAX_IV_LENGTH];
+    const ft_size_t nonce_length = this->prepare_nonce(this->_send_sequence,
+        this->_send_iv, nonce);
+    if (nonce_length == 0U)
+        return (FT_FALSE);
+    out_ciphertext.resize(payload_length + QUIC_EXPERIMENTAL_TAG_LENGTH, 0);
+    if (out_ciphertext.get_error() != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    unsigned char *ciphertext_pointer = out_ciphertext.begin();
+    unsigned char *tag_pointer = ciphertext_pointer + payload_length;
     if (!encryption_aead_encrypt(this->_send_key.begin(), this->_send_key.size(),
-            nonce.begin(), nonce.size(), plaintext.associated_data,
+            nonce, nonce_length, plaintext.associated_data,
             plaintext.associated_data_length, plaintext.payload, payload_length,
             ciphertext_pointer, tag_pointer, QUIC_EXPERIMENTAL_TAG_LENGTH))
-        goto cleanup;
+        return (FT_FALSE);
     this->_send_sequence += 1;
-    result = FT_TRUE;
-
-cleanup:
-    (void)nonce.destroy();
-    return (result);
+    return (FT_TRUE);
 }
 
 ft_bool    quic_experimental_session::decrypt_datagram(const ft_vector<unsigned char> &ciphertext,
@@ -378,54 +332,50 @@ ft_bool    quic_experimental_session::decrypt_datagram(const ft_vector<unsigned 
         ft_size_t associated_data_length,
         ft_vector<unsigned char> &out_plaintext) noexcept
 {
-    ft_vector<unsigned char> nonce;
-    int32_t initialise_error;
-    ft_size_t ciphertext_length;
-    ft_size_t payload_length;
-    ft_bool result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "quic_experimental_session::decrypt_datagram");
-    result = FT_FALSE;
     if (!this->ensure_feature_enabled())
         return (FT_FALSE);
     if (!this->ensure_configured())
         return (FT_FALSE);
     if (this->_receive_sequence == UINT64_MAX)
         return (FT_FALSE);
-    initialise_error = nonce.initialize();
-    if (initialise_error != FT_ERR_SUCCESS)
-        return (FT_FALSE);
     if (out_plaintext.is_initialised() != FT_CLASS_STATE_INITIALISED)
     {
-        initialise_error = out_plaintext.initialize();
-        if (initialise_error != FT_ERR_SUCCESS)
+        if (out_plaintext.initialize() != FT_ERR_SUCCESS)
             return (FT_FALSE);
     }
-    ciphertext_length = ciphertext.size();
+    const ft_size_t ciphertext_length = ciphertext.size();
     if (ciphertext_length < QUIC_EXPERIMENTAL_TAG_LENGTH)
-        goto cleanup;
+        return (FT_FALSE);
     if (associated_data_length > 0 && associated_data == ft_nullptr)
-        goto cleanup;
-    if (!this->prepare_nonce(this->_receive_sequence, this->_receive_iv, nonce))
-        goto cleanup;
-    payload_length = ciphertext_length - QUIC_EXPERIMENTAL_TAG_LENGTH;
-    out_plaintext.resize(payload_length, 0);
-    const unsigned char *ciphertext_pointer;
-    const unsigned char *tag_pointer;
-
-    ciphertext_pointer = ciphertext.begin();
-    tag_pointer = ciphertext_pointer + payload_length;
+        return (FT_FALSE);
+    unsigned char nonce[EVP_MAX_IV_LENGTH];
+    const ft_size_t nonce_length = this->prepare_nonce(this->_receive_sequence,
+        this->_receive_iv, nonce);
+    if (nonce_length == 0U)
+        return (FT_FALSE);
+    const ft_size_t payload_length = ciphertext_length - QUIC_EXPERIMENTAL_TAG_LENGTH;
+    const unsigned char *ciphertext_pointer = ciphertext.begin();
+    const unsigned char *tag_pointer = ciphertext_pointer + payload_length;
+    if (&ciphertext != &out_plaintext)
+    {
+        out_plaintext.resize(payload_length, 0);
+        if (out_plaintext.get_error() != FT_ERR_SUCCESS)
+            return (FT_FALSE);
+    }
     if (!encryption_aead_decrypt(this->_receive_key.begin(), this->_receive_key.size(),
-            nonce.begin(), nonce.size(), associated_data, associated_data_length,
+            nonce, nonce_length, associated_data, associated_data_length,
             ciphertext_pointer, payload_length, tag_pointer,
             QUIC_EXPERIMENTAL_TAG_LENGTH, out_plaintext.begin()))
-        goto cleanup;
+        return (FT_FALSE);
+    if (&ciphertext == &out_plaintext)
+    {
+        out_plaintext.resize(payload_length, 0);
+        if (out_plaintext.get_error() != FT_ERR_SUCCESS)
+            return (FT_FALSE);
+    }
     this->_receive_sequence += 1;
-    result = FT_TRUE;
-
-cleanup:
-    (void)nonce.destroy();
-    return (result);
+    return (FT_TRUE);
 }
 
 ft_bool    quic_experimental_session::get_feature_configuration(quic_feature_configuration &out_configuration) const noexcept

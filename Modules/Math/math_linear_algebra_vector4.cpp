@@ -1,11 +1,13 @@
 #include "linear_algebra.hpp"
 #include "math.hpp"
+#include "math_vector_norm.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/pthread.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include <new>
+#include <functional>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -72,7 +74,7 @@ int32_t vector4::lock_pair(const vector4 &first, const vector4 &second,
     }
     ordered_first = &first;
     ordered_second = &second;
-    if (ordered_first > ordered_second)
+    if (std::less<const vector4 *>{}(ordered_second, ordered_first))
     {
         const vector4 *temporary;
 
@@ -264,60 +266,35 @@ double vector4::dot(const vector4 &other) const
 
 double vector4::length() const
 {
-    int32_t lock_error;
-    double squared;
-    double result_value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector4::length");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector4::set_error(static_cast<uint32_t>(lock_error));
+        vector4::set_error(lock_error);
         return (0.0);
     }
-    squared = vector4_compute_dot(this->_x_component, this->_y_component, this->_z_component, this->_w_component,
-            this->_x_component, this->_y_component, this->_z_component, this->_w_component);
-    result_value = math_sqrt(squared);
+    const double components[] = {this->_x_component, this->_y_component, this->_z_component, this->_w_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    const double result = math_vector_length(components);
     vector4::set_error(FT_ERR_SUCCESS);
-    return (result_value);
+    return (result);
 }
 
 vector4 vector4::normalize() const
 {
-    int32_t lock_error;
-    double squared_length;
-    double length_value;
-    double epsilon;
-    double normalized_x;
-    double normalized_y;
-    double normalized_z;
-    double normalized_w;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector4::normalize");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector4::set_error(static_cast<uint32_t>(lock_error));
+        vector4::set_error(lock_error);
         return (vector4());
     }
-    squared_length = this->_x_component * this->_x_component + this->_y_component * this->_y_component
-        + this->_z_component * this->_z_component + this->_w_component * this->_w_component;
-    length_value = math_sqrt(squared_length);
-    epsilon = 0.0000001;
-    if (math_absdiff(length_value, 0.0) <= epsilon)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        vector4::set_error(FT_ERR_SUCCESS);
-        return (vector4());
-    }
-    normalized_x = this->_x_component / length_value;
-    normalized_y = this->_y_component / length_value;
-    normalized_z = this->_z_component / length_value;
-    normalized_w = this->_w_component / length_value;
+    double components[] = {this->_x_component, this->_y_component, this->_z_component, this->_w_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     vector4::set_error(FT_ERR_SUCCESS);
-    return (vector4(normalized_x, normalized_y, normalized_z, normalized_w));
+    if (!math_vector_normalize(components))
+        return (vector4());
+    return (vector4(components[0], components[1], components[2], components[3]));
 }
 
 uint32_t vector4::enable_thread_safety() noexcept

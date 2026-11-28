@@ -27,6 +27,7 @@ class game_upgrade
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        void change_modifier(int32_t &modifier, int64_t delta, const char *operation) noexcept;
 
     public:
         game_upgrade() noexcept;
@@ -39,6 +40,7 @@ class game_upgrade
         int32_t initialize() noexcept;
         int32_t initialize(const game_upgrade &other) noexcept;
         int32_t initialize(game_upgrade &&other) noexcept;
+        // Moving requires exclusive access to both records.
         int32_t move(game_upgrade &other) noexcept;
         int32_t destroy() noexcept;
         int32_t enable_thread_safety() noexcept;

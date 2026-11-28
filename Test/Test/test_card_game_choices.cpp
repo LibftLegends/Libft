@@ -3,6 +3,54 @@
 #include "../../Modules/CardGame/card_game_choices.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
+FT_TEST(test_card_game_choices_restores_unordered_ids_and_preserves_wire_padding)
+{
+    card_game_choice_ledger source;
+    card_game_choice_ledger restored;
+    card_game_choice_snapshot snapshot{};
+    card_game_choice entries[3]{};
+    card_game_choice choice{};
+    uint8_t output[12U + 3U * FT_CARD_GAME_CHOICE_RECORD_BYTES + 1U];
+    uint32_t size = 0U;
+    entries[0].choice_id = 3U;
+    entries[0].player_id = 2U;
+    entries[0].kind = CARD_GAME_CHOICE_MODE;
+    entries[1].choice_id = 1U;
+    entries[1].player_id = 1U;
+    entries[1].kind = CARD_GAME_CHOICE_TARGET;
+    entries[2].choice_id = 8U;
+    entries[2].kind = CARD_GAME_CHOICE_BOOLEAN;
+    snapshot.count = 3U;
+    snapshot.next_id = 9U;
+    snapshot.choices = entries;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.apply_snapshot(snapshot));
+    entries[2].choice_id = 3U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, source.apply_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get(8U, &choice));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get(3U, &choice));
+    FT_ASSERT_EQ(2U, choice.player_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, source.get(2U, &choice));
+    ft_memset(output, 0xA5, sizeof(output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize(output, sizeof(output), &size));
+    FT_ASSERT_EQ(sizeof(output) - 1U, size);
+    FT_ASSERT_EQ(0xA5U, output[size]);
+    uint32_t offset = 12U + 36U;
+    while (offset < 12U + FT_CARD_GAME_CHOICE_RECORD_BYTES)
+    {
+        FT_ASSERT_EQ(0U, output[offset]);
+        ++offset;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(output, size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get(1U, &choice));
+    FT_ASSERT_EQ(1U, choice.player_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.get(3U, &choice));
+    FT_ASSERT_EQ(2U, choice.player_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, restored.get(2U, &choice));
+    return (1);
+}
+
 FT_TEST(test_card_game_choices_snapshot_restores_pending_choice)
 {
     card_game_choice_ledger ledger;

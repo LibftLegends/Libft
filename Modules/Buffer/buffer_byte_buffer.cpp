@@ -1,4 +1,5 @@
 #include "byte_buffer.hpp"
+#include "buffer_endian.hpp"
 #include "../Basic/basic.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Errno/errno_internal.hpp"
@@ -283,6 +284,27 @@ int32_t ft_byte_buffer::initialize(ft_size_t capacity,
         this->_capacity = capacity;
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
+}
+
+int32_t ft_byte_buffer::initialize_from_reader(ft_size_t length,
+    int32_t (*reader)(uint8_t *destination, ft_size_t length, void *user_data) noexcept,
+    void *user_data) noexcept
+{
+    if (length != 0U && reader == ft_nullptr)
+        return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
+    if (length > SIZE_MAX)
+        return (ft_byte_buffer::set_error(FT_ERR_OUT_OF_RANGE));
+    int32_t error_code = this->initialize(length, FT_TRUE);
+    if (error_code != FT_ERR_SUCCESS || length == 0U)
+        return (error_code);
+    error_code = reader(this->_data, length, user_data);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (ft_byte_buffer::set_error(error_code));
+    }
+    this->_size = length;
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 
@@ -757,13 +779,25 @@ int32_t ft_byte_buffer::append_u32_be(uint32_t value) noexcept
 
 int32_t ft_byte_buffer::append_u32_le(uint32_t value) noexcept
 {
-    uint8_t bytes[4];
+    uint8_t bytes[sizeof(value)];
+    buffer_store_le(bytes, value);
+    return (this->append(bytes, sizeof(bytes)));
+}
 
-    bytes[0] = static_cast<uint8_t>(value & 0xFFU);
-    bytes[1] = static_cast<uint8_t>((value >> 8) & 0xFFU);
-    bytes[2] = static_cast<uint8_t>((value >> 16) & 0xFFU);
-    bytes[3] = static_cast<uint8_t>((value >> 24) & 0xFFU);
-    return (this->append(bytes, 4));
+int32_t ft_byte_buffer::overwrite_u32_le(ft_size_t offset, uint32_t value) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_byte_buffer::overwrite_u32_le");
+    const int32_t lock_error = this->lock_internal();
+    if (lock_error != FT_ERR_SUCCESS)
+        return (ft_byte_buffer::set_error(lock_error));
+    int32_t result = FT_ERR_SUCCESS;
+    if (offset > this->_size || sizeof(value) > this->_size - offset)
+        result = FT_ERR_OUT_OF_RANGE;
+    else
+        buffer_store_le(this->_data + offset, value);
+    this->unlock_internal();
+    return (ft_byte_buffer::set_error(result));
 }
 
 int32_t ft_byte_buffer::append_u64_be(uint64_t value) noexcept
@@ -783,17 +817,9 @@ int32_t ft_byte_buffer::append_u64_be(uint64_t value) noexcept
 
 int32_t ft_byte_buffer::append_u64_le(uint64_t value) noexcept
 {
-    uint8_t bytes[8];
-
-    bytes[0] = static_cast<uint8_t>(value & 0xFFU);
-    bytes[1] = static_cast<uint8_t>((value >> 8) & 0xFFU);
-    bytes[2] = static_cast<uint8_t>((value >> 16) & 0xFFU);
-    bytes[3] = static_cast<uint8_t>((value >> 24) & 0xFFU);
-    bytes[4] = static_cast<uint8_t>((value >> 32) & 0xFFU);
-    bytes[5] = static_cast<uint8_t>((value >> 40) & 0xFFU);
-    bytes[6] = static_cast<uint8_t>((value >> 48) & 0xFFU);
-    bytes[7] = static_cast<uint8_t>((value >> 56) & 0xFFU);
-    return (this->append(bytes, 8));
+    uint8_t bytes[sizeof(value)];
+    buffer_store_le(bytes, value);
+    return (this->append(bytes, sizeof(bytes)));
 }
 
 int32_t ft_byte_buffer::append_varuint64(uint64_t value) noexcept
@@ -878,18 +904,13 @@ int32_t ft_byte_buffer::read_u32_be(uint32_t *value_out) noexcept
 
 int32_t ft_byte_buffer::read_u32_le(uint32_t *value_out) noexcept
 {
-    uint8_t bytes[4];
-    int32_t read_error;
-
+    uint8_t bytes[sizeof(*value_out)];
     if (value_out == ft_nullptr)
         return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
-    read_error = this->read(bytes, 4);
+    const int32_t read_error = this->read(bytes, sizeof(bytes));
     if (read_error != FT_ERR_SUCCESS)
         return (read_error);
-    *value_out = static_cast<uint32_t>(bytes[0])
-        | (static_cast<uint32_t>(bytes[1]) << 8)
-        | (static_cast<uint32_t>(bytes[2]) << 16)
-        | (static_cast<uint32_t>(bytes[3]) << 24);
+    *value_out = buffer_load_le<uint32_t>(bytes);
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 
@@ -916,22 +937,13 @@ int32_t ft_byte_buffer::read_u64_be(uint64_t *value_out) noexcept
 
 int32_t ft_byte_buffer::read_u64_le(uint64_t *value_out) noexcept
 {
-    uint8_t bytes[8];
-    int32_t read_error;
-
+    uint8_t bytes[sizeof(*value_out)];
     if (value_out == ft_nullptr)
         return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
-    read_error = this->read(bytes, 8);
+    const int32_t read_error = this->read(bytes, sizeof(bytes));
     if (read_error != FT_ERR_SUCCESS)
         return (read_error);
-    *value_out = static_cast<uint64_t>(bytes[0])
-        | (static_cast<uint64_t>(bytes[1]) << 8)
-        | (static_cast<uint64_t>(bytes[2]) << 16)
-        | (static_cast<uint64_t>(bytes[3]) << 24)
-        | (static_cast<uint64_t>(bytes[4]) << 32)
-        | (static_cast<uint64_t>(bytes[5]) << 40)
-        | (static_cast<uint64_t>(bytes[6]) << 48)
-        | (static_cast<uint64_t>(bytes[7]) << 56);
+    *value_out = buffer_load_le<uint64_t>(bytes);
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 

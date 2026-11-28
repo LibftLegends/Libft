@@ -98,6 +98,79 @@ FT_TEST(test_game_skill_cooldown_add_and_subtract)
     return (1);
 }
 
+FT_TEST(test_game_skill_cooldown_and_remaining_modifiers_preserve_values_on_overflow)
+{
+    game_skill value;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
+    value.set_cooldown(INT32_MAX);
+    value.add_cooldown(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, value.get_error());
+    FT_ASSERT_EQ(INT32_MAX, value.get_cooldown());
+    value.set_modifier3(INT32_MIN);
+    value.sub_modifier3(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, value.get_error());
+    FT_ASSERT_EQ(INT32_MIN, value.get_modifier3());
+    value.set_modifier4(0);
+    value.sub_modifier4(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, value.get_error());
+    FT_ASSERT_EQ(0, value.get_modifier4());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    value.set_modifier3(17);
+    const int32_t write_error = value.get_error();
+    const int32_t read_value = value.get_modifier3();
+    const int32_t read_error = value.get_error();
+    const int32_t cooldown_result = value.get_cooldown();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, write_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, read_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, cooldown_result);
+    FT_ASSERT_EQ(0, read_value);
+    FT_ASSERT_EQ(INT32_MIN, value.get_modifier3());
+    return (1);
+}
+
+FT_TEST(test_game_skill_copy_and_move_honor_source_mutex)
+{
+    game_skill source;
+    game_skill destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    source.set_id(7);
+    source.set_level(2);
+    source.set_cooldown(-3);
+    source.set_modifier3(14);
+    source.set_modifier4(-9);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    const auto *mutex = source._mutex;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t copy_error = destination.initialize(source);
+    const int32_t move_error = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, copy_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, move_error);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT(source._mutex == mutex);
+    FT_ASSERT_EQ(-9, source.get_modifier4());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    FT_ASSERT_EQ(2, destination.get_level());
+    FT_ASSERT_EQ(-3, destination.get_cooldown());
+    FT_ASSERT_EQ(14, destination.get_modifier3());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT(destination._mutex == mutex);
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
+    FT_ASSERT_EQ(7, destination.get_id());
+    FT_ASSERT_EQ(-9, destination.get_modifier4());
+    return (1);
+}
+
 FT_TEST(test_game_skill_modifier1_values)
 {
     game_skill value;

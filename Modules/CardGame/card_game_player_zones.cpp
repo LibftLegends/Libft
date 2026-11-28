@@ -259,7 +259,6 @@ int32_t card_game_engine::hand_remove_instance(uint32_t player_id,
     uint32_t instance_id, card_game_deck_card *card) noexcept
 {
     uint32_t index;
-    uint32_t move_index;
 
     if (this->_initialised_state != 2U || player_id >= this->_player_count
         || instance_id == 0U)
@@ -272,16 +271,21 @@ int32_t card_game_engine::hand_remove_instance(uint32_t player_id,
         return (FT_ERR_NOT_FOUND);
     if (card != ft_nullptr)
         *card = this->_hand[player_id][index];
-    move_index = index + 1U;
-    while (move_index < this->_hand_count[player_id])
-    {
-        this->_hand[player_id][move_index - 1U] =
-            this->_hand[player_id][move_index];
-        move_index += 1U;
-    }
-    this->_hand_count[player_id] -= 1U;
-    this->_state_sequence += 1U;
+    this->remove_hand_card_at(player_id, index);
     return (FT_ERR_SUCCESS);
+}
+
+void card_game_engine::remove_hand_card_at(uint32_t player_id,
+    uint32_t hand_index) noexcept
+{
+    this->_hand_count[player_id] -= 1U;
+    const uint32_t move_count = this->_hand_count[player_id] - hand_index;
+    if (move_count != 0U)
+        ft_memmove(&this->_hand[player_id][hand_index],
+            &this->_hand[player_id][hand_index + 1U],
+            static_cast<ft_size_t>(move_count) * sizeof(card_game_deck_card));
+    this->_state_sequence += 1U;
+    return ;
 }
 
 int32_t card_game_engine::discard_hand_instance(uint32_t player_id,
@@ -312,13 +316,7 @@ int32_t card_game_engine::discard_hand_instance(uint32_t player_id,
         entry, type_id);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    result = this->hand_remove_instance(player_id, instance_id, ft_nullptr);
-    if (result != FT_ERR_SUCCESS)
-    {
-        (void)this->_zone_store.remove(player_id, discard_zone_id,
-            instance_id, ft_nullptr);
-        return (result);
-    }
+    this->remove_hand_card_at(player_id, hand_index);
     return (FT_ERR_SUCCESS);
 }
 
@@ -443,53 +441,42 @@ int32_t card_game_engine::mulligan_hand(uint32_t player_id,
 int32_t card_game_engine::play_card_from_hand(uint32_t player_id,
     uint32_t instance_id, uint32_t target_instance, void *context) noexcept
 {
-    card_game_deck_card card;
-    uint32_t hand_index;
-    uint32_t restore_index;
-    uint32_t move_index;
-    uint64_t original_state_sequence;
-    int32_t result;
-
     if (this->_initialised_state != 2U || player_id >= this->_player_count
         || instance_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    result = FT_ERR_NOT_FOUND;
-    hand_index = 0U;
-    while (hand_index < this->_hand_count[player_id])
-    {
-        if (this->_hand[player_id][hand_index].instance_id == instance_id)
-        {
-            card = this->_hand[player_id][hand_index];
-            result = FT_ERR_SUCCESS;
-            break ;
-        }
-        hand_index += 1U;
-    }
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    restore_index = hand_index;
-    original_state_sequence = this->_state_sequence;
-    result = this->hand_remove_instance(player_id, instance_id, ft_nullptr);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    result = this->play_card(player_id, card.card_id, target_instance, context);
+    uint32_t hand_index = 0U;
+    while (hand_index < this->_hand_count[player_id]
+        && this->_hand[player_id][hand_index].instance_id != instance_id)
+        ++hand_index;
+    if (hand_index == this->_hand_count[player_id])
+        return (FT_ERR_NOT_FOUND);
+    return (this->play_hand_card_at(player_id, hand_index, target_instance,
+        context));
+}
+
+int32_t card_game_engine::play_hand_card_at(uint32_t player_id,
+    uint32_t hand_index, uint32_t target_instance, void *context) noexcept
+{
+    const card_game_deck_card card = this->_hand[player_id][hand_index];
+    const uint64_t original_state_sequence = this->_state_sequence;
+    this->remove_hand_card_at(player_id, hand_index);
+    const int32_t result = this->play_card(player_id, card.card_id,
+        target_instance, context);
     if (result != FT_ERR_SUCCESS)
     {
-        if (this->_hand_count[player_id] >= FT_CARD_GAME_MAX_CARDS)
+        const uint32_t hand_count = this->_hand_count[player_id];
+        if (hand_count >= FT_CARD_GAME_MAX_CARDS || hand_count < hand_index)
             return (FT_ERR_INVALID_STATE);
-        move_index = this->_hand_count[player_id];
-        while (move_index > restore_index)
-        {
-            this->_hand[player_id][move_index] =
-                this->_hand[player_id][move_index - 1U];
-            move_index -= 1U;
-        }
-        this->_hand[player_id][restore_index] = card;
+        if (hand_count > hand_index)
+            ft_memmove(&this->_hand[player_id][hand_index + 1U],
+                &this->_hand[player_id][hand_index],
+                static_cast<ft_size_t>(hand_count - hand_index)
+                    * sizeof(card_game_deck_card));
+        this->_hand[player_id][hand_index] = card;
         this->_hand_count[player_id] += 1U;
         this->_state_sequence = original_state_sequence;
-        return (result);
     }
-    return (FT_ERR_SUCCESS);
+    return (result);
 }
 
 int32_t card_game_engine::allocate_deck_instance_id(
@@ -563,17 +550,5 @@ ft_bool card_game_engine::deck_instance_exists(uint32_t instance_id) const noexc
 ft_bool card_game_engine::zone_instance_exists(uint32_t player_id,
     uint32_t instance_id) const noexcept
 {
-    uint32_t zone_index;
-
-    if (player_id >= FT_CARD_GAME_MAX_PLAYERS || instance_id == 0U)
-        return (FT_FALSE);
-    zone_index = 0U;
-    while (zone_index < this->_zone_count)
-    {
-        if (this->_zone_store.contains(player_id,
-                this->_zones[zone_index].zone_id, instance_id) != FT_FALSE)
-            return (FT_TRUE);
-        zone_index += 1U;
-    }
-    return (FT_FALSE);
+    return (this->_zone_store.contains_any(player_id, instance_id));
 }

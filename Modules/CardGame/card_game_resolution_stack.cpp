@@ -3,12 +3,13 @@
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
 
 card_game_resolution_stack::card_game_resolution_stack() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _capacity(0U),
       _order(CARD_GAME_RESOLUTION_LIFO),
       _admission(CARD_GAME_RESOLUTION_CLOSED), _resolving(FT_FALSE),
-      _next_sequence(0U), _count(0U), _deferred_count(0U),
+      _next_sequence(0U), _highest_entry_id(0U), _count(0U), _deferred_count(0U),
       _entries(ft_nullptr), _deferred(ft_nullptr)
 {
     return ;
@@ -43,20 +44,23 @@ int32_t card_game_resolution_stack::initialize(uint32_t capacity,
             * sizeof(card_game_resolution_entry)));
     if (this->_entries == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    this->_deferred = static_cast<card_game_resolution_entry *>(cma_malloc(
-        static_cast<ft_size_t>(capacity)
-            * sizeof(card_game_resolution_entry)));
-    if (this->_deferred == ft_nullptr)
+    if (admission == CARD_GAME_RESOLUTION_OPEN_DEFERRED)
     {
-        cma_free(this->_entries);
-        this->_entries = ft_nullptr;
-        return (FT_ERR_NO_MEMORY);
+        this->_deferred = static_cast<card_game_resolution_entry *>(cma_malloc(
+            static_cast<ft_size_t>(capacity) * sizeof(card_game_resolution_entry)));
+        if (this->_deferred == ft_nullptr)
+        {
+            cma_free(this->_entries);
+            this->_entries = ft_nullptr;
+            return (FT_ERR_NO_MEMORY);
+        }
     }
     this->_capacity = capacity;
     this->_order = order;
     this->_admission = admission;
     this->_resolving = FT_FALSE;
     this->_next_sequence = 0U;
+    this->_highest_entry_id = 0U;
     this->_count = 0U;
     this->_deferred_count = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -68,6 +72,7 @@ int32_t card_game_resolution_stack::destroy() noexcept
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
     this->_capacity = 0U;
+    this->_highest_entry_id = 0U;
     this->_resolving = FT_FALSE;
     this->_count = 0U;
     this->_deferred_count = 0U;
@@ -94,6 +99,7 @@ int32_t card_game_resolution_stack::move(
     this->_admission = other._admission;
     this->_resolving = other._resolving;
     this->_next_sequence = other._next_sequence;
+    this->_highest_entry_id = other._highest_entry_id;
     this->_count = other._count;
     this->_deferred_count = other._deferred_count;
     this->_entries = other._entries;
@@ -112,23 +118,25 @@ int32_t card_game_resolution_stack::clear() noexcept
     this->_count = 0U;
     this->_deferred_count = 0U;
     this->_resolving = FT_FALSE;
+    this->_highest_entry_id = 0U;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_resolution_stack::append_entry(
-    card_game_resolution_entry *entries, uint32_t *count,
-    const card_game_resolution_entry &entry) noexcept
+static ft_bool card_game_resolution_lower_priority(
+    const card_game_resolution_entry &left, const card_game_resolution_entry &right,
+    card_game_resolution_order order) noexcept
 {
-    if (entries == ft_nullptr || count == ft_nullptr
-        || *count >= this->_capacity)
-        return (FT_ERR_FULL);
-    entries[*count] = entry;
-    *count += 1U;
-    return (FT_ERR_SUCCESS);
+    if (left.priority != right.priority)
+        return (left.priority < right.priority);
+    if (order == CARD_GAME_RESOLUTION_LIFO)
+        return (left.insertion_sequence < right.insertion_sequence);
+    return (left.insertion_sequence > right.insertion_sequence);
 }
 
 ft_bool card_game_resolution_stack::contains_entry(uint64_t entry_id) const noexcept
 {
+    if (entry_id > this->_highest_entry_id)
+        return (FT_FALSE);
     uint32_t index;
 
     index = 0U;
@@ -152,7 +160,6 @@ int32_t card_game_resolution_stack::push(uint64_t entry_id,
     uint32_t effect_id, uint32_t priority, uint64_t argument_data) noexcept
 {
     card_game_resolution_entry entry;
-    int32_t append_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
@@ -172,32 +179,51 @@ int32_t card_game_resolution_stack::push(uint64_t entry_id,
         return (FT_ERR_FULL);
     if (this->_resolving != FT_FALSE
         && this->_admission == CARD_GAME_RESOLUTION_OPEN_DEFERRED)
-        append_error = this->append_entry(this->_deferred,
-            &this->_deferred_count, entry);
+        this->_deferred[this->_deferred_count++] = entry;
     else
-        append_error = this->append_entry(this->_entries, &this->_count, entry);
-    if (append_error == FT_ERR_SUCCESS)
-        this->_next_sequence += 1U;
-    return (append_error);
+    {
+        this->_entries[this->_count++] = entry;
+        std::push_heap(this->_entries, this->_entries + this->_count,
+            [this](const card_game_resolution_entry &left, const card_game_resolution_entry &right)
+            {
+                return (card_game_resolution_lower_priority(left, right, this->_order));
+            });
+    }
+    if (entry_id > this->_highest_entry_id)
+        this->_highest_entry_id = entry_id;
+    ++this->_next_sequence;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_resolution_stack::begin_resolution() noexcept
 {
-    uint32_t index;
-    int32_t append_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_resolving != FT_FALSE)
         return (FT_ERR_INVALID_STATE);
-    index = 0U;
-    while (index < this->_deferred_count)
+    if (this->_deferred_count != 0U)
     {
-        append_error = this->append_entry(this->_entries, &this->_count,
-            this->_deferred[index]);
-        if (append_error != FT_ERR_SUCCESS)
-            return (append_error);
-        index += 1U;
+        const auto lower_priority = [this](const card_game_resolution_entry &left,
+            const card_game_resolution_entry &right)
+        {
+            return (card_game_resolution_lower_priority(left, right, this->_order));
+        };
+        ft_memcpy(this->_entries + this->_count, this->_deferred,
+            this->_deferred_count * sizeof(this->_deferred[0]));
+        if (this->_deferred_count < 8U)
+        {
+            const uint32_t end_count = this->_count + this->_deferred_count;
+            while (this->_count < end_count)
+            {
+                ++this->_count;
+                std::push_heap(this->_entries, this->_entries + this->_count, lower_priority);
+            }
+        }
+        else
+        {
+            this->_count += this->_deferred_count;
+            std::make_heap(this->_entries, this->_entries + this->_count, lower_priority);
+        }
     }
     this->_deferred_count = 0U;
     this->_resolving = FT_TRUE;
@@ -214,60 +240,25 @@ int32_t card_game_resolution_stack::end_resolution() noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_resolution_stack::remove_entry(uint32_t index,
-    card_game_resolution_entry *entry) noexcept
-{
-    uint32_t current_index;
-
-    if (entry == ft_nullptr || index >= this->_count)
-        return (FT_ERR_EMPTY);
-    *entry = this->_entries[index];
-    current_index = index + 1U;
-    while (current_index < this->_count)
-    {
-        this->_entries[current_index - 1U] = this->_entries[current_index];
-        current_index += 1U;
-    }
-    this->_count -= 1U;
-    return (FT_ERR_SUCCESS);
-}
-
 int32_t card_game_resolution_stack::pop_next(
     card_game_resolution_entry *entry) noexcept
 {
-    uint32_t index;
-    uint32_t best_index;
-    uint32_t current_index;
-
     if (entry == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_count == 0U)
         return (FT_ERR_EMPTY);
-    best_index = 0U;
-    index = 1U;
-    while (index < this->_count)
-    {
-        if (this->_entries[index].priority
-            > this->_entries[best_index].priority)
-            best_index = index;
-        else if (this->_entries[index].priority
-            == this->_entries[best_index].priority)
+    std::pop_heap(this->_entries, this->_entries + this->_count,
+        [this](const card_game_resolution_entry &left, const card_game_resolution_entry &right)
         {
-            if (this->_order == CARD_GAME_RESOLUTION_LIFO
-                && this->_entries[index].insertion_sequence
-                    > this->_entries[best_index].insertion_sequence)
-                best_index = index;
-            else if (this->_order == CARD_GAME_RESOLUTION_FIFO
-                && this->_entries[index].insertion_sequence
-                    < this->_entries[best_index].insertion_sequence)
-                best_index = index;
-        }
-        index += 1U;
-    }
-    current_index = best_index;
-    return (this->remove_entry(current_index, entry));
+            return (card_game_resolution_lower_priority(left, right, this->_order));
+        });
+    --this->_count;
+    *entry = this->_entries[this->_count];
+    if (this->_count == 0U && this->_deferred_count == 0U)
+        this->_highest_entry_id = 0U;
+    return (FT_ERR_SUCCESS);
 }
 
 uint32_t card_game_resolution_stack::size() const noexcept

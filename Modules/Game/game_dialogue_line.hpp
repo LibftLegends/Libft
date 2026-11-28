@@ -27,6 +27,11 @@ class game_dialogue_line
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t replace_values(int32_t line_id, const ft_string &speaker,
+            const ft_string &text, const ft_vector<int32_t> &next_line_ids) noexcept;
+        int32_t copy_values(const game_dialogue_line &source) noexcept;
+        friend class game_dialogue_script;
+        friend class game_dialogue_table;
 
     public:
         game_dialogue_line() noexcept;

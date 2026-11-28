@@ -77,6 +77,17 @@ FT_TEST(test_voxel_script_execute_rejects_invalid_arguments)
         script, chunk, 0, 0, "scripted-world", config, ft_nullptr));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_script_execute(bridge,
         script, chunk, 0, 0, ft_nullptr, config, ft_nullptr));
+    constexpr char SHORT_WRITE[] = "voxel_write_generated_block(1, 254, 1);";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.assign(SHORT_WRITE, sizeof(SHORT_WRITE) - 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_script_execute(bridge,
+        script, chunk, 0, 0, "scripted-world", config, "Scripting"));
+    constexpr char NEGATIVE_BLOCK[] = "voxel_write_generated_block(1, 254, 1, -1);";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.assign(NEGATIVE_BLOCK, sizeof(NEGATIVE_BLOCK) - 1U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_script_execute(bridge,
+        script, chunk, 0, 0, "scripted-world", config, "Scripting"));
+    uint32_t block_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 254, 1, &block_id));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
     voxel_runtime_reset_for_tests();
     return (1);
 }
@@ -119,6 +130,28 @@ FT_TEST(test_voxel_script_execute_uses_custom_runtime_when_selected)
     FT_ASSERT_EQ(FT_TRUE, chunk.has_generation_metadata());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 255, 0, &block_id));
     FT_ASSERT_EQ(13U, block_id);
+    constexpr char MULTILINE[] = "voxel_set_sea_level(42);\r\n"
+        "voxel_write_generated_block(\r\n0, 254,\n0, 12)\r"
+        "voxel_write_generated_block(0, 253, 0, 11)\n";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.assign(MULTILINE, sizeof(MULTILINE) - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_script_execute(bridge, script, chunk,
+        0, 0, "custom-world", config, "Scripting"));
+    FT_ASSERT_EQ(42, config.sea_level);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 254, 0, &block_id));
+    FT_ASSERT_EQ(12U, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 253, 0, &block_id));
+    FT_ASSERT_EQ(11U, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.clear());
+    uint32_t line_index = 0U;
+    while (line_index < 48U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, script.append("voxel_set_sea_level(40)\r\n"));
+        ++line_index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.append("voxel_set_sea_level(51)"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_script_execute(bridge, script, chunk,
+        0, 0, "custom-world", config, "Scripting"));
+    FT_ASSERT_EQ(51, config.sea_level);
     voxel_runtime_reset_for_tests();
     return (1);
 }

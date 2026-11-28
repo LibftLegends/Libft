@@ -122,3 +122,42 @@ FT_TEST(test_game_hooks_getters_clone_callbacks)
     destroy_metadata_vector(scoped_after);
     return (1);
 }
+
+FT_TEST(test_game_hooks_filtered_catalog_preserves_registration_order)
+{
+    game_hooks hooks;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks.enable_thread_safety());
+    char name[] = "listener-a";
+    while (name[9] <= 'l')
+    {
+        const char *identifier = "target";
+        if (name[9] == 'f' || name[9] == 'l')
+            identifier = "other";
+        ft_game_hook_metadata metadata;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, metadata.hook_identifier.initialize(identifier));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, metadata.listener_name.initialize(name));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, metadata.description.initialize("Description"));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, metadata.argument_contract.initialize("No arguments"));
+        hooks.register_listener(metadata, name[9] - 'a', [](ft_game_hook_context &) {});
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks.get_error());
+        ++name[9];
+    }
+    ft_string key;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, key.initialize("target"));
+    auto *matches = hooks.get_catalog_metadata_for(key);
+    FT_ASSERT(matches != ft_nullptr);
+    FT_ASSERT_EQ(10U, matches->size());
+    FT_ASSERT((*matches)[0].listener_name == "listener-a");
+    FT_ASSERT((*matches)[5].listener_name == "listener-g");
+    FT_ASSERT((*matches)[9].listener_name == "listener-k");
+    destroy_metadata_vector(matches);
+
+    ft_string missing_key;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, missing_key.initialize("missing"));
+    auto *missing = hooks.get_catalog_metadata_for(missing_key);
+    FT_ASSERT(missing != ft_nullptr);
+    FT_ASSERT_EQ(0U, missing->size());
+    destroy_metadata_vector(missing);
+    return (1);
+}

@@ -409,12 +409,12 @@ static void drain_loop_signal(event_loop *loop)
 
 static int32_t append_event(event_loop_ready_event *events,
     uint32_t *event_count, uint32_t event_capacity, int32_t file_descriptor,
-    uint32_t ready_mask, int32_t error_code)
+    uint32_t ready_mask, int32_t error_code, uint32_t merge_count = UINT32_MAX)
 {
     uint32_t index;
 
     index = 0U;
-    while (index < *event_count)
+    while (index < merge_count && index < *event_count)
     {
         if (events[index].file_descriptor == file_descriptor)
         {
@@ -784,7 +784,7 @@ static ft_bool event_loop_snapshot_is_current(const event_loop *loop, int32_t fi
 }
 #endif
 
-int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
+static int32_t event_loop_wait_impl(event_loop *loop, event_loop_ready_event *events,
     uint32_t event_capacity, uint32_t *event_count,
     int32_t timeout_milliseconds) noexcept
 {
@@ -815,9 +815,16 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     struct kevent empty_backend_event;
     std::chrono::steady_clock::time_point deadline;
 #else
-    constexpr uint32_t STACK_INTERESTS = 32;
-    int32_t read_stack[STACK_INTERESTS];
-    int32_t write_stack[STACK_INTERESTS];
+#ifdef _WIN32
+    // Cover a standard Winsock descriptor set and the extra read wake socket.
+    constexpr uint32_t STACK_WRITE_INTERESTS = 64U;
+    constexpr uint32_t STACK_READ_INTERESTS = STACK_WRITE_INTERESTS + 1U;
+#else
+    constexpr uint32_t STACK_READ_INTERESTS = 32U;
+    constexpr uint32_t STACK_WRITE_INTERESTS = 32U;
+#endif
+    int32_t read_stack[STACK_READ_INTERESTS];
+    int32_t write_stack[STACK_WRITE_INTERESTS];
     int32_t *read_snapshot = read_stack;
     int32_t *write_snapshot = write_stack;
     int32_t *heap_snapshot = ft_nullptr;
@@ -830,8 +837,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     (void)has_registrations;
 #endif
 
-    if (loop == ft_nullptr || events == ft_nullptr || event_count == ft_nullptr
-        || event_capacity == 0U || timeout_milliseconds < -1)
+    if (loop == ft_nullptr || event_count == ft_nullptr
+        || (events != ft_nullptr && event_capacity == 0U) || timeout_milliseconds < -1)
         return (FT_ERR_INVALID_ARGUMENT);
     *event_count = 0U;
     if (loop->wait_mutex == ft_nullptr
@@ -936,6 +943,11 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         event_loop_unlock(loop, FT_TRUE);
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
+    }
+    if (events == ft_nullptr)
+    {
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
     }
     while (index < static_cast<uint32_t>(ready_count))
     {
@@ -1072,6 +1084,11 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
+    if (events == ft_nullptr)
+    {
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
+    }
     while (index < static_cast<uint32_t>(ready_count))
     {
         if (backend_events[index].udata == ft_nullptr)
@@ -1148,7 +1165,7 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     read_count = static_cast<uint32_t>(loop->read_count);
     write_count = static_cast<uint32_t>(loop->write_count);
     poll_read_count = read_count + 1U;
-    if (poll_read_count > STACK_INTERESTS || write_count > STACK_INTERESTS)
+    if (poll_read_count > STACK_READ_INTERESTS || write_count > STACK_WRITE_INTERESTS)
     {
         const ft_size_t interest_count = static_cast<ft_size_t>(poll_read_count) + write_count;
         heap_snapshot = static_cast<int32_t *>(cma_malloc(sizeof(int32_t) * interest_count));
@@ -1185,9 +1202,15 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
+    if (events == ft_nullptr)
+    {
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
+    }
     const ft_bool registrations_changed = (loop->next_generation != snapshot_generation);
     if (poll_result > 0 && read_snapshot[read_count] == loop->wakeup_read_descriptor)
         drain_loop_signal(loop);
+    // A snapshot contains at most one entry per descriptor in each direction.
     index = 0U;
     while (poll_result > 0 && index < read_count)
     {
@@ -1203,22 +1226,23 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                 FIONREAD, &available_bytes) != 0)
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_ERROR,
-                    FT_ERR_INVALID_STATE);
+                    FT_ERR_INVALID_STATE, 0U);
             else if (available_bytes == 0U)
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_HANGUP,
-                    FT_ERR_SUCCESS);
+                    FT_ERR_SUCCESS, 0U);
             else
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_READ,
-                    FT_ERR_SUCCESS);
+                    FT_ERR_SUCCESS, 0U);
         }
 #else
             (void)append_event(events, &local_count, event_capacity,
-                read_snapshot[index], EVENT_LOOP_READY_READ, FT_ERR_SUCCESS);
+                read_snapshot[index], EVENT_LOOP_READY_READ, FT_ERR_SUCCESS, 0U);
 #endif
         index += 1U;
     }
+    const uint32_t read_event_count = local_count;
     index = 0U;
     while (poll_result > 0 && index < write_count)
     {
@@ -1227,7 +1251,7 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                 EVENT_LOOP_INTEREST_WRITE, snapshot_generation)))
             (void)append_event(events, &local_count, event_capacity,
                 write_snapshot[index], EVENT_LOOP_READY_WRITE,
-                FT_ERR_SUCCESS);
+                FT_ERR_SUCCESS, read_event_count);
         index += 1U;
     }
     event_loop_unlock(loop, FT_TRUE);
@@ -1237,6 +1261,16 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     *event_count = local_count;
     release_event_loop_wait(loop);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
+    uint32_t event_capacity, uint32_t *event_count,
+    int32_t timeout_milliseconds) noexcept
+{
+    if (events == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (event_loop_wait_impl(loop, events, event_capacity, event_count,
+        timeout_milliseconds));
 }
 
 int32_t event_loop_wait_for_socket(event_loop *loop, int32_t socket_descriptor,
@@ -1343,32 +1377,11 @@ int32_t event_loop_remove_socket(event_loop *loop, int32_t socket_fd,
 
 int32_t event_loop_run(event_loop *loop, int32_t timeout_milliseconds)
 {
-    constexpr uint32_t STACK_EVENTS = 32;
-    event_loop_ready_event stack_events[STACK_EVENTS];
-    event_loop_ready_event *events = stack_events;
     uint32_t event_count;
-    uint32_t capacity;
-    int32_t result_code;
 
-    if (loop == ft_nullptr)
-        return (-1);
-    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
-        return (-1);
-    capacity = loop->registration_count;
-    event_loop_unlock(loop, FT_TRUE);
-    if (capacity == 0U)
-        capacity = 1U;
-    if (capacity > STACK_EVENTS)
-    {
-        events = static_cast<event_loop_ready_event *>(cma_malloc(
-                sizeof(event_loop_ready_event) * capacity));
-        if (!events)
-            return (-1);
-    }
-    result_code = event_loop_wait(loop, events, capacity, &event_count,
+    // The wait takes the loop-owned result buffer only while dispatch is locked.
+    const int32_t result_code = event_loop_wait_impl(loop, ft_nullptr, 0U, &event_count,
         timeout_milliseconds);
-    if (events != stack_events)
-        cma_free(events);
     if (result_code != FT_ERR_SUCCESS)
         return (-1);
     return (static_cast<int32_t>(event_count));

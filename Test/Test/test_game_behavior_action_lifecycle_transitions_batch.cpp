@@ -156,3 +156,46 @@ FT_TEST(test_game_behavior_action_move_cleans_source_state)
     FT_ASSERT_EQ(0, source.get_action_id());
     return (1);
 }
+
+FT_TEST(test_game_behavior_action_copy_honors_destination_lock)
+{
+    game_behavior_action source;
+    game_behavior_action destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(7, 2.5, 3.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4, 0.5, 1.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = destination.initialize(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(4, destination.get_action_id());
+    FT_ASSERT_EQ(0.5, destination.get_weight());
+    FT_ASSERT_EQ(FT_TRUE, destination.is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(7, destination.get_action_id());
+    FT_ASSERT_EQ(FT_TRUE, destination.is_thread_safe());
+    return (1);
+}
+
+FT_TEST(test_game_behavior_action_move_transfers_mutex_ownership)
+{
+    game_behavior_action source;
+    game_behavior_action destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(7, 2.5, 3.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    const auto *mutex = source._mutex;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(4, 0.5, 1.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT(destination._mutex == mutex);
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(7, destination.get_action_id());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    return (1);
+}

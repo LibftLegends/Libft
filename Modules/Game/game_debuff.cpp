@@ -1,7 +1,6 @@
 #include "../PThread/pthread_internal.hpp"
 #include "game_debuff.hpp"
-#include "../Printf/printf.hpp"
-#include "../System_utils/system_utils.hpp"
+#include <new>
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -45,60 +44,27 @@ game_debuff::~game_debuff() noexcept
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return ;
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t previous_error = this->get_error();
         (void)this->destroy();
+        this->set_error(previous_error);
+    }
     return ;
 }
 
-int32_t game_debuff::initialize() noexcept
+inline void game_debuff::reset_fields() noexcept
 {
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(this->_initialised_state, "game_debuff::initialize", "called while object is already initialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
     this->_id = 0;
     this->_duration = 0;
     this->_modifier1 = 0;
     this->_modifier2 = 0;
     this->_modifier3 = 0;
     this->_modifier4 = 0;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
-int32_t game_debuff::initialize(const game_debuff &other) noexcept
+inline void game_debuff::copy_fields_from(const game_debuff &other) noexcept
 {
-    int32_t destroy_error;
-
-    if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state, "game_debuff::initialize(copy)",
-            "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
-        return (FT_ERR_SUCCESS);
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
     this->_id = other._id;
     this->_duration = other._duration;
     this->_modifier1 = other._modifier1;
@@ -106,7 +72,62 @@ int32_t game_debuff::initialize(const game_debuff &other) noexcept
     this->_modifier3 = other._modifier3;
     this->_modifier4 = other._modifier4;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(other.get_error());
+    return ;
+}
+
+int32_t game_debuff::initialize() noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        errno_abort_lifecycle(this->_initialised_state, "game_debuff::initialize",
+            "called while object is already initialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    this->reset_fields();
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_debuff::initialize(const game_debuff &other) noexcept
+{
+    if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state, "game_debuff::initialize(copy)",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        && other._initialised_state == FT_CLASS_STATE_INITIALISED && other._mutex == ft_nullptr)
+    {
+        // Both instances already share the caller's thread-local error.
+        this->copy_fields_from(other);
+        return (FT_ERR_SUCCESS);
+    }
+    return (this->copy_with_lifecycle(other));
+}
+
+int32_t game_debuff::copy_with_lifecycle(const game_debuff &other) noexcept
+{
+    const int32_t source_error = other.get_error();
+    const int32_t destroy_error = this->destroy();
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+
+    ft_bool source_locked = FT_FALSE;
+    const int32_t lock_error = other.lock_internal(&source_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    this->copy_fields_from(other);
+    (void)other.unlock_internal(source_locked);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -117,66 +138,44 @@ int32_t game_debuff::initialize(game_debuff &&other) noexcept
 
 int32_t game_debuff::move(game_debuff &other) noexcept
 {
-    int32_t destroy_error;
-
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_debuff::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (this->copy_with_lifecycle(other));
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        destroy_error = this->destroy();
+        const int32_t destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
             return (destroy_error);
     }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
-        return (FT_ERR_SUCCESS);
-    }
-    this->_id = other._id;
-    this->_duration = other._duration;
-    this->_modifier1 = other._modifier1;
-    this->_modifier2 = other._modifier2;
-    this->_modifier3 = other._modifier3;
-    this->_modifier4 = other._modifier4;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(other.get_error());
-    other._id = 0;
-    other._duration = 0;
-    other._modifier1 = 0;
-    other._modifier2 = 0;
-    other._modifier3 = 0;
-    other._modifier4 = 0;
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+
+    ft_bool source_locked = FT_FALSE;
+    const int32_t lock_error = other.lock_internal(&source_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    this->copy_fields_from(other);
+    other.reset_fields();
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    other.set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    (void)other.unlock_internal(source_locked);
+    this->_mutex = other._mutex;
+    other._mutex = ft_nullptr;
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_debuff::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    disable_error = this->disable_thread_safety();
-    this->_id = 0;
-    this->_duration = 0;
-    this->_modifier1 = 0;
-    this->_modifier2 = 0;
-    this->_modifier3 = 0;
-    this->_modifier4 = 0;
+        return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t disable_error = this->disable_thread_safety();
+    this->reset_fields();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
     return (disable_error);
 }
 
@@ -239,7 +238,7 @@ int32_t game_debuff::lock_internal(ft_bool *lock_acquired) const noexcept
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    if (lock_acquired != ft_nullptr)
+    if (lock_acquired != ft_nullptr && this->_mutex != ft_nullptr)
         *lock_acquired = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
@@ -267,190 +266,234 @@ void game_debuff::unlock(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+inline int32_t game_debuff::read_field(const int32_t &field) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    this->set_error(result);
+    if (result != FT_ERR_SUCCESS)
+        return (0);
+    const int32_t value = field;
+    (void)this->unlock_internal(lock_acquired);
+    return (value);
+}
+
+inline void game_debuff::write_field(int32_t &field, int32_t value) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        field = value;
+        (void)this->unlock_internal(lock_acquired);
+    }
+    this->set_error(result);
+    return ;
+}
+
+inline void game_debuff::adjust_field(int32_t &field, int64_t delta) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        const int64_t next_value = static_cast<int64_t>(field) + delta;
+        if (next_value < INT32_MIN || next_value > INT32_MAX)
+            result = FT_ERR_OUT_OF_RANGE;
+        else
+            field = static_cast<int32_t>(next_value);
+        (void)this->unlock_internal(lock_acquired);
+    }
+    this->set_error(result);
+    return ;
+}
+
 int32_t game_debuff::get_id() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_id");
-    return (this->_id);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_id");
+    return (this->read_field(this->_id));
 }
 
 void game_debuff::set_id(int32_t id) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_id");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_id");
     if (id < 0)
+    {
+        this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    this->_id = id;
-    (void)this->unlock_internal(lock_acquired);
+    }
+    this->write_field(this->_id, id);
     return ;
 }
 
 int32_t game_debuff::get_duration() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_duration");
-    return (this->_duration);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_duration");
+    return (this->read_field(this->_duration));
 }
 
 void game_debuff::set_duration(int32_t duration) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_duration");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_duration");
     if (duration < 0)
+    {
+        this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    this->_duration = duration;
-    (void)this->unlock_internal(lock_acquired);
+    }
+    this->write_field(this->_duration, duration);
     return ;
 }
 
 void game_debuff::add_duration(int32_t duration) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_duration");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_duration");
     if (duration < 0)
+    {
+        this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    this->_duration += duration;
-    (void)this->unlock_internal(lock_acquired);
+    }
+    this->adjust_field(this->_duration, duration);
     return ;
 }
 
 void game_debuff::sub_duration(int32_t duration) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_duration");
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_duration");
     if (duration < 0)
+    {
+        this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    this->_duration -= duration;
-    (void)this->unlock_internal(lock_acquired);
+    }
+    this->adjust_field(this->_duration, -static_cast<int64_t>(duration));
     return ;
 }
 
 int32_t game_debuff::get_modifier1() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier1");
-    return (this->_modifier1);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier1");
+    return (this->read_field(this->_modifier1));
 }
 
-void game_debuff::set_modifier1(int32_t mod) noexcept
+void game_debuff::set_modifier1(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier1");
-    this->_modifier1 = mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier1");
+    this->write_field(this->_modifier1, modifier);
     return ;
 }
 
-void game_debuff::add_modifier1(int32_t mod) noexcept
+void game_debuff::add_modifier1(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier1");
-    this->_modifier1 += mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier1");
+    this->adjust_field(this->_modifier1, modifier);
     return ;
 }
 
-void game_debuff::sub_modifier1(int32_t mod) noexcept
+void game_debuff::sub_modifier1(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier1");
-    this->_modifier1 -= mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier1");
+    this->adjust_field(this->_modifier1, -static_cast<int64_t>(modifier));
     return ;
 }
 
 int32_t game_debuff::get_modifier2() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier2");
-    return (this->_modifier2);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier2");
+    return (this->read_field(this->_modifier2));
 }
 
-void game_debuff::set_modifier2(int32_t mod) noexcept
+void game_debuff::set_modifier2(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier2");
-    this->_modifier2 = mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier2");
+    this->write_field(this->_modifier2, modifier);
     return ;
 }
 
-void game_debuff::add_modifier2(int32_t mod) noexcept
+void game_debuff::add_modifier2(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier2");
-    this->_modifier2 += mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier2");
+    this->adjust_field(this->_modifier2, modifier);
     return ;
 }
 
-void game_debuff::sub_modifier2(int32_t mod) noexcept
+void game_debuff::sub_modifier2(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier2");
-    this->_modifier2 -= mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier2");
+    this->adjust_field(this->_modifier2, -static_cast<int64_t>(modifier));
     return ;
 }
 
 int32_t game_debuff::get_modifier3() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier3");
-    return (this->_modifier3);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier3");
+    return (this->read_field(this->_modifier3));
 }
 
-void game_debuff::set_modifier3(int32_t mod) noexcept
+void game_debuff::set_modifier3(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier3");
-    this->_modifier3 = mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier3");
+    this->write_field(this->_modifier3, modifier);
     return ;
 }
 
-void game_debuff::add_modifier3(int32_t mod) noexcept
+void game_debuff::add_modifier3(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier3");
-    this->_modifier3 += mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier3");
+    this->adjust_field(this->_modifier3, modifier);
     return ;
 }
 
-void game_debuff::sub_modifier3(int32_t mod) noexcept
+void game_debuff::sub_modifier3(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier3");
-    this->_modifier3 -= mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier3");
+    this->adjust_field(this->_modifier3, -static_cast<int64_t>(modifier));
     return ;
 }
 
 int32_t game_debuff::get_modifier4() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier4");
-    return (this->_modifier4);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::get_modifier4");
+    return (this->read_field(this->_modifier4));
 }
 
-void game_debuff::set_modifier4(int32_t mod) noexcept
+void game_debuff::set_modifier4(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier4");
-    this->_modifier4 = mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::set_modifier4");
+    this->write_field(this->_modifier4, modifier);
     return ;
 }
 
-void game_debuff::add_modifier4(int32_t mod) noexcept
+void game_debuff::add_modifier4(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier4");
-    this->_modifier4 += mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::add_modifier4");
+    this->adjust_field(this->_modifier4, modifier);
     return ;
 }
 
-void game_debuff::sub_modifier4(int32_t mod) noexcept
+void game_debuff::sub_modifier4(int32_t modifier) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier4");
-    this->_modifier4 -= mod;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_debuff::sub_modifier4");
+    this->adjust_field(this->_modifier4, -static_cast<int64_t>(modifier));
     return ;
 }

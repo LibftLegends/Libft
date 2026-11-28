@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <pthread.h>
 #include "../PThread/mutex.hpp"
 #include <sys/types.h>
@@ -56,10 +57,6 @@ off_t cmp_lseek(int32_t file_descriptor, off_t offset, int32_t whence);
 int32_t cmp_open(const char *path_name);
 int32_t cmp_open(const char *path_name, int32_t flags);
 int32_t cmp_open(const char *path_name, int32_t flags, int32_t mode);
-int32_t cmp_read(int32_t file_descriptor, void *buffer, ft_size_t count,
-    int64_t *bytes_read_out);
-int32_t cmp_write(int32_t file_descriptor, const void *buffer, ft_size_t count,
-    int64_t *bytes_written_out);
 #else
 # include <fcntl.h>
 # include <unistd.h>
@@ -84,11 +81,16 @@ struct file_dir
 int32_t cmp_open(const char *path_name);
 int32_t cmp_open(const char *path_name, int32_t flags);
 int32_t cmp_open(const char *path_name, int32_t flags, mode_t mode);
+#endif
 int32_t cmp_read(int32_t file_descriptor, void *buffer, ft_size_t count,
     int64_t *bytes_read_out);
 int32_t cmp_write(int32_t file_descriptor, const void *buffer, ft_size_t count,
     int64_t *bytes_written_out);
-#endif
+// Return the CRT errno for syscall failures, or zero for local validation errors.
+int32_t cmp_read(int32_t file_descriptor, void *buffer, ft_size_t count,
+    int64_t *bytes_read_out, int32_t *system_error_out);
+int32_t cmp_write(int32_t file_descriptor, const void *buffer, ft_size_t count,
+    int64_t *bytes_written_out, int32_t *system_error_out);
 int32_t cmp_get_last_open_error(void);
 int32_t cmp_get_last_open_error_code(void);
 off_t cmp_lseek(int32_t file_descriptor, off_t offset, int32_t whence);
@@ -126,6 +128,11 @@ struct cmp_file_metadata
 };
 int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata);
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out, int32_t *error_code_out);
+// Query the open file without changing the stream position.
+int32_t cmp_file_stream_size(FILE *stream, ft_size_t *size_out) noexcept;
+int32_t cmp_file_stream_seek_absolute(FILE *stream, ft_size_t position) noexcept;
+int32_t cmp_file_get_size_and_mtime(const char *path, ft_size_t *size_out,
+    t_time *modification_time_out, int32_t *error_code_out);
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out);
 int32_t cmp_file_get_permissions(const char *path, mode_t *mode_out, int32_t *error_code_out);
@@ -200,6 +207,7 @@ int32_t cmp_socket_send_all(intptr_t socket_handle, const void *buffer,
                             ft_size_t length, int32_t flags,
                             int64_t *bytes_sent_out);
 
+// The Logger registry lock serializes configuration and teardown.
 int32_t cmp_syslog_open(const char *identifier);
 void cmp_syslog_write(const char *message);
 void cmp_syslog_close(void);

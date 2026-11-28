@@ -10,6 +10,8 @@ class ft_big_number_proxy;
 class ft_big_number
 {
     friend class ft_big_number_proxy;
+    friend ft_string *big_number_to_hex_string(const ft_big_number &number) noexcept;
+    friend ft_big_number *big_number_from_hex_string(const char *hex_digits) noexcept;
 
 #ifdef LIBFT_TEST_BUILD
     public:
@@ -35,15 +37,40 @@ class ft_big_number
         static int32_t  unlock_pair(const ft_big_number *lower, const ft_big_number *upper) noexcept;
         static void sleep_backoff() noexcept;
         void    clear_unlocked() noexcept;
-        void    append_digit_unlocked(char digit) noexcept;
-        void    append_unlocked(const char* digits) noexcept;
-        void    append_unsigned_unlocked(uint64_t value) noexcept;
-        void    trim_leading_zeros_unlocked() noexcept;
+        ft_size_t append_position() const noexcept;
+        int32_t reserve_append(ft_size_t position, ft_size_t count) noexcept;
+        void store_appended_digit(ft_size_t position, char digit) noexcept;
+        int32_t append_digit_unlocked(char digit) noexcept;
+        int32_t append_unlocked(const char *digits) noexcept;
+        int32_t append_unsigned_unlocked(uint64_t value) noexcept;
+        void    trim_leading_zeros_unlocked(ft_bool shrink_storage = FT_TRUE) noexcept;
         void    reduce_to_unlocked(ft_size_t new_size) noexcept;
         ft_bool    is_zero_value() const noexcept;
         int32_t     compare_magnitude(const ft_big_number& other) const noexcept;
-        ft_big_number    *add_magnitude(const ft_big_number& other) const noexcept;
-        ft_big_number    *subtract_magnitude(const ft_big_number& other) const noexcept;
+        int32_t compare_value(const ft_big_number &other, int32_t &comparison) const noexcept;
+        // Magnitude helpers write into an initialized, empty result.
+        int32_t copy_magnitude(ft_big_number &result) const noexcept;
+        int32_t copy_value(const ft_big_number &other) noexcept;
+        int32_t add_magnitude(const ft_big_number &other, ft_big_number &result) const noexcept;
+        int32_t subtract_magnitude(const ft_big_number &other, ft_big_number &result) const noexcept;
+        ft_big_number_proxy sum_or_difference(const ft_big_number &other,
+            ft_bool subtract) const noexcept;
+        int32_t multiply_magnitude(const ft_big_number &other, ft_big_number &result) const noexcept;
+        int32_t multiply_grouped_magnitude(const ft_big_number &other,
+            ft_big_number &result) const noexcept;
+        int32_t multiply_magnitude_by_digit(uint32_t digit, ft_big_number &result) const noexcept;
+        int32_t divide_by_digit(uint32_t divisor, ft_big_number *quotient,
+            ft_big_number &remainder) const noexcept;
+        int32_t divide_magnitude(const ft_big_number &divisor, ft_big_number *quotient,
+            ft_big_number &remainder) const noexcept;
+        ft_big_number_proxy quotient_or_remainder(const ft_big_number &divisor,
+            ft_bool remainder_only) const noexcept;
+        int32_t assign_base_digits(const char *digits, uint32_t base, ft_bool negative) noexcept;
+        int32_t assign_base_magnitude(const char *digits, uint32_t base, ft_bool negative) noexcept;
+        ft_string *format_base(int32_t base) const noexcept;
+        ft_bool halve_exponent() noexcept;
+        int32_t mod_pow_value(const ft_big_number &exponent, const ft_big_number &modulus,
+            ft_big_number &result) const noexcept;
 
     public:
         ft_big_number() noexcept;
@@ -60,6 +87,7 @@ class ft_big_number
         ft_big_number& operator=(const ft_big_number& other) noexcept;
         ft_big_number& operator=(ft_big_number&& other) noexcept;
         ft_big_number& operator=(const ft_big_number_proxy& other) noexcept;
+        ft_big_number& operator=(ft_big_number_proxy &&other) noexcept;
         ft_big_number_proxy operator+(const ft_big_number& other) const noexcept;
         ft_big_number_proxy operator-(const ft_big_number& other) const noexcept;
         ft_big_number_proxy operator*(const ft_big_number& other) const noexcept;
@@ -72,6 +100,7 @@ class ft_big_number
         ft_bool          operator>(const ft_big_number& other) const noexcept;
         ft_bool          operator>=(const ft_big_number& other) const noexcept;
 
+        // Reports parse and allocation failures through get_error().
         void        assign(const char* number) noexcept;
         int32_t         assign_base(const char* digits, int32_t base) noexcept;
         void        append_digit(char digit) noexcept;
@@ -98,6 +127,8 @@ class ft_big_number
 
 class ft_big_number_proxy
 {
+    friend class ft_big_number;
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else

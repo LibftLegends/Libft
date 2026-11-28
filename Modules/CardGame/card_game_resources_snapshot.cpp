@@ -1,5 +1,25 @@
 #include "card_game_resources.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
+
+struct card_game_snapshot_pool_key
+{
+    uint64_t key;
+    uint32_t original_index;
+};
+
+struct card_game_snapshot_pool_totals
+{
+    uint64_t current_amount;
+    uint64_t locked_amount;
+    uint64_t temporary_amount;
+};
+
+static uint64_t card_game_resource_key(uint32_t owner_id,
+    uint32_t resource_type_id) noexcept
+{
+    return ((static_cast<uint64_t>(owner_id) << 32U) | resource_type_id);
+}
 
 int32_t card_game_resource_ledger::release_snapshot(
     card_game_resource_snapshot *snapshot) noexcept
@@ -129,78 +149,89 @@ int32_t card_game_resource_ledger::clone_snapshot(
 int32_t card_game_resource_ledger::apply_snapshot(
     const card_game_resource_snapshot &snapshot) noexcept
 {
-    card_game_resource_ledger replacement;
-    uint32_t index;
-    uint32_t compare_index;
-    uint32_t highest_unit_id;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot.pool_count > FT_CARD_GAME_MAX_RESOURCE_POOLS
         || snapshot.unit_count > FT_CARD_GAME_MAX_RESOURCE_UNITS
         || (snapshot.pool_count != 0U && snapshot.pools == ft_nullptr)
         || (snapshot.unit_count != 0U && snapshot.units == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    highest_unit_id = 0U;
-    index = 0U;
+    card_game_snapshot_pool_key pool_keys[FT_CARD_GAME_MAX_RESOURCE_POOLS];
+    card_game_snapshot_pool_totals pool_totals[FT_CARD_GAME_MAX_RESOURCE_POOLS];
+    ft_bool pool_keys_ascending = FT_TRUE;
+    uint32_t index = 0U;
     while (index < snapshot.pool_count)
     {
-        if (snapshot.pools[index].pool_id != index + 1U
-            || snapshot.pools[index].resource_type_id == 0U
-            || snapshot.pools[index].current_amount
-                > snapshot.pools[index].maximum_amount
-            || snapshot.pools[index].locked_amount
-                > snapshot.pools[index].current_amount
-            || snapshot.pools[index].temporary_amount
-                > snapshot.pools[index].current_amount)
+        const card_game_resource_pool &pool = snapshot.pools[index];
+
+        if (pool.pool_id != index + 1U || pool.resource_type_id == 0U
+            || pool.current_amount > pool.maximum_amount
+            || pool.locked_amount > pool.current_amount
+            || pool.temporary_amount > pool.current_amount)
             return (FT_ERR_INVALID_ARGUMENT);
-        compare_index = index + 1U;
-        while (compare_index < snapshot.pool_count)
-        {
-            if (snapshot.pools[index].owner_id
-                    == snapshot.pools[compare_index].owner_id
-                && snapshot.pools[index].resource_type_id
-                    == snapshot.pools[compare_index].resource_type_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            compare_index += 1U;
-        }
+        pool_keys[index] = {card_game_resource_key(pool.owner_id,
+            pool.resource_type_id), index};
+        pool_totals[index] = {};
+        if (index != 0U && pool_keys[index - 1U].key >= pool_keys[index].key)
+            pool_keys_ascending = FT_FALSE;
         index += 1U;
     }
+    if (pool_keys_ascending == FT_FALSE)
+    {
+        std::sort(pool_keys, pool_keys + snapshot.pool_count,
+            [](const card_game_snapshot_pool_key &first,
+                const card_game_snapshot_pool_key &second)
+            {
+                return (first.key < second.key);
+            });
+        index = 1U;
+        while (index < snapshot.pool_count)
+        {
+            if (pool_keys[index - 1U].key == pool_keys[index].key)
+                return (FT_ERR_INVALID_ARGUMENT);
+            index += 1U;
+        }
+    }
+    uint32_t unit_ids[FT_CARD_GAME_MAX_RESOURCE_UNITS];
+    uint32_t highest_unit_id = 0U;
+    ft_bool unit_ids_ascending = FT_TRUE;
+    const card_game_snapshot_pool_key *pool_keys_begin = pool_keys;
+    const card_game_snapshot_pool_key *pool_keys_end = pool_keys + snapshot.pool_count;
     index = 0U;
     while (index < snapshot.unit_count)
     {
-        ft_bool matching_pool;
+        const card_game_resource_unit &unit = snapshot.units[index];
 
-        if (snapshot.units[index].unit_id == 0U
-            || snapshot.units[index].locked_amount > snapshot.units[index].amount
-            || snapshot.units[index].temporary > FT_TRUE)
+        if (unit.unit_id == 0U || unit.locked_amount > unit.amount
+            || unit.temporary > FT_TRUE)
             return (FT_ERR_INVALID_ARGUMENT);
-        if (snapshot.units[index].unit_id > highest_unit_id)
-            highest_unit_id = snapshot.units[index].unit_id;
-        matching_pool = FT_FALSE;
-        compare_index = 0U;
-        while (compare_index < snapshot.pool_count)
-        {
-            if (snapshot.units[index].owner_id
-                    == snapshot.pools[compare_index].owner_id
-                && snapshot.units[index].resource_type_id
-                    == snapshot.pools[compare_index].resource_type_id)
+        unit_ids[index] = unit.unit_id;
+        if (index != 0U && unit_ids[index - 1U] >= unit.unit_id)
+            unit_ids_ascending = FT_FALSE;
+        if (unit.unit_id > highest_unit_id)
+            highest_unit_id = unit.unit_id;
+        const uint64_t key = card_game_resource_key(unit.owner_id,
+            unit.resource_type_id);
+        const card_game_snapshot_pool_key *match = std::lower_bound(pool_keys_begin,
+            pool_keys_end, key,
+            [](const card_game_snapshot_pool_key &entry, uint64_t value)
             {
-                matching_pool = FT_TRUE;
-                break ;
-            }
-            compare_index += 1U;
-        }
-        if (matching_pool == FT_FALSE)
+                return (entry.key < value);
+            });
+        if (match == pool_keys_end || match->key != key)
             return (FT_ERR_INVALID_ARGUMENT);
-        compare_index = index + 1U;
-        while (compare_index < snapshot.unit_count)
-        {
-            if (snapshot.units[index].unit_id
-                == snapshot.units[compare_index].unit_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            compare_index += 1U;
-        }
+        card_game_snapshot_pool_totals &totals = pool_totals[match->original_index];
+        totals.current_amount += unit.amount;
+        totals.locked_amount += unit.locked_amount;
+        if (unit.temporary != FT_FALSE)
+            totals.temporary_amount += unit.amount;
         index += 1U;
+    }
+    if (unit_ids_ascending == FT_FALSE)
+    {
+        std::sort(unit_ids, unit_ids + snapshot.unit_count);
+        if (std::adjacent_find(unit_ids, unit_ids + snapshot.unit_count)
+            != unit_ids + snapshot.unit_count)
+            return (FT_ERR_INVALID_ARGUMENT);
     }
     if ((snapshot.unit_count == 0U && snapshot.next_unit_id == 0U)
         || (snapshot.next_unit_id != 0U
@@ -208,42 +239,43 @@ int32_t card_game_resource_ledger::apply_snapshot(
         || (snapshot.next_unit_id == 0U
             && highest_unit_id != UINT32_MAX))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (replacement.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    replacement._pool_count = snapshot.pool_count;
-    replacement._unit_count = snapshot.unit_count;
-    replacement._next_unit_id = snapshot.next_unit_id;
-    if (snapshot.pool_count != 0U)
-        ft_memcpy(replacement._pools, snapshot.pools,
-            static_cast<ft_size_t>(snapshot.pool_count)
-                * sizeof(card_game_resource_pool));
-    if (snapshot.unit_count != 0U)
-        ft_memcpy(replacement._units, snapshot.units,
-            static_cast<ft_size_t>(snapshot.unit_count)
-                * sizeof(card_game_resource_unit));
     index = 0U;
-    while (index < replacement._pool_count)
+    while (index < snapshot.pool_count)
     {
-        if (replacement.rebuild_pool(index) != FT_ERR_SUCCESS
-            || replacement._pools[index].current_amount
-                != snapshot.pools[index].current_amount
-            || replacement._pools[index].locked_amount
-                != snapshot.pools[index].locked_amount
-            || replacement._pools[index].temporary_amount
-                != snapshot.pools[index].temporary_amount)
-        {
-            (void)replacement.destroy();
+        const card_game_snapshot_pool_totals &totals = pool_totals[index];
+        const card_game_resource_pool &pool = snapshot.pools[index];
+
+        if (totals.current_amount != pool.current_amount
+            || totals.locked_amount != pool.locked_amount
+            || totals.temporary_amount != pool.temporary_amount)
             return (FT_ERR_INVALID_ARGUMENT);
-        }
         index += 1U;
     }
-    this->_pool_count = replacement._pool_count;
-    this->_unit_count = replacement._unit_count;
-    this->_next_unit_id = replacement._next_unit_id;
-    ft_memcpy(this->_pools, replacement._pools, sizeof(this->_pools));
-    ft_memcpy(this->_units, replacement._units, sizeof(this->_units));
-    (void)replacement.destroy();
+    ft_memmove(this->_pools, snapshot.pools,
+        snapshot.pool_count * sizeof(*this->_pools));
+    ft_memmove(this->_units, snapshot.units,
+        snapshot.unit_count * sizeof(*this->_units));
+    this->_pool_count = snapshot.pool_count;
+    this->_unit_count = snapshot.unit_count;
+    this->_next_unit_id = snapshot.next_unit_id;
     return (FT_ERR_SUCCESS);
+}
+
+ft_bool card_game_resource_ledger::matches_snapshot(
+    const card_game_resource_snapshot &snapshot) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_pool_count != snapshot.pool_count
+        || this->_unit_count != snapshot.unit_count
+        || this->_next_unit_id != snapshot.next_unit_id)
+        return (FT_FALSE);
+    if (this->_pool_count != 0U && (snapshot.pools == ft_nullptr
+            || ft_memcmp(this->_pools, snapshot.pools,
+                this->_pool_count * sizeof(*this->_pools)) != 0))
+        return (FT_FALSE);
+    return (this->_unit_count == 0U || (snapshot.units != ft_nullptr
+        && ft_memcmp(this->_units, snapshot.units,
+            this->_unit_count * sizeof(*this->_units)) == 0));
 }
 
 ft_bool card_game_resource_ledger::snapshots_equal(

@@ -1,50 +1,31 @@
 #include "game_block_edit_op.hpp"
+#include "../Buffer/buffer_endian.hpp"
+
+static constexpr ft_size_t GAME_BLOCK_EDIT_RECORD_SIZE = 24U;
 
 int32_t game_block_edit_op_serialize(const game_block_edit_op &edit,
     ft_byte_buffer &buffer) noexcept
 {
-    int32_t error_code;
-
-    error_code = buffer.append_u32_le(static_cast<uint32_t>(edit.world_x));
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = buffer.append_u32_le(static_cast<uint32_t>(edit.world_y));
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = buffer.append_u32_le(static_cast<uint32_t>(edit.world_z));
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = buffer.append_u32_le(edit.block_type);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (buffer.append_u64_le(edit.tick));
+    uint8_t bytes[GAME_BLOCK_EDIT_RECORD_SIZE];
+    buffer_store_le(bytes, static_cast<uint32_t>(edit.world_x));
+    buffer_store_le(bytes + 4U, static_cast<uint32_t>(edit.world_y));
+    buffer_store_le(bytes + 8U, static_cast<uint32_t>(edit.world_z));
+    buffer_store_le(bytes + 12U, edit.block_type);
+    buffer_store_le(bytes + 16U, edit.tick);
+    return (buffer.append(bytes, sizeof(bytes)));
 }
 
 int32_t game_block_edit_op_deserialize(game_block_edit_op &edit,
     ft_byte_buffer &buffer) noexcept
 {
-    uint32_t raw_x;
-    uint32_t raw_y;
-    uint32_t raw_z;
-    uint32_t block_type;
-    uint64_t tick;
-    int32_t error_code;
-
-    error_code = buffer.read_u32_le(&raw_x);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = buffer.read_u32_le(&raw_y);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = buffer.read_u32_le(&raw_z);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = buffer.read_u32_le(&block_type);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = buffer.read_u64_le(&tick);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    edit.world_x = static_cast<int32_t>(raw_x);
-    edit.world_y = static_cast<int32_t>(raw_y);
-    edit.world_z = static_cast<int32_t>(raw_z);
-    edit.block_type = block_type;
-    edit.tick = tick;
+    uint8_t bytes[GAME_BLOCK_EDIT_RECORD_SIZE];
+    const int32_t status = buffer.read(bytes, sizeof(bytes));
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    edit.world_x = static_cast<int32_t>(buffer_load_le<uint32_t>(bytes));
+    edit.world_y = static_cast<int32_t>(buffer_load_le<uint32_t>(bytes + 4U));
+    edit.world_z = static_cast<int32_t>(buffer_load_le<uint32_t>(bytes + 8U));
+    edit.block_type = buffer_load_le<uint32_t>(bytes + 12U);
+    edit.tick = buffer_load_le<uint64_t>(bytes + 16U);
     return (FT_ERR_SUCCESS);
 }

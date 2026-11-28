@@ -1,5 +1,5 @@
 #include "crypto_session.hpp"
-#include "crypto_primitives.hpp"
+#include "crypto_primitives_internal.hpp"
 #include "crypto_x25519.hpp"
 #include "../Errno/errno.hpp"
 
@@ -28,14 +28,6 @@ namespace
         return ;
     }
 
-    static int32_t derive_label(const uint8_t pseudorandom_key[32],
-        const uint8_t *label, ft_size_t label_length, uint8_t *output,
-        ft_size_t output_length) noexcept
-    {
-        return (crypto_hkdf_sha256_expand(pseudorandom_key, label,
-            label_length, output, output_length));
-    }
-
     static void clear_session_outputs(uint8_t send_key[32],
         uint8_t receive_key[32], uint8_t send_initialization_vector[12],
         uint8_t receive_initialization_vector[12]) noexcept
@@ -59,16 +51,16 @@ int32_t crypto_derive_session_keys(const uint8_t private_key[32],
     uint8_t send_initialization_vector[12],
     uint8_t receive_initialization_vector[12]) noexcept
 {
-    static const uint8_t client_to_server_key_label[8] = {
+    constexpr uint8_t CLIENT_TO_SERVER_KEY_LABEL[8] = {
         0x4cU, 0x46U, 0x54U, 0x01U, 0x43U, 0x32U, 0x53U, 0x4bU
     };
-    static const uint8_t server_to_client_key_label[8] = {
+    constexpr uint8_t SERVER_TO_CLIENT_KEY_LABEL[8] = {
         0x4cU, 0x46U, 0x54U, 0x01U, 0x53U, 0x32U, 0x43U, 0x4bU
     };
-    static const uint8_t client_to_server_iv_label[8] = {
+    constexpr uint8_t CLIENT_TO_SERVER_IV_LABEL[8] = {
         0x4cU, 0x46U, 0x54U, 0x01U, 0x43U, 0x32U, 0x53U, 0x49U
     };
-    static const uint8_t server_to_client_iv_label[8] = {
+    constexpr uint8_t SERVER_TO_CLIENT_IV_LABEL[8] = {
         0x4cU, 0x46U, 0x54U, 0x01U, 0x53U, 0x32U, 0x43U, 0x49U
     };
     uint8_t shared_secret[32];
@@ -129,9 +121,6 @@ int32_t crypto_derive_session_keys(const uint8_t private_key[32],
             send_initialization_vector, receive_initialization_vector);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    ft_memset(shared_secret, 0, sizeof(shared_secret));
-    ft_memset(transcript_hash, 0, sizeof(transcript_hash));
-    ft_memset(pseudorandom_key, 0, sizeof(pseudorandom_key));
     result = crypto_x25519_shared_secret(private_key, peer_public_key,
         shared_secret);
     if (result == FT_ERR_SUCCESS)
@@ -141,29 +130,28 @@ int32_t crypto_derive_session_keys(const uint8_t private_key[32],
         result = crypto_hkdf_sha256_extract(transcript_hash,
             sizeof(transcript_hash), shared_secret, sizeof(shared_secret),
             pseudorandom_key);
-    send_key_label = client_to_server_key_label;
-    receive_key_label = server_to_client_key_label;
-    send_iv_label = client_to_server_iv_label;
-    receive_iv_label = server_to_client_iv_label;
+    send_key_label = CLIENT_TO_SERVER_KEY_LABEL;
+    receive_key_label = SERVER_TO_CLIENT_KEY_LABEL;
+    send_iv_label = CLIENT_TO_SERVER_IV_LABEL;
+    receive_iv_label = SERVER_TO_CLIENT_IV_LABEL;
     if (role == crypto_session_role::SERVER)
     {
-        send_key_label = server_to_client_key_label;
-        receive_key_label = client_to_server_key_label;
-        send_iv_label = server_to_client_iv_label;
-        receive_iv_label = client_to_server_iv_label;
+        send_key_label = SERVER_TO_CLIENT_KEY_LABEL;
+        receive_key_label = CLIENT_TO_SERVER_KEY_LABEL;
+        send_iv_label = SERVER_TO_CLIENT_IV_LABEL;
+        receive_iv_label = CLIENT_TO_SERVER_IV_LABEL;
     }
     if (result == FT_ERR_SUCCESS)
-        result = derive_label(pseudorandom_key, send_key_label, 8U,
-            send_key, 32U);
-    if (result == FT_ERR_SUCCESS)
-        result = derive_label(pseudorandom_key, receive_key_label, 8U,
-            receive_key, 32U);
-    if (result == FT_ERR_SUCCESS)
-        result = derive_label(pseudorandom_key, send_iv_label, 8U,
-            send_initialization_vector, 12U);
-    if (result == FT_ERR_SUCCESS)
-        result = derive_label(pseudorandom_key, receive_iv_label, 8U,
-            receive_initialization_vector, 12U);
+    {
+        const crypto_hkdf_sha256_label labels[] = {
+            {send_key_label, sizeof(CLIENT_TO_SERVER_KEY_LABEL), send_key, 32U},
+            {receive_key_label, sizeof(SERVER_TO_CLIENT_KEY_LABEL), receive_key, 32U},
+            {send_iv_label, sizeof(CLIENT_TO_SERVER_IV_LABEL), send_initialization_vector, 12U},
+            {receive_iv_label, sizeof(SERVER_TO_CLIENT_IV_LABEL), receive_initialization_vector, 12U}
+        };
+        result = crypto_hkdf_sha256_expand_labels(pseudorandom_key, labels,
+            sizeof(labels) / sizeof(labels[0]));
+    }
     wipe(shared_secret, sizeof(shared_secret));
     wipe(transcript_hash, sizeof(transcript_hash));
     wipe(pseudorandom_key, sizeof(pseudorandom_key));
@@ -181,7 +169,7 @@ int32_t crypto_derive_key_update(const uint8_t current_key[32],
     uint64_t next_epoch, uint8_t updated_key[32],
     uint8_t updated_initialization_vector[12]) noexcept
 {
-    static const uint8_t label[16] = {
+    constexpr uint8_t LABEL[16] = {
         'L', 'i', 'b', 'f', 't', ' ', 'k', 'e',
         'y', ' ', 'u', 'p', 'd', 'a', 't', 'e'
     };
@@ -206,10 +194,7 @@ int32_t crypto_derive_key_update(const uint8_t current_key[32],
         || memory_ranges_overlap(updated_key, 32U,
             updated_initialization_vector, 12U) != FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
-    ft_memset(pseudorandom_key, 0, sizeof(pseudorandom_key));
-    ft_memset(info, 0, sizeof(info));
-    ft_memset(expanded, 0, sizeof(expanded));
-    ft_memcpy(info, label, sizeof(label));
+    ft_memcpy_fixed<sizeof(LABEL)>(info, LABEL);
     index = 0U;
     while (index < 8U)
     {
@@ -224,8 +209,8 @@ int32_t crypto_derive_key_update(const uint8_t current_key[32],
             sizeof(info), expanded, sizeof(expanded));
     if (result == FT_ERR_SUCCESS)
     {
-        ft_memcpy(updated_key, expanded, 32U);
-        ft_memcpy(updated_initialization_vector, expanded + 32U, 12U);
+        ft_memcpy_fixed<32U>(updated_key, expanded);
+        ft_memcpy_fixed<12U>(updated_initialization_vector, expanded + 32U);
     }
     else
     {

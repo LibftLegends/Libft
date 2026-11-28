@@ -1,95 +1,18 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
-
-static int32_t math_is_infinite_internal(double number)
-{
-    union
-    {
-        double double_value;
-        uint64_t integer_value;
-    } converter;
-
-    uint64_t exponent_bits;
-    uint64_t mantissa_bits;
-
-    converter.double_value = number;
-    exponent_bits = converter.integer_value & 0x7ff0000000000000ULL;
-    mantissa_bits = converter.integer_value & 0x000fffffffffffffULL;
-    if (exponent_bits == 0x7ff0000000000000ULL && mantissa_bits == 0)
-        return (1);
-    return (0);
-}
+#include <cmath>
 
 double math_acos(double dot)
 {
-    double pi_value;
-    double lower_bound;
-    double upper_bound;
-    double middle_value;
-    double cosine_middle;
-    double tolerance;
-    int32_t    iteration_count;
+    constexpr double TOLERANCE = 1e-13;
+    constexpr double PI = 3.14159265358979323846;
 
-    if (math_isnan(dot))
-    {
-        return (math_nan());
-    }
-    if (math_is_infinite_internal(dot) != 0)
-    {
-        return (math_nan());
-    }
-    tolerance = 0.0000000000001;
-    if (dot > 1.0)
-    {
-        if (math_fabs(dot - 1.0) <= tolerance)
-            dot = 1.0;
-        else
-        {
-            return (math_nan());
-        }
-    }
-    if (dot < -1.0)
-    {
-        if (math_fabs(dot + 1.0) <= tolerance)
-            dot = -1.0;
-        else
-        {
-            return (math_nan());
-        }
-    }
-    pi_value = 3.14159265358979323846;
-    if (math_fabs(dot - 1.0) <= tolerance)
-    {
+    if (std::fabs(dot - 1.0) <= TOLERANCE)
         return (0.0);
-    }
-    if (math_fabs(dot + 1.0) <= tolerance)
-    {
-        return (pi_value);
-    }
-    if (math_fabs(dot) <= tolerance)
-    {
-        return (pi_value * 0.5);
-    }
-    lower_bound = 0.0;
-    upper_bound = pi_value;
-    iteration_count = 0;
-    while (iteration_count < 100 && math_fabs(upper_bound - lower_bound) > tolerance)
-    {
-        middle_value = (lower_bound + upper_bound) * 0.5;
-        cosine_middle = math_cos(middle_value);
-        if (math_fabs(cosine_middle - dot) <= tolerance)
-        {
-            return (middle_value);
-        }
-        if (cosine_middle > dot)
-            lower_bound = middle_value;
-        else
-            upper_bound = middle_value;
-        iteration_count = iteration_count + 1;
-    }
-    return ((lower_bound + upper_bound) * 0.5);
+    if (std::fabs(dot + 1.0) <= TOLERANCE)
+        return (PI);
+    if (!(dot >= -1.0 && dot <= 1.0))
+        return (math_nan());
+    if (std::fabs(dot) <= TOLERANCE)
+        return (PI * 0.5);
+    return (std::acos(dot));
 }

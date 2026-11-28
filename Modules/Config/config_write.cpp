@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "../Template/vector.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/basic.hpp"
@@ -165,83 +166,85 @@ static int32_t config_write_ini(const config_data *config, const char *filename)
     return (error_code);
 }
 
-static json_group *config_find_or_create_group(json_group **groups_head,
-    json_group **groups_tail, const char *section_name)
+struct config_json_group
 {
-    const char *name;
-    json_group *current;
+    json_group *group;
+    json_item **next_item;
+};
 
-    if (!groups_head || !groups_tail)
-    {
-        return (ft_nullptr);
-    }
-    name = section_name;
-    if (!name)
+static int32_t config_append_json_entry(ft_vector<config_json_group> &groups,
+    json_group **&next_group, const config_entry &entry,
+    ft_size_t &last_index)
+{
+    const char *name = entry.section;
+    if (name == ft_nullptr)
         name = "";
-    current = *groups_head;
-    while (current)
+    const ft_size_t count = groups.size();
+    ft_size_t index = last_index;
+    if (index >= count || ft_strcmp(groups[index].group->name, name) != 0)
     {
-        if (current->name && ft_strcmp(current->name, name) == 0)
-            return (current);
-        current = current->next;
+        index = 0U;
+        while (index < count && ft_strcmp(groups[index].group->name, name) != 0)
+            index += 1U;
     }
-    json_group *new_group = json_create_json_group(name);
-    if (!new_group)
-        return (ft_nullptr);
-    if (!(*groups_head))
-        *groups_head = new_group;
-    else
-        (*groups_tail)->next = new_group;
-    *groups_tail = new_group;
-    return (new_group);
+    if (index == count)
+    {
+        json_group *group = json_create_json_group(name);
+        if (group == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        *next_group = group;
+        next_group = &group->next;
+        const config_json_group created = {group, &group->items};
+        int32_t error = groups.push_back(created);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    json_item *item = json_create_item(entry.key, entry.value);
+    if (item == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    config_json_group &target = groups[index];
+    *target.next_item = item;
+    target.next_item = &item->next;
+    last_index = index;
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t config_write_json(const config_data *config, const char *filename)
 {
-    json_group *groups;
-    json_group *groups_tail;
-    char *serialized_content;
-    int32_t write_result;
-    ft_size_t entry_index;
-
-    groups = ft_nullptr;
-    groups_tail = ft_nullptr;
-    entry_index = 0;
-    while (config && entry_index < config->entry_count)
+    json_group *head = ft_nullptr;
+    json_group **next_group = &head;
+    ft_vector<config_json_group> groups;
+    int32_t error = groups.initialize();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    ft_size_t entry_index = 0U;
+    ft_size_t last_index = 0U;
+    while (entry_index < config->entry_count)
     {
-        const config_entry *entry = &config->entries[entry_index];
-        if (!entry->key || !entry->value)
+        const config_entry &entry = config->entries[entry_index];
+        if (entry.key == ft_nullptr || entry.value == ft_nullptr)
         {
-            json_free_groups(groups);
-            return (FT_ERR_INVALID_ARGUMENT);
+            error = FT_ERR_INVALID_ARGUMENT;
+            break ;
         }
-        json_group *group = config_find_or_create_group(&groups, &groups_tail,
-            entry->section);
-        if (!group)
-        {
-            json_free_groups(groups);
-            return (FT_ERR_NO_MEMORY);
-        }
-        json_item *item = json_create_item(entry->key, entry->value);
-        if (!item)
-        {
-            json_free_groups(groups);
-            return (FT_ERR_NO_MEMORY);
-        }
-        json_add_item_to_group(group, item);
-        ++entry_index;
+        error = config_append_json_entry(groups, next_group, entry, last_index);
+        if (error != FT_ERR_SUCCESS)
+            break ;
+        entry_index += 1U;
     }
-    serialized_content = json_write_to_string(groups);
-    if (!serialized_content)
+    if (error == FT_ERR_SUCCESS)
     {
-        json_free_groups(groups);
-        return (FT_ERR_NO_MEMORY);
+        char *content = json_write_to_string(head);
+        if (content == ft_nullptr)
+            error = FT_ERR_NO_MEMORY;
+        else
+        {
+            error = file_replace_safe(filename, content, ft_strlen_size_t(content));
+            cma_free(content);
+        }
     }
-    write_result = file_replace_safe(filename, serialized_content,
-        ft_strlen(serialized_content));
-    cma_free(serialized_content);
-    json_free_groups(groups);
-    return (write_result);
+    json_free_groups(head);
+    return (error);
 }
 
 int32_t config_write_file(const config_data *config, const char *filename)

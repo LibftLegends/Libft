@@ -35,6 +35,7 @@ class voxel_light_section
         uint8_t get(uint16_t index) const noexcept;
         int32_t set(uint16_t index, uint8_t value) noexcept;
         int32_t fill(uint8_t value) noexcept;
+        int32_t assign_dense(const uint8_t (&values)[4096U]) noexcept;
         ft_bool is_uniform() const noexcept;
         uint8_t get_uniform() const noexcept;
 };
@@ -119,6 +120,7 @@ class voxel_light_build_operation
             ft_bool include_halo) noexcept;
         int32_t destroy() noexcept;
         int32_t move(voxel_light_build_operation &other) noexcept;
+        /* A section is published after its last cell is finalized. */
         int32_t step(const voxel_light_update_config &config,
             voxel_light_build_stats *stats, ft_bool *complete) noexcept;
         ft_bool is_complete() const noexcept;

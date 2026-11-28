@@ -54,7 +54,7 @@ ft_size_t time_format_timezone_offset(char *buffer, ft_size_t size,
 }
 
 static ft_size_t time_format_calendar(char *buffer, ft_size_t size,
-    t_time time_value, const char *format)
+    t_time time_value, ft_bool utc_suffix)
 {
     if (time_value < std::numeric_limits<std::time_t>::min()
         || time_value > std::numeric_limits<std::time_t>::max())
@@ -63,13 +63,14 @@ static ft_size_t time_format_calendar(char *buffer, ft_size_t size,
     std::tm date;
     if (cmp_gmtime(&standard_time, &date) != FT_ERR_SUCCESS)
         return (0U);
-    return (std::strftime(buffer, size, format, &date));
+    if (utc_suffix == FT_TRUE)
+        return (std::strftime(buffer, size, "%Y-%m-%dT%H:%M:%SZ", &date));
+    return (std::strftime(buffer, size, "%Y-%m-%dT%H:%M:%S", &date));
 }
 
 ft_size_t time_format_rfc3339_buffer(t_time time_value, char (&buffer)[21])
 {
-    return (time_format_calendar(buffer, sizeof(buffer), time_value,
-            "%Y-%m-%dT%H:%M:%SZ"));
+    return (time_format_calendar(buffer, sizeof(buffer), time_value, FT_TRUE));
 }
 
 ft_string *time_format_iso8601(t_time time_value)
@@ -89,7 +90,7 @@ ft_string *time_format_iso8601_with_offset(t_time time_value,
         return (ft_nullptr);
     char buffer[26];
     const ft_size_t date_length = time_format_calendar(buffer, 20U,
-            time_value + offset_seconds, "%Y-%m-%dT%H:%M:%S");
+            time_value + offset_seconds, FT_FALSE);
     if (date_length == 0U
         || time_format_timezone_offset(buffer + date_length, 7U,
             offset_minutes) == 0U)

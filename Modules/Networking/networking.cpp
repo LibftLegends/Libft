@@ -1,20 +1,5 @@
 #include "networking.hpp"
 #include "../Errno/errno_internal.hpp"
-#include "../Printf/printf.hpp"
-#include "../System_utils/system_utils.hpp"
-
-#include <cstring>
-
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#ifdef _WIN32
-# include <winsock2.h>
-# include <ws2tcpip.h>
-#else
-# include <sys/socket.h>
-# include <netinet/in.h>
-#endif
 
 SocketConfig::SocketConfig() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED),
@@ -45,8 +30,8 @@ int32_t SocketConfig::initialize() noexcept
         errno_abort_lifecycle(this->_initialised_state, "SocketConfig::initialize",
             "initialize called on initialised instance");
     this->_type = SocketType::SERVER;
-    ft_strncpy(this->_ip, "127.0.0.1", sizeof(this->_ip) - 1);
-    this->_ip[sizeof(this->_ip) - 1] = '\0';
+    constexpr char DEFAULT_ADDRESS[sizeof(this->_ip)] = "127.0.0.1";
+    ft_memcpy_fixed<sizeof(DEFAULT_ADDRESS)>(this->_ip, DEFAULT_ADDRESS);
     this->_port = 8080;
     this->_backlog = 10;
     this->_protocol = IPPROTO_TCP;
@@ -68,16 +53,15 @@ int32_t SocketConfig::initialize(const SocketConfig &other) noexcept
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "SocketConfig::initialize(const SocketConfig &)",
             "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)this->destroy();
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
+        (void)this->destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
     this->_type = other._type;
-    ft_strncpy(this->_ip, other._ip, sizeof(this->_ip) - 1);
-    this->_ip[sizeof(this->_ip) - 1] = '\0';
+    ft_strncpy(this->_ip, other._ip, sizeof(this->_ip) - 1U);
+    this->_ip[sizeof(this->_ip) - 1U] = '\0';
     this->_port = other._port;
     this->_backlog = other._backlog;
     this->_protocol = other._protocol;
@@ -86,10 +70,12 @@ int32_t SocketConfig::initialize(const SocketConfig &other) noexcept
     this->_non_blocking = other._non_blocking;
     this->_recv_timeout = other._recv_timeout;
     this->_send_timeout = other._send_timeout;
-    ft_strncpy(this->_multicast_group, other._multicast_group, sizeof(this->_multicast_group) - 1);
-    this->_multicast_group[sizeof(this->_multicast_group) - 1] = '\0';
-    ft_strncpy(this->_multicast_interface, other._multicast_interface, sizeof(this->_multicast_interface) - 1);
-    this->_multicast_interface[sizeof(this->_multicast_interface) - 1] = '\0';
+    ft_strncpy(this->_multicast_group, other._multicast_group,
+        sizeof(this->_multicast_group) - 1U);
+    this->_multicast_group[sizeof(this->_multicast_group) - 1U] = '\0';
+    ft_strncpy(this->_multicast_interface, other._multicast_interface,
+        sizeof(this->_multicast_interface) - 1U);
+    this->_multicast_interface[sizeof(this->_multicast_interface) - 1U] = '\0';
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -98,6 +84,8 @@ int32_t SocketConfig::initialize(SocketConfig &&other) noexcept
 {
     int32_t initialize_error;
 
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
     initialize_error = this->initialize(other);
     if (initialize_error != FT_ERR_SUCCESS)
         return (initialize_error);

@@ -1,4 +1,5 @@
 #include "cli_internal.hpp"
+#include "../Basic/basic.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../File/file_utils.hpp"
 #include <new>
@@ -42,21 +43,10 @@ static const char *cli_skip_trailing_space(const char *begin, const char *end)
     return (end);
 }
 
-static ft_bool cli_char_is_dot(char character)
-{
-    if (character == '.')
-    {
-        return (FT_TRUE);
-    }
-    return (FT_FALSE);
-}
-
 static cli_option *cli_find_option_with_length(cli_command *command,
     const char *name, ft_size_t length)
 {
     ft_size_t index;
-    ft_size_t character_index;
-    ft_bool matches;
 
     if (command == ft_nullptr || name == ft_nullptr)
     {
@@ -65,24 +55,11 @@ static cli_option *cli_find_option_with_length(cli_command *command,
     index = 0;
     while (index < command->option_count)
     {
-        if (command->options[index].long_name != ft_nullptr)
+        const char *candidate = command->options[index].long_name;
+        if (candidate != ft_nullptr && ft_strncmp(candidate, name, length) == 0
+            && candidate[length] == '\0')
         {
-            character_index = 0;
-            matches = FT_TRUE;
-            while (character_index < length)
-            {
-                if (command->options[index].long_name[character_index]
-                    != name[character_index])
-                {
-                    matches = FT_FALSE;
-                }
-                character_index++;
-            }
-            if (matches == FT_TRUE
-                && command->options[index].long_name[character_index] == '\0')
-            {
-                return (command->options + index);
-            }
+            return (command->options + index);
         }
         index++;
     }
@@ -93,8 +70,6 @@ static cli_command *cli_find_subcommand_with_length(cli_command *command,
     const char *name, ft_size_t length)
 {
     ft_size_t index;
-    ft_size_t character_index;
-    ft_bool matches;
 
     if (command == ft_nullptr || name == ft_nullptr)
     {
@@ -103,24 +78,11 @@ static cli_command *cli_find_subcommand_with_length(cli_command *command,
     index = 0;
     while (index < command->subcommand_count)
     {
-        if (command->subcommands[index].name != ft_nullptr)
+        const char *candidate = command->subcommands[index].name;
+        if (candidate != ft_nullptr && ft_strncmp(candidate, name, length) == 0
+            && candidate[length] == '\0')
         {
-            character_index = 0;
-            matches = FT_TRUE;
-            while (character_index < length)
-            {
-                if (command->subcommands[index].name[character_index]
-                    != name[character_index])
-                {
-                    matches = FT_FALSE;
-                }
-                character_index++;
-            }
-            if (matches == FT_TRUE
-                && command->subcommands[index].name[character_index] == '\0')
-            {
-                return (command->subcommands + index);
-            }
+            return (command->subcommands + index);
         }
         index++;
     }
@@ -145,7 +107,7 @@ static cli_command *cli_find_command_path(cli_command *command, const char *path
     index = 0;
     while (index <= length)
     {
-        if (index == length || cli_char_is_dot(path[index]) == FT_TRUE)
+        if (index == length || path[index] == '.')
         {
             if (index == segment_start)
             {
@@ -284,13 +246,17 @@ static int32_t cli_merge_config_line(cli_command *command, const char *line_star
         return (FT_ERR_SUCCESS);
     }
     equal_sign = ft_nullptr;
+    last_dot = ft_nullptr;
     line_start = trimmed_start;
     while (line_start < trimmed_end)
     {
-        if (*line_start == '=' && equal_sign == ft_nullptr)
+        if (*line_start == '=')
         {
             equal_sign = line_start;
+            break ;
         }
+        if (*line_start == '.')
+            last_dot = line_start;
         line_start++;
     }
     key_end = trimmed_end;
@@ -309,20 +275,6 @@ static int32_t cli_merge_config_line(cli_command *command, const char *line_star
     if (key_end <= trimmed_start)
     {
         return (FT_ERR_INVALID_ARGUMENT);
-    }
-    last_dot = ft_nullptr;
-    line_start = trimmed_start;
-    while (line_start < key_end)
-    {
-        if (cli_char_is_dot(*line_start) == FT_TRUE)
-        {
-            last_dot = line_start;
-        }
-        line_start++;
-    }
-    if (last_dot != ft_nullptr && last_dot >= key_end)
-    {
-        last_dot = ft_nullptr;
     }
     if (last_dot != ft_nullptr)
     {

@@ -28,7 +28,13 @@ struct card_game_zone_store_snapshot
 
 class card_game_zone_store
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
+        friend class card_game_engine;
+
         uint8_t _initialised_state;
         uint32_t _definition_count;
         card_game_zone_store_definition _definitions[FT_CARD_GAME_MAX_ZONES];
@@ -46,6 +52,8 @@ class card_game_zone_store
             uint32_t *index) const noexcept;
         int32_t resolve_zone(uint32_t player_id, uint32_t zone_id,
             uint32_t *definition_index, uint32_t *zone_player) const noexcept;
+        int32_t inspect_instance(uint32_t player_id, uint32_t zone_id,
+            uint32_t instance_id, card_game_zone_entry *entry) const noexcept;
         ft_bool contains_any(uint32_t player_id,
             uint32_t instance_id) const noexcept;
         int32_t validate_entry(const card_game_zone_store_definition &definition,
@@ -67,6 +75,8 @@ class card_game_zone_store
             card_game_zone_store_snapshot *destination) noexcept;
         int32_t apply_snapshot(
             const card_game_zone_store_snapshot &snapshot) noexcept;
+        int32_t append_state_hash(uint64_t &hash) const noexcept;
+        ft_bool matches_snapshot(const card_game_zone_store_snapshot &snapshot) const noexcept;
         static ft_bool snapshots_equal(
             const card_game_zone_store_snapshot &first,
             const card_game_zone_store_snapshot &second) noexcept;

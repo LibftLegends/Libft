@@ -8,8 +8,8 @@ void ft_log_debug(const char *format_string, ...)
 {
     va_list argument_list;
     va_start(argument_list, format_string);
-    if (g_async_running)
-        ft_log_enqueue(LOG_LEVEL_DEBUG, format_string, argument_list);
+    if (g_async_running.load(std::memory_order_relaxed) != FT_FALSE)
+        logger_enqueue_running(LOG_LEVEL_DEBUG, format_string, argument_list);
     else
         ft_log_vwrite(LOG_LEVEL_DEBUG, format_string, argument_list);
     va_end(argument_list);

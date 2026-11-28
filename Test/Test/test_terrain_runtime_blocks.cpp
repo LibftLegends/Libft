@@ -55,6 +55,19 @@ FT_TEST(test_voxel_runtime_block_registration_loads_assets)
     FT_ASSERT(asset_data != ft_nullptr);
     FT_ASSERT(asset_size > 0U);
     FT_ASSERT_EQ(static_cast<uint8_t>('b'), asset_data[0]);
+    constexpr char ORE_SCRIPT[] = "voxel_register_block("
+        "\"test:script_ore\", 1, 0, 0, 0, 0, 1, 9, 0, 1, 1,"
+        "\"export_values.asset\", \"export_values.asset\", \"export_values.asset\","
+        "\"export_values.asset\", \"export_values.asset\", \"export_values.asset\");";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.assign(ORE_SCRIPT, sizeof(ORE_SCRIPT) - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_script_execute(bridge, script,
+        chunk, 0, 0, "test", config, "Scripting"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_find_block_id_by_name("test:script_ore", &block_id));
+    metadata = &voxel_get_block_metadata(block_id);
+    FT_ASSERT_EQ(FT_FALSE, metadata->can_host_ore);
+    FT_ASSERT_EQ(FT_TRUE, metadata->is_ore);
+    FT_ASSERT_EQ(FT_TRUE, metadata->breakable);
+    FT_ASSERT_EQ(9U, metadata->hardness);
     voxel_runtime_reset_for_tests();
     return (1);
 }
@@ -134,6 +147,14 @@ FT_TEST(test_voxel_runtime_block_handle_survives_unregister)
     FT_ASSERT_EQ(block_id, block_handle.get_id());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_unregister_block(block_id));
     FT_ASSERT_EQ(FT_FALSE, voxel_block_is_known(block_id));
+    uint32_t resolved_id = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, voxel_find_block_id_by_name(registration.name, &resolved_id));
+    FT_ASSERT_EQ(UINT32_MAX, resolved_id);
+    registration.name = "test:replacement_handle_block";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_register_block(registration, &resolved_id));
+    FT_ASSERT_EQ(block_id, resolved_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_find_block_id_by_name(registration.name, &resolved_id));
+    FT_ASSERT_EQ(block_id, resolved_id);
     FT_ASSERT_EQ(FT_TRUE, block_handle.is_valid());
     asset_data = block_handle.get_asset_data(
         VOXEL_BLOCK_ASSET_FACE_TOP, &asset_size);

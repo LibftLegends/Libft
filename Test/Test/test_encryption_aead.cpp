@@ -199,6 +199,31 @@ FT_TEST(test_encryption_aead_tls_integration)
 
     FT_ASSERT(networking_tls_export_aead_keys(server_ssl, false,
             server_send_key, server_send_iv, server_receive_key, server_receive_iv));
+    constexpr ft_size_t KEY_LENGTH = 16U;
+    constexpr ft_size_t IV_LENGTH = 12U;
+    constexpr ft_size_t DIRECTION_LENGTH = KEY_LENGTH + IV_LENGTH;
+    constexpr char EXPORTER_LABEL[] = "EXPORTER-Libft-AEAD";
+    unsigned char exported_material[2U * DIRECTION_LENGTH];
+    FT_ASSERT_EQ(1, SSL_export_keying_material(client_ssl, exported_material,
+        sizeof(exported_material), EXPORTER_LABEL, sizeof(EXPORTER_LABEL) - 1U,
+        ft_nullptr, 0U, 0));
+    FT_ASSERT_EQ(KEY_LENGTH, client_send_key.size());
+    FT_ASSERT_EQ(IV_LENGTH, client_send_iv.size());
+    FT_ASSERT_EQ(KEY_LENGTH, client_receive_key.size());
+    FT_ASSERT_EQ(IV_LENGTH, client_receive_iv.size());
+    FT_ASSERT_EQ(0, ft_memcmp(client_send_key.begin(), exported_material, KEY_LENGTH));
+    FT_ASSERT_EQ(0, ft_memcmp(client_send_iv.begin(),
+        exported_material + KEY_LENGTH, IV_LENGTH));
+    FT_ASSERT_EQ(0, ft_memcmp(client_receive_key.begin(),
+        exported_material + DIRECTION_LENGTH, KEY_LENGTH));
+    FT_ASSERT_EQ(0, ft_memcmp(client_receive_iv.begin(),
+        exported_material + DIRECTION_LENGTH + KEY_LENGTH, IV_LENGTH));
+    FT_ASSERT_EQ(KEY_LENGTH, server_send_key.size());
+    FT_ASSERT_EQ(IV_LENGTH, server_send_iv.size());
+    FT_ASSERT_EQ(0, ft_memcmp(server_send_key.begin(),
+        client_receive_key.begin(), KEY_LENGTH));
+    FT_ASSERT_EQ(0, ft_memcmp(server_send_iv.begin(),
+        client_receive_iv.begin(), IV_LENGTH));
     FT_ASSERT_EQ(client_send_key.size(), server_receive_key.size());
     FT_ASSERT_EQ(client_send_iv.size(), server_receive_iv.size());
     size_t index;
@@ -229,6 +254,10 @@ FT_TEST(test_encryption_aead_tls_integration)
     FT_ASSERT(networking_tls_initialize_aead_contexts(server_ssl, false,
             server_send_context, server_receive_context,
             server_send_iv, server_receive_iv));
+    FT_ASSERT_EQ(0, ft_memcmp(client_send_iv.begin(),
+        exported_material + KEY_LENGTH, IV_LENGTH));
+    FT_ASSERT_EQ(0, ft_memcmp(server_send_iv.begin(),
+        exported_material + DIRECTION_LENGTH + KEY_LENGTH, IV_LENGTH));
     unsigned char additional_data[2];
 
     additional_data[0] = 0x01;
@@ -265,6 +294,23 @@ FT_TEST(test_encryption_aead_tls_integration)
         FT_ASSERT_EQ(static_cast<int>(plaintext[index]), static_cast<int>(decrypted[index]));
         index++;
     }
+    int32_t ssl_error = SSL_ERROR_NONE;
+    uint8_t incoming_byte = 0U;
+    const uint8_t outgoing_byte = 0x6AU;
+    FT_ASSERT_EQ(0, networking_ssl_read_with_status(server_ssl,
+        &incoming_byte, sizeof(incoming_byte), ssl_error));
+    FT_ASSERT_EQ(SSL_ERROR_WANT_READ, ssl_error);
+    FT_ASSERT_EQ(1, networking_ssl_write_with_status(client_ssl,
+        &outgoing_byte, sizeof(outgoing_byte), ssl_error));
+    FT_ASSERT_EQ(SSL_ERROR_NONE, ssl_error);
+    FT_ASSERT_EQ(1, networking_ssl_read_with_status(server_ssl,
+        &incoming_byte, sizeof(incoming_byte), ssl_error));
+    FT_ASSERT_EQ(SSL_ERROR_NONE, ssl_error);
+    FT_ASSERT_EQ(outgoing_byte, incoming_byte);
+    FT_ASSERT_EQ(0, SSL_shutdown(client_ssl));
+    FT_ASSERT_EQ(0, networking_ssl_read_with_status(server_ssl,
+        &incoming_byte, sizeof(incoming_byte), ssl_error));
+    FT_ASSERT_EQ(SSL_ERROR_ZERO_RETURN, ssl_error);
     SSL_free(client_ssl);
     SSL_free(server_ssl);
     SSL_CTX_free(client_ctx);

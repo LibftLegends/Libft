@@ -1,4 +1,5 @@
 #include "../../Modules/Game/game_world_region.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_game_lifecycle_helpers.hpp"
 
@@ -129,5 +130,52 @@ FT_TEST(test_game_world_region_destructor_after_destroy_is_safe)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value->destroy());
     delete value;
     FT_ASSERT_EQ(1, 1);
+    return (1);
+}
+
+FT_TEST(test_game_world_region_bulk_copy_and_move_preserve_region_ids)
+{
+    game_world_region source;
+    game_world_region copy;
+    game_world_region moved;
+    ft_vector<int32_t> replacement;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replacement.initialize());
+    int32_t region_id = 1;
+    while (region_id <= 20)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_region_ids().push_back(region_id));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, replacement.push_back(region_id + 20));
+        ++region_id;
+    }
+    source.set_region_ids(source.get_region_ids());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(9, source.get_region_ids()));
+    FT_ASSERT_EQ(9, source.get_world_id());
+    FT_ASSERT_EQ(20U, source.get_region_ids().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy.initialize(source));
+    FT_ASSERT_EQ(20, copy.get_region_ids()[19]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replacement.push_back(41));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    copy.set_region_ids(replacement);
+    const int32_t replace_error = copy.get_error();
+    const ft_size_t preserved_count = copy.get_region_ids().size();
+    const int32_t preserved_end = copy.get_region_ids()[19];
+    const int32_t move_error = moved.move(source);
+    const int32_t copy_error = copy.initialize(moved);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, replace_error);
+    FT_ASSERT_EQ(20U, preserved_count);
+    FT_ASSERT_EQ(20, preserved_end);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, move_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, copy_error);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, copy._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
+    FT_ASSERT_EQ(9, moved.get_world_id());
+    FT_ASSERT_EQ(20U, moved.get_region_ids().size());
+    FT_ASSERT_EQ(20, moved.get_region_ids()[19]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(0U, source.get_region_ids().size());
     return (1);
 }

@@ -27,6 +27,12 @@ class game_buff
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        void reset_fields() noexcept;
+        void copy_fields_from(const game_buff &other) noexcept;
+        int32_t copy_with_lifecycle(const game_buff &other) noexcept;
+        int32_t read_field(const int32_t &field) const noexcept;
+        void write_field(int32_t &field, int32_t value) noexcept;
+        void adjust_field(int32_t &field, int64_t delta) noexcept;
 
     public:
         game_buff() noexcept;

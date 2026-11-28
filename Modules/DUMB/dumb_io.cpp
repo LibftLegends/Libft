@@ -12,7 +12,7 @@
 int32_t ft_read_file(const char *path, char **out_buffer, ft_size_t *out_size)
 {
     FILE    *file;
-    int64_t file_size;
+    ft_size_t file_size;
     char    *buffer;
     ft_size_t  bytes_read;
     int32_t system_error;
@@ -34,32 +34,41 @@ int32_t ft_read_file(const char *path, char **out_buffer, ft_size_t *out_size)
         return (system_error);
     }
 
-    fseek(file, 0, SEEK_END);
-    file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    if (file_size < 0)
+    if (cmp_file_stream_size(file, &file_size) != FT_ERR_SUCCESS)
     {
-        fclose(file);
-        return (FT_ERR_IO);
+        if (fseek(file, 0, SEEK_END) != 0)
+        {
+            fclose(file);
+            return (FT_ERR_IO);
+        }
+        const int64_t end_position = ftell(file);
+        if (end_position < 0 || fseek(file, 0, SEEK_SET) != 0)
+        {
+            fclose(file);
+            return (FT_ERR_IO);
+        }
+        file_size = static_cast<ft_size_t>(end_position);
     }
 
     if (file_size == 0)
     {
-        *out_buffer = ft_nullptr;
-        *out_size = 0;
         fclose(file);
         return (FT_ERR_SUCCESS);
     }
-    buffer = static_cast<char *>(cma_malloc(static_cast<ft_size_t>(file_size)));
+    if (file_size > SIZE_MAX)
+    {
+        fclose(file);
+        return (FT_ERR_OUT_OF_RANGE);
+    }
+    buffer = static_cast<char *>(cma_malloc(file_size));
     if (buffer == ft_nullptr)
     {
         fclose(file);
         return (FT_ERR_NO_MEMORY);
     }
 
-    bytes_read = fread(buffer, 1, static_cast<ft_size_t>(file_size), file);
-    if (bytes_read != static_cast<ft_size_t>(file_size))
+    bytes_read = fread(buffer, 1, FT_UINT64_TO_NATIVE_SIZE_CAST(file_size), file);
+    if (bytes_read != file_size)
     {
         cma_free(buffer);
         fclose(file);
@@ -69,7 +78,7 @@ int32_t ft_read_file(const char *path, char **out_buffer, ft_size_t *out_size)
     fclose(file);
 
     *out_buffer = buffer;
-    *out_size = static_cast<ft_size_t>(file_size);
+    *out_size = file_size;
 
     return (FT_ERR_SUCCESS);
 }
@@ -84,6 +93,8 @@ int32_t ft_write_file(const char *path, const char *buffer, ft_size_t size)
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
+    if (size > SIZE_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
 
     file = fopen(path, "wb");
     if (file == ft_nullptr)
@@ -96,7 +107,7 @@ int32_t ft_write_file(const char *path, const char *buffer, ft_size_t size)
 
     if (size > 0)
     {
-        bytes_written = fwrite(buffer, 1, size, file);
+        bytes_written = fwrite(buffer, 1, FT_UINT64_TO_NATIVE_SIZE_CAST(size), file);
         if (bytes_written != size)
         {
             fclose(file);
@@ -104,6 +115,7 @@ int32_t ft_write_file(const char *path, const char *buffer, ft_size_t size)
         }
     }
 
-    fclose(file);
+    if (fclose(file) != 0)
+        return (FT_ERR_IO);
     return (FT_ERR_SUCCESS);
 }

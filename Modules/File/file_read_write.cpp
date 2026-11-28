@@ -204,3 +204,23 @@ int32_t file_write_all_atomic(const char *path, const char *data, ft_size_t size
         FT_OBSERVABILITY_TRACE_FINISH, error_code, 0, bytes_written);
     return (error_code);
 }
+
+int32_t file_write_all_atomic_stream(const char *path, ft_size_t size,
+    file_replace_write_callback write_contents, void *context)
+{
+    if (path == ft_nullptr || write_contents == ft_nullptr)
+    {
+        file_observability_emit("write_all_atomic", path,
+            FT_OBSERVABILITY_TRACE_FINISH, FT_ERR_INVALID_POINTER, 0, 0);
+        return (FT_ERR_INVALID_POINTER);
+    }
+    file_observability_emit("write_all_atomic", path,
+        FT_OBSERVABILITY_TRACE_START, FT_ERR_SUCCESS, 0, 0);
+    const int32_t error_code = file_replace_stream(path, FT_FALSE, write_contents, context);
+    ft_size_t bytes_written = 0U;
+    if (error_code == FT_ERR_SUCCESS)
+        bytes_written = size;
+    file_observability_emit("write_all_atomic", path,
+        FT_OBSERVABILITY_TRACE_FINISH, error_code, 0, bytes_written);
+    return (error_code);
+}

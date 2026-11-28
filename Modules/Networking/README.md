@@ -40,7 +40,7 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 - `SocketType` - Server, client, or raw socket role.
 - `SocketConfig` - Lifecycle configuration with IP, port, backlog, protocol, family, reuse-address flag, non-blocking flag, timeouts, and multicast fields.
 - `socket_config_prepare_thread_safety`, `teardown`, `lock`, and `unlock` - Synchronize public socket configuration structs.
-- `ft_socket_handle` - Lifecycle RAII-style socket descriptor holder with open/close/reset/release behavior.
+- `ft_socket_handle` - Lifecycle RAII-style socket descriptor holder with open/close/reset/release behavior. `initialize_duplicate(...)` owns a duplicate of a borrowed socket descriptor and leaves the original descriptor with its owner.
 - `ft_socket` - Lifecycle socket object for configure, bind/connect/listen/accept/send/receive/close workflows.
 - `udp_socket` - Lifecycle UDP socket wrapper supporting bind, sendto/recvfrom, multicast, close, and optional thread safety.
 
@@ -61,6 +61,7 @@ The `Networking` module provides portable socket wrappers, DNS resolution, event
 
 - `ft_websocket_client` - Lifecycle WebSocket client with connect, send, receive, close, and optional thread safety.
 - `ft_websocket_server` - Lifecycle WebSocket server with listen/accept/broadcast/client management and optional thread safety.
+- `ft_websocket_server::send_text_many(...)` - Sends one message to a list of client descriptors in order, reusing the compressed payload for clients that negotiated compression. Returns the first send error. Earlier sends can already have completed.
 - `s_connection_state` - WebSocket server client connection state.
 - `quic_feature_configuration` - Feature flags/settings for experimental QUIC.
 - `quic_datagram_plaintext` - Plaintext datagram payload holder.

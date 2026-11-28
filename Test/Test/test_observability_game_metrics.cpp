@@ -179,3 +179,36 @@ FT_TEST(test_game_character_emits_observability_metrics)
     FT_ASSERT_EQ(0, observability_game_metrics_shutdown());
     return (1);
 }
+
+FT_TEST(test_game_character_counter_metrics_respect_signed_limits)
+{
+    game_character character;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_initialize(observability_game_test_exporter));
+    g_game_export_count = 0;
+
+    character.set_coins(INT32_MAX);
+    character.add_coins(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, character.get_error());
+    FT_ASSERT_EQ(INT32_MAX, character.get_coins());
+    character.set_valor(INT32_MIN);
+    character.sub_valor(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, character.get_error());
+    FT_ASSERT_EQ(INT32_MIN, character.get_valor());
+    character.add_experience(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.get_error());
+    FT_ASSERT_EQ(0, g_game_export_count);
+
+    character.set_experience(INT32_MIN);
+    character.sub_experience(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.get_error());
+    FT_ASSERT_EQ(0, character.get_experience());
+    FT_ASSERT_EQ(1, g_game_export_count);
+    FT_ASSERT_EQ(INT64_C(2147483648), g_game_last_sample.delta_value);
+    FT_ASSERT_EQ(0, g_game_last_sample.total_value);
+    FT_ASSERT(observability_game_strings_equal("character.experience_change",
+        g_game_last_sample.labels.event_name));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_shutdown());
+    return (1);
+}

@@ -804,13 +804,14 @@ int32_t http_client_send_ssl_request(SSL *ssl_connection, const char *buffer, ft
     total_sent = 0;
     while (total_sent < length)
     {
-        send_result = nw_ssl_write(ssl_connection, buffer + total_sent, length - total_sent);
+        int32_t ssl_error;
+
+        send_result = networking_ssl_write_with_status(ssl_connection,
+            buffer + total_sent, length - total_sent, ssl_error);
         if (send_result <= 0)
         {
-            int32_t ssl_error;
             int32_t wait_result;
 
-            ssl_error = SSL_get_error(ssl_connection, static_cast<int32_t>(send_result));
             if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE)
             {
                 ft_bool wait_for_write;
@@ -978,8 +979,10 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
     use_ssl = connection.entry.use_ssl;
     while (1)
     {
+        int32_t ssl_error = SSL_ERROR_NONE;
         if (use_ssl != FT_FALSE)
-            bytes_received = nw_ssl_read(ssl_connection, buffer, sizeof(buffer) - 1);
+            bytes_received = networking_ssl_read_with_status(ssl_connection,
+                buffer, sizeof(buffer) - 1U, ssl_error);
         else
             bytes_received = nw_recv(socket_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received > 0)
@@ -1034,9 +1037,6 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
         {
             if (use_ssl != FT_FALSE)
             {
-                int32_t ssl_error;
-
-                ssl_error = SSL_get_error(ssl_connection, static_cast<int32_t>(bytes_received));
                 if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE)
                 {
                     int32_t wait_result;

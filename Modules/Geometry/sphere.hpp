@@ -4,6 +4,10 @@
 #include "../Errno/errno.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+class vector3;
+struct geometry_aabb3;
+struct geometry_sweep_hit;
+
 class sphere
 {
 #ifdef LIBFT_TEST_BUILD
@@ -18,9 +22,13 @@ class sphere
         mutable pt_recursive_mutex *_mutex;
         uint8_t                   _initialised_state;
 
-        uint32_t lock_pair(const sphere &other, const sphere *&lower,
-                    const sphere *&upper) const;
-        static void unlock_pair(const sphere *lower, const sphere *upper);
+        ft_bool snapshot(double (&center)[3], double &radius) const noexcept;
+        friend ft_bool geometry_sphere_intersect_aabb3(const sphere &shape,
+                    const geometry_aabb3 &box);
+        friend ft_bool geometry_swept_sphere_intersect_aabb3(const sphere &shape,
+                    const vector3 &velocity, const geometry_aabb3 &box,
+                    geometry_sweep_hit *hit);
+        uint32_t release_mutex() noexcept;
 
     public:
         sphere() noexcept;

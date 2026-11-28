@@ -53,6 +53,7 @@ static void *game_resistance_read_task(void *argument)
 {
     game_resistance_read_args *arguments;
     int index;
+    game_resistance copy;
 
     arguments = static_cast<game_resistance_read_args *>(argument);
     if (arguments == ft_nullptr)
@@ -63,18 +64,22 @@ static void *game_resistance_read_task(void *argument)
         int percent_value;
         int flat_value;
 
-        percent_value = arguments->resistance_pointer->get_percent();
-        if (arguments->resistance_pointer->get_error() != FT_ERR_SUCCESS)
+        arguments->result_code = arguments->resistance_pointer->get_values(percent_value, flat_value);
+        if (arguments->result_code != FT_ERR_SUCCESS)
+            return (ft_nullptr);
+        if (percent_value != flat_value % 100)
         {
-            (void)percent_value;
-            arguments->result_code = arguments->resistance_pointer->get_error();
+            arguments->result_code = FT_ERR_INVALID_STATE;
             return (ft_nullptr);
         }
-        flat_value = arguments->resistance_pointer->get_flat();
-        if (arguments->resistance_pointer->get_error() != FT_ERR_SUCCESS)
+        arguments->result_code = copy.initialize(*arguments->resistance_pointer);
+        if (arguments->result_code == FT_ERR_SUCCESS)
+            arguments->result_code = copy.get_values(percent_value, flat_value);
+        if (arguments->result_code != FT_ERR_SUCCESS)
+            return (ft_nullptr);
+        if (percent_value != flat_value % 100)
         {
-            (void)flat_value;
-            arguments->result_code = arguments->resistance_pointer->get_error();
+            arguments->result_code = FT_ERR_INVALID_STATE;
             return (ft_nullptr);
         }
         index += 1;
@@ -182,5 +187,27 @@ FT_TEST(test_game_resistance_thread_safety)
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_resistance.disable_thread_safety());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, primary_resistance.get_error());
+    return (1);
+}
+
+FT_TEST(test_game_resistance_move_releases_source_mutex)
+{
+    game_resistance source;
+    game_resistance destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.set_values(-11, 42));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    int32_t percent_value = 0;
+    int32_t flat_value = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_values(percent_value, flat_value));
+    FT_ASSERT_EQ(-11, percent_value);
+    FT_ASSERT_EQ(42, flat_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_values(percent_value, flat_value));
+    FT_ASSERT_EQ(0, percent_value);
+    FT_ASSERT_EQ(0, flat_value);
     return (1);
 }

@@ -35,6 +35,7 @@ class game_world_replay_session
         game_world_replay_session &operator=(game_world_replay_session &&other) noexcept = delete;
 
         int32_t initialize() noexcept;
+        // Transfers the snapshot and callbacks. The source can be initialized again.
         int32_t move(game_world_replay_session &other) noexcept;
         int32_t destroy() noexcept;
         int32_t capture_snapshot(game_world &world, const game_character &character, const game_inventory &inventory) noexcept;

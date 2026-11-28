@@ -84,6 +84,7 @@ class ft_string
         int32_t      assign(ft_size_t count, char character) noexcept;
         int32_t      clear() noexcept;
         int32_t      assign(const char *string, ft_size_t length) noexcept;
+        int32_t      assign(const ft_string &other) noexcept;
         const char    *at(ft_size_t index) const noexcept;
         const char    *c_str() const noexcept;
         char        *data() noexcept;

@@ -169,6 +169,69 @@ FT_TEST(test_crypto_x25519_exact_input_output_aliasing)
     return (1);
 }
 
+#ifdef LIBFT_TEST_BUILD
+FT_TEST(test_crypto_x25519_field_reduction_at_modulus_and_carry_bounds)
+{
+    uint64_t limbs[16];
+    uint32_t reduced[16];
+    const uint32_t zero[16] = {};
+    const uint32_t one[16] = {1U};
+    const uint32_t wrap_at_bit_255[16] = {19U};
+    const uint32_t wrap_at_bit_256[16] = {37U};
+    const uint32_t expected_wide[16] = {
+        38911U, 38911U, 1023U, 1023U, 1023U, 1023U, 1023U, 1023U,
+        1023U, 1023U, 1023U, 1023U, 1023U, 1023U, 1023U, 1023U
+    };
+    uint32_t index = 0U;
+    while (index < 16U)
+    {
+        limbs[index] = 0xffffU;
+        index += 1U;
+    }
+    limbs[0] = 65517U;
+    limbs[15] = 32767U;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(zero, reduced, sizeof(reduced)));
+    limbs[0] += 1U;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(one, reduced, sizeof(reduced)));
+    limbs[0] = 65516U;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(65516U, reduced[0]);
+    index = 1U;
+    while (index < 16U)
+    {
+        FT_ASSERT_EQ(static_cast<uint32_t>(limbs[index]), reduced[index]);
+        index += 1U;
+    }
+    ft_memset(limbs, 0, sizeof(limbs));
+    limbs[15] = 32768U;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(wrap_at_bit_255, reduced, sizeof(reduced)));
+    index = 0U;
+    while (index < 16U)
+    {
+        limbs[index] = 0xffffU;
+        index += 1U;
+    }
+    limbs[0] = 65498U;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(zero, reduced, sizeof(reduced)));
+    limbs[0] = 0xffffU;
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(wrap_at_bit_256, reduced, sizeof(reduced)));
+    index = 0U;
+    while (index < 16U)
+    {
+        limbs[index] = (UINT64_C(1) << 42U) - 1U;
+        index += 1U;
+    }
+    crypto_x25519_test_reduce_limbs(reduced, limbs);
+    FT_ASSERT_EQ(0, ft_memcmp(expected_wide, reduced, sizeof(reduced)));
+    return (1);
+}
+#endif
+
 FT_TEST(test_crypto_x25519_rfc7748_iteration_vectors)
 {
     const uint8_t expected_one_iteration[32] = {

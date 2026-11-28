@@ -9,6 +9,7 @@
 
 #include "../Compatebility/compatebility_stack_trace.hpp"
 #include <cstdint>
+#include <atomic>
 #include <stdint.h>
 
 #define PAGE_SIZE 131072
@@ -42,7 +43,7 @@
 #endif
 
 extern ft_size_t    g_cma_alloc_limit;
-extern ft_bool    g_cma_alloc_logging;
+extern std::atomic<ft_bool> g_cma_alloc_logging;
 extern ft_size_t    g_cma_allocation_count;
 extern ft_size_t    g_cma_free_count;
 extern ft_size_t    g_cma_current_bytes;

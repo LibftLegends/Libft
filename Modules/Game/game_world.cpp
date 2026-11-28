@@ -10,7 +10,7 @@
 #include "game_quest.hpp"
 #include "game_vendor_profile.hpp"
 #include "game_upgrade.hpp"
-#include "../JSon/json.hpp"
+#include "../JSon/json_internal.hpp"
 #include "../Basic/basic.hpp"
 #include "../CMA/CMA.hpp"
 #include "../CPP_class/class_string.hpp"
@@ -46,7 +46,7 @@ int32_t deserialize_event_scheduler(ft_sharedptr<game_event_scheduler> &schedule
 json_group *serialize_inventory(const game_inventory &inventory);
 int32_t deserialize_inventory(game_inventory &inventory, json_group *group);
 json_group *serialize_equipment(const game_character &character);
-int32_t deserialize_equipment(game_character &character, json_group *group);
+int32_t deserialize_equipment(game_character &character, json_group *group, ft_bool stats_already_applied);
 
 thread_local int32_t game_world::_last_error = FT_ERR_SUCCESS;
 
@@ -762,7 +762,6 @@ int32_t game_world::load_from_store(kv_store &store, const char *slot_key, game_
 int32_t game_world::save_to_buffer(ft_string &out_buffer, const game_character &character, const game_inventory &inventory) const noexcept
 {
     json_group *groups;
-    char *serialized_state;
     int32_t error_code;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world::save_to_buffer");
@@ -772,29 +771,21 @@ int32_t game_world::save_to_buffer(ft_string &out_buffer, const game_character &
     groups = this->build_snapshot_groups(character, inventory, error_code);
     if (!groups)
         return (this->get_error());
-    serialized_state = json_write_to_string(groups);
+    ft_size_t length;
+    char *serialized_state = json_write_to_string_with_length(groups, length);
     json_free_groups(groups);
     if (!serialized_state)
+        return (this->set_error(FT_ERR_GAME_GENERAL_ERROR));
+    if (out_buffer.is_initialised() == FT_TRUE && out_buffer.size() >= length)
     {
-        error_code = FT_ERR_GAME_GENERAL_ERROR;
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_GAME_GENERAL_ERROR;
-        this->set_error(error_code);
-        return (this->get_error());
-    }
-    out_buffer = serialized_state;
-    if (out_buffer.get_error() != FT_ERR_SUCCESS)
-    {
-        int32_t assign_error;
-
-        assign_error = out_buffer.get_error();
+        error_code = out_buffer.assign(serialized_state, length);
         cma_free(serialized_state);
-        this->set_error(assign_error);
-        return (this->get_error());
+        return (this->set_error(error_code));
     }
-    cma_free(serialized_state);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    error_code = ft_string_take_owned_buffer(out_buffer, serialized_state, length);
+    if (error_code != FT_ERR_SUCCESS)
+        cma_free(serialized_state);
+    return (this->set_error(error_code));
 }
 
 int32_t game_world::load_from_buffer(const char *buffer, game_character &character, game_inventory &inventory) noexcept
@@ -1060,7 +1051,7 @@ int32_t game_world::restore_from_groups(json_group *groups, game_character &char
     if (deserialize_event_scheduler(this->_event_scheduler, event_group) != FT_ERR_SUCCESS ||
         deserialize_character(character, character_group) != FT_ERR_SUCCESS ||
         deserialize_inventory(inventory, inventory_group) != FT_ERR_SUCCESS ||
-        deserialize_equipment(character, equipment_group) != FT_ERR_SUCCESS)
+        deserialize_equipment(character, equipment_group, FT_TRUE) != FT_ERR_SUCCESS)
     {
         this->set_error(FT_ERR_GAME_GENERAL_ERROR);
         return (this->get_error());

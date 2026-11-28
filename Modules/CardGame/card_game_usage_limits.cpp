@@ -1,8 +1,9 @@
 #include "card_game_usage_limits.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
 
 card_game_usage_limit_ledger::card_game_usage_limit_ledger() noexcept
-    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _count(0U),
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _sequential_ids(FT_TRUE), _count(0U),
       _next_id(1U), _limits(ft_nullptr)
 {
     return ;
@@ -91,62 +92,77 @@ int32_t card_game_usage_limit_ledger::clone_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+static uint32_t card_game_usage_duplicate_index(
+    const card_game_usage_limit *limits, uint32_t count) noexcept
+{
+    uint32_t index = 1U;
+    while (index < count && limits[index - 1U].limit_id < limits[index].limit_id)
+        ++index;
+    if (index >= count)
+        return (count);
+
+    uint64_t keys[FT_CARD_GAME_MAX_USAGE_LIMITS];
+    index = 0U;
+    while (index < count)
+    {
+        keys[index] = (static_cast<uint64_t>(limits[index].limit_id) << 32U) | index;
+        ++index;
+    }
+    std::sort(keys, keys + count);
+    uint32_t duplicate = count;
+    index = 1U;
+    while (index < count)
+    {
+        if ((keys[index - 1U] >> 32U) == (keys[index] >> 32U))
+            duplicate = std::min(duplicate, static_cast<uint32_t>(keys[index]));
+        ++index;
+    }
+    return (duplicate);
+}
+
 int32_t card_game_usage_limit_ledger::apply_snapshot(
     const card_game_usage_limit_snapshot &snapshot) noexcept
 {
-    card_game_usage_limit_ledger replacement;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot.count > FT_CARD_GAME_MAX_USAGE_LIMITS
         || snapshot.capacity < snapshot.count
         || snapshot.next_id == 0U
         || (snapshot.count != 0U && snapshot.limits == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (snapshot.count != 0U)
+    const uint32_t duplicate = card_game_usage_duplicate_index(snapshot.limits, snapshot.count);
+    ft_bool sequential = FT_TRUE;
+    uint32_t index = 0U;
+    while (index < snapshot.count)
     {
-        uint32_t index;
-        uint32_t other_index;
-
-        index = 0U;
-        while (index < snapshot.count)
-        {
-            if (snapshot.limits[index].limit_id == 0U
-                || snapshot.limits[index].key_id == 0U
-                || snapshot.limits[index].subject_id == 0U
-                || snapshot.limits[index].maximum_uses == 0U
-                || snapshot.limits[index].used_uses
-                    > snapshot.limits[index].maximum_uses
-                || snapshot.limits[index].scope
-                    > CARD_GAME_USAGE_CUSTOM
-                || snapshot.limits[index].attempt_policy
-                    > CARD_GAME_USAGE_ON_RESOLUTION)
-                return (FT_ERR_INVALID_ARGUMENT);
-            other_index = 0U;
-            while (other_index < index)
-            {
-                if (snapshot.limits[other_index].limit_id
-                    == snapshot.limits[index].limit_id)
-                    return (FT_ERR_ALREADY_EXISTS);
-                other_index += 1U;
-            }
-            index += 1U;
-        }
+        const card_game_usage_limit &limit = snapshot.limits[index];
+        if (limit.limit_id == 0U || limit.key_id == 0U || limit.subject_id == 0U
+            || limit.maximum_uses == 0U || limit.used_uses > limit.maximum_uses
+            || limit.scope > CARD_GAME_USAGE_CUSTOM
+            || limit.attempt_policy > CARD_GAME_USAGE_ON_RESOLUTION)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (index == duplicate)
+            return (FT_ERR_ALREADY_EXISTS);
+        if (limit.limit_id != index + 1U)
+            sequential = FT_FALSE;
+        ++index;
     }
-    if (replacement.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_NO_MEMORY);
-    ft_memcpy(replacement._limits, snapshot.limits,
+    ft_memmove(this->_limits, snapshot.limits,
         static_cast<ft_size_t>(snapshot.count)
             * sizeof(card_game_usage_limit));
-    replacement._count = snapshot.count;
-    replacement._next_id = snapshot.next_id;
-    (void)this->destroy();
-    this->_limits = replacement._limits;
-    replacement._limits = ft_nullptr;
-    this->_count = replacement._count;
-    this->_next_id = replacement._next_id;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    (void)replacement.destroy();
+    this->_count = snapshot.count;
+    this->_next_id = snapshot.next_id;
+    this->_sequential_ids = sequential;
     return (FT_ERR_SUCCESS);
+}
+
+ft_bool card_game_usage_limit_ledger::matches_snapshot(
+    const card_game_usage_limit_snapshot &snapshot) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_FALSE);
+    const card_game_usage_limit_snapshot live{
+        this->_count, this->_next_id, FT_CARD_GAME_MAX_USAGE_LIMITS, this->_limits};
+    return (snapshots_equal(live, snapshot));
 }
 
 ft_bool card_game_usage_limit_ledger::snapshots_equal(
@@ -163,7 +179,20 @@ ft_bool card_game_usage_limit_ledger::snapshots_equal(
             static_cast<ft_size_t>(first.count)
                 * sizeof(card_game_usage_limit)) == 0)
         return (FT_TRUE);
-    return (FT_FALSE);
+    uint32_t index = 0U;
+    while (index < first.count)
+    {
+        const card_game_usage_limit &left = first.limits[index];
+        const card_game_usage_limit &right = second.limits[index];
+        if (left.limit_id != right.limit_id || left.key_id != right.key_id
+            || left.subject_id != right.subject_id || left.scope != right.scope
+            || left.window_epoch != right.window_epoch || left.maximum_uses != right.maximum_uses
+            || left.used_uses != right.used_uses || left.attempt_policy != right.attempt_policy
+            || left.source_instance != right.source_instance)
+            return (FT_FALSE);
+        ++index;
+    }
+    return (FT_TRUE);
 }
 
 int32_t card_game_usage_limit_ledger::initialize() noexcept
@@ -184,6 +213,7 @@ int32_t card_game_usage_limit_ledger::initialize() noexcept
     this->_limits = limits;
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -195,6 +225,7 @@ int32_t card_game_usage_limit_ledger::destroy() noexcept
     this->_limits = ft_nullptr;
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -211,6 +242,7 @@ int32_t card_game_usage_limit_ledger::move(
     other._limits = ft_nullptr;
     this->_count = other._count;
     this->_next_id = other._next_id;
+    this->_sequential_ids = other._sequential_ids;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (other.destroy());
 }
@@ -222,6 +254,13 @@ int32_t card_game_usage_limit_ledger::find(uint32_t limit_id,
 
     if (index == ft_nullptr || limit_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_sequential_ids == FT_TRUE)
+    {
+        if (limit_id > this->_count)
+            return (FT_ERR_NOT_FOUND);
+        *index = limit_id - 1U;
+        return (FT_ERR_SUCCESS);
+    }
     current_index = 0U;
     while (current_index < this->_count)
     {
@@ -277,6 +316,8 @@ int32_t card_game_usage_limit_ledger::register_limit(uint32_t key_id,
         == FT_ERR_SUCCESS)
         return (FT_ERR_ALREADY_EXISTS);
     index = this->_count;
+    if (this->_next_id != index + 1U)
+        this->_sequential_ids = FT_FALSE;
     this->_limits[index].limit_id = this->_next_id;
     this->_limits[index].key_id = key_id;
     this->_limits[index].subject_id = subject_id;
@@ -308,25 +349,30 @@ int32_t card_game_usage_limit_ledger::get(uint32_t limit_id,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_usage_limit_ledger::can_consume(uint32_t limit_id,
-    uint32_t amount, uint64_t current_epoch) const noexcept
+int32_t card_game_usage_limit_ledger::find_consumable(uint32_t limit_id,
+    uint32_t amount, uint64_t current_epoch, uint32_t *index) const noexcept
 {
-    uint32_t index;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || amount == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    result = this->find(limit_id, &index);
+    result = this->find(limit_id, index);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    if (this->_limits[index].scope != CARD_GAME_USAGE_MATCH
-        && this->_limits[index].window_epoch != current_epoch)
+    const card_game_usage_limit &limit = this->_limits[*index];
+    if (limit.scope != CARD_GAME_USAGE_MATCH && limit.window_epoch != current_epoch)
         return (FT_ERR_PERMISSION_DENIED);
-    if (amount > this->_limits[index].maximum_uses
-        - this->_limits[index].used_uses)
+    if (amount > limit.maximum_uses - limit.used_uses)
         return (FT_ERR_FULL);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_usage_limit_ledger::can_consume(uint32_t limit_id,
+    uint32_t amount, uint64_t current_epoch) const noexcept
+{
+    uint32_t index;
+    return (this->find_consumable(limit_id, amount, current_epoch, &index));
 }
 
 int32_t card_game_usage_limit_ledger::consume(uint32_t limit_id,
@@ -335,11 +381,9 @@ int32_t card_game_usage_limit_ledger::consume(uint32_t limit_id,
     int32_t result;
     uint32_t index;
 
-    result = this->can_consume(limit_id, amount, current_epoch);
+    result = this->find_consumable(limit_id, amount, current_epoch, &index);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    if (this->find(limit_id, &index) != FT_ERR_SUCCESS)
-        return (FT_ERR_NOT_FOUND);
     this->_limits[index].used_uses += amount;
     return (FT_ERR_SUCCESS);
 }

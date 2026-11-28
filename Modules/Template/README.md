@@ -23,7 +23,7 @@ The `Template` module provides the library's generic containers, ownership wrapp
 
 ## Sequence Containers
 
-- `ft_vector<ElementType>` - Dynamic array with lifecycle, copy/move initialization, reserve/resize, push/pop, index operators, insert/erase, iterators, size/capacity/empty, error accessors, and optional thread safety. `ft_vector_inline_storage` provides small-buffer storage when the element type is complete.
+- `ft_vector<ElementType>` - Dynamic array with lifecycle, copy/move initialization, reserve/resize, push/pop, index operators, insert/erase, iterators, size/capacity/empty, error accessors, and optional thread safety. `ft_vector_inline_storage` provides small-buffer storage when the element type is complete. `replace_from(other)` replaces the live elements of an initialized vector and keeps the previous elements if copying fails. A replacement may allocate temporary storage.
 - `ft_deque<ElementType>` - Double-ended queue with push/pop front/back, front/back access, size/empty/clear, lifecycle, error accessors, and optional thread safety. `deque_node` is its linked node.
 - `ft_circular_buffer<ElementType>` - Fixed-capacity ring buffer with push/pop, full/empty checks, size/capacity, clear, lifecycle, error accessors, and optional thread safety.
 - `ft_queue<ElementType>` - FIFO queue with push/pop/front/back style access, value proxies, lifecycle, error accessors, and optional thread safety. `QueueNode` is its linked node.
@@ -32,7 +32,8 @@ The `Template` module provides the library's generic containers, ownership wrapp
 
 ## Associative Containers
 
-- `ft_map<Key, MappedType>` - Ordered map with insert/erase/find, `operator[]`, mapped proxy support, size/empty/clear, iterators where provided, lifecycle, error accessors, and optional thread safety.
+- `ft_map<Key, MappedType>` - Ordered map with insert/erase/find, `operator[]`, mapped proxy support, size/empty/clear, iterators where provided, lifecycle, error accessors, and optional thread safety. The const and mutable `visit_value(key, callback)` overloads call a nonthrowing callback under the map lock and return its status, or `FT_ERR_NOT_FOUND` when the key is absent. The callback may access the mapped value but must leave the map structure intact.
+  `remove_transactional(key)` preserves the original map if allocating storage or copying a retained entry fails. Successful non-tail removal may invalidate all borrowed pointers. An optional nonthrowing transfer callback runs after staging to retain state that copying omits. An optional nonthrowing predicate can certify that both destroying and copying each shifted value cannot fail, allowing removal in place.
 - `ft_unordered_map<Key, MappedType>` - Hash map with buckets, iterators, insert/erase/find, `operator[]`, mapped proxy support, size/bucket count, lifecycle, error accessors, and optional thread safety. Public helper types include `ft_pair`, `iterator`, `const_iterator`, and `mapped_proxy`.
 - `ft_set<ValueType>` - Set container with insert/erase/find/contains style operations, size/empty/clear, lifecycle, and optional thread safety.
 - `ft_trie<ValueType>` - Prefix tree with insert/find/remove/prefix traversal style operations. `node_value` stores trie node payload state.

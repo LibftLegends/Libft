@@ -95,7 +95,10 @@ static void *game_chunk_snapshot_reader(void *argument)
         else
         {
             revision = snapshot.get_revision();
-            if (revision == 0U || (block_id != 1U && block_id != 2U))
+            uint32_t expected = GAME_VOXEL_AIR_BLOCK;
+            if (revision != 0U)
+                expected = static_cast<uint32_t>((revision - 1U) & 1U) + 1U;
+            if (block_id != expected)
                 state->failures->fetch_add(1);
         }
         index += 1;

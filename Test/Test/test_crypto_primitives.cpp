@@ -798,7 +798,7 @@ FT_TEST(test_crypto_aead_allocation_failure_clears_output)
     return (1);
 }
 
-FT_TEST(test_crypto_aead_authentication_allocation_failure_is_transactional)
+FT_TEST(test_crypto_aead_seal_needs_only_the_ciphertext_allocation)
 {
     const uint8_t key[32] = {0U};
     const uint8_t nonce[12] = {0U};
@@ -816,11 +816,12 @@ FT_TEST(test_crypto_aead_authentication_allocation_failure_is_transactional)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         test_cma_failure_controller_fail_after(controller,
             TEST_CMA_FAILURE_ALLOCATE, 1U));
-    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, crypto_chacha20_poly1305_seal(key, nonce,
-        ft_nullptr, 0U, plaintext, sizeof(plaintext), ciphertext, tag));
-    FT_ASSERT_EQ(0U, ciphertext.size());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        test_cma_failure_controller_end(controller));
+    const int32_t seal_result = crypto_chacha20_poly1305_seal(key, nonce,
+        ft_nullptr, 0U, plaintext, sizeof(plaintext), ciphertext, tag);
+    const int32_t cleanup_result = test_cma_failure_controller_end(controller);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cleanup_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, seal_result);
+    FT_ASSERT_EQ(sizeof(plaintext), ciphertext.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ciphertext.destroy());
     return (1);
 }

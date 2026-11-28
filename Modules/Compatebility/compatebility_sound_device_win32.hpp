@@ -15,18 +15,32 @@
 
 class ft_sound_device_win32 : public ft_sound_device
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         HWAVEOUT                _wave_out;
-        WAVEHDR                 _headers[2];
+        WAVEHDR                 *_headers;
         uint8_t                 *_buffer;
-        int32_t                 _buffer_size;
-        ft_sound_spec           _spec;
-        const ft_sound_clip     *_current_clip;
+        DWORD                   _buffer_capacity;
+        uint32_t                _prepared_headers;
+        ft_bool                 _queued[2];
+        HANDLE                  _completion_event;
+        HANDLE                  _stop_event;
+        HANDLE                  _worker;
+        SRWLOCK                 _playback_lock;
+        ft_bool                 _closing;
+        const uint8_t           *_samples;
+        ft_size_t               _sample_size;
         ft_size_t               _playback_pos;
 
-        static void CALLBACK wave_out_proc(HWAVEOUT wave_out,
-            UINT message, DWORD_PTR instance, DWORD_PTR parameter_one,
-            DWORD_PTR parameter_two);
+        static DWORD WINAPI playback_worker(void *argument);
+        int32_t open_device(const ft_sound_spec &spec, DWORD buffer_capacity);
+        void refill_completed_buffers(void);
+        void submit_buffer(uint32_t index);
+        ft_bool reset_playback(void);
+        void release_device(void);
 
     public:
         ft_sound_device_win32(void);

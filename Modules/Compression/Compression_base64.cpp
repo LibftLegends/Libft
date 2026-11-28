@@ -43,7 +43,7 @@ ft_bool compression_base64_encode_into(const uint8_t *input_buffer, ft_size_t in
     char *output, ft_size_t output_capacity) noexcept
 {
     if (input_buffer == ft_nullptr || output == ft_nullptr
-        || input_size > (static_cast<ft_size_t>(SIZE_MAX) / 4U) * 3U)
+        || input_size > (SIZE_MAX / 4U) * 3U)
         return (FT_FALSE);
     const ft_size_t output_length = ((input_size + 2U) / 3U) * 4U;
     if (output_length >= output_capacity)

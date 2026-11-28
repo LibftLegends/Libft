@@ -205,6 +205,29 @@ FT_TEST(test_ft_putfloat_fd_matches_snprintf)
     return (1);
 }
 
+FT_TEST(test_ft_putfloat_fd_precision_exceeds_stack_buffer)
+{
+    char expected[512];
+    char buffer[512];
+    constexpr int32_t precision = 300;
+    const int32_t expected_length = std::snprintf(expected, sizeof(expected),
+        "%.*f", precision, -1.25);
+    int32_t pipe_fds[2];
+    FT_ASSERT(expected_length > 256 && expected_length < static_cast<int32_t>(sizeof(expected)));
+    FT_ASSERT(create_pipe(pipe_fds));
+    ft_size_t write_count = 0;
+    ft_putfloat_fd(-1.25, pipe_fds[1], &write_count, precision);
+    FT_ASSERT(close_pipe_end(pipe_fds[1]));
+    ssize_t bytes_read;
+    FT_ASSERT(read_pipe_into_buffer(pipe_fds[0], buffer, sizeof(buffer) - 1U, &bytes_read));
+    FT_ASSERT(close_pipe_end(pipe_fds[0]));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(expected_length), write_count);
+    FT_ASSERT_EQ(static_cast<ssize_t>(expected_length), bytes_read);
+    buffer[bytes_read] = '\0';
+    FT_ASSERT_EQ(0, ft_strcmp(buffer, expected));
+    return (1);
+}
+
 FT_TEST(test_ft_putgeneral_fd_uppercase)
 {
     int pipe_fds[2];

@@ -719,27 +719,52 @@ int32_t ft_websocket_server::run_once(int32_t &client_fd, ft_string &message)
 int32_t ft_websocket_server::send_text(int32_t client_fd, const ft_string &message)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_websocket_server::send_text");
-    if (client_fd < 0 || pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+    if (client_fd < 0)
         return (FT_ERR_INVALID_OPERATION);
-    int32_t send_result;
-    if (this->connection_supports_permessage_deflate_locked(client_fd))
+    return (this->send_text_many(&client_fd, 1U, message));
+}
+
+int32_t ft_websocket_server::send_text_many(const int32_t *client_descriptors,
+    ft_size_t count, const ft_string &message)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_websocket_server::send_text_many");
+    if (count == 0U)
+        return (FT_ERR_SUCCESS);
+    if (client_descriptors == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_OPERATION);
+
+    ft_string compressed_payload;
+    ft_size_t client_index = 0U;
+    int32_t result = FT_ERR_SUCCESS;
+    while (client_index < count && result == FT_ERR_SUCCESS)
     {
-        ft_string compressed_payload;
-        const int32_t initialise_error = compressed_payload.initialize();
-        if (initialise_error != FT_ERR_SUCCESS)
-            send_result = initialise_error;
-        else if (websocket_permessage_deflate_deflate(message, compressed_payload) != FT_ERR_SUCCESS)
-            send_result = FT_ERR_INVALID_OPERATION;
+        const int32_t client_fd = client_descriptors[client_index];
+        if (client_fd < 0)
+            result = FT_ERR_INVALID_OPERATION;
+        else if (this->connection_supports_permessage_deflate_locked(client_fd))
+        {
+            // All negotiated connections use server_no_context_takeover.
+            if (!compressed_payload.is_initialised())
+            {
+                result = compressed_payload.initialize();
+                if (result == FT_ERR_SUCCESS && websocket_permessage_deflate_deflate(
+                        message, compressed_payload) != FT_ERR_SUCCESS)
+                    result = FT_ERR_INVALID_OPERATION;
+            }
+            if (result == FT_ERR_SUCCESS)
+                result = websocket_send_frame(client_fd, 0xC1U,
+                    reinterpret_cast<const unsigned char *>(compressed_payload.c_str()),
+                    compressed_payload.size() - WEBSOCKET_DEFLATE_TAIL_SIZE, ft_nullptr);
+        }
         else
-            send_result = websocket_send_frame(client_fd, 0xC1U,
-                reinterpret_cast<const unsigned char *>(compressed_payload.c_str()),
-                compressed_payload.size() - WEBSOCKET_DEFLATE_TAIL_SIZE, ft_nullptr);
+            result = websocket_send_frame(client_fd, 0x81U,
+                reinterpret_cast<const unsigned char *>(message.c_str()), message.size(), ft_nullptr);
+        ++client_index;
     }
-    else
-        send_result = websocket_send_frame(client_fd, 0x81U,
-            reinterpret_cast<const unsigned char *>(message.c_str()), message.size(), ft_nullptr);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (send_result);
+    return (result);
 }
 
 int32_t ft_websocket_server::get_port(uint16_t &port_value) const

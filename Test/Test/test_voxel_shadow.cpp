@@ -67,4 +67,20 @@ FT_TEST(test_voxel_shadow_height_fade_is_bounded)
     return (1);
 }
 
+FT_TEST(test_voxel_shadow_stops_at_lowest_representable_receiver)
+{
+    voxel_shadow_test_context context = {INT32_MIN, INT32_MAX, 4, -2};
+    int32_t receiver_y = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_shadow_find_receiver(4, INT32_MIN + 1, -2, 3,
+        voxel_shadow_test_lookup, &context, &receiver_y));
+    FT_ASSERT_EQ(INT32_MIN, receiver_y);
+    context.solid_y_near = 0;
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, voxel_shadow_find_receiver(4, INT32_MIN + 1, -2, 3,
+        voxel_shadow_test_lookup, &context, &receiver_y));
+    FT_ASSERT_EQ(INT32_MIN, receiver_y);
+    FT_ASSERT_EQ(0.5, voxel_shadow_height_fade(
+        static_cast<double>(INT32_MAX) + 5.0, INT32_MAX, 8.0));
+    return (1);
+}
+
 #endif

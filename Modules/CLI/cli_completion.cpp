@@ -1,20 +1,5 @@
 #include "cli_internal.hpp"
-
-static ft_size_t cli_strlen(const char *string)
-{
-    ft_size_t length;
-
-    if (string == ft_nullptr)
-    {
-        return (0);
-    }
-    length = 0;
-    while (string[length] != '\0')
-    {
-        length++;
-    }
-    return (length);
-}
+#include "../Basic/basic.hpp"
 
 static int32_t cli_append_identifier_fragment(char *buffer, ft_size_t buffer_size,
     ft_size_t *used, const char *string)
@@ -202,76 +187,43 @@ static int32_t cli_append_case_entry(const char *path, const cli_command *comman
 }
 
 static int32_t cli_append_case_entries_recursive(const cli_command *command,
-    const char *path_prefix, char *buffer, ft_size_t buffer_size, ft_size_t *used)
+    const char *path_prefix, ft_size_t prefix_length, char *buffer,
+    ft_size_t buffer_size, ft_size_t *used)
 {
-    ft_size_t index;
-    int32_t error_code;
-    char child_path[256];
-    ft_size_t child_length;
-    ft_size_t prefix_length;
-    ft_size_t name_length;
-    ft_size_t name_index;
-
     if (command == ft_nullptr || used == ft_nullptr)
-    {
         return (FT_ERR_INVALID_POINTER);
-    }
-    if (path_prefix == ft_nullptr)
-    {
-        error_code = cli_append_case_entry("", command, buffer, buffer_size, used);
-    }
-    else
-    {
-        error_code = cli_append_case_entry(path_prefix, command, buffer,
-                buffer_size, used);
-    }
-    if (error_code != FT_ERR_SUCCESS)
-    {
+    int32_t error_code = cli_append_case_entry(path_prefix, command, buffer,
+        buffer_size, used);
+    if (error_code != FT_ERR_SUCCESS || command->subcommand_count == 0)
         return (error_code);
+
+    char child_path[256];
+    ft_size_t name_offset = 0;
+    if (prefix_length != 0)
+    {
+        if (prefix_length >= sizeof(child_path) - 1)
+            return (FT_ERR_OUT_OF_RANGE);
+        ft_memcpy(child_path, path_prefix, prefix_length);
+        child_path[prefix_length] = '.';
+        name_offset = prefix_length + 1;
     }
-    index = 0;
+    const ft_size_t name_capacity = sizeof(child_path) - name_offset;
+    ft_size_t index = 0;
     while (index < command->subcommand_count)
     {
-        child_length = 0;
-        if (path_prefix != ft_nullptr && path_prefix[0] != '\0')
-        {
-            prefix_length = cli_strlen(path_prefix);
-            if (prefix_length + 1 >= sizeof(child_path))
-            {
-                return (FT_ERR_OUT_OF_RANGE);
-            }
-            while (child_length < prefix_length)
-            {
-                child_path[child_length] = path_prefix[child_length];
-                child_length++;
-            }
-            child_path[child_length] = '.';
-            child_length++;
-        }
-        if (command->subcommands[index].name == ft_nullptr)
-        {
+        const cli_command *child = command->subcommands + index;
+        const char *name = child->name;
+        if (name == ft_nullptr)
             return (FT_ERR_INVALID_ARGUMENT);
-        }
-        name_length = cli_strlen(command->subcommands[index].name);
-        if (child_length + name_length + 1 > sizeof(child_path))
-        {
+        const ft_size_t name_length = ft_strnlen(name, name_capacity);
+        if (name_length == name_capacity)
             return (FT_ERR_OUT_OF_RANGE);
-        }
-        name_index = 0;
-        while (name_index < name_length)
-        {
-            child_path[child_length + name_index]
-                = command->subcommands[index].name[name_index];
-            name_index++;
-        }
-        child_path[child_length + name_index] = '\0';
-        error_code = cli_append_case_entries_recursive(command->subcommands + index,
-                child_path, buffer, buffer_size, used);
+        ft_memcpy(child_path + name_offset, name, name_length + 1);
+        error_code = cli_append_case_entries_recursive(child, child_path,
+            name_offset + name_length, buffer, buffer_size, used);
         if (error_code != FT_ERR_SUCCESS)
-        {
             return (error_code);
-        }
-        index++;
+        ++index;
     }
     return (FT_ERR_SUCCESS);
 }
@@ -321,7 +273,7 @@ int32_t cli_generate_completion_script(const cli_command *command,
     {
         return (error_code);
     }
-    error_code = cli_append_case_entries_recursive(command, "", buffer, buffer_size,
+    error_code = cli_append_case_entries_recursive(command, "", 0, buffer, buffer_size,
             &used);
     if (error_code != FT_ERR_SUCCESS)
     {

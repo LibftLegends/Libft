@@ -122,5 +122,44 @@ FT_TEST(test_cross_process_descriptor_wire_decode_is_transactional)
     result = cmp_cross_process_decode_wire(wire, sizeof(wire), message);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, result);
     FT_ASSERT(std::memcmp(&message, &original, sizeof(message)) == 0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_cross_process_encode_wire(source, wire, sizeof(wire)));
+    std::memset(wire + sizeof(wire) - sizeof(source.shared_memory_name), 'x',
+        sizeof(source.shared_memory_name));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, cmp_cross_process_decode_wire(wire, sizeof(wire), message));
+    FT_ASSERT(std::memcmp(&message, &original, sizeof(message)) == 0);
+    return (1);
+}
+
+FT_TEST(test_cross_process_wire_fills_frame_and_supports_overlapping_output)
+{
+    struct wire_storage
+    {
+        cross_process_message message;
+        uint8_t trailing[16];
+    };
+    wire_storage storage;
+    cross_process_message source = {0x0102030405060708U, 64U, 128U, 192U, 256U, {}};
+    std::memset(source.shared_memory_name + 1, 'x', sizeof(source.shared_memory_name) - 1);
+    storage.message = source;
+    auto *wire = reinterpret_cast<uint8_t *>(&storage);
+    wire[CMP_CROSS_PROCESS_WIRE_SIZE] = 0xA5U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_cross_process_encode_wire(storage.message, wire,
+        sizeof(storage)));
+    FT_ASSERT_EQ(0x43U, wire[0]);
+    FT_ASSERT_EQ(0x01U, wire[5]);
+    FT_ASSERT_EQ(0U, wire[6]);
+    FT_ASSERT_EQ(0U, wire[7]);
+    FT_ASSERT_EQ(0x01U, wire[8]);
+    FT_ASSERT_EQ(0x08U, wire[15]);
+    FT_ASSERT_EQ(0xA5U, wire[CMP_CROSS_PROCESS_WIRE_SIZE]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_cross_process_decode_wire(wire, CMP_CROSS_PROCESS_WIRE_SIZE,
+        storage.message));
+    FT_ASSERT_EQ(source.stack_base_address, storage.message.stack_base_address);
+    FT_ASSERT_EQ(source.remote_memory_address, storage.message.remote_memory_address);
+    FT_ASSERT_EQ(source.remote_memory_size, storage.message.remote_memory_size);
+    FT_ASSERT_EQ(source.shared_mutex_address, storage.message.shared_mutex_address);
+    FT_ASSERT_EQ(source.error_memory_address, storage.message.error_memory_address);
+    FT_ASSERT(std::memcmp(source.shared_memory_name, storage.message.shared_memory_name,
+        sizeof(source.shared_memory_name)) == 0);
     return (1);
 }

@@ -3,12 +3,14 @@
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <thread>
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -378,5 +380,76 @@ FT_TEST(test_pf_disable_thread_safety_without_enable_is_safe)
     pf_disable_thread_safety();
     FT_ASSERT_EQ(0, pf_register_custom_specifier('Z', pf_custom_ok_handler, context));
     FT_ASSERT_EQ(0, pf_unregister_custom_specifier('Z'));
+    return (1);
+}
+
+static int32_t pf_custom_marker_first(va_list *, ft_string &output, void *context)
+{
+    if (context == ft_nullptr || *static_cast<const char *>(context) != 'A')
+        return (FT_ERR_INVALID_STATE);
+    return (output.append('A'));
+}
+
+static int32_t pf_custom_marker_second(va_list *, ft_string &output, void *context)
+{
+    if (context == ft_nullptr || *static_cast<const char *>(context) != 'B')
+        return (FT_ERR_INVALID_STATE);
+    return (output.append('B'));
+}
+
+FT_TEST(test_pf_custom_registry_keeps_handler_context_pairs_during_replacement)
+{
+    char first = 'A';
+    char second = 'B';
+    std::atomic<ft_bool> success{FT_TRUE};
+    std::atomic<ft_bool> ready{FT_FALSE};
+    std::thread updater([&first, &second, &ready, &success]()
+    {
+        while (ready.load(std::memory_order_acquire) == FT_FALSE)
+            std::this_thread::yield();
+        uint32_t iteration = 0U;
+        while (iteration < 600U)
+        {
+            int32_t result;
+            if (iteration % 2U == 0U)
+                result = pf_register_custom_specifier('Q', pf_custom_marker_first, &first);
+            else
+                result = pf_register_custom_specifier('Q', pf_custom_marker_second, &second);
+            if (result != FT_ERR_SUCCESS || pf_unregister_custom_specifier('Q') != FT_ERR_SUCCESS)
+                success.store(FT_FALSE, std::memory_order_relaxed);
+            iteration += 1U;
+        }
+        return ;
+    });
+
+    ready.store(FT_TRUE, std::memory_order_release);
+    uint32_t iteration = 0U;
+    while (iteration < 1200U)
+    {
+        char output[4];
+        const int32_t length = pf_vsnprintf_wrapper(output, sizeof(output), "%Q");
+        if ((length != 1 || (output[0] != 'A' && output[0] != 'B'))
+            && (length != 2 || ft_strcmp(output, "%Q") != 0))
+            success.store(FT_FALSE, std::memory_order_relaxed);
+        iteration += 1U;
+    }
+    updater.join();
+    (void)pf_unregister_custom_specifier('Q');
+    FT_ASSERT_EQ(FT_TRUE, success.load(std::memory_order_relaxed));
+    return (1);
+}
+
+FT_TEST(test_pf_custom_registry_overrides_a_native_sequential_specifier)
+{
+    char marker = 'A';
+    char output[8];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, pf_register_custom_specifier('d', pf_custom_marker_first, &marker));
+    const int32_t custom_count = pf_vsnprintf_wrapper(output, sizeof(output), "%d", 42);
+    const char custom_value = output[0];
+    (void)pf_unregister_custom_specifier('d');
+    FT_ASSERT_EQ(1, custom_count);
+    FT_ASSERT_EQ('A', custom_value);
+    FT_ASSERT_EQ(2, pf_vsnprintf_wrapper(output, sizeof(output), "%d", 42));
+    FT_ASSERT_EQ(0, ft_strcmp(output, "42"));
     return (1);
 }

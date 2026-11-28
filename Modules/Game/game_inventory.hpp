@@ -19,6 +19,8 @@
 #include <vector>
 #include <map>
 
+struct json_group;
+
 struct game_inventory_item_snapshot
 {
 	int32_t slot;
@@ -98,6 +100,8 @@ class game_inventory
         };
         static const ft_size_t TRANSFER_CACHE_LIMIT = 4096U;
         friend class game_crafting;
+        friend class game_character;
+        friend int32_t deserialize_inventory(game_inventory &inventory, json_group *group);
         ft_map<int32_t, ft_sharedptr<game_item> > _items;
         std::map<std::pair<uint64_t, uint64_t>, TransferCacheEntry> _transfer_cache;
         std::map<std::pair<uint64_t, uint64_t>, QuantityRemoveCacheEntry>
@@ -121,6 +125,10 @@ class game_inventory
             uint64_t expected_revision, ft_bool check_revision,
             int32_t *inserted_slot_out) noexcept;
         int32_t add_item_in_place(const ft_sharedptr<game_item> &item) noexcept;
+        int32_t restore_serialized_item(const ft_sharedptr<game_item> &item) noexcept;
+        int32_t count_by_item_field(int32_t game_item::*field, int32_t value) const noexcept;
+        int32_t erase_slot_unlocked(int32_t slot, uint64_t instance_id) noexcept;
+        int32_t remove_quantity_in_place(int32_t item_id, int32_t quantity) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
         int32_t bump_revision() noexcept;
@@ -150,6 +158,7 @@ class game_inventory
         const ft_map<int32_t, ft_sharedptr<game_item> > &get_items() const noexcept;
         #endif
 		/* Produces value-only records under the inventory and map locks.
+		 * Each record captures its item under one item lock.
 		 * Entries remain valid after the inventory changes. */
 		int32_t get_snapshot(
 			std::vector<game_inventory_item_snapshot> &items_out,

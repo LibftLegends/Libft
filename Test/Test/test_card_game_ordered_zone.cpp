@@ -84,3 +84,73 @@ FT_TEST(test_card_game_ordered_zone_shuffle_is_deterministic_and_seeded)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.destroy());
     return (1);
 }
+
+FT_TEST(test_card_game_ordered_zone_wraps_without_changing_entry_order)
+{
+    card_game_ordered_zone source;
+    card_game_ordered_zone moved;
+    card_game_ordered_zone reference;
+    card_game_zone_entry entry{};
+    constexpr uint32_t ROTATIONS = FT_CARD_GAME_MAX_CARDS - 2U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(8U, FT_TRUE));
+    uint32_t index = 1U;
+    while (index <= 8U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.push_bottom_entry({index, index + 1000U}));
+        ++index;
+    }
+    index = 1U;
+    while (index <= ROTATIONS)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.pop_top_entry(&entry));
+        FT_ASSERT_EQ(index, entry.instance_id);
+        FT_ASSERT_EQ(index + 1000U, entry.card_id);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            source.push_bottom_entry({index + 8U, index + 1008U}));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.pop_bottom_entry(&entry));
+    FT_ASSERT_EQ(ROTATIONS + 8U, entry.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.insert_entry_at(1U, {999U, 9U}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.remove_entry(999U, &entry));
+    FT_ASSERT_EQ(9U, entry.card_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.insert_entry_at(3U, {ROTATIONS + 1U, 9U}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.remove_entry(ROTATIONS + 1U, &entry));
+    FT_ASSERT_EQ(ROTATIONS + 1001U, entry.card_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(source));
+    FT_ASSERT_EQ(0U, source.size());
+    FT_ASSERT_EQ(8U, moved.capacity());
+    FT_ASSERT_EQ(7U, moved.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.initialize(8U, FT_TRUE));
+    const uint32_t expected_ids[] = {
+        ROTATIONS + 2U, ROTATIONS + 3U, ROTATIONS + 1U, ROTATIONS + 4U,
+        ROTATIONS + 5U, ROTATIONS + 6U, ROTATIONS + 7U
+    };
+    index = 0U;
+    while (index < moved.size())
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.get_entry(index, &entry));
+        FT_ASSERT_EQ(expected_ids[index], entry.instance_id);
+        if (index == 2U)
+            FT_ASSERT_EQ(9U, entry.card_id);
+        else
+            FT_ASSERT_EQ(entry.instance_id + 1000U, entry.card_id);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.push_bottom_entry(entry));
+        ++index;
+    }
+    uint64_t moved_seed = 1234567U;
+    uint64_t reference_seed = moved_seed;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.shuffle(&moved_seed));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.shuffle(&reference_seed));
+    FT_ASSERT_EQ(reference_seed, moved_seed);
+    while (moved.size() != 0U)
+    {
+        card_game_zone_entry expected{};
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pop_top_entry(&entry));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.pop_top_entry(&expected));
+        FT_ASSERT_EQ(expected.instance_id, entry.instance_id);
+        FT_ASSERT_EQ(expected.card_id, entry.card_id);
+    }
+    return (1);
+}

@@ -136,6 +136,48 @@ FT_TEST(test_game_script_bridge_move_disables_destination_thread_safety)
     return (1);
 }
 
+FT_TEST(test_game_script_bridge_move_rebinds_active_callbacks_and_keeps_vm_limit)
+{
+    game_script_bridge source;
+    game_script_bridge destination;
+    ft_string removed_name;
+    ft_string retained_name;
+    ft_string script;
+    uint32_t callback_calls = 0U;
+    ft_function<int32_t(game_script_context &, const ft_vector<ft_string> &)> callback(
+        [&callback_calls](game_script_context &, const ft_vector<ft_string> &arguments) noexcept
+        {
+            if (arguments.size() != 1U || arguments[0] != "12")
+                return (FT_ERR_INVALID_ARGUMENT);
+            ++callback_calls;
+            return (FT_ERR_SUCCESS);
+        });
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, removed_name.initialize("removed"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, retained_name.initialize("retained"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_function(removed_name, callback));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_function(retained_name, callback));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.remove_function(removed_name));
+    source.set_max_operations(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(1U, destination.get_callback_count());
+    uint32_t native_id;
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, destination._custom_engine.find_native("removed", 7U, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination._custom_engine.find_native("retained", 8U, &native_id));
+    FT_ASSERT_EQ(0U, native_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize("return 1 + 2;"));
+    FT_ASSERT_EQ(FT_ERR_FULL,
+        destination.execute_custom_with_user_data(script, ft_nullptr, ft_nullptr));
+    destination.set_max_operations(16);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.assign("retained(12)", sizeof("retained(12)") - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.execute_custom_with_user_data(script, ft_nullptr, ft_nullptr));
+    FT_ASSERT_EQ(1U, callback_calls);
+    return (1);
+}
+
 FT_TEST(test_game_script_bridge_move_cleanup_is_idempotent)
 {
     game_script_bridge source;

@@ -12,9 +12,6 @@ static ft_bool chunk_mesh_intersect_chunk_box(const geometry_frustum &frustum,
     double maximum_x, double maximum_y, double maximum_z) noexcept
 {
     int32_t plane_index;
-    double normal_x;
-    double normal_y;
-    double normal_z;
     double vertex_x;
     double vertex_y;
     double vertex_z;
@@ -23,9 +20,11 @@ static ft_bool chunk_mesh_intersect_chunk_box(const geometry_frustum &frustum,
     plane_index = 0;
     while (plane_index < 6)
     {
-        normal_x = frustum.planes[plane_index].normal.get_x();
-        normal_y = frustum.planes[plane_index].normal.get_y();
-        normal_z = frustum.planes[plane_index].normal.get_z();
+        double normal_x = 0.0;
+        double normal_y = 0.0;
+        double normal_z = 0.0;
+        (void)frustum.planes[plane_index].normal.get_components(
+            normal_x, normal_y, normal_z);
         vertex_x = minimum_x;
         vertex_y = minimum_y;
         vertex_z = minimum_z;

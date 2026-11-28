@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Math/math.hpp"
+#include <cmath>
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <limits>
 
@@ -115,5 +116,14 @@ FT_TEST(test_math_acos_recovers_after_invalid_input)
     expected = 3.14159265358979323846 * 0.25;
     result = math_acos(0.7071067811865475);
     FT_ASSERT(math_fabs(result - expected) <= 1e-12);
+    return (1);
+}
+
+FT_TEST(test_math_acos_resolves_values_near_endpoints)
+{
+    constexpr double INPUT = 1.0 - 1e-12;
+
+    FT_ASSERT(math_fabs(math_acos(INPUT) - std::acos(INPUT)) < 1e-12);
+    FT_ASSERT(math_fabs(math_acos(-INPUT) - std::acos(-INPUT)) < 1e-12);
     return (1);
 }

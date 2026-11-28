@@ -111,14 +111,22 @@ int32_t ft_socket_handle::initialize(const ft_socket_handle &other) noexcept
         return (FT_ERR_SUCCESS);
     }
     if (other._socket_fd >= 0)
+        return (this->initialize_duplicate(other._socket_fd));
+    return (this->initialize());
+}
+
+int32_t ft_socket_handle::initialize_duplicate(int32_t descriptor) noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        errno_abort_lifecycle(this->_initialised_state,
+            "ft_socket_handle::initialize_duplicate", "already initialised");
+    int32_t error = FT_ERR_INVALID_HANDLE;
+    if (descriptor >= 0)
+        error = socket_handle_duplicate(descriptor, this->_socket_fd);
+    if (error != FT_ERR_SUCCESS)
     {
-        const int32_t duplicate_error = socket_handle_duplicate(other._socket_fd,
-            this->_socket_fd);
-        if (duplicate_error != FT_ERR_SUCCESS)
-        {
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (duplicate_error);
-        }
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (error);
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);

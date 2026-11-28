@@ -5,6 +5,7 @@
 #include "../../Modules/Crypto/crypto_poly1305.hpp"
 #include "../../Modules/Crypto/crypto_session.hpp"
 #include "../../Modules/Crypto/crypto_x25519.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -87,6 +88,21 @@ FT_TEST(test_crypto_hkdf_boundaries_and_invalid_arguments)
     return (1);
 }
 
+FT_TEST(test_crypto_hkdf_expand_preserves_key_when_output_overlaps)
+{
+    const uint8_t key[32] = {0x82U, 0x37U};
+    const uint8_t info[] = {7U, 5U, 3U, 2U};
+    uint8_t separate_output[97];
+    uint8_t overlapping_output[sizeof(separate_output)];
+    ft_memcpy(overlapping_output, key, sizeof(key));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hkdf_sha256_expand(key, info, sizeof(info),
+        separate_output, sizeof(separate_output)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hkdf_sha256_expand(overlapping_output,
+        info, sizeof(info), overlapping_output, sizeof(overlapping_output)));
+    FT_ASSERT_EQ(0, ft_memcmp(separate_output, overlapping_output, sizeof(separate_output)));
+    return (1);
+}
+
 FT_TEST(test_crypto_chacha20_boundary_arguments_and_counter_wrap)
 {
     const uint8_t key[32] = {0U};
@@ -105,6 +121,44 @@ FT_TEST(test_crypto_chacha20_boundary_arguments_and_counter_wrap)
         0xffffffffU, input, 65U, output));
     FT_ASSERT_EQ(0U, output.size());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, output.destroy());
+    return (1);
+}
+
+FT_TEST(test_crypto_chacha20_reuses_output_and_preserves_aliased_inputs)
+{
+    const uint8_t key[32] = {0x93U};
+    const uint8_t nonce[12] = {0x17U};
+    const uint8_t input[128] = {0xA0U, 0x61U};
+    ft_vector<uint8_t> expected;
+    ft_vector<uint8_t> output;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_xor(key, nonce,
+        1U, input, sizeof(input), expected));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize());
+    output.reserve(sizeof(key) + sizeof(nonce) + sizeof(input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.get_error());
+    const uint8_t *initial_buffer = output.begin();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t result = crypto_chacha20_xor(key, nonce, 1U,
+        input, sizeof(input), output);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(initial_buffer, output.begin());
+    FT_ASSERT_EQ(sizeof(input), output.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected.begin(), output.begin(), output.size()));
+
+    output.resize(sizeof(key) + sizeof(nonce) + sizeof(input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.get_error());
+    uint8_t *overlapping_key = output.begin();
+    uint8_t *overlapping_nonce = overlapping_key + sizeof(key);
+    uint8_t *overlapping_input = overlapping_nonce + sizeof(nonce);
+    ft_memcpy(overlapping_key, key, sizeof(key));
+    ft_memcpy(overlapping_nonce, nonce, sizeof(nonce));
+    ft_memcpy(overlapping_input, input, sizeof(input));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_chacha20_xor(overlapping_key,
+        overlapping_nonce, 1U, overlapping_input, sizeof(input), output));
+    FT_ASSERT_EQ(sizeof(input), output.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected.begin(), output.begin(), output.size()));
     return (1);
 }
 

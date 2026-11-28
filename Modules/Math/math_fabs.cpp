@@ -1,15 +1,10 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
+#include "math_float_bits.hpp"
 
 double math_fabs(double number)
 {
-    if (math_signbit(number))
-    {
-        return (-number);
-    }
-    return (number);
+    const uint64_t magnitude = math_double_magnitude_bits(math_double_bits(number));
+    if (magnitude > MATH_DOUBLE_INFINITY_BITS)
+        return (number);
+    return (math_double_from_bits(magnitude));
 }

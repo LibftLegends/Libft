@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CardGame/card_game_deck_code.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 static void card_game_deck_code_fill(card_game_deck *deck) noexcept
@@ -39,7 +40,11 @@ FT_TEST(test_card_game_deck_code_round_trips_canonically)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reordered.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, zone_encoded.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_deck_encode(first, &encoded));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_deck_decode(encoded, &second));
+    FT_ASSERT_EQ(0, ft_strcmp(encoded.c_str(), "AQIECQECAQIUCwH0AzcDAwFkAAJUxT7M"));
+    cma_set_alloc_limit(1);
+    const int32_t decode_status = card_game_deck_decode(encoded, &second);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, decode_status);
     FT_ASSERT_EQ(first.profile_id, second.profile_id);
     FT_ASSERT_EQ(first.zone_count, second.zone_count);
     FT_ASSERT_EQ(20U, second.zones[0].entries[0].definition_id);

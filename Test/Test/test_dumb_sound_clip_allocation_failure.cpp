@@ -41,7 +41,17 @@ static int32_t dumb_prepare_sparse_wav_file(char *path_buffer, ft_size_t path_bu
             path_buffer_size, path_buffer);
     if (file_descriptor < 0)
         return (0);
-    truncate_status = ftruncate(file_descriptor, 16 * 1024 * 1024);
+    constexpr uint8_t PCM_HEADER[] = {
+        'R', 'I', 'F', 'F', 36, 0, 0, 1, 'W', 'A', 'V', 'E',
+        'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+        68, 172, 0, 0, 136, 88, 1, 0, 2, 0, 16, 0,
+        'd', 'a', 't', 'a', 0, 0, 0, 1
+    };
+    truncate_status = -1;
+    const int64_t written = write(file_descriptor, PCM_HEADER, sizeof(PCM_HEADER));
+    if (written == static_cast<int64_t>(sizeof(PCM_HEADER)))
+        truncate_status = ftruncate(file_descriptor,
+            static_cast<off_t>(16 * 1024 * 1024 + sizeof(PCM_HEADER)));
     close(file_descriptor);
     if (truncate_status != 0)
     {
@@ -78,7 +88,7 @@ static int32_t dumb_expect_load_wav_allocation_failure_with_temp_limit(void)
         result_code = sound_clip_instance.load_wav(temporary_path);
         cma_set_alloc_limit(0);
         (void)sound_clip_instance.destroy();
-        if (result_code == FT_ERR_IO)
+        if (result_code == FT_ERR_NO_MEMORY)
             test_success = 1;
     }
     if (temporary_path[0] != '\0')

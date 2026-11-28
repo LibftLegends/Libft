@@ -8,6 +8,7 @@
 #include "../../Modules/Buffer/byte_buffer.hpp"
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 static void voxel_test_set_registration(
     voxel_block_registration &registration, const char *name,
@@ -57,6 +58,9 @@ FT_TEST(test_voxel_builtin_and_runtime_block_ids_are_disjoint)
         FT_ASSERT_EQ(FT_TRUE, voxel_block_is_known(builtin_index));
         builtin_name = voxel_get_block_name(builtin_index);
         FT_ASSERT(builtin_name != ft_nullptr);
+        uint32_t resolved_id;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_find_block_id_by_name(builtin_name, &resolved_id));
+        FT_ASSERT_EQ(builtin_index, resolved_id);
         block_id = 0U;
         while (block_id < builtin_index)
         {
@@ -197,6 +201,53 @@ FT_TEST(test_voxel_duplicate_runtime_names_do_not_consume_ids)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_register_block(registration,
         &second_block_id));
     FT_ASSERT_EQ(first_block_id + 1U, second_block_id);
+    voxel_runtime_reset_for_tests();
+    return (1);
+}
+
+FT_TEST(test_voxel_runtime_block_registration_publishes_only_complete_unique_blocks)
+{
+    voxel_block_registration registration = {};
+    voxel_runtime_reset_for_tests();
+    voxel_test_set_registration(registration, "test:parallel_registration",
+        FT_FALSE, FT_FALSE);
+    registration.asset_paths[VOXEL_BLOCK_ASSET_FACE_WEST] =
+        "Scripting/nonexistent_voxel_texture.asset";
+    constexpr uint32_t UNPUBLISHED_ID = UINT32_MAX;
+    uint32_t failed_id = UNPUBLISHED_ID;
+    FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, voxel_register_block(registration, &failed_id));
+    FT_ASSERT_EQ(UNPUBLISHED_ID, failed_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, voxel_find_block_id_by_name(registration.name, &failed_id));
+
+    voxel_test_set_registration(registration, "test:parallel_registration",
+        FT_FALSE, FT_FALSE);
+    int32_t first_result;
+    int32_t second_result;
+    uint32_t first_id = UNPUBLISHED_ID;
+    uint32_t second_id = UNPUBLISHED_ID;
+    std::thread first([&]()
+    {
+        first_result = voxel_register_block(registration, &first_id);
+        return ;
+    });
+    std::thread second([&]()
+    {
+        second_result = voxel_register_block(registration, &second_id);
+        return ;
+    });
+    first.join();
+    second.join();
+    FT_ASSERT((first_result == FT_ERR_SUCCESS && second_result == FT_ERR_ALREADY_EXISTS)
+        || (second_result == FT_ERR_SUCCESS && first_result == FT_ERR_ALREADY_EXISTS));
+    FT_ASSERT((first_id == VOXEL_BUILTIN_BLOCK_COUNT && second_id == UNPUBLISHED_ID)
+        || (second_id == VOXEL_BUILTIN_BLOCK_COUNT && first_id == UNPUBLISHED_ID));
+    uint32_t published_id = UNPUBLISHED_ID;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_find_block_id_by_name(registration.name, &published_id));
+    FT_ASSERT_EQ(static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT), published_id);
+    ft_size_t asset_size = 0U;
+    FT_ASSERT(voxel_get_block_asset_data(published_id, VOXEL_BLOCK_ASSET_FACE_WEST,
+        &asset_size) != ft_nullptr);
+    FT_ASSERT(asset_size > 0U);
     voxel_runtime_reset_for_tests();
     return (1);
 }

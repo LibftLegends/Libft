@@ -77,101 +77,67 @@ static int32_t bmp_calculate_encoded_size(ft_size_t width,
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t bmp_encode_into(const uint8_t *pixels, ft_size_t width,
-    ft_size_t height, uint16_t bit_depth, uint8_t *file_data,
-    ft_size_t file_size) noexcept
+template <ft_size_t InputBytes, ft_size_t OutputBytes>
+static void bmp_reorder_row(uint8_t *destination, const uint8_t *source,
+    ft_size_t width) noexcept
 {
-    ft_size_t row_size;
-    ft_size_t expected_file_size;
-    ft_size_t row_index;
-    int32_t error_code;
+    ft_size_t column = 0U;
+    while (column < width)
+    {
+        destination[0] = source[2];
+        destination[1] = source[1];
+        destination[2] = source[0];
+        if constexpr (OutputBytes == 4U)
+        {
+            if constexpr (InputBytes == 4U)
+                destination[3] = source[3];
+            else
+                destination[3] = 255U;
+        }
+        destination += OutputBytes;
+        source += InputBytes;
+        column += 1U;
+    }
+    return ;
+}
 
-    if (pixels == ft_nullptr || file_data == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    error_code = bmp_calculate_encoded_size(width, height, bit_depth,
-        &expected_file_size, &row_size);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    if (file_size < expected_file_size)
-        return (FT_ERR_OUT_OF_RANGE);
-    ft_memset(file_data, 0, expected_file_size);
+static void bmp_encode_into(const uint8_t *pixels, ft_size_t width,
+    ft_size_t height, uint16_t bit_depth, uint8_t *file_data,
+    ft_size_t file_size, ft_size_t row_size) noexcept
+{
+    ft_memset(file_data, 0, 54U);
     file_data[0] = 'B';
     file_data[1] = 'M';
-    bmp_write_u32(file_data + 2U,
-        static_cast<uint32_t>(expected_file_size));
+    bmp_write_u32(file_data + 2U, static_cast<uint32_t>(file_size));
     bmp_write_u32(file_data + 10U, 54U);
     bmp_write_u32(file_data + 14U, 40U);
     bmp_write_u32(file_data + 18U, static_cast<uint32_t>(width));
     bmp_write_u32(file_data + 22U, static_cast<uint32_t>(height));
     bmp_write_u16(file_data + 26U, 1U);
     bmp_write_u16(file_data + 28U, bit_depth);
-    bmp_write_u32(file_data + 30U, 0U);
-    bmp_write_u32(file_data + 34U,
-        static_cast<uint32_t>(row_size * height));
-    row_index = 0U;
+    bmp_write_u32(file_data + 34U, static_cast<uint32_t>(row_size * height));
+    const ft_size_t rgba_row_size = width * 4U;
+    const ft_size_t rgb_row_size = width * 3U;
+    ft_size_t row_index = 0U;
     while (row_index < height)
     {
-        ft_size_t source_row;
-        ft_size_t column_index;
-        uint8_t *destination_row;
-        const uint8_t *source_row_data;
-
-        source_row = height - 1U - row_index;
-        destination_row = file_data + 54U + row_index * row_size;
-        source_row_data = pixels + source_row * width * 4U;
-        column_index = 0U;
-        while (column_index < width)
+        uint8_t *destination = file_data + 54U + row_index * row_size;
+        const uint8_t *source = pixels + (height - 1U - row_index) * rgba_row_size;
+        if (bit_depth == BMP_BIT_DEPTH_RGBA32)
+            bmp_reorder_row<4U, 4U>(destination, source, width);
+        else
         {
-            const uint8_t *source_pixel;
-            uint8_t *destination_pixel;
-
-            source_pixel = source_row_data + column_index * 4U;
-            destination_pixel = destination_row
-                + column_index * (bit_depth / 8U);
-            destination_pixel[0] = source_pixel[2];
-            destination_pixel[1] = source_pixel[1];
-            destination_pixel[2] = source_pixel[0];
-            if (bit_depth == 32U)
-                destination_pixel[3] = source_pixel[3];
-            column_index += 1U;
+            bmp_reorder_row<4U, 3U>(destination, source, width);
+            ft_size_t padding_index = rgb_row_size;
+            while (padding_index < row_size)
+            {
+                destination[padding_index] = 0U;
+                padding_index += 1U;
+            }
         }
         row_index += 1U;
     }
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t bmp_encode(const uint8_t *pixels, ft_size_t width,
-    ft_size_t height, uint16_t bit_depth, uint8_t **file_data_out,
-    ft_size_t *file_size_out) noexcept
-{
-    ft_size_t row_size;
-    ft_size_t file_size;
-    uint8_t *file_data;
-    int32_t error_code;
-
-    if (pixels == ft_nullptr || file_data_out == ft_nullptr
-        || file_size_out == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    *file_data_out = ft_nullptr;
-    *file_size_out = 0U;
-    error_code = bmp_calculate_encoded_size(width, height, bit_depth,
-        &file_size, &row_size);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    (void)row_size;
-    file_data = new (std::nothrow) uint8_t[file_size];
-    if (file_data == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    error_code = bmp_encode_into(pixels, width, height, bit_depth,
-        file_data, file_size);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        delete[] file_data;
-        return (error_code);
-    }
-    *file_data_out = file_data;
-    *file_size_out = file_size;
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
 static uint8_t bmp_adjust_channel(uint8_t channel, int32_t amount) noexcept
@@ -257,36 +223,19 @@ static int32_t bmp_decode(const uint8_t *file_data, ft_size_t file_size,
     pixels = new (std::nothrow) uint8_t[pixel_size];
     if (pixels == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
+    const ft_size_t rgba_row_size = width * 4U;
     row_index = 0U;
     while (row_index < height)
     {
-        ft_size_t source_row;
-        ft_size_t column_index;
-        const uint8_t *source;
-
-        if (height_signed < 0)
-            source_row = row_index;
-        else
+        ft_size_t source_row = row_index;
+        if (height_signed > 0)
             source_row = height - 1U - row_index;
-        source = file_data + pixel_offset + source_row * row_size;
-        column_index = 0U;
-        while (column_index < width)
-        {
-            const uint8_t *source_pixel;
-            uint8_t *destination_pixel;
-
-            source_pixel = source + column_index * bytes_per_pixel;
-            destination_pixel = pixels + (row_index * width
-                + column_index) * 4U;
-            destination_pixel[0] = source_pixel[2];
-            destination_pixel[1] = source_pixel[1];
-            destination_pixel[2] = source_pixel[0];
-            if (bytes_per_pixel == 4U)
-                destination_pixel[3] = source_pixel[3];
-            else
-                destination_pixel[3] = 255U;
-            column_index += 1U;
-        }
+        const uint8_t *source = file_data + pixel_offset + source_row * row_size;
+        uint8_t *destination = pixels + row_index * rgba_row_size;
+        if (bytes_per_pixel == 4U)
+            bmp_reorder_row<4U, 4U>(destination, source, width);
+        else
+            bmp_reorder_row<3U, 4U>(destination, source, width);
         row_index += 1U;
     }
     *pixels_out = pixels;
@@ -380,6 +329,12 @@ int32_t bmp_image::initialize(const char *file_path,
         (void)su_fclose(file);
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
     }
+    if (su_fseek(file, 0, SEEK_SET) != FT_ERR_SUCCESS)
+    {
+        (void)su_fclose(file);
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_IO));
+    }
     file_size = static_cast<ft_size_t>(native_file_size);
     file_data = new (std::nothrow) uint8_t[file_size];
     if (file_data == ft_nullptr && file_size != 0U)
@@ -387,7 +342,6 @@ int32_t bmp_image::initialize(const char *file_path,
         (void)su_fclose(file);
         return (this->set_error(FT_ERR_NO_MEMORY));
     }
-    (void)su_fseek(file, 0, SEEK_SET);
     read_size = su_fread(file_data, 1U, file_size, file);
     (void)su_fclose(file);
     if (read_size != file_size)
@@ -439,9 +393,7 @@ int32_t bmp_image::initialize(const uint8_t *file_data,
 int32_t bmp_image::initialize_rgb(const uint8_t *rgb_data,
     ft_size_t width, ft_size_t height, ft_bool has_alpha) noexcept
 {
-    ft_size_t input_pixel_size;
     ft_size_t pixel_size;
-    ft_size_t row_index;
     uint8_t *pixels;
     int32_t lock_error;
 
@@ -467,18 +419,6 @@ int32_t bmp_image::initialize_rgb(const uint8_t *rgb_data,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
     }
-    input_pixel_size = 3U;
-    if (has_alpha == FT_TRUE)
-        input_pixel_size = 4U;
-    if (width > (BMP_HARD_MAX_FILE_SIZE - 54U) / input_pixel_size
-        || height > BMP_HARD_MAX_FILE_SIZE
-            / (width * input_pixel_size))
-    {
-        this->reset_fields();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        return (this->set_error(FT_ERR_OUT_OF_RANGE));
-    }
     pixel_size = width * height * 4U;
     pixels = new (std::nothrow) uint8_t[pixel_size];
     if (pixels == ft_nullptr)
@@ -488,30 +428,22 @@ int32_t bmp_image::initialize_rgb(const uint8_t *rgb_data,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (this->set_error(FT_ERR_NO_MEMORY));
     }
-    row_index = 0U;
-    while (row_index < height)
+    if (has_alpha == FT_TRUE)
+        ft_memcpy(pixels, rgb_data, pixel_size);
+    else
     {
-        ft_size_t column_index;
-
-        column_index = 0U;
-        while (column_index < width)
+        const uint8_t *source = rgb_data;
+        uint8_t *destination = pixels;
+        const uint8_t *end = pixels + pixel_size;
+        while (destination < end)
         {
-            ft_size_t source_index;
-            ft_size_t destination_index;
-
-            source_index = (row_index * width + column_index)
-                * input_pixel_size;
-            destination_index = (row_index * width + column_index) * 4U;
-            pixels[destination_index] = rgb_data[source_index];
-            pixels[destination_index + 1U] = rgb_data[source_index + 1U];
-            pixels[destination_index + 2U] = rgb_data[source_index + 2U];
-            if (has_alpha == FT_TRUE)
-                pixels[destination_index + 3U] = rgb_data[source_index + 3U];
-            else
-                pixels[destination_index + 3U] = 255U;
-            column_index += 1U;
+            destination[0] = source[0];
+            destination[1] = source[1];
+            destination[2] = source[2];
+            destination[3] = 255U;
+            source += 3U;
+            destination += 4U;
         }
-        row_index += 1U;
     }
     this->reset_fields();
     this->_pixels = pixels;
@@ -527,8 +459,8 @@ int32_t bmp_image::destroy() noexcept
 {
     int32_t disable_error;
 
-    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
-        || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        && this->_mutex == ft_nullptr)
         return (FT_ERR_SUCCESS);
     disable_error = this->disable_thread_safety();
     if (this->_pixels != ft_nullptr)
@@ -589,14 +521,14 @@ ft_bool bmp_image::is_thread_safe() const noexcept
 
 int32_t bmp_image::move(bmp_image &other) noexcept
 {
-    if (this == &other)
-        return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state,
             "bmp_image::move", "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)this->destroy();
-    this->reset_fields();
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
     this->_initialised_state = other._initialised_state;
     this->_pixels = other._pixels;
     this->_width = other._width;
@@ -652,13 +584,15 @@ int32_t bmp_image::encode(uint8_t *file_data, ft_size_t file_size,
     {
         if (file_size < required_size)
             error_code = FT_ERR_OUT_OF_RANGE;
+        else if (this->_pixels == ft_nullptr)
+            error_code = FT_ERR_INVALID_POINTER;
         else
-            error_code = bmp_encode_into(this->_pixels, this->_width,
-                this->_height, bit_depth, file_data, file_size);
+        {
+            bmp_encode_into(this->_pixels, this->_width, this->_height,
+                bit_depth, file_data, required_size, row_size);
+            *written_size = required_size;
+        }
     }
-    if (error_code == FT_ERR_SUCCESS)
-        *written_size = required_size;
-    (void)row_size;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (bmp_image::set_error(error_code));
 }
@@ -668,6 +602,7 @@ int32_t bmp_image::save(const char *file_path,
 {
     uint8_t *file_data;
     ft_size_t file_size;
+    ft_size_t row_size;
     su_file *file;
     ft_size_t write_size;
     int32_t error_code;
@@ -683,15 +618,26 @@ int32_t bmp_image::save(const char *file_path,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (bmp_image::set_error(FT_ERR_INVALID_ARGUMENT));
     }
-    file_data = ft_nullptr;
-    file_size = 0U;
-    error_code = bmp_encode(this->_pixels, this->_width, this->_height,
-        bit_depth, &file_data, &file_size);
+    if (this->_pixels == ft_nullptr)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (bmp_image::set_error(FT_ERR_INVALID_POINTER));
+    }
+    error_code = bmp_calculate_encoded_size(this->_width, this->_height,
+        bit_depth, &file_size, &row_size);
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (bmp_image::set_error(error_code));
     }
+    file_data = new (std::nothrow) uint8_t[file_size];
+    if (file_data == ft_nullptr)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (bmp_image::set_error(FT_ERR_NO_MEMORY));
+    }
+    bmp_encode_into(this->_pixels, this->_width, this->_height, bit_depth,
+        file_data, file_size, row_size);
     file = su_fopen(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (file == ft_nullptr)
     {
@@ -880,6 +826,10 @@ int32_t bmp_image::adjust_brightness(int32_t amount) noexcept
         return (this->set_error(lock_error));
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::adjust_brightness");
+    if (amount < -255)
+        amount = -255;
+    else if (amount > 255)
+        amount = 255;
     pixel_index = 0U;
     while (pixel_index < this->_pixel_size)
     {
@@ -958,11 +908,21 @@ int32_t bmp_image::resize_nearest(ft_size_t new_width,
         return (this->set_error(lock_error));
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::resize_nearest");
+    if (this->_pixels == ft_nullptr)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    }
     if (new_width == 0U || new_height == 0U
         || new_width > (BMP_HARD_MAX_FILE_SIZE / 4U) / new_height)
     {
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    }
+    if (new_width == this->_width && new_height == this->_height)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (this->set_error(FT_ERR_SUCCESS));
     }
     resized_pixel_size = new_width * new_height * 4U;
     resized_pixels = new (std::nothrow) uint8_t[resized_pixel_size];
@@ -971,27 +931,40 @@ int32_t bmp_image::resize_nearest(ft_size_t new_width,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (this->set_error(FT_ERR_NO_MEMORY));
     }
+    const ft_size_t row_size = new_width * 4U;
+    const ft_size_t source_row_size = this->_width * 4U;
+    // Carry the fractional step to reproduce floor(column * old_width / new_width).
+    const ft_size_t column_step = this->_width / new_width;
+    const ft_size_t column_remainder = this->_width % new_width;
+    ft_size_t previous_source_row = this->_height;
     row_index = 0U;
     while (row_index < new_height)
     {
-        ft_size_t column_index;
-        ft_size_t source_row;
-
-        source_row = row_index * this->_height / new_height;
-        column_index = 0U;
-        while (column_index < new_width)
+        const ft_size_t source_row = row_index * this->_height / new_height;
+        const uint8_t *source = this->_pixels + source_row * source_row_size;
+        uint8_t *destination = resized_pixels + row_index * row_size;
+        if (source_row == previous_source_row)
+            ft_memcpy(destination, destination - row_size, row_size);
+        else if (row_size == source_row_size)
+            ft_memcpy(destination, source, row_size);
+        else
         {
-            ft_size_t source_column;
-            ft_size_t source_index;
-            ft_size_t destination_index;
-
-            source_column = column_index * this->_width / new_width;
-            source_index = (source_row * this->_width + source_column) * 4U;
-            destination_index = (row_index * new_width + column_index) * 4U;
-            ft_memcpy(resized_pixels + destination_index,
-                this->_pixels + source_index, 4U);
-            column_index += 1U;
+            const uint8_t *end = destination + row_size;
+            ft_size_t remainder = 0U;
+            while (destination < end)
+            {
+                ft_memmove_fixed<4U>(destination, source);
+                destination += 4U;
+                source += column_step * 4U;
+                remainder += column_remainder;
+                if (remainder >= new_width)
+                {
+                    remainder -= new_width;
+                    source += 4U;
+                }
+            }
         }
+        previous_source_row = source_row;
         row_index += 1U;
     }
     delete[] this->_pixels;
@@ -1009,8 +982,9 @@ const uint8_t *bmp_image::data() const noexcept
         return (ft_nullptr);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::data");
+    const uint8_t *value = this->_pixels;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (this->_pixels);
+    return (value);
 }
 
 ft_size_t bmp_image::width() const noexcept
@@ -1019,8 +993,9 @@ ft_size_t bmp_image::width() const noexcept
         return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::width");
+    ft_size_t value = this->_width;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (this->_width);
+    return (value);
 }
 
 ft_size_t bmp_image::height() const noexcept
@@ -1029,8 +1004,9 @@ ft_size_t bmp_image::height() const noexcept
         return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::height");
+    ft_size_t value = this->_height;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (this->_height);
+    return (value);
 }
 
 ft_size_t bmp_image::pixel_size() const noexcept
@@ -1039,8 +1015,9 @@ ft_size_t bmp_image::pixel_size() const noexcept
         return (0U);
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "bmp_image::pixel_size");
+    ft_size_t value = this->_pixel_size;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (this->_pixel_size);
+    return (value);
 }
 
 ft_bool bmp_image::is_initialised() const noexcept

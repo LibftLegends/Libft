@@ -22,9 +22,8 @@ class game_behavior_action
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
-        static int32_t lock_pair(const game_behavior_action &first, const game_behavior_action &second,
-                ft_bool *first_locked,
-                ft_bool *second_locked);
+        void copy_values_from(const game_behavior_action &other) noexcept;
+        int32_t copy_locked(const game_behavior_action &other) noexcept;
 
     public:
         game_behavior_action() noexcept;

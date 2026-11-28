@@ -8,6 +8,7 @@
 #include "../CPP_class/class_string.hpp"
 #include "../Template/shared_ptr.hpp"
 #include <cstdio>
+#include <charconv>
 #include <stdint.h>
 #include <limits>
 #include <new>
@@ -52,6 +53,27 @@ static int32_t build_item_field_key(const ft_string &item_prefix,
     return (FT_ERR_SUCCESS);
 }
 
+static ft_bool parse_item_instance_id(const json_item *field, uint64_t &instance_id)
+{
+    instance_id = 0U;
+    if (field == ft_nullptr)
+        return (FT_TRUE);
+    const char *digit = field->value;
+    if (digit == ft_nullptr || *digit == '\0')
+        return (FT_FALSE);
+    while (*digit != '\0')
+    {
+        if (*digit < '0' || *digit > '9')
+            return (FT_FALSE);
+        const uint32_t value = static_cast<uint32_t>(*digit - '0');
+        if (instance_id > (UINT64_MAX - value) / 10U)
+            return (FT_FALSE);
+        instance_id = instance_id * 10U + value;
+        ++digit;
+    }
+    return (FT_TRUE);
+}
+
 static int32_t build_item_from_group(game_item &item, json_group *group, const ft_string &item_prefix)
 {
     int32_t value;
@@ -77,24 +99,9 @@ static int32_t build_item_from_group(game_item &item, json_group *group, const f
     if (build_item_field_key(item_prefix, "_instance_id", key_instance_id) != FT_ERR_SUCCESS)
         return (FT_ERR_NO_MEMORY);
     json_item *instance_id_item = json_find_item(group, key_instance_id.c_str());
-    uint64_t instance_id = 0;
-    if (instance_id_item)
-    {
-        const char *digit = instance_id_item->value;
-        if (!digit || !*digit)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        while (*digit)
-        {
-            uint32_t number;
-            if (*digit < '0' || *digit > '9')
-                return (FT_ERR_GAME_GENERAL_ERROR);
-            number = static_cast<uint32_t>(*digit - '0');
-            if (instance_id > (UINT64_MAX - number) / 10)
-                return (FT_ERR_GAME_GENERAL_ERROR);
-            instance_id = instance_id * 10 + number;
-            ++digit;
-        }
-    }
+    uint64_t instance_id;
+    if (parse_item_instance_id(instance_id_item, instance_id) == FT_FALSE)
+        return (FT_ERR_GAME_GENERAL_ERROR);
     item.set_instance_id(instance_id);
     ft_string key_rarity;
     if (build_item_field_key(item_prefix, "_rarity", key_rarity) != FT_ERR_SUCCESS)
@@ -168,6 +175,117 @@ static int32_t build_item_from_group(game_item &item, json_group *group, const f
     return (FT_ERR_SUCCESS);
 }
 
+static const json_item *ordered_item_start(json_group *group,
+    const char *const *header, ft_size_t count)
+{
+    if (pt_recursive_mutex_lock_if_not_null(group->_mutex) != FT_ERR_SUCCESS)
+        return (ft_nullptr);
+    const json_item *field = group->items;
+    ft_size_t index = 0U;
+    while (field != ft_nullptr && index < count)
+    {
+        if (field->key == ft_nullptr || ft_strcmp(field->key, header[index]) != 0)
+        {
+            field = ft_nullptr;
+            break ;
+        }
+        field = field->next;
+        ++index;
+    }
+    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+    return (field);
+}
+
+static ft_bool read_ordered_item(game_item &item, json_group *group,
+    const json_item *&cursor, char *key, char *suffix_start, ft_bool early_rarity)
+{
+    struct integer_field
+    {
+        const char *suffix;
+        void (game_item::*set)(int32_t) noexcept;
+    };
+    static constexpr integer_field FIELDS[] = {
+        {"_max_stack", &game_item::set_max_stack},
+        {"_stack_size", &game_item::set_stack_size},
+        {"_id", &game_item::set_item_id},
+        {"_width", &game_item::set_width},
+        {"_height", &game_item::set_height},
+        {"_mod1_id", &game_item::set_modifier1_id},
+        {"_mod1_value", &game_item::set_modifier1_value},
+        {"_mod2_id", &game_item::set_modifier2_id},
+        {"_mod2_value", &game_item::set_modifier2_value},
+        {"_mod3_id", &game_item::set_modifier3_id},
+        {"_mod3_value", &game_item::set_modifier3_value},
+        {"_mod4_id", &game_item::set_modifier4_id},
+        {"_mod4_value", &game_item::set_modifier4_value},
+        {"_rarity", &game_item::set_rarity}
+    };
+    if (cursor == ft_nullptr
+        || pt_recursive_mutex_lock_if_not_null(group->_mutex) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    ft_memcpy(suffix_start, "_instance_id", sizeof("_instance_id"));
+    uint64_t instance_id;
+    if (cursor->key == ft_nullptr || ft_strcmp(cursor->key, key) != 0
+        || parse_item_instance_id(cursor, instance_id) == FT_FALSE)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+        return (FT_FALSE);
+    }
+    constexpr ft_size_t FIELD_COUNT = sizeof(FIELDS) / sizeof(FIELDS[0]);
+    constexpr ft_size_t RARITY_INDEX = FIELD_COUNT - 1U;
+    const json_item *fields[FIELD_COUNT];
+    const json_item *field = cursor->next;
+    ft_size_t index = 0U;
+    while (index < FIELD_COUNT)
+    {
+        ft_size_t field_index = index;
+        // Equipment and rewards put rarity immediately after the item ID.
+        if (early_rarity == FT_TRUE && index >= 3U)
+        {
+            field_index = RARITY_INDEX;
+            if (index != 3U)
+                field_index = index - 1U;
+        }
+        const char *suffix = FIELDS[field_index].suffix;
+        ft_memcpy(suffix_start, suffix, ft_strlen_size_t(suffix) + 1U);
+        if (field == ft_nullptr || field->key == ft_nullptr || ft_strcmp(field->key, key) != 0)
+            break ;
+        fields[field_index] = field;
+        field = field->next;
+        ++index;
+    }
+    if (index != FIELD_COUNT)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+        return (FT_FALSE);
+    }
+    item.set_instance_id(instance_id);
+    index = 0U;
+    while (index < FIELD_COUNT)
+    {
+        (item.*FIELDS[index].set)(ft_atoi(fields[index]->value));
+        ++index;
+    }
+    cursor = field;
+    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+    return (FT_TRUE);
+}
+
+static ft_bool read_ordered_indexed_item(game_item &item, json_group *group,
+    const json_item *&cursor, const char *prefix, int32_t item_index, ft_bool early_rarity)
+{
+    if (cursor == ft_nullptr)
+        return (FT_FALSE);
+    char key[48];
+    const ft_size_t prefix_length = ft_strlen_size_t(prefix);
+    ft_memcpy(key, prefix, prefix_length);
+    const auto number = std::to_chars(key + prefix_length,
+        key + sizeof(key) - sizeof("_instance_id"), item_index);
+    if (number.ec != std::errc())
+        return (FT_FALSE);
+    return (read_ordered_item(item, group, cursor, key, number.ptr, early_rarity));
+}
+
 int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
 {
     int32_t initialize_error;
@@ -211,33 +329,38 @@ int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
         return (FT_ERR_GAME_GENERAL_ERROR);
     }
     int32_t item_count = ft_atoi(count_item->value);
+    // Only consume the ordered fields while the list matches the writer from its head.
+    static constexpr const char *HEADER[] = {
+        "capacity", "weight_limit", "current_weight", "used_slots", "revision", "item_count"
+    };
+    const json_item *ordered_field = ordered_item_start(group, HEADER,
+        sizeof(HEADER) / sizeof(HEADER[0]));
     int32_t item_index = 0;
     int32_t loop_error = FT_ERR_SUCCESS;
     while (item_index < item_count)
     {
-        char item_index_string[32];
-
-        std::snprintf(item_index_string, sizeof(item_index_string), "%d", item_index);
-        ft_string item_prefix;
-        if (item_prefix.initialize("item_") != FT_ERR_SUCCESS)
-        {
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        }
-        item_prefix += item_index_string;
         game_item item_temp;
         if (item_temp.initialize() != FT_ERR_SUCCESS)
             return (FT_ERR_GAME_GENERAL_ERROR);
-        if (build_item_from_group(item_temp, group, item_prefix) != FT_ERR_SUCCESS)
+        if (read_ordered_indexed_item(item_temp, group, ordered_field,
+                "item_", item_index, FT_FALSE) == FT_FALSE)
         {
-            loop_error = FT_ERR_GAME_GENERAL_ERROR;
-            break ;
+            ordered_field = ft_nullptr;
+            char item_index_string[32];
+            std::snprintf(item_index_string, sizeof(item_index_string), "%d", item_index);
+            ft_string item_prefix;
+            if (item_prefix.initialize("item_") != FT_ERR_SUCCESS)
+                return (FT_ERR_GAME_GENERAL_ERROR);
+            item_prefix += item_index_string;
+            if (build_item_from_group(item_temp, group, item_prefix) != FT_ERR_SUCCESS)
+                return (FT_ERR_GAME_GENERAL_ERROR);
         }
         ft_sharedptr<game_item> item(new game_item());
         if (!item || item->initialize(item_temp) != FT_ERR_SUCCESS)
         {
             return (FT_ERR_NO_MEMORY);
         }
-        loop_error = inventory.add_item(item);
+        loop_error = inventory.restore_serialized_item(item);
         if (loop_error != FT_ERR_SUCCESS)
         {
             break ;
@@ -276,107 +399,186 @@ int32_t deserialize_inventory(game_inventory &inventory, json_group *group)
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t deserialize_equipment_extra_slot(game_character &character,
-    json_group *group, int32_t slot, const char *name)
+static ft_bool take_ordered_slot_presence(json_group *group, const char *key,
+    const json_item *&cursor, int32_t &present)
 {
-    char present_name[32];
-    if (std::snprintf(present_name, sizeof(present_name), "%s_present", name)
-        < 0)
-        return (FT_ERR_INVALID_ARGUMENT);
-    json_item *present = json_find_item(group, present_name);
-    if (present == ft_nullptr || ft_atoi(present->value) != 1)
+    if (cursor == ft_nullptr
+        || pt_recursive_mutex_lock_if_not_null(group->_mutex) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    const ft_bool matches = cursor->key != ft_nullptr && ft_strcmp(cursor->key, key) == 0;
+    if (matches == FT_TRUE)
     {
-        character.unequip_item(slot);
-        return (FT_ERR_SUCCESS);
+        present = ft_atoi(cursor->value);
+        cursor = cursor->next;
     }
-    game_item item_temp;
-    ft_string prefix;
-    if (prefix.initialize(name) != FT_ERR_SUCCESS
-        || item_temp.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    int32_t result = build_item_from_group(item_temp, group, prefix);
+    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
+    return (matches);
+}
+
+static int32_t parse_applied_modifiers(const char *encoded,
+    game_item_modifier_value (&modifiers)[4])
+{
+    if (encoded == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *current = encoded;
+    const char *const end = current + ft_strlen_size_t(current);
+    ft_size_t index = 0;
+    while (index < 4U)
+    {
+        const auto id = std::from_chars(current, end, modifiers[index].id);
+        if (id.ec != std::errc() || id.ptr == end || *id.ptr != ',')
+            return (FT_ERR_INVALID_ARGUMENT);
+        const auto value = std::from_chars(id.ptr + 1, end, modifiers[index].value);
+        if (value.ec != std::errc())
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+        if (index == 4U)
+        {
+            if (value.ptr != end)
+                return (FT_ERR_INVALID_ARGUMENT);
+            return (FT_ERR_SUCCESS);
+        }
+        if (value.ptr == end || *value.ptr != ',')
+            return (FT_ERR_INVALID_ARGUMENT);
+        current = value.ptr + 1;
+    }
+    return (FT_ERR_INVALID_ARGUMENT);
+}
+
+static int32_t read_applied_modifiers(json_group *group, const json_item *&cursor,
+    char *key, char *suffix_start, game_item_modifier_value (&modifiers)[4], ft_bool &found)
+{
+    ft_memcpy(suffix_start, "_applied_modifiers", sizeof("_applied_modifiers"));
+    int32_t result = pt_recursive_mutex_lock_if_not_null(group->_mutex);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    ft_sharedptr<game_item> item(new (std::nothrow) game_item());
-    if (!item)
-        return (FT_ERR_NO_MEMORY);
-    result = item->initialize(item_temp);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    result = character.equip_item(slot, item);
+    const json_item *field;
+    if (cursor != ft_nullptr && cursor->key != ft_nullptr && ft_strcmp(cursor->key, key) == 0)
+    {
+        field = cursor;
+        cursor = cursor->next;
+    }
+    else
+        field = json_find_item(group, key);
+    found = field != ft_nullptr;
+    if (found)
+        result = parse_applied_modifiers(field->value, modifiers);
+    (void)pt_recursive_mutex_unlock_if_not_null(group->_mutex);
     return (result);
+}
+
+static int32_t deserialize_equipment_slot(json_group *group, const json_item *&cursor,
+    const char *name, ft_bool primary_slot, ft_sharedptr<game_item> &item,
+    game_item_modifier_value (&applied)[4], ft_bool &has_applied)
+{
+    char key[48];
+    const ft_size_t name_length = ft_strlen_size_t(name);
+    ft_memcpy(key, name, name_length);
+    ft_memcpy(key + name_length, "_present", sizeof("_present"));
+    int32_t present = 0;
+    if (take_ordered_slot_presence(group, key, cursor, present) == FT_FALSE)
+    {
+        cursor = ft_nullptr;
+        const json_item *presence_field = json_find_item(group, key);
+        if (presence_field != ft_nullptr)
+            present = ft_atoi(presence_field->value);
+    }
+    if (present != 1)
+        return (FT_ERR_SUCCESS);
+
+    game_item item_temp;
+    if (item_temp.initialize() != FT_ERR_SUCCESS)
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    if (read_ordered_item(item_temp, group, cursor, key, key + name_length, FT_TRUE) == FT_FALSE)
+    {
+        cursor = ft_nullptr;
+        ft_string prefix;
+        if (prefix.initialize(name) != FT_ERR_SUCCESS)
+            return (FT_ERR_GAME_GENERAL_ERROR);
+        const int32_t result = build_item_from_group(item_temp, group, prefix);
+        if (result != FT_ERR_SUCCESS)
+        {
+            if (primary_slot == FT_TRUE)
+                return (FT_ERR_GAME_GENERAL_ERROR);
+            return (result);
+        }
+    }
+
+    int32_t result = read_applied_modifiers(group, cursor, key, key + name_length,
+        applied, has_applied);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    auto *loaded = new (std::nothrow) game_item();
+    if (loaded == ft_nullptr || item.initialize(loaded) != FT_ERR_SUCCESS)
+        return (FT_ERR_NO_MEMORY);
+    result = loaded->initialize(item_temp);
+    if (result != FT_ERR_SUCCESS)
+    {
+        if (primary_slot == FT_TRUE)
+            return (FT_ERR_NO_MEMORY);
+        return (result);
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t deserialize_equipment(game_character &character, json_group *group,
+    ft_bool stats_already_applied)
+{
+    const json_item *cursor = ft_nullptr;
+    if (group != ft_nullptr)
+        cursor = ordered_item_start(group, ft_nullptr, 0U);
+    struct equipment_slot
+    {
+        int32_t slot;
+        const char *name;
+        ft_bool primary;
+    };
+    static constexpr equipment_slot SLOTS[] = {
+        {EQUIP_HEAD, "head", FT_TRUE}, {EQUIP_CHEST, "chest", FT_TRUE},
+        {EQUIP_WEAPON, "weapon", FT_TRUE}, {EQUIP_LEGS, "legs", FT_FALSE},
+        {EQUIP_FEET, "feet", FT_FALSE}, {EQUIP_OFF_HAND, "off_hand", FT_FALSE}
+    };
+    struct restored_slot
+    {
+        ft_sharedptr<game_item> item;
+        game_character::equipped_modifier_snapshot applied;
+        ft_bool has_applied;
+    };
+    constexpr ft_size_t SLOT_COUNT = sizeof(SLOTS) / sizeof(SLOTS[0]);
+    restored_slot restored[SLOT_COUNT]{};
+    ft_size_t index = 0U;
+    while (index < SLOT_COUNT)
+    {
+        const equipment_slot &slot = SLOTS[index];
+        restored_slot &state = restored[index];
+        const int32_t result = deserialize_equipment_slot(group, cursor, slot.name,
+            slot.primary, state.item, state.applied.values, state.has_applied);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        ++index;
+    }
+    index = 0U;
+    while (index < SLOT_COUNT)
+    {
+        const restored_slot &state = restored[index];
+        const ft_sharedptr<game_item> *equipped = ft_nullptr;
+        if (state.item)
+            equipped = &state.item;
+        const game_character::equipped_modifier_snapshot *snapshot = ft_nullptr;
+        if (state.has_applied)
+            snapshot = &state.applied;
+        const int32_t result = character.replace_equipment_slot(SLOTS[index].slot, equipped, snapshot,
+            static_cast<ft_bool>(!stats_already_applied));
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        ++index;
+    }
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t deserialize_equipment(game_character &character, json_group *group)
 {
-    json_item *present = json_find_item(group, "head_present");
-    if (present && ft_atoi(present->value) == 1)
-    {
-        game_item item_temp;
-        ft_string head_prefix;
-        if (head_prefix.initialize("head") != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (item_temp.initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (build_item_from_group(item_temp, group, head_prefix) != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        ft_sharedptr<game_item> item(new game_item());
-        if (!item || item->initialize(item_temp) != FT_ERR_SUCCESS)
-            return (FT_ERR_NO_MEMORY);
-        if (character.equip_item(EQUIP_HEAD, item) != FT_ERR_SUCCESS)
-            return (character.get_error());
-    }
-    else
-        character.unequip_item(EQUIP_HEAD);
-    present = json_find_item(group, "chest_present");
-    if (present && ft_atoi(present->value) == 1)
-    {
-        game_item item_temp;
-        ft_string chest_prefix;
-        if (chest_prefix.initialize("chest") != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (item_temp.initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (build_item_from_group(item_temp, group, chest_prefix) != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        ft_sharedptr<game_item> item(new game_item());
-        if (!item || item->initialize(item_temp) != FT_ERR_SUCCESS)
-            return (FT_ERR_NO_MEMORY);
-        if (character.equip_item(EQUIP_CHEST, item) != FT_ERR_SUCCESS)
-            return (character.get_error());
-    }
-    else
-        character.unequip_item(EQUIP_CHEST);
-    present = json_find_item(group, "weapon_present");
-    if (present && ft_atoi(present->value) == 1)
-    {
-        game_item item_temp;
-        ft_string weapon_prefix;
-        if (weapon_prefix.initialize("weapon") != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (item_temp.initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        if (build_item_from_group(item_temp, group, weapon_prefix) != FT_ERR_SUCCESS)
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        ft_sharedptr<game_item> item(new game_item());
-        if (!item || item->initialize(item_temp) != FT_ERR_SUCCESS)
-            return (FT_ERR_NO_MEMORY);
-        if (character.equip_item(EQUIP_WEAPON, item) != FT_ERR_SUCCESS)
-            return (character.get_error());
-    }
-    else
-        character.unequip_item(EQUIP_WEAPON);
-    int32_t extra_result = deserialize_equipment_extra_slot(character, group,
-        EQUIP_LEGS, "legs");
-    if (extra_result == FT_ERR_SUCCESS)
-        extra_result = deserialize_equipment_extra_slot(character, group,
-            EQUIP_FEET, "feet");
-    if (extra_result == FT_ERR_SUCCESS)
-        extra_result = deserialize_equipment_extra_slot(character, group,
-            EQUIP_OFF_HAND, "off_hand");
-    if (extra_result != FT_ERR_SUCCESS)
-        return (extra_result);
-    return (FT_ERR_SUCCESS);
+    return (deserialize_equipment(character, group, FT_FALSE));
 }
 
 int32_t deserialize_quest(game_quest &quest, json_group *group)
@@ -412,23 +614,33 @@ int32_t deserialize_quest(game_quest &quest, json_group *group)
     json_item *count_item = json_find_item(group, "reward_item_count");
     if (count_item)
     {
+        static constexpr const char *HEADER[] = {
+            "id", "phases", "current_phase", "description", "objective",
+            "reward_experience", "reward_item_count"
+        };
+        const json_item *ordered_field = ordered_item_start(group, HEADER,
+            sizeof(HEADER) / sizeof(HEADER[0]));
         int32_t reward_count = ft_atoi(count_item->value);
         int32_t reward_index = 0;
         quest.get_reward_items().clear();
         while (reward_index < reward_count)
         {
-            char index_string[32];
-
-            std::snprintf(index_string, sizeof(index_string), "%d", reward_index);
-            ft_string prefix;
-            if (prefix.initialize("reward_item_") != FT_ERR_SUCCESS)
-                return (FT_ERR_NO_MEMORY);
-            prefix += index_string;
             game_item reward_temp;
             if (reward_temp.initialize() != FT_ERR_SUCCESS)
                 return (FT_ERR_GAME_GENERAL_ERROR);
-            if (build_item_from_group(reward_temp, group, prefix) != FT_ERR_SUCCESS)
-                return (FT_ERR_GAME_GENERAL_ERROR);
+            if (read_ordered_indexed_item(reward_temp, group, ordered_field,
+                    "reward_item_", reward_index, FT_TRUE) == FT_FALSE)
+            {
+                ordered_field = ft_nullptr;
+                char index_string[32];
+                std::snprintf(index_string, sizeof(index_string), "%d", reward_index);
+                ft_string prefix;
+                if (prefix.initialize("reward_item_") != FT_ERR_SUCCESS)
+                    return (FT_ERR_NO_MEMORY);
+                prefix += index_string;
+                if (build_item_from_group(reward_temp, group, prefix) != FT_ERR_SUCCESS)
+                    return (FT_ERR_GAME_GENERAL_ERROR);
+            }
             ft_sharedptr<game_item> reward(new game_item());
             if (!reward || reward->initialize(reward_temp) != FT_ERR_SUCCESS)
             {

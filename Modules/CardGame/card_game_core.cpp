@@ -276,7 +276,8 @@ card_game_engine::card_game_engine() noexcept
       _card_type_ids(ft_nullptr), _card_capacity(0U), _card_types(),
       _card_type_count(0U), _effects(),
       _effect_callbacks(), _effect_user_data(), _effect_event_types(),
-      _effect_priorities(), _effect_usage_limit_ids(),
+      _effect_priorities(), _effect_usage_limit_ids(), _event_effect_order(),
+      _event_effect_count(0U), _event_effect_revision(0U),
       _phases(), _phase_count(0U), _zones(), _zone_count(0U),
       _current_phase_id(0U), _events(ft_nullptr), _event_capacity(0U),
       _event_count(0U), _event_sequence(0U),
@@ -294,7 +295,8 @@ card_game_engine::card_game_engine() noexcept
       _zone_store(), _usage_limits(),
       _start_overrides(), _start_override_count(0U),
       _host_intent_types(), _host_intent_type_count(0U),
-      _host_intent_records(ft_nullptr), _host_intent_record_count(0U),
+      _host_intent_record_head(0U), _host_intent_records(ft_nullptr),
+      _host_intent_record_count(0U),
       _host_intent_record_capacity(0U), _next_host_intent_sequence(1U),
       _draw_policy(), _draw_policy_configured(FT_FALSE),
       _pending_discard_player_id(0U), _pending_discard_count(0U),
@@ -360,6 +362,8 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_card_count = 0U;
     this->_card_type_count = 0U;
     this->_effect_count = 0U;
+    this->_event_effect_count = 0U;
+    this->_event_effect_revision += 1U;
     this->_phase_count = 0U;
     this->_zone_count = 0U;
     this->_start_override_count = 0U;
@@ -367,6 +371,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     ft_bzero(&this->_draw_policy, sizeof(this->_draw_policy));
     this->_draw_policy_configured = FT_FALSE;
     this->_host_intent_record_count = 0U;
+    this->_host_intent_record_head = 0U;
     this->_next_host_intent_sequence = 1U;
     this->_pending_discard_player_id = 0U;
     this->_pending_discard_count = 0U;
@@ -381,21 +386,10 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_next_modifier_id = 1U;
     this->_state_sequence = 1U;
     this->_last_command_sequence = 0U;
-    this->_card_capacity = FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY;
-    this->_cards = static_cast<card_game_card_definition *>(cma_malloc(
-        static_cast<ft_size_t>(this->_card_capacity)
-            * sizeof(card_game_card_definition)));
-    this->_card_type_ids = static_cast<uint32_t *>(cma_malloc(
-        static_cast<ft_size_t>(this->_card_capacity) * sizeof(uint32_t)));
-    if (this->_cards == ft_nullptr || this->_card_type_ids == ft_nullptr)
+    const int32_t catalog_error = this->resize_card_definitions(
+        FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY);
+    if (catalog_error != FT_ERR_SUCCESS)
     {
-        if (this->_cards != ft_nullptr)
-            cma_free(this->_cards);
-        if (this->_card_type_ids != ft_nullptr)
-            cma_free(this->_card_type_ids);
-        this->_cards = ft_nullptr;
-        this->_card_type_ids = ft_nullptr;
-        this->_card_capacity = 0U;
         deck_index = 0U;
         while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
         {
@@ -408,7 +402,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         (void)this->_zone_store.destroy();
         (void)this->_usage_limits.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (catalog_error);
     }
     this->_command_record_capacity =
         FT_CARD_GAME_COMMAND_RECORD_INITIAL_CAPACITY;
@@ -473,6 +467,8 @@ int32_t card_game_engine::destroy() noexcept
 
     if (this->_initialised_state != 2U)
         return (FT_ERR_SUCCESS);
+    this->_event_effect_count = 0U;
+    this->_event_effect_revision += 1U;
     deck_index = 0U;
     while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
     {
@@ -492,6 +488,7 @@ int32_t card_game_engine::destroy() noexcept
         cma_free(this->_host_intent_records);
     this->_host_intent_records = ft_nullptr;
     this->_host_intent_record_count = 0U;
+    this->_host_intent_record_head = 0U;
     this->_host_intent_record_capacity = 0U;
     ft_bzero(&this->_draw_policy, sizeof(this->_draw_policy));
     this->_draw_policy_configured = FT_FALSE;
@@ -541,6 +538,9 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
         sizeof(this->_effect_priorities));
     ft_memcpy(this->_effect_usage_limit_ids, other._effect_usage_limit_ids,
         sizeof(this->_effect_usage_limit_ids));
+    this->_event_effect_count = other._event_effect_count;
+    ft_memcpy(this->_event_effect_order, other._event_effect_order,
+        this->_event_effect_count * sizeof(*this->_event_effect_order));
     ft_memcpy(this->_phases, other._phases, sizeof(this->_phases));
     ft_memcpy(this->_zones, other._zones, sizeof(this->_zones));
     this->_events = other._events;
@@ -586,6 +586,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_host_intent_type_count = other._host_intent_type_count;
     this->_host_intent_records = other._host_intent_records;
     this->_host_intent_record_count = other._host_intent_record_count;
+    this->_host_intent_record_head = other._host_intent_record_head;
     this->_host_intent_record_capacity = other._host_intent_record_capacity;
     this->_next_host_intent_sequence = other._next_host_intent_sequence;
     this->_draw_policy = other._draw_policy;
@@ -609,6 +610,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     other._event_capacity = 0U;
     other._host_intent_records = ft_nullptr;
     other._host_intent_record_count = 0U;
+    other._host_intent_record_head = 0U;
     other._host_intent_record_capacity = 0U;
     ft_bzero(&other._draw_policy, sizeof(other._draw_policy));
     other._draw_policy_configured = FT_FALSE;

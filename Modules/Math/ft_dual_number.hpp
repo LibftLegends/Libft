@@ -8,6 +8,12 @@
 #include <cstdint>
 
 class ft_dual_number_proxy;
+class ft_dual_number;
+
+typedef ft_dual_number *(*math_autodiff_univariate_function)(const ft_dual_number &input, void *user_data);
+typedef ft_dual_number *(*math_autodiff_multivariate_function)(const ft_vector<ft_dual_number> &input, void *user_data);
+
+
 
 class ft_dual_number
 {
@@ -33,6 +39,18 @@ class ft_dual_number
                             const char *reason) const noexcept;
         void            abort_if_not_initialised(const char *method_name) const noexcept;
         static int32_t      set_error(int32_t error_code) noexcept;
+        template <char Operation>
+        ft_dual_number_proxy apply_binary(const ft_dual_number &other,
+            const char *method_name) const noexcept;
+        template <typename Operation>
+        ft_dual_number *apply_unary(Operation operation, const char *method_name) const noexcept;
+        int32_t read_result(double &value, double &derivative,
+            const char *method_name = "ft_dual_number::read_result") const noexcept;
+        friend int32_t math_autodiff_univariate(math_autodiff_univariate_function function,
+            double point, double *value, double *derivative, void *user_data) noexcept;
+        friend int32_t math_autodiff_gradient(math_autodiff_multivariate_function function,
+            const ft_vector<double> &point, ft_vector<double> &gradient,
+            double *value, void *user_data) noexcept;
         friend class ft_dual_number_proxy;
 
     public:
@@ -82,6 +100,8 @@ class ft_dual_number_proxy
 #else
     private:
 #endif
+        friend class ft_dual_number;
+        ft_dual_number_proxy(double value, double derivative) noexcept;
         ft_dual_number  _value;
         int32_t             _operation_error;
 
@@ -104,9 +124,6 @@ class ft_dual_number_proxy
         operator ft_dual_number *() const noexcept;
         int32_t get_error() const noexcept;
 };
-
-typedef ft_dual_number *(*math_autodiff_univariate_function)(const ft_dual_number &input, void *user_data);
-typedef ft_dual_number *(*math_autodiff_multivariate_function)(const ft_vector<ft_dual_number> &input, void *user_data);
 
 int32_t     math_autodiff_univariate(math_autodiff_univariate_function function,
             double point, double *value, double *derivative, void *user_data) noexcept;

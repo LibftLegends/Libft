@@ -17,6 +17,7 @@ In class declarations, place private members above public members and separate t
 Function and variable names must use snake_case.
 Constants and macros must use UPPER_SNAKE_CASE (all uppercase letters with `_` separators), for example `FT_ERR_SUCCESS`.
 Do not use built-in width-ambiguous integer types such as `int`, `unsigned int`, `long`, `unsigned long`, `long long`, or `unsigned long long`.
+The C++ program entry point is an exception. Declare `main` with an `int` return type and use `int` for the argument count when it is present.
 Use project/fixed-width integer types instead (`ft_size_t`, `uint32_t`, `uint64_t`, `int32_t`, `int64_t`, and their signed/unsigned fixed-width variants).
 Do not use built-in `bool`; use `ft_bool` (`typedef uint8_t ft_bool`) so boolean storage is always 8-bit.
 Define boolean constants as `#define FT_FALSE ((ft_bool)0U)` and `#define FT_TRUE  ((ft_bool)1U)`.

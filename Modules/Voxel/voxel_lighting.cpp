@@ -142,6 +142,19 @@ int32_t voxel_light_section::fill(uint8_t value) noexcept
     return FT_ERR_SUCCESS;
 }
 
+int32_t voxel_light_section::assign_dense(
+    const uint8_t (&values)[VOXEL_LIGHT_SECTION_BLOCKS]) noexcept
+{
+    if (this->_lights == ft_nullptr)
+    {
+        this->_lights = new (std::nothrow) uint8_t[VOXEL_LIGHT_SECTION_BLOCKS];
+        if (this->_lights == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    ft_memcpy(this->_lights, values, sizeof(values));
+    return (FT_ERR_SUCCESS);
+}
+
 ft_bool voxel_light_section::is_uniform() const noexcept
 {
     return _lights == ft_nullptr ? FT_TRUE : FT_FALSE;
@@ -257,14 +270,31 @@ namespace
         std::vector<uint8_t> block;
         std::vector<uint8_t> sky_queued;
         std::vector<uint8_t> block_queued;
-        std::vector<uint32_t> block_ids;
+        std::vector<uint8_t> step_costs;
         std::vector<light_node> queue;
     };
 
-    static uint32_t light_index(int32_t x, int32_t y, int32_t z) noexcept
+    static uint32_t light_grid_index(int32_t x, int32_t y, int32_t z,
+        int32_t edge) noexcept
     {
-        return static_cast<uint32_t>((y * VOXEL_LIGHT_GRID_EDGE + z)
-            * VOXEL_LIGHT_GRID_EDGE + x);
+        return (static_cast<uint32_t>((y * edge + z) * edge + x));
+    }
+
+    static uint8_t light_step_cost(const voxel_block_metadata &metadata) noexcept
+    {
+        if (metadata.light_attenuation >= 15U || metadata.occludes_faces == FT_TRUE)
+            return (15U);
+        if (metadata.light_attenuation == 0U)
+            return (1U);
+        return (metadata.light_attenuation);
+    }
+
+    static int32_t light_store_section(voxel_light_section &section,
+        const uint8_t (&packed)[VOXEL_LIGHT_SECTION_BLOCKS], uint8_t differences) noexcept
+    {
+        if (differences == 0U)
+            return (section.fill(packed[0]));
+        return (section.assign_dense(packed));
     }
 
     static int32_t read_block(voxel_light_block_lookup_fn lookup, void *data,
@@ -293,6 +323,83 @@ namespace
         }
         return (FT_ERR_SUCCESS);
     }
+
+    static int32_t light_seed_sky_column(light_workspace &workspace,
+        int32_t x, int32_t z, int32_t first_y, int32_t end_y,
+        int32_t region_min, int32_t edge) noexcept
+    {
+        int32_t y = first_y;
+        while (y < end_y)
+        {
+            const uint32_t index = light_grid_index(x - region_min, y, z - region_min, edge);
+            const uint8_t cost = workspace.step_costs[index];
+            if (cost < 15U)
+            {
+                const uint8_t candidate = static_cast<uint8_t>(15U - cost);
+                if (candidate > workspace.sky[index])
+                {
+                    if (candidate > 1U)
+                    {
+                        const int32_t error_code = light_queue_push(workspace.queue, {
+                            static_cast<int16_t>(x), static_cast<int16_t>(y),
+                            static_cast<int16_t>(z), 0U, candidate});
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                        workspace.sky_queued[index] = 1U;
+                    }
+                    workspace.sky[index] = candidate;
+                }
+            }
+            y += 1;
+        }
+        return (FT_ERR_SUCCESS);
+    }
+
+    static int32_t light_seed_sky_boundaries(light_workspace &workspace,
+        const uint16_t *sky_floors, int32_t region_min, int32_t region_max) noexcept
+    {
+        const int32_t edge = region_max - region_min;
+        int32_t z = region_min;
+        uint32_t column = 0U;
+        while (z < region_max)
+        {
+            int32_t x = region_min;
+            while (x < region_max)
+            {
+                const int32_t floor = sky_floors[column];
+                int32_t error_code = FT_ERR_SUCCESS;
+                if (floor > 0 && floor < 256)
+                    error_code = light_seed_sky_column(workspace, x, z,
+                        floor - 1, floor, region_min, edge);
+                if (error_code == FT_ERR_SUCCESS && x > region_min)
+                {
+                    const int32_t west_floor = sky_floors[column - 1U];
+                    if (west_floor < floor)
+                        error_code = light_seed_sky_column(workspace, x, z,
+                            west_floor, floor, region_min, edge);
+                    else if (floor < west_floor)
+                        error_code = light_seed_sky_column(workspace, x - 1, z,
+                            floor, west_floor, region_min, edge);
+                }
+                if (error_code == FT_ERR_SUCCESS && z > region_min)
+                {
+                    const int32_t north_floor = sky_floors[column - edge];
+                    if (north_floor < floor)
+                        error_code = light_seed_sky_column(workspace, x, z,
+                            north_floor, floor, region_min, edge);
+                    else if (floor < north_floor)
+                        error_code = light_seed_sky_column(workspace, x, z - 1,
+                            floor, north_floor, region_min, edge);
+                }
+                if (error_code != FT_ERR_SUCCESS)
+                    return (error_code);
+                column += 1U;
+                x += 1;
+            }
+            z += 1;
+        }
+        return (FT_ERR_SUCCESS);
+    }
 }
 
 struct voxel_light_build_operation::implementation
@@ -302,13 +409,15 @@ struct voxel_light_build_operation::implementation
     int32_t origin_z;
     int32_t region_min;
     int32_t region_max;
+    int32_t grid_edge;
     int32_t scan_x;
     int32_t scan_y;
     int32_t scan_z;
     ft_bool direct_sky;
-    int32_t final_x;
-    int32_t final_y;
-    int32_t final_z;
+    uint16_t final_cell;
+    uint8_t final_section;
+    uint8_t final_differences;
+    uint8_t final_lights[VOXEL_LIGHT_SECTION_BLOCKS];
     uint8_t phase;
     uint32_t last_block_id;
     uint8_t last_block_cost;
@@ -326,9 +435,11 @@ struct voxel_light_build_operation::implementation
     size_t queued_count;
 
     int32_t enqueue(const light_node &node) noexcept;
-    int32_t seed_sky_neighbor(int32_t destination_x,
+    uint32_t index(int32_t x, int32_t y, int32_t z) const noexcept;
+    int32_t seed_sky_neighbor(uint32_t destination_index, int32_t destination_x,
         int32_t destination_y, int32_t destination_z) noexcept;
     int32_t propagate_next() noexcept;
+    int32_t finalize_next() noexcept;
 };
 
 static const uint8_t VOXEL_LIGHT_OPERATION_SCAN = 0U;
@@ -354,22 +465,20 @@ int32_t voxel_light_build_operation::implementation::enqueue(
     return (FT_ERR_SUCCESS);
 }
 
+uint32_t voxel_light_build_operation::implementation::index(
+    int32_t x, int32_t y, int32_t z) const noexcept
+{
+    return (light_grid_index(x - this->region_min, y, z - this->region_min,
+        this->grid_edge));
+}
+
 int32_t voxel_light_build_operation::implementation::seed_sky_neighbor(
-    int32_t destination_x, int32_t destination_y,
+    uint32_t destination_index, int32_t destination_x, int32_t destination_y,
     int32_t destination_z) noexcept
 {
-    uint32_t destination_index;
     uint8_t cost;
     uint8_t candidate;
 
-    if (destination_x < this->region_min
-        || destination_x >= this->region_max
-        || destination_y < 0 || destination_y >= 256
-        || destination_z < this->region_min
-        || destination_z >= this->region_max)
-        return (FT_ERR_SUCCESS);
-    destination_index = light_index(destination_x + VOXEL_LIGHT_HALO,
-        destination_y, destination_z + VOXEL_LIGHT_HALO);
     cost = this->step_costs[destination_index];
     if (cost >= 15U)
         return (FT_ERR_SUCCESS);
@@ -401,8 +510,7 @@ int32_t voxel_light_build_operation::implementation::propagate_next() noexcept
     std::vector<uint8_t> *channel = &this->sky;
     if (node.channel != 0U)
         channel = &this->block;
-    if ((*channel)[light_index(node.x + VOXEL_LIGHT_HALO, node.y,
-            node.z + VOXEL_LIGHT_HALO)] != node.level)
+    if ((*channel)[this->index(node.x, node.y, node.z)] != node.level)
         return (FT_ERR_SUCCESS);
     this->stats.propagated_cells += 1U;
     direction = 0U;
@@ -416,8 +524,7 @@ int32_t voxel_light_build_operation::implementation::propagate_next() noexcept
             || coordinate_y < 0 || coordinate_y >= 256
             || coordinate_z < this->region_min || coordinate_z >= this->region_max)
             continue ;
-        const uint32_t index = light_index(coordinate_x + VOXEL_LIGHT_HALO,
-            coordinate_y, coordinate_z + VOXEL_LIGHT_HALO);
+        const uint32_t index = this->index(coordinate_x, coordinate_y, coordinate_z);
         const uint8_t cost = this->step_costs[index];
         if (node.level <= cost)
             continue ;
@@ -432,6 +539,32 @@ int32_t voxel_light_build_operation::implementation::propagate_next() noexcept
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
     }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t voxel_light_build_operation::implementation::finalize_next() noexcept
+{
+    const int32_t x = this->final_cell & 15U;
+    const int32_t z = (this->final_cell >> 4U) & 15U;
+    const int32_t y = (this->final_section << 4U) + (this->final_cell >> 8U);
+    const uint32_t index = this->index(x, y, z);
+    const uint8_t packed = static_cast<uint8_t>(this->sky[index] | (this->block[index] << 4U));
+    this->final_lights[this->final_cell] = packed;
+    this->final_differences |= packed ^ this->final_lights[0];
+    if (this->final_cell + 1U < VOXEL_LIGHT_SECTION_BLOCKS)
+    {
+        this->final_cell += 1U;
+        return (FT_ERR_SUCCESS);
+    }
+    const int32_t error = light_store_section(this->light_chunk->get_section(this->final_section),
+        this->final_lights, this->final_differences);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    this->final_cell = 0U;
+    this->final_differences = 0U;
+    this->final_section += 1U;
+    if (this->final_section == GAME_VOXEL_CHUNK_SECTION_COUNT)
+        this->phase = VOXEL_LIGHT_OPERATION_COMPLETE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -473,19 +606,20 @@ int32_t voxel_light_build_operation::initialize(
     operation->region_min = include_halo != FT_FALSE ? -VOXEL_LIGHT_HALO : 0;
     operation->region_max = include_halo != FT_FALSE
         ? 16 + VOXEL_LIGHT_HALO : 16;
+    operation->grid_edge = operation->region_max - operation->region_min;
     operation->scan_x = operation->region_min;
     operation->scan_y = 255;
     operation->scan_z = operation->region_min;
     operation->direct_sky = FT_TRUE;
-    operation->final_x = 0;
-    operation->final_y = 0;
-    operation->final_z = 0;
+    operation->final_cell = 0U;
+    operation->final_section = 0U;
+    operation->final_differences = 0U;
     operation->phase = VOXEL_LIGHT_OPERATION_SCAN;
     operation->lookup = lookup_block;
     operation->user_data = user_data;
     operation->stats = {};
-    grid_size = static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE) * 256U
-        * VOXEL_LIGHT_GRID_EDGE;
+    grid_size = static_cast<size_t>(operation->grid_edge) * 256U
+        * operation->grid_edge;
     try
     {
         operation->sky.assign(grid_size, 0U);
@@ -546,8 +680,6 @@ int32_t voxel_light_build_operation::step(
     uint32_t processed;
     uint32_t minimum_nodes;
     uint32_t target_nodes;
-    uint32_t maximum_nodes;
-    uint64_t start_nanoseconds;
     int32_t error_code;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
@@ -566,12 +698,12 @@ int32_t voxel_light_build_operation::step(
     }
     minimum_nodes = config.min_nodes_per_frame;
     target_nodes = config.target_nodes_per_frame;
-    maximum_nodes = config.max_nodes_per_frame;
     processed = 0U;
-    start_nanoseconds = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    while (processed < maximum_nodes)
+    const ft_bool use_time_budget = minimum_nodes < target_nodes;
+    std::chrono::steady_clock::time_point start;
+    if (use_time_budget != FT_FALSE)
+        start = std::chrono::steady_clock::now();
+    while (processed < target_nodes)
     {
         if (operation->phase == VOXEL_LIGHT_OPERATION_SCAN)
         {
@@ -585,8 +717,7 @@ int32_t voxel_light_build_operation::step(
                     operation->origin_z + operation->scan_z,
                     &block_id) != FT_ERR_SUCCESS)
                 return (FT_ERR_INVALID_OPERATION);
-            index = light_index(operation->scan_x + VOXEL_LIGHT_HALO,
-                operation->scan_y, operation->scan_z + VOXEL_LIGHT_HALO);
+            index = operation->index(operation->scan_x, operation->scan_y, operation->scan_z);
             operation->stats.scanned_cells += 1U;
             if (operation->has_last_block == FT_FALSE
                 || operation->last_block_id != block_id)
@@ -595,12 +726,7 @@ int32_t voxel_light_build_operation::step(
                     voxel_get_block_metadata(block_id);
                 operation->has_last_block = FT_TRUE;
                 operation->last_block_id = block_id;
-                operation->last_block_cost = metadata.light_attenuation;
-                if (metadata.occludes_faces != FT_FALSE
-                    || operation->last_block_cost >= 15U)
-                    operation->last_block_cost = 15U;
-                else if (operation->last_block_cost == 0U)
-                    operation->last_block_cost = 1U;
+                operation->last_block_cost = light_step_cost(metadata);
                 operation->last_block_passes_sky = FT_FALSE;
                 if (metadata.light_attenuation < 15U
                     && metadata.transparent != FT_FALSE)
@@ -615,13 +741,10 @@ int32_t voxel_light_build_operation::step(
                 operation->sky[index] = 15U;
                 if (operation->scan_x > operation->region_min)
                 {
-                    uint32_t west_index = light_index(
-                        operation->scan_x - 1 + VOXEL_LIGHT_HALO,
-                        operation->scan_y,
-                        operation->scan_z + VOXEL_LIGHT_HALO);
+                    const uint32_t west_index = index - 1U;
                     if (operation->sky[west_index] == 0U)
                     {
-                        error_code = operation->seed_sky_neighbor(
+                        error_code = operation->seed_sky_neighbor(west_index,
                             operation->scan_x - 1, operation->scan_y,
                             operation->scan_z);
                         if (error_code != FT_ERR_SUCCESS)
@@ -630,13 +753,10 @@ int32_t voxel_light_build_operation::step(
                 }
                 if (operation->scan_z > operation->region_min)
                 {
-                    uint32_t north_index = light_index(
-                        operation->scan_x + VOXEL_LIGHT_HALO,
-                        operation->scan_y,
-                        operation->scan_z - 1 + VOXEL_LIGHT_HALO);
+                    const uint32_t north_index = index - operation->grid_edge;
                     if (operation->sky[north_index] == 0U)
                     {
-                        error_code = operation->seed_sky_neighbor(
+                        error_code = operation->seed_sky_neighbor(north_index,
                             operation->scan_x, operation->scan_y,
                             operation->scan_z - 1);
                         if (error_code != FT_ERR_SUCCESS)
@@ -646,18 +766,21 @@ int32_t voxel_light_build_operation::step(
             }
             else
             {
-                operation->direct_sky = FT_FALSE;
                 if (operation->last_block_cost < 15U)
                 {
+                    if (operation->direct_sky != FT_FALSE && operation->scan_y < 255)
+                    {
+                        error_code = operation->seed_sky_neighbor(index,
+                            operation->scan_x, operation->scan_y, operation->scan_z);
+                        if (error_code != FT_ERR_SUCCESS)
+                            return (error_code);
+                    }
                     if (operation->scan_x > operation->region_min)
                     {
-                        uint32_t west_index = light_index(
-                            operation->scan_x - 1 + VOXEL_LIGHT_HALO,
-                            operation->scan_y,
-                            operation->scan_z + VOXEL_LIGHT_HALO);
+                        const uint32_t west_index = index - 1U;
                         if (operation->sky[west_index] == 15U)
                         {
-                            error_code = operation->seed_sky_neighbor(
+                            error_code = operation->seed_sky_neighbor(index,
                                 operation->scan_x, operation->scan_y,
                                 operation->scan_z);
                             if (error_code != FT_ERR_SUCCESS)
@@ -666,13 +789,10 @@ int32_t voxel_light_build_operation::step(
                     }
                     if (operation->scan_z > operation->region_min)
                     {
-                        uint32_t north_index = light_index(
-                            operation->scan_x + VOXEL_LIGHT_HALO,
-                            operation->scan_y,
-                            operation->scan_z - 1 + VOXEL_LIGHT_HALO);
+                        const uint32_t north_index = index - operation->grid_edge;
                         if (operation->sky[north_index] == 15U)
                         {
-                            error_code = operation->seed_sky_neighbor(
+                            error_code = operation->seed_sky_neighbor(index,
                                 operation->scan_x, operation->scan_y,
                                 operation->scan_z);
                             if (error_code != FT_ERR_SUCCESS)
@@ -680,6 +800,7 @@ int32_t voxel_light_build_operation::step(
                         }
                     }
                 }
+                operation->direct_sky = FT_FALSE;
             }
             if (operation->last_block_emission > 0U)
             {
@@ -720,39 +841,19 @@ int32_t voxel_light_build_operation::step(
         }
         else if (operation->phase == VOXEL_LIGHT_OPERATION_FINALIZE)
         {
-            uint32_t index = light_index(operation->final_x
-                + VOXEL_LIGHT_HALO, operation->final_y,
-                operation->final_z + VOXEL_LIGHT_HALO);
-            if (operation->light_chunk->set(operation->final_x,
-                    operation->final_y, operation->final_z,
-                    voxel_light_pack(operation->sky[index],
-                        operation->block[index])) != FT_ERR_SUCCESS)
-                return (FT_ERR_NO_MEMORY);
-            operation->final_x += 1;
-            if (operation->final_x >= 16)
-            {
-                operation->final_x = 0;
-                operation->final_z += 1;
-                if (operation->final_z >= 16)
-                {
-                    operation->final_z = 0;
-                    operation->final_y += 1;
-                    if (operation->final_y >= 256)
-                        operation->phase = VOXEL_LIGHT_OPERATION_COMPLETE;
-                }
-            }
+            error_code = operation->finalize_next();
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+            if (operation->phase == VOXEL_LIGHT_OPERATION_COMPLETE)
+                break ;
         }
         processed += 1U;
-        if (processed >= target_nodes)
-            break ;
-        if (processed >= minimum_nodes
+        if (use_time_budget != FT_FALSE && processed < target_nodes
+            && processed >= minimum_nodes
             && (processed == minimum_nodes || (processed & 31U) == 0U))
         {
-            const uint64_t now_nanoseconds = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
-            if (now_nanoseconds - start_nanoseconds
-                >= config.time_budget_microseconds * 1000U)
+            if (std::chrono::steady_clock::now() - start
+                >= std::chrono::microseconds(config.time_budget_microseconds))
                 break ;
         }
     }
@@ -797,8 +898,8 @@ int32_t voxel_light_build_operation::get_packed_light(int32_t world_x,
         || local_z < this->_implementation->region_min
         || local_z >= this->_implementation->region_max)
         return (FT_ERR_OUT_OF_RANGE);
-    index = light_index(static_cast<int32_t>(local_x) + VOXEL_LIGHT_HALO,
-        world_y, static_cast<int32_t>(local_z) + VOXEL_LIGHT_HALO);
+    index = this->_implementation->index(static_cast<int32_t>(local_x),
+        world_y, static_cast<int32_t>(local_z));
     *packed_light = voxel_light_pack(this->_implementation->sky[index],
         this->_implementation->block[index]);
     return (FT_ERR_SUCCESS);
@@ -823,7 +924,6 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     int32_t region_min, int32_t region_max,
     voxel_light_build_stats *stats) noexcept
 {
-    size_t grid_size;
     uint32_t index;
     int32_t error;
 
@@ -836,17 +936,17 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     std::vector<uint8_t> &block = workspace->block;
     std::vector<uint8_t> &sky_queued = workspace->sky_queued;
     std::vector<uint8_t> &block_queued = workspace->block_queued;
-    std::vector<uint32_t> &block_ids = workspace->block_ids;
+    std::vector<uint8_t> &step_costs = workspace->step_costs;
     std::vector<light_node> &queue = workspace->queue;
-    grid_size = static_cast<size_t>(VOXEL_LIGHT_GRID_EDGE)
-        * 256U * VOXEL_LIGHT_GRID_EDGE;
+    const int32_t edge = region_max - region_min;
+    const ft_size_t grid_size = static_cast<ft_size_t>(edge) * 256U * edge;
     try
     {
         sky.assign(grid_size, 0U);
         block.assign(grid_size, 0U);
         sky_queued.assign(grid_size, 0U);
         block_queued.assign(grid_size, 0U);
-        block_ids.assign(grid_size, GAME_VOXEL_AIR_BLOCK);
+        step_costs.resize(grid_size);
     }
     catch (const std::bad_alloc &)
     {
@@ -863,22 +963,14 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
     error = light_chunk.initialize(0U);
     if (error != FT_ERR_SUCCESS)
         return error;
-    if (queue.capacity() < 65536U)
-    {
-        try
-        {
-            queue.reserve(65536U);
-        }
-        catch (const std::bad_alloc &)
-        {
-            return (FT_ERR_NO_MEMORY);
-        }
-    }
+    uint16_t sky_floors[VOXEL_LIGHT_GRID_EDGE * VOXEL_LIGHT_GRID_EDGE];
+    uint32_t column = 0U;
     for (int32_t z = region_min; z < region_max; ++z)
     {
         for (int32_t x = region_min; x < region_max; ++x)
         {
             ft_bool direct = FT_TRUE;
+            uint16_t sky_floor = 256U;
 			for (int32_t y = 255; y >= 0; --y)
 			{
 				uint32_t id = GAME_VOXEL_AIR_BLOCK;
@@ -890,25 +982,13 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
                     stats->scanned_cells += 1U;
                 const voxel_block_metadata &metadata =
                     voxel_get_block_metadata(id);
-                index = light_index(x + VOXEL_LIGHT_HALO, y,
-                    z + VOXEL_LIGHT_HALO);
-                block_ids[index] = id;
+                index = light_grid_index(x - region_min, y, z - region_min, edge);
+                step_costs[index] = light_step_cost(metadata);
 				if (direct == FT_TRUE && metadata.light_attenuation < 15U
 					&& metadata.transparent == FT_TRUE)
 				{
 					sky[index] = 15U;
-					/* Every direct-sky cell is also a lateral propagation source.
-					 * Seeding only the top and roof boundary leaves an adjacent
-					 * cave at the same height without a source to propagate from. */
-                    if (sky_queued[index] == 0U)
-                    {
-                        error = light_queue_push(queue, {
-                            static_cast<int16_t>(x), static_cast<int16_t>(y),
-                            static_cast<int16_t>(z), 0U, 15U});
-                        if (error != FT_ERR_SUCCESS)
-                            return (error);
-                        sky_queued[index] = 1U;
-                    }
+                    sky_floor = static_cast<uint16_t>(y);
                 }
                 else
                     direct = FT_FALSE;
@@ -931,16 +1011,21 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
                     }
                 }
             }
+            sky_floors[column] = sky_floor;
+            column += 1U;
         }
     }
+    // Cells at level 15 only contribute across the boundary of their columns.
+    error = light_seed_sky_boundaries(*workspace, sky_floors, region_min, region_max);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
     if (stats != nullptr)
         stats->queue_peak = queue.size();
     while (!queue.empty())
     {
         light_node node = queue.back();
         queue.pop_back();
-        index = light_index(node.x + VOXEL_LIGHT_HALO, node.y,
-            node.z + VOXEL_LIGHT_HALO);
+        index = light_grid_index(node.x - region_min, node.y, node.z - region_min, edge);
         if (node.channel == 0U)
         {
             sky_queued[index] = 0U;
@@ -964,14 +1049,8 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
             if (x < region_min || x >= region_max || y < 0 || y >= 256
                 || z < region_min || z >= region_max)
                 continue;
-            index = light_index(x + VOXEL_LIGHT_HALO, y,
-                z + VOXEL_LIGHT_HALO);
-            uint32_t id = block_ids[index];
-            const voxel_block_metadata &metadata = voxel_get_block_metadata(id);
-            if (metadata.light_attenuation >= 15U || metadata.occludes_faces == FT_TRUE)
-                continue;
-            uint8_t cost = metadata.light_attenuation > 1U
-                ? metadata.light_attenuation : 1U;
+            index = light_grid_index(x - region_min, y, z - region_min, edge);
+            const uint8_t cost = step_costs[index];
             if (node.level <= cost)
                 continue;
             uint8_t candidate = static_cast<uint8_t>(node.level - cost);
@@ -997,15 +1076,40 @@ static int32_t voxel_light_build_chunk_region(voxel_light_chunk &light_chunk,
             }
         }
     }
-    for (int32_t y = 0; y < 256; ++y)
-        for (int32_t z = 0; z < 16; ++z)
-            for (int32_t x = 0; x < 16; ++x)
-                if (light_chunk.set(x, y, z,
-                        voxel_light_pack(sky[light_index(x + VOXEL_LIGHT_HALO,
-                            y, z + VOXEL_LIGHT_HALO)],
-                            block[light_index(x + VOXEL_LIGHT_HALO, y,
-                                z + VOXEL_LIGHT_HALO)])) != FT_ERR_SUCCESS)
-                    return FT_ERR_NO_MEMORY;
+    uint8_t packed[VOXEL_LIGHT_SECTION_BLOCKS];
+    uint8_t section = 0U;
+    while (section < GAME_VOXEL_CHUNK_SECTION_COUNT)
+    {
+        const int32_t first_y = section << 4U;
+        const uint32_t first_index = light_grid_index(-region_min, first_y, -region_min, edge);
+        const uint8_t first = static_cast<uint8_t>(sky[first_index] | (block[first_index] << 4U));
+        uint8_t differences = 0U;
+        uint16_t cell = 0U;
+        int32_t y = first_y;
+        while (y < first_y + 16)
+        {
+            int32_t z = 0;
+            while (z < 16)
+            {
+                const uint32_t row = light_grid_index(-region_min, y, z - region_min, edge);
+                uint32_t x = 0U;
+                while (x < 16U)
+                {
+                    const uint8_t value = static_cast<uint8_t>(sky[row + x] | (block[row + x] << 4U));
+                    packed[cell] = value;
+                    differences |= value ^ first;
+                    cell += 1U;
+                    x += 1U;
+                }
+                z += 1;
+            }
+            y += 1;
+        }
+        error = light_store_section(light_chunk.get_section(section), packed, differences);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        section += 1U;
+    }
     return FT_ERR_SUCCESS;
 }
 

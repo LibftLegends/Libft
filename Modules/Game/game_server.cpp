@@ -1,6 +1,5 @@
 #include "../PThread/pthread_internal.hpp"
 #include "game_server.hpp"
-#include "../JSon/document.hpp"
 #include "../Networking/socket_class.hpp"
 #include "../Template/pair.hpp"
 #include "../Errno/errno_internal.hpp"
@@ -58,6 +57,7 @@ const char *game_server::get_error_str() const noexcept
 game_server::game_server() noexcept
     : _server(ft_nullptr), _world(), _clients(), _auth_token(),
       _on_join(ft_nullptr), _on_leave(ft_nullptr), _on_message(ft_nullptr),
+      _on_parsed_message(ft_nullptr),
       _message_user_data(ft_nullptr), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
@@ -68,256 +68,138 @@ game_server::game_server() noexcept
 int32_t game_server::initialize() noexcept
 {
     ft_sharedptr<game_world> world;
-    int32_t world_error;
-
-    world_error = world.initialize();
-    if (world_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(world_error);
-        return (world_error);
-    }
+    const int32_t result = world.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
     return (this->initialize(world, ft_nullptr));
 }
 
 int32_t game_server::initialize(const ft_sharedptr<game_world> &world,
     const char *auth_token) noexcept
 {
-    ft_websocket_server *server_instance;
-    int32_t server_initialize_error;
-    int32_t world_error;
-    int32_t clients_error;
-    int32_t auth_token_destroy_error;
-    int32_t clients_destroy_error;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        errno_abort_lifecycle(this->_initialised_state, "game_server::initialize", "called while object is already initialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        errno_abort_lifecycle(this->_initialised_state, "game_server::initialize",
+            "called while object is already initialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    world_error = this->_world.initialize(world);
-    if (world_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(world_error);
-        return (world_error);
-    }
-    auth_token_destroy_error = this->_auth_token.destroy();
-    if (auth_token_destroy_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(auth_token_destroy_error);
-        return (auth_token_destroy_error);
-    }
-    clients_destroy_error = this->_clients.destroy();
-    if (clients_destroy_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(clients_destroy_error);
-        return (clients_destroy_error);
-    }
-    if (this->_auth_token.initialize() != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(this->_auth_token.get_error());
-        return (this->get_error());
-    }
-    clients_error = this->_clients.initialize();
-    if (clients_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        (void)this->_auth_token.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(clients_error);
-        return (this->get_error());
-    }
-    this->_auth_token.clear();
-    this->_clients.clear();
-    this->_on_join = ft_nullptr;
-    this->_on_leave = ft_nullptr;
-    this->_on_message = ft_nullptr;
-    this->_message_user_data = ft_nullptr;
-    if (this->_server != ft_nullptr)
-    {
-        delete this->_server;
-        this->_server = ft_nullptr;
-    }
-    server_instance = new (std::nothrow) ft_websocket_server();
-    if (server_instance == ft_nullptr)
-    {
-        (void)this->_clients.destroy();
-        (void)this->_auth_token.destroy();
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(FT_ERR_NO_MEMORY);
-        return (FT_ERR_NO_MEMORY);
-    }
-    server_initialize_error = server_instance->initialize();
-    if (server_initialize_error != FT_ERR_SUCCESS)
-    {
-        delete server_instance;
-        (void)this->_clients.destroy();
-        (void)this->_auth_token.destroy();
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(server_initialize_error);
-        return (server_initialize_error);
-    }
-    this->_server = server_instance;
-    if (auth_token != ft_nullptr)
-        this->_auth_token = auth_token;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    int32_t result = this->_world.initialize(world);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_auth_token.initialize(auth_token);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_clients.initialize();
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->_server = new (std::nothrow) ft_websocket_server();
+        if (this->_server == ft_nullptr)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->_server->initialize();
+    }
+    if (result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (this->set_error(result));
 }
 
 int32_t game_server::destroy() noexcept
 {
-    int32_t disable_error;
-    int32_t world_destroy_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    disable_error = this->disable_thread_safety();
+        return (this->set_error(FT_ERR_SUCCESS));
+    int32_t result = this->disable_thread_safety();
     if (this->_server != ft_nullptr)
     {
+        const int32_t transport_error = this->_server->destroy();
+        if (result == FT_ERR_SUCCESS)
+            result = transport_error;
         delete this->_server;
         this->_server = ft_nullptr;
     }
-    world_destroy_error = this->_world.destroy();
-    this->_clients.clear();
-    this->_auth_token.clear();
+    const int32_t world_error = this->_world.destroy();
+    const int32_t clients_error = this->_clients.destroy();
+    const int32_t token_error = this->_auth_token.destroy();
     this->_on_join = ft_nullptr;
     this->_on_leave = ft_nullptr;
     this->_on_message = ft_nullptr;
+    this->_on_parsed_message = ft_nullptr;
     this->_message_user_data = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    if (disable_error == FT_ERR_SUCCESS && world_destroy_error != FT_ERR_SUCCESS)
-        disable_error = world_destroy_error;
-    this->set_error(disable_error);
-    return (disable_error);
+    if (result == FT_ERR_SUCCESS)
+        result = world_error;
+    if (result == FT_ERR_SUCCESS)
+        result = clients_error;
+    if (result == FT_ERR_SUCCESS)
+        result = token_error;
+    return (this->set_error(result));
+}
+
+ft_bool game_server::has_active_lock() const noexcept
+{
+    return ((this->_mutex != ft_nullptr && this->_mutex->lockState())
+        || this->_clients.has_active_lock());
 }
 
 int32_t game_server::move(game_server &other) noexcept
 {
-    int32_t destroy_error;
-    int32_t source_error;
-    int32_t source_destroy_error;
-    int32_t move_error;
-    ft_websocket_server *server_pointer;
-    pt_recursive_mutex *mutex_pointer;
-    ft_sharedptr<game_world> world_copy;
-    ft_map<int32_t, int32_t> clients_copy;
-    ft_string auth_token_copy;
-
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
-        errno_abort_lifecycle(other._initialised_state, "game_server::move", "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        errno_abort_lifecycle(other._initialised_state, "game_server::move",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    destroy_error = this->destroy();
-    if (destroy_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(destroy_error);
-        return (destroy_error);
-    }
+    if (this->has_active_lock())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    move_error = world_copy.initialize(other._world);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    move_error = clients_copy.copy_from(other._clients);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    move_error = auth_token_copy.initialize(other._auth_token);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    move_error = this->_world.move(world_copy);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    move_error = this->_clients.move(clients_copy);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    move_error = this->_auth_token.move(auth_token_copy);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_world.destroy();
-        (void)this->_clients.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(move_error);
-        return (move_error);
-    }
-    if (other._mutex != ft_nullptr && other._mutex->lockState())
-    {
-        (void)this->_world.destroy();
-        (void)this->_clients.destroy();
-        (void)this->_auth_token.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(FT_ERR_THREAD_BUSY);
-        return (FT_ERR_THREAD_BUSY);
-    }
-    server_pointer = other._server;
-    mutex_pointer = other._mutex;
-    source_error = other.get_error();
-    other._server = ft_nullptr;
-    other._mutex = ft_nullptr;
-    this->_server = server_pointer;
-    this->_on_join = other._on_join;
-    this->_on_leave = other._on_leave;
-    this->_on_message = other._on_message;
-    this->_message_user_data = other._message_user_data;
-    this->_mutex = mutex_pointer;
+    if (other.has_active_lock())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    source_destroy_error = other.destroy();
-    if (source_destroy_error != FT_ERR_SUCCESS)
+    result = this->_clients.move(other._clients);
+    if (result == FT_ERR_SUCCESS)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
+        result = this->_auth_token.move(other._auth_token);
+        if (result == FT_ERR_SUCCESS)
         {
-            this->set_error(destroy_error);
-            return (destroy_error);
+            result = this->_world.move(other._world);
+            if (result != FT_ERR_SUCCESS)
+                (void)other._auth_token.move(this->_auth_token);
         }
-        this->set_error(source_destroy_error);
-        return (source_destroy_error);
+        if (result != FT_ERR_SUCCESS)
+            (void)other._clients.move(this->_clients);
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->_server = other._server;
+        this->_mutex = other._mutex;
+        this->_on_join = other._on_join;
+        this->_on_leave = other._on_leave;
+        this->_on_message = other._on_message;
+        this->_on_parsed_message = other._on_parsed_message;
+        this->_message_user_data = other._message_user_data;
+        other._server = ft_nullptr;
+        other._mutex = ft_nullptr;
+        result = other.destroy();
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
     }
     this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
+
 
 game_server::~game_server() noexcept
 {
@@ -427,22 +309,37 @@ void game_server::set_leave_callback(void (*callback)(int32_t)) noexcept
 void game_server::set_message_callback(game_server_message_callback callback,
     void *user_data) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "game_server::set_message_callback");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    this->configure_message_callbacks(callback, ft_nullptr, user_data);
+    return ;
+}
+
+void game_server::set_parsed_message_callback(game_server_parsed_message_callback callback,
+    void *user_data) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_server::set_parsed_message_callback");
+    this->configure_message_callbacks(ft_nullptr, callback, user_data);
+    return ;
+}
+
+void game_server::configure_message_callbacks(game_server_message_callback raw_callback,
+    game_server_parsed_message_callback parsed_callback, void *user_data) noexcept
+{
+    ft_bool lock_acquired;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         this->set_error(lock_error);
         return ;
     }
-    this->_on_message = callback;
+    this->_on_message = raw_callback;
+    this->_on_parsed_message = parsed_callback;
     this->_message_user_data = user_data;
     (void)this->unlock_internal(lock_acquired);
     this->set_error(FT_ERR_SUCCESS);
+    return ;
 }
 
 int32_t game_server::send_to_client(int32_t client_handle,
@@ -466,245 +363,249 @@ int32_t game_server::send_to_client(int32_t client_handle,
     return (this->set_error(send_error));
 }
 
-int32_t game_server::handle_message_locked(int32_t client_handle,
-    const ft_string &message) noexcept
+enum class game_server_request_type
 {
-    json_group *groups;
-    json_group *join_group;
-    json_group *leave_group;
-    json_group *event_group;
-    json_item *id_item;
-    json_item *token_item;
-    json_item *duration_item;
-    int32_t client_id;
-    ft_sharedptr<game_event> event;
-    ft_sharedptr<game_event_scheduler> scheduler;
+    UNKNOWN,
+    EVENT,
+    LEAVE,
+    JOIN,
+    WORLD_REVISION
+};
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::handle_message_locked");
-    groups = json_read_from_string(message.c_str());
-    if (groups == ft_nullptr)
+struct game_server_request
+{
+    game_server_request_type type;
+    int32_t identifier;
+    int32_t duration;
+    ft_bool close_on_error;
+    json_group *revision;
+};
+
+static json_group *select_request_group(json_group *groups,
+    ft_bool has_message_callback, game_server_request_type &type) noexcept
+{
+    json_group *selected = ft_nullptr;
+    while (groups != ft_nullptr)
     {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    if (json_find_group(groups, "world_revision") != ft_nullptr
-        && this->_on_message != ft_nullptr)
-    {
-        int32_t callback_result = this->_on_message(client_handle,
-            message.c_str(), this->_message_user_data);
-        json_free_groups(groups);
-        this->set_error(callback_result);
-        return (callback_result);
-    }
-    join_group = json_find_group(groups, "join");
-    if (join_group != ft_nullptr)
-    {
-        id_item = json_find_item(join_group, "id");
-        token_item = json_find_item(join_group, "token");
-        if (id_item == ft_nullptr)
+        const char *name = groups->name;
+        if (name != ft_nullptr)
         {
-            json_free_groups(groups);
-            this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-            return (FT_ERR_GAME_GENERAL_ERROR);
-        }
-        if (this->_auth_token.size() > 0)
-        {
-            if (token_item == ft_nullptr || this->_auth_token != token_item->value)
+            if (has_message_callback && name[0] == 'w' && ft_strcmp(name, "world_revision") == 0)
             {
-                json_free_groups(groups);
-                nw_close(client_handle);
-                this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-                return (FT_ERR_GAME_GENERAL_ERROR);
+                type = game_server_request_type::WORLD_REVISION;
+                return (groups);
+            }
+            if (type < game_server_request_type::JOIN && name[0] == 'j' && ft_strcmp(name, "join") == 0)
+            {
+                type = game_server_request_type::JOIN;
+                selected = groups;
+                if (!has_message_callback)
+                    break ;
+            }
+            else if (type < game_server_request_type::LEAVE && name[0] == 'l' && ft_strcmp(name, "leave") == 0)
+            {
+                type = game_server_request_type::LEAVE;
+                selected = groups;
+            }
+            else if (type == game_server_request_type::UNKNOWN && name[0] == 'e' && ft_strcmp(name, "event") == 0)
+            {
+                type = game_server_request_type::EVENT;
+                selected = groups;
             }
         }
-        client_id = ft_atoi(id_item->value);
-        this->join_client_locked(client_id, client_handle);
-        json_free_groups(groups);
-        this->set_error(FT_ERR_SUCCESS);
+        groups = groups->next;
+    }
+    return (selected);
+}
+
+static int32_t read_game_server_request(json_group *groups, const ft_string &auth_token,
+    ft_bool has_message_callback, game_server_request &request) noexcept
+{
+    json_group *selected = select_request_group(groups, has_message_callback, request.type);
+    if (selected == ft_nullptr)
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    if (request.type == game_server_request_type::WORLD_REVISION)
+    {
+        request.revision = selected;
         return (FT_ERR_SUCCESS);
     }
-    leave_group = json_find_group(groups, "leave");
-    if (leave_group != ft_nullptr)
+
+    const ft_bool needs_token = request.type == game_server_request_type::JOIN
+        && auth_token.size() != 0U;
+    const ft_bool needs_duration = request.type == game_server_request_type::EVENT;
+    const json_item *identifier = ft_nullptr;
+    const json_item *token = ft_nullptr;
+    const json_item *duration = ft_nullptr;
+    const json_item *item = selected->items;
+    while (item != ft_nullptr)
     {
-        id_item = json_find_item(leave_group, "id");
-        if (id_item == ft_nullptr)
+        const char *key = item->key;
+        if (key != ft_nullptr)
         {
-            json_free_groups(groups);
-            this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-            return (FT_ERR_GAME_GENERAL_ERROR);
+            if (identifier == ft_nullptr && key[0] == 'i' && ft_strcmp(key, "id") == 0)
+                identifier = item;
+            else if (needs_token && token == ft_nullptr && key[0] == 't' && ft_strcmp(key, "token") == 0)
+                token = item;
+            else if (needs_duration && duration == ft_nullptr && key[0] == 'd' && ft_strcmp(key, "duration") == 0)
+                duration = item;
         }
-        client_id = ft_atoi(id_item->value);
-        this->leave_client_locked(client_id);
-        nw_close(client_handle);
-        json_free_groups(groups);
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
+        if (identifier != ft_nullptr && (!needs_token || token != ft_nullptr)
+            && (!needs_duration || duration != ft_nullptr))
+            break ;
+        item = item->next;
     }
-    event_group = json_find_group(groups, "event");
-    if (event_group == ft_nullptr)
+    if (identifier == ft_nullptr || (needs_duration && duration == ft_nullptr))
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    if (needs_token && (token == ft_nullptr || auth_token != token->value))
     {
-        json_free_groups(groups);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
+        request.close_on_error = FT_TRUE;
         return (FT_ERR_GAME_GENERAL_ERROR);
     }
-    id_item = json_find_item(event_group, "id");
-    duration_item = json_find_item(event_group, "duration");
-    if (id_item == ft_nullptr || duration_item == ft_nullptr)
-    {
-        json_free_groups(groups);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    event = ft_sharedptr<game_event>(new (std::nothrow) game_event());
-    if (!event)
-    {
-        json_free_groups(groups);
-        this->set_error(FT_ERR_NO_MEMORY);
-        return (FT_ERR_NO_MEMORY);
-    }
-    if (event->initialize() != FT_ERR_SUCCESS)
-    {
-        json_free_groups(groups);
-        this->set_error(event->get_error());
-        return (this->get_error());
-    }
-    event->set_id(ft_atoi(id_item->value));
-    if (event->get_error() != FT_ERR_SUCCESS)
-    {
-        json_free_groups(groups);
-        this->set_error(event->get_error());
-        return (this->get_error());
-    }
-    event->set_duration(ft_atoi(duration_item->value));
-    if (event->get_error() != FT_ERR_SUCCESS)
-    {
-        json_free_groups(groups);
-        this->set_error(event->get_error());
-        return (this->get_error());
-    }
-    if (!this->_world)
-    {
-        json_free_groups(groups);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    this->_world->schedule_event(event);
-    if (this->_world->get_error() != FT_ERR_SUCCESS)
-    {
-        json_free_groups(groups);
-        this->set_error(this->_world->get_error());
-        return (this->get_error());
-    }
-    json_free_groups(groups);
-    scheduler = this->_world->get_event_scheduler();
-    if (!scheduler)
-    {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    this->set_error(FT_ERR_SUCCESS);
+    request.identifier = ft_atoi(identifier->value);
+    if (needs_duration)
+        request.duration = ft_atoi(duration->value);
     return (FT_ERR_SUCCESS);
 }
 
+int32_t game_server::handle_message_locked(int32_t client_handle,
+    const ft_string &message) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::handle_message_locked");
+    const char *message_text = message.c_str();
+    json_group *groups = json_read_from_string(message_text);
+    if (groups == ft_nullptr)
+        return (this->set_error(FT_ERR_GAME_GENERAL_ERROR));
+    game_server_request request = {game_server_request_type::UNKNOWN, 0, 0, FT_FALSE, ft_nullptr};
+    int32_t result = read_game_server_request(groups, this->_auth_token,
+        this->_on_message != ft_nullptr || this->_on_parsed_message != ft_nullptr, request);
+    if (result == FT_ERR_SUCCESS && request.type == game_server_request_type::WORLD_REVISION
+        && this->_on_parsed_message != ft_nullptr)
+    {
+        result = this->_on_parsed_message(client_handle, message_text,
+            *request.revision, this->_message_user_data);
+        json_free_groups(groups);
+        return (this->set_error(result));
+    }
+    json_free_groups(groups);
+    if (result != FT_ERR_SUCCESS)
+    {
+        if (request.close_on_error)
+            nw_close(client_handle);
+        return (this->set_error(result));
+    }
+    if (request.type == game_server_request_type::WORLD_REVISION)
+        result = this->_on_message(client_handle, message_text, this->_message_user_data);
+    else if (request.type == game_server_request_type::JOIN)
+        result = this->join_client_locked(request.identifier, client_handle);
+    else if (request.type == game_server_request_type::LEAVE)
+    {
+        result = this->leave_client_locked(request.identifier);
+        nw_close(client_handle);
+    }
+    else
+        result = this->schedule_event_locked(request.identifier, request.duration);
+    return (this->set_error(result));
+}
+
+int32_t game_server::schedule_event_locked(int32_t event_id, int32_t duration) noexcept
+{
+    if (event_id < 0 || duration < 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!this->_world)
+        return (FT_ERR_GAME_GENERAL_ERROR);
+    auto *event = new (std::nothrow) game_event();
+    if (event == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_sharedptr<game_event> owner;
+    int32_t result = owner.initialize(event);
+    if (result != FT_ERR_SUCCESS)
+    {
+        delete event;
+        return (result);
+    }
+    result = event->initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    event->set_id(event_id);
+    event->set_duration(duration);
+    this->_world->schedule_event(owner);
+    return (this->_world->get_error());
+}
+
+
 int32_t game_server::serialize_world_locked(ft_string &out) const noexcept
 {
-    ft_sharedptr<game_event_scheduler> scheduler;
-    json_document document;
-    json_group *group;
-    char *content;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::serialize_world_locked");
     if (!this->_world)
-    {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
+        return (this->set_error(FT_ERR_GAME_GENERAL_ERROR));
+    ft_sharedptr<game_event_scheduler> scheduler;
     scheduler = this->_world->get_event_scheduler();
     if (!scheduler)
+        return (this->set_error(FT_ERR_GAME_GENERAL_ERROR));
+    return (this->set_error(serialize_event_scheduler_buffer(scheduler, out)));
+}
+
+int32_t game_server::broadcast_world_locked() noexcept
+{
+    const ft_size_t count = this->_clients.size();
+    int32_t result = this->_clients.get_error();
+    if (result != FT_ERR_SUCCESS || count == 0U)
+        return (result);
+    ft_string update;
+    result = this->serialize_world_locked(update);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    const auto *end = this->_clients.end();
+    result = this->_clients.get_error();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    const auto *client = end - count;
+    while (client != end)
     {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
+        constexpr ft_size_t BATCH_SIZE = 64U;
+        int32_t descriptors[BATCH_SIZE];
+        ft_size_t descriptor_count = 0U;
+        while (client != end && descriptor_count < BATCH_SIZE)
+        {
+            descriptors[descriptor_count++] = client->value;
+            ++client;
+        }
+        result = this->_server->send_text_many(descriptors, descriptor_count, update);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
     }
-    group = serialize_event_scheduler(scheduler);
-    if (group == ft_nullptr)
-    {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    document.append_group(group);
-    content = document.write_to_string();
-    if (content == ft_nullptr)
-    {
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return (FT_ERR_GAME_GENERAL_ERROR);
-    }
-    out = content;
-    cma_free(content);
-    this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
 
 void game_server::run_once() noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t client_handle;
-    ft_string message;
-    ft_string update;
-    Pair<int32_t, int32_t> *client_ptr;
-    Pair<int32_t, int32_t> *client_end;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::run_once");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
-    }
-    if (this->_server == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_INVALID_STATE);
-        return ;
-    }
-    if (this->_server->run_once(client_handle, message) != 0)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return ;
-    }
-    if (this->handle_message_locked(client_handle, message) != FT_ERR_SUCCESS)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return ;
-    }
-    if (this->serialize_world_locked(update) != FT_ERR_SUCCESS)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_GAME_GENERAL_ERROR);
-        return ;
-    }
-    client_ptr = this->_clients.end() - this->_clients.size();
-    client_end = this->_clients.end();
-    while (client_ptr != client_end)
-    {
-        int32_t send_error;
-
-        send_error = this->_server->send_text(client_ptr->value, update);
-        if (send_error != FT_ERR_SUCCESS)
+        if (this->_server == ft_nullptr)
+            result = FT_ERR_INVALID_STATE;
+        else
         {
-            (void)this->unlock_internal(lock_acquired);
-            this->set_error(send_error);
-            return ;
+            ft_string message;
+            result = message.initialize();
+            if (result == FT_ERR_SUCCESS)
+            {
+                int32_t client_handle;
+                if (this->_server->run_once(client_handle, message) != FT_ERR_SUCCESS
+                    || this->handle_message_locked(client_handle, message) != FT_ERR_SUCCESS)
+                    result = FT_ERR_GAME_GENERAL_ERROR;
+                else
+                    result = this->broadcast_world_locked();
+            }
         }
-        client_ptr++;
+        (void)this->unlock_internal(lock_acquired);
     }
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
+
 
 int32_t game_server::enable_thread_safety() noexcept
 {
@@ -759,22 +660,22 @@ ft_bool game_server::is_thread_safe() const noexcept
     return (this->_mutex != ft_nullptr);
 }
 
-void game_server::join_client_locked(int32_t client_id, int32_t client_handle) noexcept
+int32_t game_server::join_client_locked(int32_t client_id, int32_t client_handle) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::join_client_locked");
     this->_clients.insert(client_id, client_handle);
-    if (this->_on_join != ft_nullptr)
+    const int32_t result = this->_clients.get_error();
+    if (result == FT_ERR_SUCCESS && this->_on_join != ft_nullptr)
         this->_on_join(client_id);
-    this->set_error(FT_ERR_SUCCESS);
-    return ;
+    return (this->set_error(result));
 }
 
-void game_server::leave_client_locked(int32_t client_id) noexcept
+int32_t game_server::leave_client_locked(int32_t client_id) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_server::leave_client_locked");
     this->_clients.remove(client_id);
-    if (this->_on_leave != ft_nullptr)
+    const int32_t result = this->_clients.get_error();
+    if (result == FT_ERR_SUCCESS && this->_on_leave != ft_nullptr)
         this->_on_leave(client_id);
-    this->set_error(FT_ERR_SUCCESS);
-    return ;
+    return (this->set_error(result));
 }

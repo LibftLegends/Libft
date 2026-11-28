@@ -561,3 +561,90 @@ FT_TEST(test_bmp_thread_safety_controls)
     FT_ASSERT_EQ(FT_FALSE, image.is_thread_safe());
     return (1);
 }
+
+FT_TEST(test_bmp_encode_clears_padding_and_keeps_the_buffer_tail)
+{
+    const uint8_t rgba[8] = {11U, 22U, 33U, 44U, 55U, 66U, 77U, 88U};
+    uint8_t output[65];
+    bmp_image image;
+    ft_size_t written = 0U;
+
+    ft_memset(output, 0xA5, sizeof(output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize_rgb(rgba, 1U, 2U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        image.encode(output, sizeof(output), &written, BMP_BIT_DEPTH_RGB24));
+    FT_ASSERT_EQ(62U, written);
+    const uint8_t expected_rows[8] = {77U, 66U, 55U, 0U, 33U, 22U, 11U, 0U};
+    FT_ASSERT_EQ(0, ft_memcmp(output + 54U, expected_rows, sizeof(expected_rows)));
+    FT_ASSERT_EQ(0xA5U, output[62]);
+    FT_ASSERT_EQ(0xA5U, output[64]);
+    return (1);
+}
+
+FT_TEST(test_bmp_resize_matches_integer_reference_for_nonintegral_ratios)
+{
+    uint8_t source[7U * 5U * 4U];
+    ft_size_t index = 0U;
+    while (index < sizeof(source))
+    {
+        source[index] = static_cast<uint8_t>(index * 13U);
+        index += 1U;
+    }
+    const ft_size_t sizes[][2] = {{11U, 9U}, {3U, 2U}, {7U, 9U}, {7U, 5U}};
+    ft_size_t size_index = 0U;
+    while (size_index < 4U)
+    {
+        bmp_image image;
+        const ft_size_t width = sizes[size_index][0];
+        const ft_size_t height = sizes[size_index][1];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize_rgb(source, 7U, 5U, FT_TRUE));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, image.resize_nearest(width, height));
+        const uint8_t *pixels = image.data();
+        ft_size_t row = 0U;
+        while (row < height)
+        {
+            ft_size_t column = 0U;
+            while (column < width)
+            {
+                const ft_size_t source_index = (row * 5U / height * 7U
+                    + column * 7U / width) * 4U;
+                const ft_size_t destination_index = (row * width + column) * 4U;
+                FT_ASSERT_EQ(0, ft_memcmp(source + source_index,
+                    pixels + destination_index, 4U));
+                column += 1U;
+            }
+            row += 1U;
+        }
+        size_index += 1U;
+    }
+    return (1);
+}
+
+FT_TEST(test_bmp_empty_resize_and_extreme_brightness)
+{
+    bmp_image image;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, image.resize_nearest(1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.destroy());
+    const uint8_t source[4] = {100U, 135U, 17U, 42U};
+    const uint8_t white[4] = {255U, 255U, 255U, 42U};
+    const uint8_t black[4] = {0U, 0U, 0U, 42U};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.initialize_rgb(source, 1U, 1U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.adjust_brightness(INT32_MAX));
+    FT_ASSERT_EQ(0, ft_memcmp(white, image.data(), sizeof(white)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, image.adjust_brightness(INT32_MIN));
+    FT_ASSERT_EQ(0, ft_memcmp(black, image.data(), sizeof(black)));
+    return (1);
+}
+
+FT_TEST(test_bmp_move_source_can_release_its_retained_mutex)
+{
+    bmp_image source;
+    bmp_image destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
+    FT_ASSERT_EQ(ft_nullptr, source._mutex);
+    return (1);
+}

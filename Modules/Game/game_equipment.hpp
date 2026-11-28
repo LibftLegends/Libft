@@ -38,9 +38,12 @@ class game_equipment
 
         static int32_t set_error(int32_t error_code) noexcept;
 
-        ft_bool validate_item(const ft_sharedptr<game_item> &item) const noexcept;
+        using slot_member_pointer = ft_sharedptr<game_item> game_equipment::*;
+        static slot_member_pointer find_slot(int32_t slot) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t read_item(int32_t slot, ft_sharedptr<game_item> &result) const noexcept;
+        friend class game_character;
 
     public:
         game_equipment() noexcept;

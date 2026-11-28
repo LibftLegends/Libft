@@ -175,10 +175,10 @@ class test_timeout_watchdog
 
         void begin_test(const s_test_case *test) noexcept
         {
-            uint32_t timeout;
-
-            timeout = test_timeout_seconds();
-            if (timeout == 0U || !this->_thread.joinable())
+            if (!this->_thread.joinable())
+                return ;
+            const uint32_t timeout = test_timeout_seconds();
+            if (timeout == 0U)
                 return ;
             {
                 std::lock_guard<std::mutex> lock(this->_mutex);
@@ -850,7 +850,6 @@ int32_t ft_run_registered_tests(void)
     int32_t selected_tests;
     int32_t hide_successful_tests;
     int32_t terminal_width;
-    int32_t show_running_line;
 #ifdef LIBFT_TEST_BUILD
     test_timeout_watchdog timeout_watchdog;
 #endif
@@ -914,7 +913,11 @@ int32_t ft_run_registered_tests(void)
 #endif
     selected_tests = 0;
     hide_successful_tests = hide_successful_tests_enabled();
-    terminal_width = get_stdout_terminal_width();
+    const ft_bool show_running_line = hide_successful_tests == 0
+        || stdout_is_terminal() != 0;
+    terminal_width = 0;
+    if (show_running_line)
+        terminal_width = get_stdout_terminal_width();
     index = 0;
     passed = 0;
     while (index < total_tests)
@@ -927,9 +930,6 @@ int32_t ft_run_registered_tests(void)
         }
         selected_tests++;
         current_test = tests[index];
-        show_running_line = 1;
-        if (hide_successful_tests != 0 && stdout_is_terminal() == 0)
-            show_running_line = 0;
         if (show_running_line != 0)
         {
             print_running_test_line(selected_tests, current_test.description,
@@ -947,10 +947,7 @@ int32_t ft_run_registered_tests(void)
                 if (show_running_line != 0)
                     printf("\r\033[2K");
                 if (selected_tests % TEST_PROGRESS_INTERVAL == 0)
-                {
                     printf("[LIBFT][Test] %d tests completed\n", selected_tests);
-                    fflush(stdout);
-                }
             }
             else
                 printf("\r\033[2K\033[32mSUCCESS\033[0m %d %s\n",

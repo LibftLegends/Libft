@@ -63,14 +63,17 @@ struct card_game_collection_entry
 
 class card_game_collection_engine
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
         uint32_t _set_entry_count;
         uint32_t _product_count;
-        uint32_t _collection_count;
         card_game_set_entry _set_entries[FT_CARD_GAME_MAX_SET_ENTRIES];
         card_game_product_definition _products[FT_CARD_GAME_MAX_PRODUCTS];
-        card_game_collection_entry _collection[FT_CARD_GAME_MAX_SET_ENTRIES];
+        uint32_t _quantities[FT_CARD_GAME_MAX_SET_ENTRIES];
 
         card_game_collection_engine(const card_game_collection_engine &other) = delete;
         card_game_collection_engine(card_game_collection_engine &&other) = delete;
@@ -83,10 +86,6 @@ class card_game_collection_engine
             uint32_t *index) const noexcept;
         int32_t find_product(uint32_t product_id,
             uint32_t *index) const noexcept;
-        int32_t choose_printing(const card_game_product_slot &slot,
-            uint64_t *random_state, const uint32_t *excluded_printing_ids,
-            uint32_t excluded_count, uint32_t *printing_id) const noexcept;
-        int32_t add_collection(uint32_t printing_id) noexcept;
 
     public:
         card_game_collection_engine() noexcept;

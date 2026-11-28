@@ -1,5 +1,6 @@
 #include "card_game_zone_store.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
 
 card_game_zone_store::card_game_zone_store() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _definition_count(0U),
@@ -42,7 +43,6 @@ int32_t card_game_zone_store::get_snapshot(
 {
     uint32_t player_id;
     uint32_t zone_index;
-    uint32_t entry_index;
     uint32_t offset;
     card_game_zone_entry *entries;
     card_game_zone_store_snapshot candidate;
@@ -84,27 +84,21 @@ int32_t card_game_zone_store::get_snapshot(
             return (FT_ERR_NO_MEMORY);
     }
     candidate.entries = entries;
-    entry_index = 0U;
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
         zone_index = 0U;
         while (zone_index < this->_definition_count)
         {
-            uint32_t local_index;
-
-            local_index = 0U;
-            while (local_index < candidate.counts[player_id][zone_index])
+            if (candidate.counts[player_id][zone_index] != 0U)
             {
-                if (this->_zones[player_id][zone_index].get_entry(local_index,
-                        &candidate.entries[entry_index]) != FT_ERR_SUCCESS)
+                const card_game_ordered_zone &zone = this->_zones[player_id][zone_index];
+                if (zone._initialised_state != FT_CLASS_STATE_INITIALISED)
                 {
-                    if (candidate.entries != ft_nullptr)
-                        cma_free(candidate.entries);
+                    cma_free(candidate.entries);
                     return (FT_ERR_INVALID_STATE);
                 }
-                entry_index += 1U;
-                local_index += 1U;
+                zone.copy_entries_to(candidate.entries + candidate.offsets[player_id][zone_index]);
             }
             zone_index += 1U;
         }
@@ -162,6 +156,55 @@ int32_t card_game_zone_store::clone_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+ft_bool card_game_zone_store::matches_snapshot(
+    const card_game_zone_store_snapshot &snapshot) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || snapshot.definition_count != this->_definition_count
+        || (snapshot.entry_count != 0U && snapshot.entries == ft_nullptr))
+        return (FT_FALSE);
+    uint32_t zone_index = 0U;
+    while (zone_index < FT_CARD_GAME_MAX_ZONES)
+    {
+        if (!card_game_zone_store_definition_equal(this->_definitions[zone_index],
+                snapshot.definitions[zone_index]))
+            return (FT_FALSE);
+        ++zone_index;
+    }
+    uint32_t offset = 0U;
+    uint32_t player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        zone_index = 0U;
+        while (zone_index < FT_CARD_GAME_MAX_ZONES)
+        {
+            const card_game_ordered_zone &zone = this->_zones[player_id][zone_index];
+            uint32_t count = 0U;
+            if (zone_index < this->_definition_count)
+                count = zone.size();
+            if (snapshot.counts[player_id][zone_index] != count
+                || snapshot.offsets[player_id][zone_index] != offset
+                || count > snapshot.entry_count - offset)
+                return (FT_FALSE);
+            if (count != 0U)
+            {
+                const uint32_t first_count = std::min(count,
+                    FT_CARD_GAME_MAX_CARDS - zone._head);
+                const card_game_zone_entry *entries = snapshot.entries + offset;
+                if (ft_memcmp(zone._cards + zone._head, entries,
+                        first_count * sizeof(*entries)) != 0
+                    || ft_memcmp(zone._cards, entries + first_count,
+                        (count - first_count) * sizeof(*entries)) != 0)
+                    return (FT_FALSE);
+            }
+            offset += count;
+            ++zone_index;
+        }
+        ++player_id;
+    }
+    return (offset == snapshot.entry_count);
+}
+
 ft_bool card_game_zone_store::snapshots_equal(
     const card_game_zone_store_snapshot &first,
     const card_game_zone_store_snapshot &second) noexcept
@@ -193,15 +236,64 @@ ft_bool card_game_zone_store::snapshots_equal(
     return (FT_FALSE);
 }
 
+static ft_bool card_game_snapshot_ids_unique(const card_game_zone_entry *entries,
+    uint32_t count) noexcept
+{
+    ft_bool increasing = FT_TRUE;
+    uint32_t index = 0U;
+    uint32_t previous_id = 0U;
+    while (index < count)
+    {
+        const card_game_zone_entry &entry = entries[index];
+        if (entry.instance_id == 0U || entry.card_id == 0U)
+            return (FT_FALSE);
+        if (entry.instance_id <= previous_id)
+            increasing = FT_FALSE;
+        previous_id = entry.instance_id;
+        ++index;
+    }
+    if (increasing == FT_TRUE)
+        return (FT_TRUE);
+
+    uint32_t *ids = ft_nullptr;
+    if (count > 16U)
+        ids = static_cast<uint32_t *>(cma_malloc(count * sizeof(*ids)));
+    if (ids != ft_nullptr)
+    {
+        index = 0U;
+        while (index < count)
+        {
+            ids[index] = entries[index].instance_id;
+            ++index;
+        }
+        std::sort(ids, ids + count);
+        const ft_bool unique = std::adjacent_find(ids, ids + count) == ids + count;
+        cma_free(ids);
+        return (unique);
+    }
+
+    index = 1U;
+    while (index < count)
+    {
+        uint32_t earlier = 0U;
+        while (earlier < index)
+        {
+            if (entries[earlier].instance_id == entries[index].instance_id)
+                return (FT_FALSE);
+            ++earlier;
+        }
+        ++index;
+    }
+    return (FT_TRUE);
+}
+
 int32_t card_game_zone_store::apply_snapshot(
     const card_game_zone_store_snapshot &snapshot) noexcept
 {
     uint32_t player_id;
     uint32_t zone_index;
-    uint32_t entry_index;
     uint32_t expected_offset;
     uint32_t definition_index;
-    card_game_zone_entry entry;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot.definition_count != this->_definition_count
@@ -241,45 +333,21 @@ int32_t card_game_zone_store::apply_snapshot(
     }
     if (expected_offset != snapshot.entry_count)
         return (FT_ERR_INVALID_ARGUMENT);
-    entry_index = 0U;
-    while (entry_index < snapshot.entry_count)
-    {
-        entry = snapshot.entries[entry_index];
-        if (entry.instance_id == 0U || entry.card_id == 0U)
-            return (FT_ERR_INVALID_ARGUMENT);
-        if (entry_index > 0U)
-        {
-            uint32_t previous_index;
-
-            previous_index = 0U;
-            while (previous_index < entry_index)
-            {
-                if (snapshot.entries[previous_index].instance_id
-                    == entry.instance_id)
-                    return (FT_ERR_INVALID_ARGUMENT);
-                previous_index += 1U;
-            }
-        }
-        entry_index += 1U;
-    }
+    if (card_game_snapshot_ids_unique(snapshot.entries, snapshot.entry_count) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
         zone_index = 0U;
         while (zone_index < this->_definition_count)
         {
-            if (this->_zones[player_id][zone_index].clear()
+            const uint32_t count = snapshot.counts[player_id][zone_index];
+            const card_game_zone_entry *entries = ft_nullptr;
+            if (count != 0U)
+                entries = snapshot.entries + snapshot.offsets[player_id][zone_index];
+            if (this->_zones[player_id][zone_index].replace_entries(entries, count)
                 != FT_ERR_SUCCESS)
                 return (FT_ERR_INVALID_STATE);
-            entry_index = snapshot.offsets[player_id][zone_index];
-            while (entry_index < snapshot.offsets[player_id][zone_index]
-                + snapshot.counts[player_id][zone_index])
-            {
-                if (this->_zones[player_id][zone_index].push_bottom_entry(
-                        snapshot.entries[entry_index]) != FT_ERR_SUCCESS)
-                    return (FT_ERR_INVALID_STATE);
-                entry_index += 1U;
-            }
             zone_index += 1U;
         }
         player_id += 1U;
@@ -685,21 +753,14 @@ int32_t card_game_zone_store::move_instance(uint32_t player_id,
     if (source_definition_index == destination_definition_index
         && source_zone_player == destination_zone_player)
         return (FT_ERR_INVALID_ARGUMENT);
-    source_index = 0U;
-    while (source_index < this->_zones[source_zone_player]
-        [source_definition_index].size())
-    {
-        result = this->_zones[source_zone_player][source_definition_index]
-            .get_entry(source_index, &entry);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        if (entry.instance_id == instance_id)
-            break ;
-        source_index += 1U;
-    }
-    if (source_index >= this->_zones[source_zone_player]
-        [source_definition_index].size())
-        return (FT_ERR_NOT_FOUND);
+    card_game_ordered_zone &source = this->_zones[source_zone_player]
+        [source_definition_index];
+    result = source.find_card(instance_id, &source_index);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = source.get_entry(source_index, &entry);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     result = this->validate_entry(
         this->_definitions[destination_definition_index], entry, card_type_id);
     if (result != FT_ERR_SUCCESS)
@@ -708,15 +769,25 @@ int32_t card_game_zone_store::move_instance(uint32_t player_id,
         .push_bottom_entry(entry);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    result = this->_zones[source_zone_player][source_definition_index]
-        .remove_entry(instance_id, ft_nullptr);
-    if (result != FT_ERR_SUCCESS)
-    {
-        (void)this->_zones[destination_zone_player][destination_definition_index]
-            .remove_entry(instance_id, ft_nullptr);
-        return (result);
-    }
+    // The destination is a different zone, so the validated source index is unchanged.
+    source.erase_at(source_index);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_zone_store::inspect_instance(uint32_t player_id,
+    uint32_t zone_id, uint32_t instance_id, card_game_zone_entry *entry) const noexcept
+{
+    uint32_t definition_index;
+    uint32_t zone_player;
+    uint32_t index;
+    if (this->resolve_zone(player_id, zone_id, &definition_index, &zone_player)
+        != FT_ERR_SUCCESS)
+        return (FT_ERR_NOT_FOUND);
+    const card_game_ordered_zone &zone = this->_zones[zone_player][definition_index];
+    const int32_t result = zone.find_card(instance_id, &index);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (zone.get_entry(index, entry));
 }
 
 int32_t card_game_zone_store::inspect(uint32_t player_id, uint32_t zone_id,

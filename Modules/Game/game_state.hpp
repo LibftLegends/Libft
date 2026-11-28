@@ -33,6 +33,11 @@ class game_state
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        ft_bool has_active_lock() const noexcept;
+        int32_t transfer_storage(game_state &other, ft_bool transfer_worlds,
+            ft_bool transfer_characters) noexcept;
+        template <typename State, typename Visit>
+        static void visit_hooks(State &state, Visit visit) noexcept;
 
     public:
         game_state() noexcept;
@@ -43,14 +48,17 @@ class game_state
         game_state &operator=(game_state &&other) noexcept = delete;
 
         int32_t initialize() noexcept;
+        // Moving requires exclusive access to both states and their collections.
         int32_t move(game_state &other) noexcept;
         int32_t destroy() noexcept;
 
+        // Callers must synchronize direct access through these collection references.
         ft_vector<ft_sharedptr<game_world> > &get_worlds() noexcept;
 
         ft_vector<ft_sharedptr<game_character> > &get_characters() noexcept;
 
         void set_variable(const ft_string &key, const ft_string &value) noexcept;
+        // Borrowed value. Callers must prevent concurrent variable mutations while using it.
         const ft_string *get_variable(const ft_string &key) const noexcept;
         void remove_variable(const ft_string &key) noexcept;
         void clear_variables() noexcept;

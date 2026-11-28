@@ -1,12 +1,37 @@
 #include "logger_internal.hpp"
 #include "../Basic/basic.hpp"
 #include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <new>
 #include "../Template/vector.hpp"
 #include "../Errno/errno.hpp"
 
-ft_vector<s_redaction_rule> g_redaction_rules;
+struct s_log_redaction_snapshot
+{
+    std::atomic<ft_size_t> references{1U};
+    ft_vector<s_redaction_rule> rules;
+};
+
+struct s_log_redaction_state
+{
+    std::atomic<s_log_redaction_snapshot *> snapshot{nullptr};
+
+    ~s_log_redaction_state()
+    {
+        delete this->snapshot.load(std::memory_order_relaxed);
+        return ;
+    }
+};
+
+static s_log_redaction_state g_redaction_state;
+static pthread_mutex_t g_redaction_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void logger_release_redaction_snapshot(s_log_redaction_snapshot *snapshot)
+{
+    if (snapshot != ft_nullptr
+        && snapshot->references.fetch_sub(1U, std::memory_order_acq_rel) == 1U)
+        delete snapshot;
+    return ;
+}
 
 int32_t s_redaction_rule::initialize(const s_redaction_rule &other) noexcept
 {
@@ -36,115 +61,78 @@ int32_t s_redaction_rule::destroy() noexcept
 static int32_t logger_apply_redaction_rule(ft_string &text,
     const s_redaction_rule &rule)
 {
-    const char *pattern;
-    const char *replacement;
-    ft_size_t pattern_length;
-    ft_size_t text_length;
-    ft_size_t entry_index;
-    const char *source;
-    ft_string operation_result;
-    int32_t error_code_value;
-
-    if (operation_result.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_NO_MEMORY);
     if (!text.is_initialised() || !rule.pattern.is_initialised()
         || !rule.replacement.is_initialised())
         return (FT_ERR_NOT_INITIALISED);
-    pattern = rule.pattern.c_str();
-    pattern_length = rule.pattern.size();
-    if (pattern_length == 0)
+    const ft_size_t pattern_size = rule.pattern.size();
+    if (pattern_size == 0U)
         return (FT_ERR_SUCCESS);
-    replacement = rule.replacement.c_str();
-    text_length = text.size();
-    source = text.c_str();
-    if (!source)
-        source = "";
-    entry_index = 0;
-    while (entry_index < text_length)
+    const char *pattern = rule.pattern.c_str();
+    const char *cursor = text.c_str();
+    const char *end = cursor + text.size();
+    const char *match = static_cast<const char *>(ft_memmem(cursor,
+        static_cast<ft_size_t>(end - cursor), pattern, pattern_size));
+    if (match == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    ft_string result;
+    int32_t error = result.initialize();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    while (match != ft_nullptr)
     {
-        ft_size_t match_index;
-
-        match_index = 0;
-        while (entry_index + match_index < text_length
-            && match_index < pattern_length
-            && source[entry_index + match_index] == pattern[match_index])
-            match_index++;
-        if (match_index == pattern_length)
-        {
-            error_code_value = operation_result.append(replacement);
-            if (error_code_value != FT_ERR_SUCCESS)
-                return (error_code_value);
-            entry_index += pattern_length;
-        }
-        else
-        {
-            error_code_value = operation_result.append(source[entry_index]);
-            if (error_code_value != FT_ERR_SUCCESS)
-                return (error_code_value);
-            entry_index++;
-        }
+        error = result.append(cursor, static_cast<ft_size_t>(match - cursor));
+        if (error == FT_ERR_SUCCESS)
+            error = result.append(rule.replacement);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        cursor = match + pattern_size;
+        match = static_cast<const char *>(ft_memmem(cursor,
+            static_cast<ft_size_t>(end - cursor), pattern, pattern_size));
     }
-    error_code_value = text.destroy();
-    if (error_code_value != FT_ERR_SUCCESS)
-        return (error_code_value);
-    error_code_value = text.initialize(operation_result);
-    if (error_code_value != FT_ERR_SUCCESS)
-        return (error_code_value);
-    return (FT_ERR_SUCCESS);
+    error = result.append(cursor, static_cast<ft_size_t>(end - cursor));
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    return (text.move(result));
 }
 
 int32_t ft_log_add_redaction_with_replacement(const char *pattern,
     const char *replacement)
 {
-    const char  *replacement_value;
-    int32_t     unlock_status;
-    int32_t     error_code_value;
-    int32_t     lock_error;
-    s_redaction_rule rule;
-
-    if (!pattern || !pattern[0])
-    {
+    if (pattern == ft_nullptr || pattern[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    }
-    replacement_value = replacement;
-    if (!replacement_value)
-        replacement_value = "[REDACTED]";
-    lock_error = logger_lock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
+    if (replacement == ft_nullptr)
+        replacement = "[REDACTED]";
+    s_redaction_rule rule;
+    int32_t error = rule.pattern.initialize(pattern);
+    if (error == FT_ERR_SUCCESS)
+        error = rule.replacement.initialize(replacement);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+
+    auto *updated = new (std::nothrow) s_log_redaction_snapshot;
+    if (updated == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    if (pthread_mutex_lock(&g_redaction_mutex) != 0)
     {
-        return (lock_error);
+        delete updated;
+        return (FT_ERR_INTERNAL);
     }
-    error_code_value = rule.pattern.initialize(pattern);
-    if (error_code_value != FT_ERR_SUCCESS)
-    {
-        unlock_status = logger_unlock_sinks();
-        if (unlock_status != FT_ERR_SUCCESS)
-            return (unlock_status);
-        return (error_code_value);
-    }
-    error_code_value = rule.replacement.initialize(replacement_value);
-    if (error_code_value != FT_ERR_SUCCESS)
-    {
-        unlock_status = logger_unlock_sinks();
-        if (unlock_status != FT_ERR_SUCCESS)
-            return (unlock_status);
-        return (error_code_value);
-    }
-    g_redaction_rules.push_back(rule);
-    error_code_value = g_redaction_rules.get_error();
-    if (error_code_value != FT_ERR_SUCCESS)
-    {
-        unlock_status = logger_unlock_sinks();
-        if (unlock_status != FT_ERR_SUCCESS)
-            return (unlock_status);
-        return (error_code_value);
-    }
-    unlock_status = logger_unlock_sinks();
-    if (unlock_status != FT_ERR_SUCCESS)
-    {
-        return (unlock_status);
-    }
-    return (FT_ERR_SUCCESS);
+    s_log_redaction_snapshot *previous = g_redaction_state.snapshot.load(std::memory_order_relaxed);
+    if (previous == ft_nullptr)
+        error = updated->rules.initialize();
+    else
+        error = updated->rules.initialize(previous->rules);
+    if (error == FT_ERR_SUCCESS)
+        error = updated->rules.push_back(rule);
+    if (error == FT_ERR_SUCCESS)
+        g_redaction_state.snapshot.store(updated, std::memory_order_release);
+    (void)pthread_mutex_unlock(&g_redaction_mutex);
+
+    if (error == FT_ERR_SUCCESS)
+        logger_release_redaction_snapshot(previous);
+    else
+        delete updated;
+    return (error);
 }
 
 int32_t ft_log_add_redaction(const char *pattern)
@@ -154,63 +142,77 @@ int32_t ft_log_add_redaction(const char *pattern)
 
 void ft_log_clear_redactions()
 {
-    int32_t unlock_status;
-    int32_t clear_error;
-    int32_t lock_error;
-
-    lock_error = logger_lock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-    {
+    if (pthread_mutex_lock(&g_redaction_mutex) != 0)
         return ;
-    }
-    g_redaction_rules.clear();
-    clear_error = g_redaction_rules.get_error();
-    unlock_status = logger_unlock_sinks();
-    if (unlock_status != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    if (clear_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
+    s_log_redaction_snapshot *previous = g_redaction_state.snapshot.exchange(
+        nullptr, std::memory_order_release);
+    (void)pthread_mutex_unlock(&g_redaction_mutex);
+    logger_release_redaction_snapshot(previous);
     return ;
 }
 
-int32_t logger_copy_redaction_rules(ft_vector<s_redaction_rule> &destination)
+int32_t logger_acquire_redaction_snapshot(s_log_redaction_snapshot *&snapshot)
 {
-    ft_size_t rule_count;
-    ft_size_t entry_index;
-    int32_t error_code_value;
-    uint8_t destination_state;
-    int32_t destination_initialize_error;
+    snapshot = ft_nullptr;
+    // The fast check never dereferences the pointer. The mutex protects retention.
+    if (g_redaction_state.snapshot.load(std::memory_order_acquire) != ft_nullptr)
+    {
+        if (pthread_mutex_lock(&g_redaction_mutex) != 0)
+            return (FT_ERR_INTERNAL);
+        snapshot = g_redaction_state.snapshot.load(std::memory_order_relaxed);
+        if (snapshot != ft_nullptr)
+            snapshot->references.fetch_add(1U, std::memory_order_relaxed);
+        (void)pthread_mutex_unlock(&g_redaction_mutex);
+    }
+    return (FT_ERR_SUCCESS);
+}
 
-    destination_state = destination.is_initialised();
-    if (destination_state != FT_CLASS_STATE_INITIALISED)
+int32_t logger_redact_log_value(const s_log_redaction_snapshot *snapshot,
+    const char *&value, ft_string &storage)
+{
+    if (snapshot == ft_nullptr || value == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    const ft_size_t length = ft_strlen_size_t(value);
+    const ft_size_t count = snapshot->rules.size();
+    ft_size_t index = 0U;
+    while (index < count)
     {
-        destination_initialize_error = destination.initialize();
-        if (destination_initialize_error != FT_ERR_SUCCESS)
-            return (destination_initialize_error);
+        const s_redaction_rule &rule = snapshot->rules[index];
+        if (ft_memmem(value, length, rule.pattern.c_str(), rule.pattern.size()) != ft_nullptr)
+        {
+            int32_t error = storage.initialize(value);
+            while (error == FT_ERR_SUCCESS && index < count)
+            {
+                error = logger_apply_redaction_rule(storage, snapshot->rules[index]);
+                index += 1U;
+            }
+            if (error == FT_ERR_SUCCESS)
+                value = storage.c_str();
+            return (error);
+        }
+        index += 1U;
     }
-    rule_count = g_redaction_rules.size();
-    error_code_value = g_redaction_rules.get_error();
-    if (error_code_value != FT_ERR_SUCCESS)
-        return (error_code_value);
-    entry_index = 0;
-    while (entry_index < rule_count)
-    {
-        const s_redaction_rule &source_rule = g_redaction_rules[entry_index];
-        error_code_value = g_redaction_rules.get_error();
-        if (error_code_value != FT_ERR_SUCCESS)
-            return (error_code_value);
-        destination.push_back(source_rule);
-        error_code_value = destination.get_error();
-        if (error_code_value != FT_ERR_SUCCESS)
-            return (error_code_value);
-        entry_index++;
-    }
-    error_code_value = FT_ERR_SUCCESS;
-    return (error_code_value);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t logger_prepare_redacted_context(ft_string &text, ft_string &context)
+{
+    if (text.is_initialised() == FT_FALSE)
+        return (FT_ERR_NOT_INITIALISED);
+    s_log_redaction_snapshot *snapshot;
+    int32_t error = logger_acquire_redaction_snapshot(snapshot);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    if (snapshot != ft_nullptr)
+        error = logger_apply_redactions(text, snapshot->rules);
+    if (error == FT_ERR_SUCCESS)
+        error = context.initialize();
+    if (error == FT_ERR_SUCCESS)
+        error = logger_context_format_flat(context);
+    if (error == FT_ERR_SUCCESS && snapshot != ft_nullptr && context.size() != 0U)
+        error = logger_apply_redactions(context, snapshot->rules);
+    logger_release_redaction_snapshot(snapshot);
+    return (error);
 }
 
 int32_t logger_apply_redactions(ft_string &text,

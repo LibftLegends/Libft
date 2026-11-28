@@ -29,7 +29,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Config` | `Advanced`, `Basic`, `CMA`, `Compatebility`, `Errno`, `File`, `JSon`, `PThread`, `Printf` |
 | `CrossProcess` | `Basic`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
 | `Crypto` | `Basic`, `Errno`, `RNG`, `Template` |
-| `DUMB` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `PThread` |
+| `DUMB` | `Basic`, `CMA`, `Compatebility`, `Errno`, `GetNextLine`, `PThread` |
 | `Debug` | `Basic`, `Compatebility`, `Errno` |
 | `Encoding` | `Basic`, `CMA`, `Errno` |
 | `Encryption` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Networking`, `PThread`, `RNG`, `System_utils`, `Template` |
@@ -44,7 +44,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `HTML` | `Advanced`, `Basic`, `CMA`, `Compatebility`, `Errno`, `PThread`, `Printf`, `System_utils` |
 | `JSon` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template` |
 | `Logger` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Networking`, `PThread`, `Printf`, `Sink`, `System_utils`, `Template`, `Time` |
-| `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `GetNextLine`, `PThread`, `Printf`, `RNG`, `Template` |
+| `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `Printf`, `RNG`, `Template` |
 | `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Crypto`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Observability` | `Basic`, `CMA`, `Errno`, `PThread`, `Template`, `Threading`, `Time` |
 | `Analytics` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Template` |
@@ -176,7 +176,6 @@ graph TD
     Crypto --> Template
     DUMB --> Basic
     DUMB --> CMA
-    DUMB --> CPP_class
     DUMB --> Compatebility
     DUMB --> Errno
     DUMB --> GetNextLine
@@ -284,7 +283,6 @@ graph TD
     Math --> CMA
     Math --> CPP_class
     Math --> Errno
-    Math --> GetNextLine
     Math --> PThread
     Math --> Printf
     Math --> RNG
@@ -319,6 +317,7 @@ graph TD
     Analytics --> Template
     CardGame --> Basic
     CardGame --> Errno
+    CardGame --> File
     CardGame --> Scripting
     Scripting --> Basic
     Scripting --> Errno

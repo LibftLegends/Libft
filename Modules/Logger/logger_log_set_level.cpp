@@ -6,6 +6,6 @@
 
 void ft_log_set_level(t_log_level level)
 {
-    g_level = level;
+    g_level.store(level, std::memory_order_relaxed);
     return ;
 }

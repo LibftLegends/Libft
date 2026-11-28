@@ -11,6 +11,7 @@ class voxel_generation_context
     private:
         voxel_generation_config _config;
         uint32_t _configuration_signature;
+        uint32_t _region_configuration_signature;
         uint8_t _initialised_state;
 
     public:
@@ -32,6 +33,8 @@ class voxel_generation_context
         ft_bool is_initialised() const noexcept;
         const voxel_generation_config &config() const noexcept;
         uint32_t configuration_signature() const noexcept;
+        // Cached signature with the region's cross-chunk writer enabled.
+        uint32_t region_configuration_signature() const noexcept;
 };
 
 class voxel_world_chunk_coordinate
@@ -39,6 +42,7 @@ class voxel_world_chunk_coordinate
     private:
         ft_big_number _chunk_x;
         ft_big_number _chunk_z;
+        uint64_t _hash;
         uint8_t _initialised_state;
 
     public:
@@ -58,6 +62,7 @@ class voxel_world_chunk_coordinate
         uint32_t destroy() noexcept;
         uint32_t move(voxel_world_chunk_coordinate &other) noexcept;
         ft_bool is_initialised() const noexcept;
+        // X is assigned first and remains set if assigning Z fails.
         int32_t set_chunk_coordinates(const char *chunk_x,
             const char *chunk_z) noexcept;
         const ft_big_number &chunk_x() const noexcept;

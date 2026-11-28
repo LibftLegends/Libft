@@ -194,9 +194,10 @@ static DWORD cmp_move_native_file(const char *source_path, const char *destinati
     if (global_force_cross_device_move == FT_TRUE)
         return (ERROR_NOT_SAME_DEVICE);
 #endif
+    constexpr uint32_t maximum_attempts = 64U;
     uint32_t attempt = 0;
     DWORD last_error = ERROR_SUCCESS;
-    while (attempt < 16U)
+    while (attempt < maximum_attempts)
     {
         if (MoveFileExA(source_path, destination_path, flags))
             return (ERROR_SUCCESS);
@@ -204,8 +205,15 @@ static DWORD cmp_move_native_file(const char *source_path, const char *destinati
         if (last_error != ERROR_SHARING_VIOLATION && last_error != ERROR_LOCK_VIOLATION
             && last_error != ERROR_ACCESS_DENIED)
             break ;
+        if (last_error == ERROR_ACCESS_DENIED)
+        {
+            const DWORD attributes = GetFileAttributesA(destination_path);
+            if (attributes != INVALID_FILE_ATTRIBUTES
+                && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U)
+                break ;
+        }
         ++attempt;
-        if (attempt < 16U)
+        if (attempt < maximum_attempts)
             Sleep(1U);
     }
     return (last_error);
@@ -465,60 +473,44 @@ int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata)
     return (FT_ERR_SUCCESS);
 }
 
+int32_t cmp_file_get_size_and_mtime(const char *path, ft_size_t *size_out,
+    t_time *modification_time_out, int32_t *error_code_out)
+{
+    if (size_out != ft_nullptr)
+        *size_out = 0U;
+    if (modification_time_out != ft_nullptr)
+        *modification_time_out = 0;
+    int32_t error_code = FT_ERR_INVALID_ARGUMENT;
+    if (path != ft_nullptr && (size_out != ft_nullptr
+        || modification_time_out != ft_nullptr))
+    {
+        struct _stat metadata;
+        if (_stat(path, &metadata) == 0)
+        {
+            if (size_out != ft_nullptr)
+                *size_out = static_cast<ft_size_t>(metadata.st_size);
+            if (modification_time_out != ft_nullptr)
+                *modification_time_out = static_cast<t_time>(metadata.st_mtime);
+            error_code = FT_ERR_SUCCESS;
+        }
+        else if (errno != 0)
+            error_code = cmp_file_error_to_errno(errno);
+    }
+    cmp_set_error_code(error_code_out, error_code);
+    return (error_code);
+}
+
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct _stat file_info;
-
-    if (size_out != ft_nullptr)
-        *size_out = 0;
-    if (path == ft_nullptr || size_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (_stat(path, &file_info) == 0)
-    {
-        *size_out = static_cast<ft_size_t>(file_info.st_size);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (errno != 0)
-        error_code = cmp_file_error_to_errno(errno);
-    else
-        error_code = FT_ERR_INVALID_ARGUMENT;
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, size_out, ft_nullptr, error_code_out));
 }
 
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct _stat file_info;
-
-    if (modification_time_out != ft_nullptr)
-        *modification_time_out = 0;
-    if (path == ft_nullptr || modification_time_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (_stat(path, &file_info) == 0)
-    {
-        *modification_time_out = static_cast<t_time>(file_info.st_mtime);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (errno != 0)
-        error_code = cmp_file_error_to_errno(errno);
-    else
-        error_code = FT_ERR_INVALID_ARGUMENT;
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, ft_nullptr, modification_time_out,
+        error_code_out));
 }
 
 int32_t cmp_file_get_permissions(const char *path, mode_t *mode_out, int32_t *error_code_out)
@@ -957,54 +949,44 @@ int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata)
     return (FT_ERR_SUCCESS);
 }
 
+int32_t cmp_file_get_size_and_mtime(const char *path, ft_size_t *size_out,
+    t_time *modification_time_out, int32_t *error_code_out)
+{
+    if (size_out != ft_nullptr)
+        *size_out = 0U;
+    if (modification_time_out != ft_nullptr)
+        *modification_time_out = 0;
+    int32_t error_code = FT_ERR_INVALID_ARGUMENT;
+    if (path != ft_nullptr && (size_out != ft_nullptr
+        || modification_time_out != ft_nullptr))
+    {
+        struct stat metadata;
+        if (stat(path, &metadata) == 0)
+        {
+            if (size_out != ft_nullptr)
+                *size_out = static_cast<ft_size_t>(metadata.st_size);
+            if (modification_time_out != ft_nullptr)
+                *modification_time_out = static_cast<t_time>(metadata.st_mtime);
+            error_code = FT_ERR_SUCCESS;
+        }
+        else if (errno != 0)
+            error_code = cmp_file_error_to_errno(errno);
+    }
+    cmp_set_error_code(error_code_out, error_code);
+    return (error_code);
+}
+
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct stat stat_buffer;
-
-    if (size_out != ft_nullptr)
-        *size_out = 0;
-    if (path == ft_nullptr || size_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (stat(path, &stat_buffer) == 0)
-    {
-        *size_out = static_cast<ft_size_t>(stat_buffer.st_size);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    error_code = cmp_file_error_to_errno(errno);
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, size_out, ft_nullptr, error_code_out));
 }
 
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct stat stat_buffer;
-
-    if (modification_time_out != ft_nullptr)
-        *modification_time_out = 0;
-    if (path == ft_nullptr || modification_time_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (stat(path, &stat_buffer) == 0)
-    {
-        *modification_time_out = stat_buffer.st_mtime;
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    error_code = cmp_file_error_to_errno(errno);
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, ft_nullptr, modification_time_out,
+        error_code_out));
 }
 
 int32_t cmp_file_get_permissions(const char *path, mode_t *mode_out, int32_t *error_code_out)

@@ -7,6 +7,10 @@
 
 namespace
 {
+    constexpr ft_size_t WIRE_NAME_OFFSET = 48U;
+    static_assert(WIRE_NAME_OFFSET + sizeof(cross_process_message::shared_memory_name)
+        == CMP_CROSS_PROCESS_WIRE_SIZE);
+
     static void write_u16(uint8_t *destination, uint16_t value)
     {
         destination[0] = static_cast<uint8_t>(value >> 8U);
@@ -56,8 +60,6 @@ namespace
 int32_t cmp_cross_process_encode_wire(const cross_process_message &message,
     uint8_t *wire, ft_size_t wire_size)
 {
-    ft_size_t offset;
-
     if (wire == ft_nullptr || wire_size < CMP_CROSS_PROCESS_WIRE_SIZE
         || ft_memchr(message.shared_memory_name, '\0',
             sizeof(message.shared_memory_name)) == ft_nullptr)
@@ -65,60 +67,49 @@ int32_t cmp_cross_process_encode_wire(const cross_process_message &message,
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    ft_memset(wire, 0, CMP_CROSS_PROCESS_WIRE_SIZE);
+    const uint64_t stack_base_address = message.stack_base_address;
+    const uint64_t remote_memory_address = message.remote_memory_address;
+    const uint64_t remote_memory_size = message.remote_memory_size;
+    const uint64_t shared_mutex_address = message.shared_mutex_address;
+    const uint64_t error_memory_address = message.error_memory_address;
+    (void)ft_memmove(wire + WIRE_NAME_OFFSET, message.shared_memory_name,
+        sizeof(message.shared_memory_name));
     write_u32(wire, CMP_CROSS_PROCESS_WIRE_MAGIC);
     write_u16(wire + 4U, CMP_CROSS_PROCESS_WIRE_VERSION);
     write_u16(wire + 6U, 0U);
-    offset = 8U;
-    write_u64(wire + offset, message.stack_base_address);
-    offset += 8U;
-    write_u64(wire + offset, message.remote_memory_address);
-    offset += 8U;
-    write_u64(wire + offset, message.remote_memory_size);
-    offset += 8U;
-    write_u64(wire + offset, message.shared_mutex_address);
-    offset += 8U;
-    write_u64(wire + offset, message.error_memory_address);
-    offset += 8U;
-    ft_memcpy(wire + offset, message.shared_memory_name,
-        sizeof(message.shared_memory_name));
+    write_u64(wire + 8U, stack_base_address);
+    write_u64(wire + 16U, remote_memory_address);
+    write_u64(wire + 24U, remote_memory_size);
+    write_u64(wire + 32U, shared_mutex_address);
+    write_u64(wire + 40U, error_memory_address);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t cmp_cross_process_decode_wire(const uint8_t *wire,
     ft_size_t wire_size, cross_process_message &message)
 {
-    cross_process_message decoded;
-    ft_size_t offset;
-
     if (wire == ft_nullptr || wire_size != CMP_CROSS_PROCESS_WIRE_SIZE
         || read_u32(wire) != CMP_CROSS_PROCESS_WIRE_MAGIC
         || read_u16(wire + 4U) != CMP_CROSS_PROCESS_WIRE_VERSION
-        || read_u16(wire + 6U) != 0U)
+        || read_u16(wire + 6U) != 0U
+        || ft_memchr(wire + WIRE_NAME_OFFSET, '\0',
+            sizeof(message.shared_memory_name)) == ft_nullptr)
     {
         errno = EINVAL;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    ft_memset(&decoded, 0, sizeof(decoded));
-    offset = 8U;
-    decoded.stack_base_address = read_u64(wire + offset);
-    offset += 8U;
-    decoded.remote_memory_address = read_u64(wire + offset);
-    offset += 8U;
-    decoded.remote_memory_size = read_u64(wire + offset);
-    offset += 8U;
-    decoded.shared_mutex_address = read_u64(wire + offset);
-    offset += 8U;
-    decoded.error_memory_address = read_u64(wire + offset);
-    offset += 8U;
-    ft_memcpy(decoded.shared_memory_name, wire + offset,
-        sizeof(decoded.shared_memory_name));
-    if (ft_memchr(decoded.shared_memory_name, '\0',
-        sizeof(decoded.shared_memory_name)) == ft_nullptr)
-    {
-        errno = EINVAL;
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    message = decoded;
+    // Read the scalar fields before writing the possibly overlapping destination.
+    const uint64_t stack_base_address = read_u64(wire + 8U);
+    const uint64_t remote_memory_address = read_u64(wire + 16U);
+    const uint64_t remote_memory_size = read_u64(wire + 24U);
+    const uint64_t shared_mutex_address = read_u64(wire + 32U);
+    const uint64_t error_memory_address = read_u64(wire + 40U);
+    (void)ft_memmove(message.shared_memory_name, wire + WIRE_NAME_OFFSET,
+        sizeof(message.shared_memory_name));
+    message.stack_base_address = stack_base_address;
+    message.remote_memory_address = remote_memory_address;
+    message.remote_memory_size = remote_memory_size;
+    message.shared_mutex_address = shared_mutex_address;
+    message.error_memory_address = error_memory_address;
     return (FT_ERR_SUCCESS);
 }

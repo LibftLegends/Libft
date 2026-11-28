@@ -4,6 +4,7 @@
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include "../../Modules/System_utils/system_utils.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cerrno>
@@ -325,3 +326,66 @@ FT_TEST(test_pf_printf_null_format_sets_errno)
     FT_ASSERT_EQ(-1, plain_pf_printf(static_cast<const char *>(ft_nullptr)));
     return (1);
 }
+
+#ifdef LIBFT_TEST_BUILD
+struct s_printf_write_capture
+{
+    char output[32];
+    ft_size_t length;
+    ft_size_t chunk_limit;
+    uint32_t writes;
+    ft_bool fail;
+};
+
+static s_printf_write_capture g_printf_capture{};
+
+static int64_t test_printf_capture_write(int32_t, const void *data, ft_size_t length)
+{
+    g_printf_capture.writes += 1U;
+    if (g_printf_capture.fail != FT_FALSE || length > sizeof(g_printf_capture.output) - g_printf_capture.length)
+    {
+        errno = EIO;
+        return (-1);
+    }
+    if (g_printf_capture.chunk_limit != 0U && length > g_printf_capture.chunk_limit)
+        length = g_printf_capture.chunk_limit;
+    (void)ft_memcpy(g_printf_capture.output + g_printf_capture.length, data, length);
+    g_printf_capture.length += length;
+    return (static_cast<int64_t>(length));
+}
+
+FT_TEST(test_pf_printf_fd_combines_spans_and_retries_short_writes)
+{
+    g_printf_capture = {};
+    su_set_write_syscall_hook(test_printf_capture_write);
+    const int32_t first_result = pf_printf_fd(17, "prefix %s %d!", "abc", 7);
+    const uint32_t first_writes = g_printf_capture.writes;
+    g_printf_capture = {};
+    g_printf_capture.chunk_limit = 3U;
+    const int32_t second_result = pf_printf_fd(17, "prefix %s %d!", "abc", 7);
+    su_set_write_syscall_hook(ft_nullptr);
+    FT_ASSERT_EQ(13, first_result);
+    FT_ASSERT_EQ(1U, first_writes);
+    FT_ASSERT_EQ(13, second_result);
+    FT_ASSERT_EQ(5U, g_printf_capture.writes);
+    FT_ASSERT_EQ(0, ft_strcmp("prefix abc 7!", g_printf_capture.output));
+    return (1);
+}
+
+FT_TEST(test_pf_printf_fd_failure_before_percent_n_leaves_count_untouched)
+{
+    g_printf_capture = {};
+    g_printf_capture.fail = FT_TRUE;
+    int32_t count = -1;
+    const t_pf_printf_fd_plain format = pf_printf_fd;
+    su_set_write_syscall_hook(test_printf_capture_write);
+    const int32_t sequential = format(17, "prefix%n", &count);
+    const int32_t positional = format(17, "prefix%1$n", &count);
+    su_set_write_syscall_hook(ft_nullptr);
+    FT_ASSERT_EQ(-1, sequential);
+    FT_ASSERT_EQ(-1, positional);
+    FT_ASSERT_EQ(-1, count);
+    FT_ASSERT_EQ(2U, g_printf_capture.writes);
+    return (1);
+}
+#endif

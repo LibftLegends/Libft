@@ -1,5 +1,7 @@
 # Standalone performance checks
 
+- `benchmark_voxel_region_comparison.cpp` interleaves fresh region builds from three versions in one process and checks their block checksums and generation signatures. It also measures cached calls and compares every block in base-only generation between the context and current versions. Build two historical `voxel_generation.cpp` sources against the same headers and prefix their public functions with `baseline_` and `context_` using compiler definitions. Rename `voxel_generate_chunk`, `voxel_generate_chunk_with_stage_mask`, `voxel_generate_chunk_with_context`, `voxel_generate_chunk_at_world_coordinate`, `voxel_generate_chunk_in_region`, and `voxel_generate_chunk_in_region_with_context`. Link those objects with the current Libft build.
+
 - `benchmark_api_connection_pool.cpp` measures returning and reacquiring an idle TCP connection on loopback.
 - `benchmark_api_http_common.cpp` measures CRLF search on an 8 KiB line, decoding a 64 KiB chunked body, and measuring and streaming a 128-field JSON request.
 
@@ -43,6 +45,16 @@
 - `benchmark_unordered_map.cpp` measures erase and reinsert in a large collision cluster that wraps around the table.
 - `benchmark_ordered_set.cpp` measures insertion and removal at the front of a sorted set of 8,192 integers.
 - `benchmark_map_lookup.cpp` measures mixed hits and misses in insertion-ordered maps of 8 and 4,096 integer keys.
+- `benchmark_game_reputation.cpp` measures paired reputation and milestone reads, inserts, and updates on 128 IDs with and without map mutexes. Pass `--move` to time moving a reputation object with 1,024 entries in each map, or `--counters` to measure scalar reads and adjustments with and without the reputation mutex.
+- `benchmark_game_region_definition.cpp` measures repeated updates and ownership transfers of a 256-byte region name and 4 KiB description.
+- `benchmark_game_rarity_band.cpp` measures economy table fetches with and without mutexes on the stored rarity band and the destination.
+- `benchmark_game_currency_rate.cpp` measures currency-rate fetches with and without mutexes on the stored rate and the destination.
+- `benchmark_game_vendor_profile.cpp` measures vendor fetches into a reusable profile with and without a mutex on the stored profile.
+- `benchmark_game_dialogue_table.cpp` measures moving a dialogue table with 128 registered lines. Pass `--scripts` to measure bulk script copies, `--register` to measure replacing a 1 KiB line, or `--fetch` to compare the cached and mutex-enabled public-map fetch paths.
+- `benchmark_game_dialogue_line.cpp` measures repeated 4 KiB text edits and whole-line updates with 32 next-line IDs. Pass `--move` to measure moving the same fixture.
+- `benchmark_game_dialogue_script.cpp` measures deep-copying a script with 32 lines, each with 256 bytes of text and 16 next-line IDs. Pass `--locked` to enable line mutexes, or `--metadata` to measure repeated 4 KiB title and summary edits.
+- `benchmark_game_hooks_dispatch.cpp` measures the built-in damage hook with zero or one registered callback.
+- `benchmark_game_data_catalog.cpp` measures replacing and fetching the last item in a 512-item catalogue with and without the item map mutex. Pass `--move` to measure transferring a catalogue with 256 items, 64 recipes, and 64 loadouts, or `--blueprints` to measure copying and moving a recipe and loadout with 128 entries each.
 - `benchmark_result_failure.cpp` measures creating and discarding an error result with room for a 64 KiB value.
 - `benchmark_template_value_access.cpp` measures reading stored optional, variant, and tuple values and counts fallback constructions.
 - `benchmark_matrix.cpp` measures rectangular double-precision matrix multiplication.

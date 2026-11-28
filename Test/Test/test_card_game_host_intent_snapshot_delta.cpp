@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CardGame/card_game.hpp"
+#include "../../Modules/Buffer/buffer_endian.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 static const uint32_t CARD_GAME_HOST_INTENT_SNAPSHOT_TEST_TYPE = 0x534E4150U;
@@ -228,5 +229,102 @@ FT_TEST(test_card_game_host_intents_survive_byte_snapshot_restore)
     FT_ASSERT_EQ(2U, record.sequence);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_engine.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_host_intents_preserve_wrapped_order_during_growth)
+{
+    card_game_engine source;
+    card_game_engine moved;
+    card_game_engine replica;
+    card_game_snapshot wrapped_snapshot;
+    card_game_delta unchanged;
+    card_game_delta grown;
+    std::vector<uint8_t> encoded;
+    std::vector<uint8_t> replica_encoded;
+    constexpr uint32_t CAPACITY = FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY;
+    constexpr uint32_t ACKNOWLEDGED = CAPACITY / 2U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(&source, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(&replica, FT_TRUE));
+    uint32_t index = 0U;
+    while (index < CAPACITY)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_emit(&source));
+        ++index;
+    }
+    index = 0U;
+    while (index < ACKNOWLEDGED)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.acknowledge_host_intent(index + 1U));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_emit(&source));
+        ++index;
+    }
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_snapshot(&wrapped_snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(encoded));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.restore_snapshot(encoded.data(), encoded.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.serialize_snapshot(replica_encoded));
+    FT_ASSERT(encoded == replica_encoded);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.create_delta(wrapped_snapshot, &unchanged));
+    FT_ASSERT_EQ(FT_FALSE, unchanged.global_state_changed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.apply_delta(unchanged));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_emit(&moved));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.create_delta(wrapped_snapshot, &grown));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.apply_delta(grown));
+
+    index = 0U;
+    while (index <= CAPACITY)
+    {
+        card_game_host_intent_record record{};
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.inspect_pending_host_intent(index, &record));
+        FT_ASSERT_EQ(ACKNOWLEDGED + index + 1U, record.sequence);
+        FT_ASSERT_EQ(77U, record.intent.fields[0U].value);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            moved.acknowledge_host_intent(ACKNOWLEDGED + index + 1U));
+        ++index;
+    }
+    card_game_host_intent_record record{};
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, moved.peek_pending_host_intent(&record));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_emit(&moved));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.peek_pending_host_intent(&record));
+    FT_ASSERT_EQ(CAPACITY + ACKNOWLEDGED + 2U, record.sequence);
+    return (1);
+}
+
+FT_TEST(test_card_game_host_intent_snapshot_restores_legacy_wire_records)
+{
+    card_game_engine source;
+    card_game_engine replica;
+    std::vector<uint8_t> bytes;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(&source, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_setup(&replica, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_host_intent_snapshot_test_emit(&source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_snapshot(bytes));
+    constexpr std::size_t VERSION = 4U;
+    constexpr std::size_t HOST_COUNT = 96U;
+    constexpr std::size_t ACTION_REQUEST = HOST_COUNT + sizeof(uint32_t) + sizeof(uint64_t);
+    FT_ASSERT_EQ(2U, buffer_load_le<uint32_t>(bytes.data() + VERSION));
+    FT_ASSERT_EQ(1U, buffer_load_le<uint32_t>(bytes.data() + HOST_COUNT));
+    bytes.erase(bytes.begin() + ACTION_REQUEST,
+        bytes.begin() + ACTION_REQUEST + sizeof(uint64_t));
+    buffer_store_le<uint32_t>(bytes.data() + VERSION, 1U);
+    const std::size_t payload_size = bytes.size() - sizeof(uint64_t);
+    uint64_t checksum = UINT64_C(14695981039346656037);
+    std::size_t index = 0U;
+    while (index < payload_size)
+    {
+        checksum ^= bytes[index];
+        checksum *= UINT64_C(1099511628211);
+        ++index;
+    }
+    buffer_store_le<uint64_t>(bytes.data() + payload_size, checksum);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.restore_snapshot(bytes.data(), bytes.size()));
+    card_game_host_intent_record record{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, replica.peek_pending_host_intent(&record));
+    FT_ASSERT_EQ(1U, record.sequence);
+    FT_ASSERT_EQ(0U, record.action_request_id);
+    FT_ASSERT_EQ(77U, record.intent.fields[0U].value);
     return (1);
 }

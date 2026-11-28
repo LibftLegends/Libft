@@ -1,57 +1,62 @@
 #include "card_game_internal.hpp"
+#include <algorithm>
+
+static uint32_t card_game_card_bucket(uint32_t card_id,
+    const card_game_card_definition *cards, const uint32_t *buckets,
+    uint32_t bucket_mask) noexcept
+{
+    uint32_t hash = card_id;
+
+    hash ^= hash >> 16U;
+    hash *= 0x7FEB352DU;
+    hash ^= hash >> 15U;
+    hash *= 0x846CA68BU;
+    hash ^= hash >> 16U;
+    uint32_t bucket = hash & bucket_mask;
+    while (buckets[bucket] != 0U && cards[buckets[bucket] - 1U].card_id != card_id)
+        bucket = (bucket + 1U) & bucket_mask;
+    return (bucket);
+}
+
+uint32_t card_game_engine::find_card_index(uint32_t card_id) const noexcept
+{
+    if (this->_card_count == 0U || this->_card_capacity == 0U)
+        return (UINT32_MAX);
+    const uint32_t *buckets = this->_card_type_ids + this->_card_capacity;
+    uint32_t bucket = card_game_card_bucket(card_id, this->_cards, buckets,
+        this->_card_capacity * 2U - 1U);
+    if (buckets[bucket] == 0U)
+        return (UINT32_MAX);
+    return (buckets[bucket] - 1U);
+}
 
 int32_t card_game_engine::find_card(uint32_t card_id,
     card_game_card_definition **definition) noexcept
 {
-    uint32_t index;
-
     if (definition == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    index = 0U;
-    while (index < this->_card_count)
-    {
-        if (this->_cards[index].card_id == card_id)
-        {
-            *definition = &this->_cards[index];
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
-    }
-    return (FT_ERR_NOT_FOUND);
+    const uint32_t index = this->find_card_index(card_id);
+    if (index == UINT32_MAX)
+        return (FT_ERR_NOT_FOUND);
+    *definition = &this->_cards[index];
+    return (FT_ERR_SUCCESS);
 }
 
 ft_bool card_game_engine::is_card_registered(uint32_t card_id) const noexcept
 {
-    uint32_t index;
-
-    index = 0U;
-    while (index < this->_card_count)
-    {
-        if (this->_cards[index].card_id == card_id)
-            return (FT_TRUE);
-        index += 1U;
-    }
-    return (FT_FALSE);
+    return (this->find_card_index(card_id) != UINT32_MAX);
 }
 
 int32_t card_game_engine::find_card_type_id(uint32_t card_id,
     uint32_t *type_id) const noexcept
 {
-    uint32_t index;
-
     if (type_id == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    index = 0U;
-    while (index < this->_card_count)
-    {
-        if (this->_cards[index].card_id == card_id)
-        {
-            *type_id = this->_card_type_ids[index];
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
-    }
-    return (FT_ERR_NOT_FOUND);
+    const uint32_t index = this->find_card_index(card_id);
+    if (index == UINT32_MAX)
+        return (FT_ERR_NOT_FOUND);
+    *type_id = this->_card_type_ids[index];
+    return (FT_ERR_SUCCESS);
 }
 
 uint32_t card_game_engine::get_board_capacity() const noexcept
@@ -74,48 +79,52 @@ uint32_t card_game_engine::get_board_capacity() const noexcept
 int32_t card_game_engine::register_card_internal(
     const card_game_card_definition &definition, uint32_t type_id) noexcept
 {
-    card_game_card_definition *existing;
-
     if (this->_initialised_state != 2U || definition.card_id == 0U
         || type_id >= FT_CARD_GAME_MAX_CARD_TYPES
         || (definition.effect_id != CARD_GAME_NO_EFFECT
             && definition.effect_id >= this->_effect_count))
         return (FT_ERR_INVALID_ARGUMENT);
-    if (this->find_card(definition.card_id, &existing) == FT_ERR_SUCCESS)
+    uint32_t *buckets = this->_card_type_ids + this->_card_capacity;
+    uint32_t bucket = card_game_card_bucket(definition.card_id, this->_cards,
+        buckets, this->_card_capacity * 2U - 1U);
+    if (buckets[bucket] != 0U)
         return (FT_ERR_ALREADY_EXISTS);
     if (this->_card_count >= FT_CARD_GAME_MAX_CARD_DEFINITIONS)
         return (FT_ERR_FULL);
     if (this->_card_count == this->_card_capacity)
     {
-        int32_t grow_error = this->grow_card_definitions();
+        int32_t grow_error = this->resize_card_definitions(this->_card_capacity * 2U);
 
         if (grow_error != FT_ERR_SUCCESS)
             return (grow_error);
+        buckets = this->_card_type_ids + this->_card_capacity;
+        bucket = card_game_card_bucket(definition.card_id, this->_cards,
+            buckets, this->_card_capacity * 2U - 1U);
     }
     this->_cards[this->_card_count] = definition;
     this->_card_type_ids[this->_card_count] = type_id;
     this->_card_count += 1U;
+    buckets[bucket] = this->_card_count;
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_engine::grow_card_definitions() noexcept
+int32_t card_game_engine::resize_card_definitions(uint32_t capacity) noexcept
 {
+    static_assert(FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY != 0U
+        && (FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY
+            & (FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY - 1U)) == 0U);
+    static_assert(FT_CARD_GAME_MAX_CARD_DEFINITIONS >= FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY
+        && (FT_CARD_GAME_MAX_CARD_DEFINITIONS
+            & (FT_CARD_GAME_MAX_CARD_DEFINITIONS - 1U)) == 0U);
     card_game_card_definition *cards;
     uint32_t *card_type_ids;
-    uint32_t capacity;
 
-    if (this->_card_capacity >= FT_CARD_GAME_MAX_CARD_DEFINITIONS)
-        return (FT_ERR_FULL);
-    capacity = this->_card_capacity * 2U;
-    if (capacity < this->_card_capacity
-        || capacity > FT_CARD_GAME_MAX_CARD_DEFINITIONS)
-        capacity = FT_CARD_GAME_MAX_CARD_DEFINITIONS;
     cards = static_cast<card_game_card_definition *>(cma_malloc(
         static_cast<ft_size_t>(capacity) * sizeof(card_game_card_definition)));
     if (cards == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
     card_type_ids = static_cast<uint32_t *>(cma_malloc(
-        static_cast<ft_size_t>(capacity) * sizeof(uint32_t)));
+        static_cast<ft_size_t>(capacity) * 3U * sizeof(uint32_t)));
     if (card_type_ids == ft_nullptr)
     {
         cma_free(cards);
@@ -128,6 +137,17 @@ int32_t card_game_engine::grow_card_definitions() noexcept
                 * sizeof(card_game_card_definition));
         ft_memcpy(card_type_ids, this->_card_type_ids,
             static_cast<ft_size_t>(this->_card_count) * sizeof(uint32_t));
+    }
+    uint32_t *buckets = card_type_ids + capacity;
+    const uint32_t bucket_mask = capacity * 2U - 1U;
+    ft_bzero(buckets, static_cast<ft_size_t>(capacity) * 2U * sizeof(*buckets));
+    uint32_t index = 0U;
+    while (index < this->_card_count)
+    {
+        const uint32_t bucket = card_game_card_bucket(cards[index].card_id,
+            cards, buckets, bucket_mask);
+        buckets[bucket] = index + 1U;
+        index += 1U;
     }
     if (this->_cards != ft_nullptr)
         cma_free(this->_cards);
@@ -279,6 +299,21 @@ int32_t card_game_engine::register_effect_callback_with_usage_limit(
     this->_effect_event_types[this->_effect_count] = event_type;
     this->_effect_priorities[this->_effect_count] = priority;
     this->_effect_usage_limit_ids[this->_effect_count] = usage_limit_id;
+    static_assert(FT_CARD_GAME_MAX_EFFECTS <= UINT16_MAX + 1U);
+    const uint16_t new_effect = static_cast<uint16_t>(this->_effect_count);
+    uint16_t *end = this->_event_effect_order + this->_event_effect_count;
+    uint16_t *position = std::upper_bound(this->_event_effect_order, end,
+        new_effect, [this](uint16_t first, uint16_t second)
+        {
+            if (this->_effect_event_types[first] != this->_effect_event_types[second])
+                return (this->_effect_event_types[first] < this->_effect_event_types[second]);
+            return (this->_effect_priorities[first] < this->_effect_priorities[second]);
+        });
+    ft_memmove(position + 1U, position,
+        static_cast<ft_size_t>(end - position) * sizeof(*position));
+    *position = new_effect;
+    this->_event_effect_count += 1U;
+    this->_event_effect_revision += 1U;
     this->_effect_count += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -299,6 +334,15 @@ int32_t card_game_engine::unregister_effect_callback(uint32_t effect_id,
     if (this->_effect_callbacks[effect_id] != expected_callback
         || this->_effect_user_data[effect_id] != expected_user_data)
         return (FT_ERR_PERMISSION_DENIED);
+    uint16_t *end = this->_event_effect_order + this->_event_effect_count;
+    uint16_t *position = std::find(this->_event_effect_order, end,
+        static_cast<uint16_t>(effect_id));
+    if (position == end)
+        return (FT_ERR_INVALID_STATE);
+    ft_memmove(position, position + 1U,
+        static_cast<ft_size_t>(end - position - 1U) * sizeof(*position));
+    this->_event_effect_count -= 1U;
+    this->_event_effect_revision += 1U;
     this->_effect_callbacks[effect_id] = ft_nullptr;
     this->_effect_user_data[effect_id] = ft_nullptr;
     this->_effect_event_types[effect_id] = 0U;
@@ -400,63 +444,6 @@ int32_t card_game_engine::register_start_override(
         return (FT_ERR_INVALID_ARGUMENT);
     this->_start_overrides[this->_start_override_count] = override_rule;
     this->_start_override_count += 1U;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t card_game_engine::resolve_start_override(
-    card_game_start_override_field field, uint32_t player_id,
-    uint32_t baseline, uint32_t *value) const noexcept
-{
-    uint32_t index;
-    uint32_t highest_set_priority;
-    uint32_t resolved_value;
-    ft_bool set_found;
-
-    if (value == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    resolved_value = baseline;
-    highest_set_priority = 0U;
-    set_found = FT_FALSE;
-    index = 0U;
-    while (index < this->_start_override_count)
-    {
-        const card_game_start_override &rule = this->_start_overrides[index];
-        if (rule.field == field
-            && (rule.player_id == player_id
-                || rule.player_id == CARD_GAME_START_ALL_PLAYERS))
-        {
-            if (rule.operation == CARD_GAME_START_OVERRIDE_SET)
-            {
-                if (set_found == FT_FALSE
-                    || rule.priority > highest_set_priority)
-                {
-                    resolved_value = rule.value;
-                    highest_set_priority = rule.priority;
-                    set_found = FT_TRUE;
-                }
-                else if (rule.priority == highest_set_priority
-                    && rule.value != resolved_value)
-                    return (FT_ERR_INVALID_STATE);
-            }
-        }
-        index += 1U;
-    }
-    index = 0U;
-    while (index < this->_start_override_count)
-    {
-        const card_game_start_override &rule = this->_start_overrides[index];
-        if (rule.field == field
-            && (rule.player_id == player_id
-                || rule.player_id == CARD_GAME_START_ALL_PLAYERS)
-            && rule.operation == CARD_GAME_START_OVERRIDE_ADD)
-        {
-            if (UINT32_MAX - resolved_value < rule.value)
-                return (FT_ERR_OUT_OF_RANGE);
-            resolved_value += rule.value;
-        }
-        index += 1U;
-    }
-    *value = resolved_value;
     return (FT_ERR_SUCCESS);
 }
 

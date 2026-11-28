@@ -1,8 +1,5 @@
 #include "rng.hpp"
 #include "../Errno/errno.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
 
 static uint64_t rng_splitmix64_next(uint64_t *state)
 {
@@ -38,17 +35,16 @@ int32_t rng_stream_seed_sequence(uint64_t base_seed, uint64_t stream_identifier,
         return (FT_ERR_SUCCESS);
     uint64_t state = rng_initialize_state(base_seed, stream_identifier);
     ft_size_t index = 0;
-    while (index < count)
+    const ft_size_t paired_count = count - (count & 1U);
+    while (index < paired_count)
     {
-        uint64_t mixed_value = rng_splitmix64_next(&state);
-        buffer[index] = static_cast<uint32_t>(mixed_value & 0xFFFFFFFFu);
-        index++;
-        if (index < count)
-        {
-            buffer[index] = static_cast<uint32_t>((mixed_value >> 32) & 0xFFFFFFFFu);
-            index++;
-        }
+        const uint64_t mixed_value = rng_splitmix64_next(&state);
+        buffer[index] = static_cast<uint32_t>(mixed_value);
+        buffer[index + 1U] = static_cast<uint32_t>(mixed_value >> 32U);
+        index += 2U;
     }
+    if (index < count)
+        buffer[index] = static_cast<uint32_t>(rng_splitmix64_next(&state));
     return (FT_ERR_SUCCESS);
 }
 

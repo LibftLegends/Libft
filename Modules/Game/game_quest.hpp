@@ -31,6 +31,9 @@ class game_quest
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t advance_phase_internal(ft_bool require_incomplete) noexcept;
+
+        friend class game_progress_tracker;
 
     public:
         game_quest() noexcept;

@@ -51,6 +51,45 @@ static int64_t    logger_partial_write_hook(int file_descriptor,
     return (bytes_written);
 }
 
+static int64_t logger_write_with_extra_bytes(int32_t descriptor,
+    const void *message, ft_size_t count)
+{
+    char external[1024];
+    ft_memset(external, 'e', sizeof(external));
+    int64_t written = 0;
+    if (cmp_write(descriptor, external, sizeof(external), &written) != FT_ERR_SUCCESS
+        || written != static_cast<int64_t>(sizeof(external))
+        || cmp_write(descriptor, message, count, &written) != FT_ERR_SUCCESS)
+        return (-1);
+    return (written);
+}
+
+FT_TEST(test_logger_rotation_checks_written_file_size_after_append)
+{
+    char path[256];
+    const int32_t descriptor = create_logger_temp_file(path, sizeof(path));
+    FT_ASSERT(descriptor >= 0);
+    close(descriptor);
+    ft_log_close();
+    FT_ASSERT_EQ(0, ft_log_set_file(path, 512U));
+    su_set_write_syscall_hook(logger_write_with_extra_bytes);
+    ft_log_info("cross threshold after write");
+    su_reset_write_syscall_hook();
+    ft_log_close();
+
+    const std::string rotated = std::string(path) + ".1";
+    ft_size_t size = 0U;
+    t_time modification = 0;
+    const int32_t status = cmp_file_get_size_and_mtime(rotated.c_str(), &size,
+        &modification, ft_nullptr);
+    unlink(path);
+    unlink(rotated.c_str());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, status);
+    FT_ASSERT(size > 1024U);
+    FT_ASSERT(modification > 0);
+    return (1);
+}
+
 FT_TEST(test_logger_file_sink_prepare_thread_safety_initializes_mutex)
 {
     char        template_path[256];

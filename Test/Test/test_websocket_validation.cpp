@@ -3,11 +3,120 @@
 #include "networking_test_support.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/pair.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+static int32_t open_websocket_batch_peer(const sockaddr_in &address, int32_t listener,
+    int32_t &receiver, int32_t &sender)
+{
+    receiver = nw_socket(AF_INET, SOCK_STREAM, 0);
+    if (receiver < 0 || nw_connect(receiver, reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address)) != 0)
+        return (FT_ERR_IO);
+    sender = nw_accept(listener, ft_nullptr, ft_nullptr);
+    if (sender < 0)
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t read_short_websocket_frame(int32_t receiver, uint8_t (&frame)[127])
+{
+    if (nw_recv(receiver, frame, 2U, MSG_WAITALL) != 2 || frame[1] > 125U)
+        return (FT_ERR_IO);
+    if (frame[1] != 0U && nw_recv(receiver, frame + 2U, frame[1], MSG_WAITALL) != frame[1])
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_websocket_server_batch_reuses_compression_for_mixed_clients)
+{
+    if (!networking_test_local_ipv4_available())
+        return (1);
+    ft_websocket_server server;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.enable_thread_safety());
+    ft_string message;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, message.initialize("world update world update"));
+    const int32_t listener = nw_socket(AF_INET, SOCK_STREAM, 0);
+    FT_ASSERT(listener >= 0);
+    sockaddr_in address = {};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t address_length = sizeof(address);
+    int32_t receivers[] = {-1, -1, -1};
+    int32_t senders[] = {-1, -1, -1};
+    uint8_t repeated[3][127]{};
+    uint8_t batched[3][127]{};
+    ft_size_t before = 0U;
+    ft_size_t after = 0U;
+    ft_size_t frees = 0U;
+    ft_size_t repeated_allocations = 0U;
+    ft_size_t batched_allocations = 0U;
+    int32_t result = FT_ERR_IO;
+    if (nw_bind(listener, reinterpret_cast<const sockaddr *>(&address), sizeof(address)) == 0
+        && nw_listen(listener, 3) == 0
+        && getsockname(listener, reinterpret_cast<sockaddr *>(&address), &address_length) == 0)
+    {
+        result = FT_ERR_SUCCESS;
+        ft_size_t index = 0U;
+        while (index < 3U && result == FT_ERR_SUCCESS)
+        {
+            result = open_websocket_batch_peer(address, listener, receivers[index], senders[index]);
+            if (result == FT_ERR_SUCCESS && index != 1U)
+                server.store_connection_state_locked(senders[index], FT_TRUE);
+            ++index;
+        }
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = cma_get_stats(&before, &frees);
+    ft_size_t index = 0U;
+    while (index < 3U && result == FT_ERR_SUCCESS)
+    {
+        result = server.send_text(senders[index], message);
+        if (result == FT_ERR_SUCCESS)
+            result = read_short_websocket_frame(receivers[index], repeated[index]);
+        ++index;
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = cma_get_stats(&after, &frees);
+    repeated_allocations = after - before;
+    before = after;
+    if (result == FT_ERR_SUCCESS)
+        result = server.send_text_many(senders, 3U, message);
+    index = 0U;
+    while (index < 3U && result == FT_ERR_SUCCESS)
+    {
+        result = read_short_websocket_frame(receivers[index], batched[index]);
+        ++index;
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = cma_get_stats(&after, &frees);
+    batched_allocations = after - before;
+    (void)nw_close(listener);
+    index = 0U;
+    while (index < 3U)
+    {
+        if (senders[index] >= 0)
+            (void)nw_close(senders[index]);
+        if (receivers[index] >= 0)
+            (void)nw_close(receivers[index]);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(0xC1U, batched[0][0]);
+    FT_ASSERT_EQ(0x81U, batched[1][0]);
+    FT_ASSERT_EQ(0xC1U, batched[2][0]);
+    FT_ASSERT_EQ(0, ft_memcmp(repeated, batched, sizeof(repeated)));
+    FT_ASSERT_EQ(2U * batched_allocations, repeated_allocations);
+    FT_ASSERT(batched_allocations > 0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.send_text_many(ft_nullptr, 0U, message));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, server.send_text_many(ft_nullptr, 1U, message));
+    return (1);
+}
 
 FT_TEST(test_websocket_server_rejects_unmasked_frame)
 {

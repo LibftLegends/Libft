@@ -769,22 +769,22 @@ struct storage_kv_record_scan
     ft_bool escaped = FT_FALSE;
 };
 
-static void storage_kv_scan_record_byte(storage_kv_record_scan &scan, char byte)
+static void storage_kv_scan_record_byte(storage_kv_record_scan &scan, char byte_value)
 {
     if (scan.in_string == FT_TRUE)
     {
         if (scan.escaped == FT_TRUE)
             scan.escaped = FT_FALSE;
-        else if (byte == '\\')
+        else if (byte_value == '\\')
             scan.escaped = FT_TRUE;
-        else if (byte == '"')
+        else if (byte_value == '"')
             scan.in_string = FT_FALSE;
     }
-    else if (byte == '"')
+    else if (byte_value == '"')
         scan.in_string = FT_TRUE;
-    else if (byte == '{')
+    else if (byte_value == '{')
         ++scan.depth;
-    else if (byte == '}')
+    else if (byte_value == '}')
         --scan.depth;
     return ;
 }
@@ -807,22 +807,22 @@ int32_t kv_store::load_json_lines_entries(const char *location, ft_vector<kv_sto
         ft_size_t offset = 0;
         while (result == FT_ERR_SUCCESS && offset < size)
         {
-            const char byte = block[offset];
+            const char byte_value = block[offset];
             if (scan.depth == 0)
             {
-                if (byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n')
+                if (byte_value == ' ' || byte_value == '\t' || byte_value == '\r' || byte_value == '\n')
                 {
                     ++offset;
                     continue ;
                 }
-                if (byte != '{')
+                if (byte_value != '{')
                 {
                     result = FT_ERR_INVALID_ARGUMENT;
                     break ;
                 }
                 start = offset;
             }
-            storage_kv_scan_record_byte(scan, byte);
+            storage_kv_scan_record_byte(scan, byte_value);
             ++offset;
             if (scan.depth == 0)
             {

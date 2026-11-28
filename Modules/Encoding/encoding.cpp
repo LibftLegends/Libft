@@ -1,4 +1,4 @@
-#include "encoding.hpp"
+#include "encoding_internal.hpp"
 #include "../Basic/basic.hpp"
 #include "../Basic/utf8.hpp"
 #include "../CMA/CMA.hpp"
@@ -108,40 +108,29 @@ static constexpr char BASE64_URL_ALPHABET[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 static constexpr char BASE32_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-static char *encoding_base64_encode_internal(const uint8_t *input,
-    ft_size_t input_size, ft_bool url_safe, ft_bool padded)
+static int32_t encoding_base64_encoded_size(const uint8_t *input,
+    ft_size_t input_size, ft_bool url_safe, ft_bool padded, ft_size_t *size) noexcept
 {
-    ft_size_t output_size;
-    ft_size_t output_index;
-    ft_size_t input_index;
-    char *output;
-
     if (input == ft_nullptr && input_size != 0)
-    {
-        encoding_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
+        return (FT_ERR_INVALID_ARGUMENT);
     if (input_size > (FT_SYSTEM_SIZE_MAX / 4) * 3)
-    {
-        encoding_set_error(FT_ERR_OUT_OF_RANGE);
-        return (ft_nullptr);
-    }
-    output_size = ((input_size + 2) / 3) * 4;
+        return (FT_ERR_OUT_OF_RANGE);
+    *size = ((input_size + 2) / 3) * 4;
     if (url_safe == FT_TRUE && padded == FT_FALSE)
     {
         if (input_size % 3 == 1)
-            output_size -= 2;
+            *size -= 2;
         else if (input_size % 3 == 2)
-            output_size -= 1;
+            *size -= 1;
     }
-    output = static_cast<char *>(cma_malloc(output_size + 1));
-    if (output == ft_nullptr)
-    {
-        encoding_set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    input_index = 0;
-    output_index = 0;
+    return (FT_ERR_SUCCESS);
+}
+
+static void encoding_base64_write(const uint8_t *input, ft_size_t input_size,
+    ft_bool url_safe, ft_bool padded, char *output) noexcept
+{
+    ft_size_t input_index = 0;
+    ft_size_t output_index = 0;
     const char *alphabet = BASE64_ALPHABET;
     if (url_safe == FT_TRUE)
         alphabet = BASE64_URL_ALPHABET;
@@ -173,6 +162,27 @@ static char *encoding_base64_encode_internal(const uint8_t *input,
             output[output_index++] = '=';
     }
     output[output_index] = '\0';
+    return ;
+}
+
+static char *encoding_base64_encode_internal(const uint8_t *input,
+    ft_size_t input_size, ft_bool url_safe, ft_bool padded)
+{
+    ft_size_t output_size;
+    const int32_t status = encoding_base64_encoded_size(input, input_size,
+        url_safe, padded, &output_size);
+    if (status != FT_ERR_SUCCESS)
+    {
+        encoding_set_error(status);
+        return (ft_nullptr);
+    }
+    char *output = static_cast<char *>(cma_malloc(output_size + 1U));
+    if (output == ft_nullptr)
+    {
+        encoding_set_error(FT_ERR_NO_MEMORY);
+        return (ft_nullptr);
+    }
+    encoding_base64_write(input, input_size, url_safe, padded, output);
     encoding_set_error(FT_ERR_SUCCESS);
     return (output);
 }
@@ -188,46 +198,47 @@ char *encoding_base64url_encode(const uint8_t *input, ft_size_t input_size,
     return (encoding_base64_encode_internal(input, input_size, FT_TRUE, padded));
 }
 
-static uint8_t *encoding_base64_decode_internal(const char *input,
-    ft_size_t input_size, ft_size_t *output_size, ft_bool url_safe)
+int32_t encoding_base64url_encode_into(const uint8_t *input, ft_size_t input_size,
+    ft_bool padded, char *output, ft_size_t output_capacity) noexcept
 {
-    if (output_size != ft_nullptr)
-        *output_size = 0U;
+    if (output == ft_nullptr)
+        return (encoding_set_error(FT_ERR_INVALID_ARGUMENT));
+    ft_size_t output_size;
+    const int32_t status = encoding_base64_encoded_size(input, input_size,
+        FT_TRUE, padded, &output_size);
+    if (status != FT_ERR_SUCCESS)
+        return (encoding_set_error(status));
+    if (output_size >= output_capacity)
+        return (encoding_set_error(FT_ERR_OUT_OF_RANGE));
+    encoding_base64_write(input, input_size, FT_TRUE, padded, output);
+    return (encoding_set_error(FT_ERR_SUCCESS));
+}
+
+static int32_t encoding_base64_validate_input(const char *input,
+    ft_size_t input_size, uint32_t *padding_count) noexcept
+{
     if ((input == ft_nullptr && input_size != 0U) || input_size % 4U == 1U)
-    {
-        encoding_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
+        return (FT_ERR_INVALID_ARGUMENT);
     ft_size_t input_index = 0U;
-    uint32_t padding_count = 0U;
-    ft_bool invalid = FT_FALSE;
+    uint32_t padding = 0U;
     while (input_index < input_size)
     {
         const uint8_t character = static_cast<uint8_t>(input[input_index++]);
         if (character == '=')
-            ++padding_count;
+            ++padding;
         if ((character != '=' && BASE64_VALUES.values[character] < 0)
-            || padding_count > 2U)
-        {
-            invalid = FT_TRUE;
-            break ;
-        }
+            || padding > 2U)
+            return (FT_ERR_INVALID_ARGUMENT);
     }
-    if (invalid == FT_TRUE)
-    {
-        encoding_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
-    ft_size_t output_capacity = (input_size / 4U) * 3U;
-    if (input_size % 4U != 0U)
-        output_capacity += 3U;
-    uint8_t *output = static_cast<uint8_t *>(cma_malloc(output_capacity + 1U));
-    if (output == ft_nullptr)
-    {
-        encoding_set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    input_index = 0U;
+    if (padding_count != ft_nullptr)
+        *padding_count = padding;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t encoding_base64_decode_bytes(const char *input, ft_size_t input_size,
+    ft_bool url_safe, uint8_t *output, ft_size_t *output_size) noexcept
+{
+    ft_size_t input_index = 0U;
     ft_size_t output_index = 0U;
     while (input_index < input_size)
     {
@@ -252,11 +263,7 @@ static uint8_t *encoding_base64_decode_internal(const char *input,
             || (url_safe == FT_TRUE && (first == '+' || first == '/'
                 || second == '+' || second == '/' || third == '+' || third == '/'
                 || fourth == '+' || fourth == '/')))
-        {
-            cma_free(output);
-            encoding_set_error(FT_ERR_INVALID_ARGUMENT);
-            return (ft_nullptr);
-        }
+            return (FT_ERR_INVALID_ARGUMENT);
         output[output_index++] = static_cast<uint8_t>((first_value << 2) | (second_value >> 4));
         if (third != '=')
             output[output_index++] = static_cast<uint8_t>((second_value << 4) | (third_value >> 2));
@@ -268,6 +275,36 @@ static uint8_t *encoding_base64_decode_internal(const char *input,
     }
     if (output_size != ft_nullptr)
         *output_size = output_index;
+    return (FT_ERR_SUCCESS);
+}
+
+static uint8_t *encoding_base64_decode_internal(const char *input,
+    ft_size_t input_size, ft_size_t *output_size, ft_bool url_safe)
+{
+    if (output_size != ft_nullptr)
+        *output_size = 0U;
+    int32_t status = encoding_base64_validate_input(input, input_size, ft_nullptr);
+    if (status != FT_ERR_SUCCESS)
+    {
+        encoding_set_error(status);
+        return (ft_nullptr);
+    }
+    ft_size_t output_capacity = (input_size / 4U) * 3U;
+    if (input_size % 4U != 0U)
+        output_capacity += 3U;
+    uint8_t *output = static_cast<uint8_t *>(cma_malloc(output_capacity + 1U));
+    if (output == ft_nullptr)
+    {
+        encoding_set_error(FT_ERR_NO_MEMORY);
+        return (ft_nullptr);
+    }
+    status = encoding_base64_decode_bytes(input, input_size, url_safe, output, output_size);
+    if (status != FT_ERR_SUCCESS)
+    {
+        cma_free(output);
+        encoding_set_error(status);
+        return (ft_nullptr);
+    }
     encoding_set_error(FT_ERR_SUCCESS);
     return (output);
 }
@@ -282,6 +319,29 @@ uint8_t *encoding_base64url_decode(const char *input, ft_size_t input_size,
     ft_size_t *output_size)
 {
     return (encoding_base64_decode_internal(input, input_size, output_size, FT_TRUE));
+}
+
+int32_t encoding_base64url_decode_into(const char *input, ft_size_t input_size,
+    uint8_t *output, ft_size_t output_capacity, ft_size_t *output_size) noexcept
+{
+    if (output_size == ft_nullptr)
+        return (encoding_set_error(FT_ERR_INVALID_ARGUMENT));
+    *output_size = 0U;
+    if (output == ft_nullptr)
+        return (encoding_set_error(FT_ERR_INVALID_ARGUMENT));
+    uint32_t padding_count;
+    const int32_t status = encoding_base64_validate_input(input, input_size, &padding_count);
+    if (status != FT_ERR_SUCCESS)
+        return (encoding_set_error(status));
+    ft_size_t decoded_size = (input_size / 4U) * 3U;
+    if (input_size % 4U != 0U)
+        decoded_size += (input_size % 4U) - 1U;
+    if (decoded_size < padding_count)
+        return (encoding_set_error(FT_ERR_INVALID_ARGUMENT));
+    if (decoded_size - padding_count > output_capacity)
+        return (encoding_set_error(FT_ERR_OUT_OF_RANGE));
+    return (encoding_set_error(encoding_base64_decode_bytes(input, input_size,
+        FT_TRUE, output, output_size)));
 }
 
 static void encoding_base32_encode_block(const uint8_t *input, char *output)

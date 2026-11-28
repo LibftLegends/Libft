@@ -141,3 +141,20 @@ FT_TEST(test_loadout_blueprint_copy_move)
     FT_ASSERT_EQ(2u, moved.get_entries().size());
     return (1);
 }
+FT_TEST(test_catalog_loadout_entry_move_releases_source_and_destination_mutexes)
+{
+    game_loadout_entry source;
+    game_loadout_entry destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(1, 2, 3));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    FT_ASSERT_EQ(1, destination.get_slot());
+    FT_ASSERT_EQ(2, destination.get_item_id());
+    FT_ASSERT_EQ(3, destination.get_quantity());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    return (1);
+}

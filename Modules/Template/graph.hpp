@@ -587,7 +587,6 @@ void ft_graph<VertexType>::neighbors(ft_size_t index,
 {
     ft_bool lock_acquired;
     int32_t lock_error;
-    ft_size_t edge_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_graph::neighbors");
     lock_acquired = FT_FALSE;
@@ -603,14 +602,12 @@ void ft_graph<VertexType>::neighbors(ft_size_t index,
         set_error(FT_ERR_NOT_FOUND);
         return ;
     }
-    edge_index = 0;
-    while (edge_index < this->_nodes[index]._degree)
-    {
-        out.push_back(this->_nodes[index]._edges[edge_index]);
-        ++edge_index;
-    }
+    const graph_node &node = this->_nodes[index];
+    int32_t result = FT_ERR_SUCCESS;
+    if (node._degree != 0U)
+        result = out.append(node._edges, node._degree);
     (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    set_error(result);
     return ;
 }
 

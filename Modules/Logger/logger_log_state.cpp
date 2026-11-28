@@ -5,39 +5,18 @@
 #include "../Template/vector.hpp"
 #include "../Errno/errno.hpp"
 
-t_log_level g_level = LOG_LEVEL_INFO;
+std::atomic<t_log_level> g_level{LOG_LEVEL_INFO};
 ft_vector<s_log_sink> g_sinks;
 pthread_mutex_t g_sinks_mutex;
 static pthread_once_t g_sinks_mutex_once = PTHREAD_ONCE_INIT;
 static int32_t g_sinks_mutex_init_error = 0;
-ft_bool g_use_color = FT_TRUE;
+std::atomic<ft_bool> g_use_color{FT_TRUE};
 
 static int32_t logger_ensure_sinks_ready()
 {
-    uint8_t state_value;
-    int32_t initialize_status;
-
-    state_value = g_sinks.is_initialised();
-    if (state_value == FT_CLASS_STATE_INITIALISED)
-    {
-        state_value = g_redaction_rules.is_initialised();
-        if (state_value == FT_CLASS_STATE_INITIALISED)
-            return (FT_ERR_SUCCESS);
-        initialize_status = g_redaction_rules.initialize();
-        if (initialize_status != FT_ERR_SUCCESS)
-            return (initialize_status);
+    if (g_sinks.is_initialised() == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    }
-    initialize_status = g_sinks.initialize();
-    if (initialize_status != FT_ERR_SUCCESS)
-        return (initialize_status);
-    state_value = g_redaction_rules.is_initialised();
-    if (state_value == FT_CLASS_STATE_INITIALISED)
-        return (FT_ERR_SUCCESS);
-    initialize_status = g_redaction_rules.initialize();
-    if (initialize_status != FT_ERR_SUCCESS)
-        return (initialize_status);
-    return (FT_ERR_SUCCESS);
+    return (g_sinks.initialize());
 }
 
 static void logger_initialize_sinks_mutex()

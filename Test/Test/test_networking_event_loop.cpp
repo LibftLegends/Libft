@@ -462,7 +462,7 @@ FT_TEST(test_networking_event_loop_runs_small_ready_set_without_heap)
 
 FT_TEST(test_networking_event_loop_recovers_after_large_snapshot_allocation_failure)
 {
-    constexpr uint32_t SOCKET_COUNT = 33;
+    constexpr uint32_t SOCKET_COUNT = 65U;
     event_loop loop;
     event_loop_init(&loop);
     int32_t descriptors[SOCKET_COUNT];
@@ -484,6 +484,10 @@ FT_TEST(test_networking_event_loop_recovers_after_large_snapshot_allocation_fail
     const int32_t limited = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
     cma_set_alloc_limit(0);
     const int32_t recovered = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
+    // The select snapshot fits this limit. A second allocation for results does not.
+    cma_set_alloc_limit(400U);
+    const int32_t count_only = event_loop_run(&loop, 0);
+    cma_set_alloc_limit(0U);
     event_loop_clear(&loop);
     const uint32_t opened = count;
     while (count > 0)
@@ -493,6 +497,7 @@ FT_TEST(test_networking_event_loop_recovers_after_large_snapshot_allocation_fail
     FT_ASSERT_EQ(FT_ERR_NO_MEMORY, limited);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, recovered);
     FT_ASSERT_EQ(SOCKET_COUNT, ready_count);
+    FT_ASSERT_EQ(static_cast<int32_t>(SOCKET_COUNT), count_only);
     return (1);
 }
 #endif
@@ -629,6 +634,57 @@ FT_TEST(test_networking_event_loop_windows_full_read_set_keeps_tail_and_wake_soc
     FT_ASSERT_EQ(FT_ERR_SUCCESS, result.load());
     FT_ASSERT_EQ(0, wake_count);
     FT_ASSERT(elapsed < std::chrono::milliseconds(500));
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_windows_standard_read_set_needs_no_heap)
+{
+    constexpr uint32_t SOCKET_COUNT = 64U;
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t idle_sockets[SOCKET_COUNT - 1U];
+    uint32_t opened = 0U;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (opened < SOCKET_COUNT - 1U)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        idle_sockets[opened++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_READ);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    const int32_t tail_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ | EVENT_LOOP_INTEREST_WRITE);
+    const ssize_t sent = nw_send(connection[1], "x", 1U, 0);
+    int32_t readable_descriptor = connection[0];
+    const int32_t readable = nw_poll(&readable_descriptor, 1, ft_nullptr, 0, 500);
+    event_loop_ready_event event{};
+    uint32_t ready_count = 0U;
+    cma_set_alloc_limit(1U);
+    const int32_t wait_result = event_loop_wait(&loop, &event, 1U, &ready_count, 100);
+    const int32_t counted = event_loop_run(&loop, 100);
+    cma_set_alloc_limit(0U);
+    const int32_t ready_descriptor = connection[0];
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    const uint32_t opened_count = opened;
+    while (opened > 0U)
+        nw_close(idle_sockets[--opened]);
+
+    FT_ASSERT_EQ(SOCKET_COUNT - 1U, opened_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tail_result);
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(1, readable);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wait_result);
+    FT_ASSERT_EQ(1U, ready_count);
+    FT_ASSERT_EQ(1, counted);
+    FT_ASSERT_EQ(ready_descriptor, event.file_descriptor);
+    FT_ASSERT_EQ(EVENT_LOOP_READY_READ | EVENT_LOOP_READY_WRITE, event.ready_mask);
     return (1);
 }
 #endif

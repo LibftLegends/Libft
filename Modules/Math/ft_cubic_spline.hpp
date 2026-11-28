@@ -18,6 +18,9 @@ class ft_cubic_spline
 #else
     private:
 #endif
+        friend double ft_cubic_spline_evaluate(const ft_cubic_spline &spline,
+            double input_value) noexcept;
+
         mutable pt_recursive_mutex *_mutex = ft_nullptr;
         uint8_t                    _initialised_state = FT_CLASS_STATE_UNINITIALISED;
 

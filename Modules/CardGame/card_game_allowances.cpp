@@ -1,5 +1,6 @@
 #include "card_game_resources.hpp"
 #include "../CMA/CMA.hpp"
+#include <algorithm>
 
 int32_t card_game_allowance_ledger::release_snapshot(
     card_game_allowance_snapshot *snapshot) noexcept
@@ -77,11 +78,37 @@ int32_t card_game_allowance_ledger::clone_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+static uint32_t card_game_allowance_duplicate_index(
+    const card_game_action_allowance *allowances, uint32_t count) noexcept
+{
+    uint32_t index = 1U;
+    while (index < count && allowances[index - 1U].allowance_id < allowances[index].allowance_id)
+        ++index;
+    if (index >= count)
+        return (count);
+    uint64_t keys[FT_CARD_GAME_MAX_ALLOWANCES];
+    index = 0U;
+    while (index < count)
+    {
+        keys[index] = (static_cast<uint64_t>(allowances[index].allowance_id) << 32U) | index;
+        ++index;
+    }
+    std::sort(keys, keys + count);
+    uint32_t duplicate = count;
+    index = 1U;
+    while (index < count)
+    {
+        if ((keys[index - 1U] >> 32U) == (keys[index] >> 32U))
+            duplicate = std::min(duplicate, static_cast<uint32_t>(keys[index - 1U]));
+        ++index;
+    }
+    return (duplicate);
+}
+
 int32_t card_game_allowance_ledger::apply_snapshot(
     const card_game_allowance_snapshot &snapshot) noexcept
 {
     uint32_t index;
-    uint32_t compare_index;
     uint32_t predicate_index;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
@@ -89,6 +116,8 @@ int32_t card_game_allowance_ledger::apply_snapshot(
         || snapshot.next_id == 0U
         || (snapshot.count != 0U && snapshot.allowances == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
+    const uint32_t duplicate = card_game_allowance_duplicate_index(snapshot.allowances, snapshot.count);
+    ft_bool sequential = FT_TRUE;
     index = 0U;
     while (index < snapshot.count)
     {
@@ -101,22 +130,30 @@ int32_t card_game_allowance_ledger::apply_snapshot(
             && this->find_predicate(snapshot.allowances[index].predicate_id,
                 &predicate_index) != FT_ERR_SUCCESS)
             return (FT_ERR_NOT_FOUND);
-        compare_index = index + 1U;
-        while (compare_index < snapshot.count)
-        {
-            if (snapshot.allowances[index].allowance_id
-                == snapshot.allowances[compare_index].allowance_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            compare_index += 1U;
-        }
+        if (index == duplicate)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (snapshot.allowances[index].allowance_id != index + 1U)
+            sequential = FT_FALSE;
         index += 1U;
     }
-    ft_memcpy(this->_allowances, snapshot.allowances,
+    ft_memmove(this->_allowances, snapshot.allowances,
         static_cast<ft_size_t>(snapshot.count)
             * sizeof(card_game_action_allowance));
     this->_count = snapshot.count;
     this->_next_id = snapshot.next_id;
+    this->_sequential_ids = sequential;
     return (FT_ERR_SUCCESS);
+}
+
+ft_bool card_game_allowance_ledger::matches_snapshot(
+    const card_game_allowance_snapshot &snapshot) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || this->_count != snapshot.count || this->_next_id != snapshot.next_id)
+        return (FT_FALSE);
+    return (this->_count == 0U || (snapshot.allowances != ft_nullptr
+        && ft_memcmp(this->_allowances, snapshot.allowances,
+            this->_count * sizeof(*this->_allowances)) == 0));
 }
 
 ft_bool card_game_allowance_ledger::snapshots_equal(
@@ -137,7 +174,7 @@ ft_bool card_game_allowance_ledger::snapshots_equal(
 }
 
 card_game_allowance_ledger::card_game_allowance_ledger() noexcept
-    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _count(0U),
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _sequential_ids(FT_TRUE), _count(0U),
       _next_id(1U), _allowances(), _predicate_count(0U), _predicates()
 {
     return ;
@@ -155,6 +192,7 @@ int32_t card_game_allowance_ledger::initialize() noexcept
         return (FT_ERR_ALREADY_INITIALISED);
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_predicate_count = 0U;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
@@ -164,6 +202,7 @@ int32_t card_game_allowance_ledger::destroy() noexcept
 {
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_sequential_ids = FT_TRUE;
     this->_predicate_count = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
@@ -179,11 +218,12 @@ int32_t card_game_allowance_ledger::move(
     (void)this->destroy();
     this->_count = other._count;
     this->_next_id = other._next_id;
+    this->_sequential_ids = other._sequential_ids;
     this->_predicate_count = other._predicate_count;
     ft_memcpy(this->_allowances, other._allowances,
-        sizeof(this->_allowances));
+        this->_count * sizeof(this->_allowances[0]));
     ft_memcpy(this->_predicates, other._predicates,
-        sizeof(this->_predicates));
+        this->_predicate_count * sizeof(this->_predicates[0]));
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (other.destroy());
 }
@@ -195,6 +235,13 @@ int32_t card_game_allowance_ledger::find(uint32_t allowance_id,
 
     if (index == ft_nullptr || allowance_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_sequential_ids == FT_TRUE)
+    {
+        if (allowance_id > this->_count)
+            return (FT_ERR_NOT_FOUND);
+        *index = allowance_id - 1U;
+        return (FT_ERR_SUCCESS);
+    }
     current_index = 0U;
     while (current_index < this->_count)
     {
@@ -211,21 +258,19 @@ int32_t card_game_allowance_ledger::find(uint32_t allowance_id,
 int32_t card_game_allowance_ledger::find_predicate(uint32_t predicate_id,
     uint32_t *index) const noexcept
 {
-    uint32_t current_index;
-
     if (index == ft_nullptr || predicate_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    current_index = 0U;
-    while (current_index < this->_predicate_count)
-    {
-        if (this->_predicates[current_index].predicate_id == predicate_id)
+    const card_game_allowance_predicate_record *end = this->_predicates + this->_predicate_count;
+    const card_game_allowance_predicate_record *found = std::lower_bound(
+        this->_predicates, end, predicate_id,
+        [](const card_game_allowance_predicate_record &entry, uint32_t id)
         {
-            *index = current_index;
-            return (FT_ERR_SUCCESS);
-        }
-        current_index += 1U;
-    }
-    return (FT_ERR_NOT_FOUND);
+            return (entry.predicate_id < id);
+        });
+    *index = static_cast<uint32_t>(found - this->_predicates);
+    if (found == end || found->predicate_id != predicate_id)
+        return (FT_ERR_NOT_FOUND);
+    return (FT_ERR_SUCCESS);
 }
 
 ft_bool card_game_allowance_ledger::matches(
@@ -266,7 +311,9 @@ int32_t card_game_allowance_ledger::register_predicate(
         return (FT_ERR_ALREADY_EXISTS);
     if (this->_predicate_count >= FT_CARD_GAME_MAX_ALLOWANCE_PREDICATES)
         return (FT_ERR_FULL);
-    index = this->_predicate_count;
+    if (index < this->_predicate_count)
+        ft_memmove(this->_predicates + index + 1U, this->_predicates + index,
+            (this->_predicate_count - index) * sizeof(this->_predicates[0]));
     this->_predicates[index].predicate_id = predicate_id;
     this->_predicates[index].predicate = predicate;
     this->_predicates[index].user_data = user_data;
@@ -293,6 +340,8 @@ int32_t card_game_allowance_ledger::grant(uint32_t owner_id,
             != FT_ERR_SUCCESS)
             return (FT_ERR_NOT_FOUND);
     }
+    if (this->_next_id != this->_count + 1U)
+        this->_sequential_ids = FT_FALSE;
     this->_allowances[this->_count].allowance_id = this->_next_id;
     this->_allowances[this->_count].owner_id = owner_id;
     this->_allowances[this->_count].action_id = action_id;
@@ -404,6 +453,7 @@ int32_t card_game_allowance_ledger::reset_epoch(uint64_t epoch) noexcept
         {
             this->_allowances[index] = this->_allowances[this->_count - 1U];
             this->_count -= 1U;
+            this->_sequential_ids = FT_FALSE;
             continue ;
         }
         this->_allowances[index].remaining_uses =

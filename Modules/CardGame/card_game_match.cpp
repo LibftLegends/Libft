@@ -1,5 +1,46 @@
 #include "card_game_internal.hpp"
 
+struct card_game_start_override_total
+{
+    uint64_t added;
+    uint32_t set_value;
+    uint32_t set_priority;
+    ft_bool has_set;
+    ft_bool conflict;
+};
+
+static void card_game_accumulate_start_override(
+    card_game_start_override_total &total,
+    const card_game_start_override &rule) noexcept
+{
+    if (rule.operation == CARD_GAME_START_OVERRIDE_ADD)
+        total.added += rule.value;
+    else if (total.has_set == FT_FALSE || rule.priority > total.set_priority)
+    {
+        total.has_set = FT_TRUE;
+        total.set_value = rule.value;
+        total.set_priority = rule.priority;
+    }
+    else if (rule.priority == total.set_priority && rule.value != total.set_value)
+        total.conflict = FT_TRUE;
+    return ;
+}
+
+static int32_t card_game_finish_start_override(
+    const card_game_start_override_total &total, uint32_t baseline,
+    uint32_t &value) noexcept
+{
+    if (total.conflict == FT_TRUE)
+        return (FT_ERR_INVALID_STATE);
+    if (total.has_set == FT_TRUE)
+        baseline = total.set_value;
+    const uint64_t resolved_value = baseline + total.added;
+    if (resolved_value > UINT32_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
+    value = static_cast<uint32_t>(resolved_value);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::start_match(uint32_t player_count) noexcept
 {
     int32_t event_error;
@@ -51,7 +92,6 @@ int32_t card_game_engine::start_match(uint32_t player_count,
     const card_game_match_start_config &config) noexcept
 {
     uint32_t player_id;
-    uint32_t deck_count;
     uint32_t resolved_first_player;
     uint32_t resolved_health[FT_CARD_GAME_MAX_PLAYERS];
     uint32_t resolved_mana[FT_CARD_GAME_MAX_PLAYERS];
@@ -88,9 +128,32 @@ int32_t card_game_engine::start_match(uint32_t player_count,
         resolved_first_player = static_cast<uint32_t>(random_value
             % player_count);
     }
-    result = this->resolve_start_override(CARD_GAME_START_FIRST_PLAYER,
-        CARD_GAME_START_ALL_PLAYERS, resolved_first_player,
-        &resolved_first_player);
+    card_game_start_override_total first_player_total{};
+    card_game_start_override_total player_totals[FT_CARD_GAME_MAX_PLAYERS]
+        [CARD_GAME_START_FIRST_PLAYER]{};
+    uint32_t override_index = 0U;
+    while (override_index < this->_start_override_count)
+    {
+        const card_game_start_override &rule = this->_start_overrides[override_index];
+        if (rule.field == CARD_GAME_START_FIRST_PLAYER)
+            card_game_accumulate_start_override(first_player_total, rule);
+        else if (rule.player_id == CARD_GAME_START_ALL_PLAYERS)
+        {
+            player_id = 0U;
+            while (player_id < player_count)
+            {
+                card_game_accumulate_start_override(
+                    player_totals[player_id][rule.field], rule);
+                ++player_id;
+            }
+        }
+        else if (rule.player_id < player_count)
+            card_game_accumulate_start_override(
+                player_totals[rule.player_id][rule.field], rule);
+        ++override_index;
+    }
+    result = card_game_finish_start_override(first_player_total,
+        resolved_first_player, resolved_first_player);
     if (result != FT_ERR_SUCCESS || resolved_first_player >= player_count)
     {
         if (result != FT_ERR_SUCCESS)
@@ -100,14 +163,14 @@ int32_t card_game_engine::start_match(uint32_t player_count,
     player_id = 0U;
     while (player_id < player_count)
     {
-        result = this->resolve_start_override(CARD_GAME_START_HEALTH,
-            player_id, config.starting_health,
-            &resolved_health[player_id]);
+        result = card_game_finish_start_override(
+            player_totals[player_id][CARD_GAME_START_HEALTH],
+            config.starting_health, resolved_health[player_id]);
         if (result != FT_ERR_SUCCESS)
             return (result);
-        result = this->resolve_start_override(CARD_GAME_START_MANA,
-            player_id, config.starting_mana,
-            &resolved_mana[player_id]);
+        result = card_game_finish_start_override(
+            player_totals[player_id][CARD_GAME_START_MANA],
+            config.starting_mana, resolved_mana[player_id]);
         if (result != FT_ERR_SUCCESS
             || resolved_mana[player_id] > this->_rules.max_mana)
         {
@@ -115,9 +178,9 @@ int32_t card_game_engine::start_match(uint32_t player_count,
                 return (result);
             return (FT_ERR_OUT_OF_RANGE);
         }
-        result = this->resolve_start_override(CARD_GAME_START_OPENING_HAND,
-            player_id, config.opening_hand_size,
-            &resolved_opening_hand[player_id]);
+        result = card_game_finish_start_override(
+            player_totals[player_id][CARD_GAME_START_OPENING_HAND],
+            config.opening_hand_size, resolved_opening_hand[player_id]);
         if (result != FT_ERR_SUCCESS
             || resolved_opening_hand[player_id] > this->_rules.max_hand_size)
         {
@@ -125,9 +188,8 @@ int32_t card_game_engine::start_match(uint32_t player_count,
                 return (result);
             return (FT_ERR_OUT_OF_RANGE);
         }
-        deck_count = this->_decks[player_id].size();
         if (config.deal_opening_hand != FT_FALSE
-            && deck_count < resolved_opening_hand[player_id])
+            && this->_decks[player_id].size() < resolved_opening_hand[player_id])
             return (FT_ERR_FULL);
         player_id += 1U;
     }
@@ -560,18 +622,12 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
 {
     card_game_card_definition *definition;
     card_game_card_type_definition type_definition;
-    uint32_t instance_index;
     uint32_t type_id;
     uint32_t existing_type_id;
     uint32_t board_index;
-    uint32_t board_instance_id;
     uint32_t type_copy_count;
     uint32_t board_capacity;
     uint32_t zone_index;
-    card_game_snapshot before_state;
-    int32_t snapshot_error;
-    int32_t restore_error;
-    int32_t effect_error;
 
     if (this->_initialised_state != 2U || player_id != this->_active_player
         || this->is_command_allowed(CARD_GAME_COMMAND_PLAY_CARD) == FT_FALSE)
@@ -580,10 +636,11 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     if (player_id >= FT_CARD_GAME_MAX_PLAYERS
         || this->_board_count[player_id] >= board_capacity)
         return (FT_ERR_FULL);
-    if (this->find_card(card_id, &definition) != FT_ERR_SUCCESS)
+    const uint32_t definition_index = this->find_card_index(card_id);
+    if (definition_index == UINT32_MAX)
         return (FT_ERR_NOT_FOUND);
-    if (this->find_card_type_id(card_id, &type_id) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
+    definition = &this->_cards[definition_index];
+    type_id = this->_card_type_ids[definition_index];
     if (type_id >= 32U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->get_card_type(type_id, &type_definition) == FT_ERR_SUCCESS)
@@ -617,28 +674,51 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
     }
     if (this->_mana[player_id] < definition->cost)
         return (FT_ERR_OUT_OF_RANGE);
-    snapshot_error = this->get_snapshot(&before_state);
-    if (snapshot_error != FT_ERR_SUCCESS)
-        return (snapshot_error);
-    snapshot_error = this->allocate_deck_instance_id(&board_instance_id);
-    if (snapshot_error != FT_ERR_SUCCESS)
-        return (snapshot_error);
-    this->_mana[player_id] -= definition->cost;
-    instance_index = this->_board_count[player_id];
+    if (definition->effect_id < this->_effect_count
+        && (this->_effect_callbacks[definition->effect_id] != ft_nullptr
+            || this->_effects[definition->effect_id] != ft_nullptr))
+        return (this->play_card_with_effect(player_id, *definition,
+            target_instance, context));
+    uint32_t board_instance_id;
+    return (this->place_card_on_board(player_id, *definition, &board_instance_id));
+}
+
+int32_t card_game_engine::place_card_on_board(uint32_t player_id,
+    const card_game_card_definition &definition, uint32_t *instance_id) noexcept
+{
+    const int32_t result = this->allocate_deck_instance_id(instance_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    this->_mana[player_id] -= definition.cost;
+    const uint32_t instance_index = this->_board_count[player_id];
     this->_board[player_id][instance_index] = instance_index;
     this->_instances[player_id][instance_index].instance_id =
-        board_instance_id;
-    this->_instances[player_id][instance_index].definition_id = card_id;
+        *instance_id;
+    this->_instances[player_id][instance_index].definition_id = definition.card_id;
     this->_instances[player_id][instance_index].owner_id = player_id;
-    this->_instances[player_id][instance_index].attack = definition->attack;
-    this->_instances[player_id][instance_index].health = definition->health;
+    this->_instances[player_id][instance_index].attack = definition.attack;
+    this->_instances[player_id][instance_index].health = definition.health;
     this->_instances[player_id][instance_index].damage_taken = 0;
     this->_instances[player_id][instance_index].on_board = FT_TRUE;
     this->_board_count[player_id] += 1U;
     this->_state_sequence += 1U;
-    if (definition->effect_id != CARD_GAME_NO_EFFECT
-        && definition->effect_id < this->_effect_count
-        && this->_effect_callbacks[definition->effect_id] != ft_nullptr)
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::play_card_with_effect(uint32_t player_id,
+    const card_game_card_definition &definition, uint32_t target_instance,
+    void *context) noexcept
+{
+    card_game_snapshot before_state;
+    int32_t result = this->get_snapshot(&before_state);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    uint32_t board_instance_id;
+    result = this->place_card_on_board(player_id, definition, &board_instance_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    const uint32_t effect_id = definition.effect_id;
+    if (this->_effect_callbacks[effect_id] != ft_nullptr)
     {
         card_game_operation_buffer operations;
         card_game_effect_context effect_context;
@@ -652,99 +732,67 @@ int32_t card_game_engine::play_card(uint32_t player_id, uint32_t card_id,
         effect_context.action_request_id = this->_active_action_request_id;
         ft_memcpy(effect_context.play_payload, this->_active_play_payload,
             FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
-        effect_error = operations.initialize();
-        if (effect_error != FT_ERR_SUCCESS)
-        {
-            restore_error = this->apply_snapshot_internal(before_state);
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (effect_error);
-        }
-        effect_error = this->_effect_callbacks[definition->effect_id](*this,
-            effect_context, operations,
-            this->_effect_user_data[definition->effect_id]);
-        if (effect_error != FT_ERR_SUCCESS)
-        {
-            restore_error = this->apply_snapshot_internal(before_state);
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (effect_error);
-        }
+        result = operations.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = this->_effect_callbacks[effect_id](*this,
+                effect_context, operations, this->_effect_user_data[effect_id]);
         operation_index = 0U;
-        while (operation_index < operations.size())
+        while (result == FT_ERR_SUCCESS && operation_index < operations.size())
         {
             if (operations.get(operation_index, &operation)
                 != FT_ERR_SUCCESS)
             {
-            restore_error = this->apply_snapshot_internal(before_state);
-                if (restore_error != FT_ERR_SUCCESS)
-                    return (restore_error);
-                return (FT_ERR_INVALID_STATE);
+                result = FT_ERR_INVALID_STATE;
+                break ;
             }
-            effect_error = this->apply_operation(operation);
-            if (effect_error != FT_ERR_SUCCESS)
-            {
-            restore_error = this->apply_snapshot_internal(before_state);
-                if (restore_error != FT_ERR_SUCCESS)
-                    return (restore_error);
-                return (effect_error);
-            }
+            result = this->apply_operation(operation);
             operation_index += 1U;
         }
-        return (FT_ERR_SUCCESS);
     }
-    if (definition->effect_id != CARD_GAME_NO_EFFECT
-        && definition->effect_id < this->_effect_count
-        && this->_effects[definition->effect_id] != ft_nullptr)
-    {
-        effect_error = this->_effects[definition->effect_id](*this,
+    else
+        result = this->_effects[effect_id](*this,
             board_instance_id, target_instance, context);
-        if (effect_error != FT_ERR_SUCCESS)
-        {
-            restore_error = this->apply_snapshot_internal(before_state);
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (effect_error);
-        }
-    }
-    return (FT_ERR_SUCCESS);
+    if (result == FT_ERR_SUCCESS)
+        return (FT_ERR_SUCCESS);
+    const int32_t restore_error = this->apply_snapshot_internal(before_state);
+    if (restore_error != FT_ERR_SUCCESS)
+        return (restore_error);
+    return (result);
 }
 
 int32_t card_game_engine::end_turn() noexcept
 {
-    card_game_snapshot before_state;
-    int32_t snapshot_error;
-    int32_t resolve_error;
-    int32_t restore_error;
-
     if (this->_initialised_state != 2U)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_player_count == 0U)
         return (FT_ERR_INVALID_STATE);
     if (this->is_command_allowed(CARD_GAME_COMMAND_END_TURN) == FT_FALSE)
         return (FT_ERR_PERMISSION_DENIED);
-    snapshot_error = this->get_snapshot(&before_state);
-    if (snapshot_error != FT_ERR_SUCCESS)
-        return (snapshot_error);
-    this->_active_player = (this->_active_player + 1U)
-        % this->_player_count;
-    this->_turn_number += 1U;
-    resolve_error = this->resolve_events();
-    if (resolve_error != FT_ERR_SUCCESS)
+    const uint32_t next_player = (this->_active_player + 1U) % this->_player_count;
+    if (this->_event_count == 0U || this->_event_effect_count == 0U)
     {
-        restore_error = this->apply_snapshot_internal(before_state);
-        if (restore_error != FT_ERR_SUCCESS)
-            return (restore_error);
-        return (resolve_error);
+        this->_active_player = next_player;
+        this->_turn_number += 1U;
+        this->_event_count = 0U;
     }
-    resolve_error = this->expire_turn_modifiers();
-    if (resolve_error != FT_ERR_SUCCESS)
+    else
     {
-        restore_error = this->apply_snapshot_internal(before_state);
-        if (restore_error != FT_ERR_SUCCESS)
-            return (restore_error);
-        return (resolve_error);
+        card_game_snapshot before_state;
+        const int32_t snapshot_error = this->get_snapshot(&before_state);
+        if (snapshot_error != FT_ERR_SUCCESS)
+            return (snapshot_error);
+        this->_active_player = next_player;
+        this->_turn_number += 1U;
+        const int32_t resolve_error = this->resolve_events();
+        if (resolve_error != FT_ERR_SUCCESS)
+        {
+            const int32_t restore_error = this->apply_snapshot_internal(before_state);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (resolve_error);
+        }
     }
+    this->expire_turn_modifiers();
     this->_state_sequence += 1U;
-    return (resolve_error);
+    return (FT_ERR_SUCCESS);
 }

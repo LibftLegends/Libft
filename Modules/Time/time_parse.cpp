@@ -122,9 +122,9 @@ static ft_bool time_parse_timestamp(const char *input, std::tm *time_output,
     int32_t hours;
     int32_t minutes;
     int32_t seconds;
-    char timezone[7]{};
+    char timezone_text[7]{};
     if (std::sscanf(input, "%d-%d-%dT%d:%d:%d%6s", &year, &month, &day,
-            &hours, &minutes, &seconds, timezone) != 7)
+            &hours, &minutes, &seconds, timezone_text) != 7)
         return (FT_FALSE);
     if (year < INT32_MIN + 1900 || month < 1 || month > 12
         || day < 1 || day > get_days_in_month(year, month)
@@ -135,11 +135,11 @@ static ft_bool time_parse_timestamp(const char *input, std::tm *time_output,
     if (require_rfc3339_offset == FT_TRUE)
     {
         int32_t offset_minutes = 0;
-        if (timezone[0] == 'z' || !time_parse_timezone_offset(timezone, &offset_minutes))
+        if (timezone_text[0] == 'z' || !time_parse_timezone_offset(timezone_text, &offset_minutes))
             return (FT_FALSE);
         offset_seconds = offset_minutes * 60;
     }
-    else if (!parse_timezone_offset(timezone, &offset_seconds))
+    else if (!parse_timezone_offset(timezone_text, &offset_seconds))
         return (FT_FALSE);
     std::tm parsed_time{};
     parsed_time.tm_year = year - 1900;

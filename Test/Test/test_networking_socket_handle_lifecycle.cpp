@@ -87,3 +87,18 @@ FT_TEST(test_networking_socket_handle_move_keeps_source_when_destination_close_f
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
     return (1);
 }
+
+FT_TEST(test_networking_socket_handle_duplicates_a_borrowed_descriptor)
+{
+    ft_socket_handle duplicate;
+    const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    FT_ASSERT(descriptor >= 0);
+    const int32_t duplicate_result = duplicate.initialize_duplicate(descriptor);
+    FT_ASSERT_EQ(0, nw_close(descriptor));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate_result);
+    const int32_t copy_descriptor = duplicate.get();
+    FT_ASSERT(copy_descriptor != descriptor);
+    FT_ASSERT_EQ(0, test_socket_handle_bind(copy_descriptor));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, duplicate.destroy());
+    return (1);
+}

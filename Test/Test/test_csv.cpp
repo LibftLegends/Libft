@@ -398,3 +398,35 @@ FT_TEST(test_csv_document_supports_header_lookup_typed_access_and_row_iteration)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, document.destroy());
     return (1);
 }
+FT_TEST(test_csv_shared_field_scanner_preserves_line_and_document_boundaries)
+{
+    ft_vector<ft_string> fields;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        csv_split_line("outside\r\nquote,\"inside\r\nquote\"  ,\"a\"\"b\",", fields));
+    FT_ASSERT_EQ(4U, fields.size());
+    FT_ASSERT_EQ(0, ft_strcmp(fields[0].c_str(), "outside\r\nquote"));
+    FT_ASSERT_EQ(0, ft_strcmp(fields[1].c_str(), "inside\r\nquote"));
+    FT_ASSERT_EQ(0, ft_strcmp(fields[2].c_str(), "a\"b"));
+    FT_ASSERT_EQ(0, ft_strcmp(fields[3].c_str(), ""));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, csv_split_line("ok,\"bad\"!", fields));
+    FT_ASSERT_EQ(0U, fields.size());
+
+    ft_csv_document document;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        document.initialize("\r\n\"inside\r\nquote\"  ,\r\n"));
+    FT_ASSERT_EQ(2U, document.row_count());
+    FT_ASSERT_EQ(1U, document.column_count(0U));
+    FT_ASSERT_EQ(2U, document.column_count(1U));
+    FT_ASSERT_EQ(0, ft_strcmp(document.get_field(1U, 0U)->c_str(), "inside\r\nquote"));
+    FT_ASSERT_EQ(0, ft_strcmp(document.get_field(1U, 1U)->c_str(), ""));
+    return (1);
+}
+
+FT_TEST(test_csv_header_lookup_handles_empty_document)
+{
+    ft_csv_document document;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize("", ',', FT_TRUE));
+    FT_ASSERT_EQ(ft_nullptr, document.get_field_by_name(0U, "missing"));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, document.get_error());
+    return (1);
+}

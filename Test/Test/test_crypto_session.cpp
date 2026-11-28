@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Crypto/crypto_session.hpp"
+#include "../../Modules/Crypto/crypto_primitives.hpp"
 #include "../../Modules/Crypto/crypto_x25519.hpp"
 #include "../../Modules/Errno/errno.hpp"
 
@@ -52,6 +53,50 @@ FT_TEST(test_crypto_session_directional_keys_and_key_updates)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_derive_key_update(client_send_key,
         8U, repeated_key, repeated_iv));
     FT_ASSERT(ft_memcmp(updated_key, repeated_key, 32U) != 0);
+    return (1);
+}
+
+FT_TEST(test_crypto_session_labels_match_separate_hkdf_expansions)
+{
+    const uint8_t private_key[32] = {0x23U, 0x54U};
+    const uint8_t peer_private_key[32] = {0x91U, 0x76U};
+    const uint8_t transcript[] = {'h', 'e', 'l', 'l', 'o'};
+    const uint8_t labels[][8] = {
+        {'L', 'F', 'T', 1U, 'C', '2', 'S', 'K'},
+        {'L', 'F', 'T', 1U, 'S', '2', 'C', 'K'},
+        {'L', 'F', 'T', 1U, 'C', '2', 'S', 'I'},
+        {'L', 'F', 'T', 1U, 'S', '2', 'C', 'I'}
+    };
+    uint8_t peer_public_key[32];
+    uint8_t shared_secret[32];
+    uint8_t transcript_hash[32];
+    uint8_t pseudorandom_key[32];
+    uint8_t keys[2][32];
+    uint8_t initialization_vectors[2][12];
+    uint8_t expected[32];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_x25519_public_key(peer_private_key, peer_public_key));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_x25519_shared_secret(private_key,
+        peer_public_key, shared_secret));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_sha256_hash(transcript, sizeof(transcript),
+        transcript_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hkdf_sha256_extract(transcript_hash,
+        sizeof(transcript_hash), shared_secret, sizeof(shared_secret), pseudorandom_key));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_derive_session_keys(private_key, peer_public_key,
+        transcript, sizeof(transcript), crypto_session_role::CLIENT, keys[0], keys[1],
+        initialization_vectors[0], initialization_vectors[1]));
+    ft_size_t index = 0U;
+    while (index < 2U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hkdf_sha256_expand(pseudorandom_key,
+            labels[index], sizeof(labels[index]), expected, sizeof(expected)));
+        FT_ASSERT_EQ(0, ft_memcmp(expected, keys[index], sizeof(keys[index])));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, crypto_hkdf_sha256_expand(pseudorandom_key,
+            labels[index + 2U], sizeof(labels[index]), expected, sizeof(initialization_vectors[index])));
+        FT_ASSERT_EQ(0, ft_memcmp(expected, initialization_vectors[index],
+            sizeof(initialization_vectors[index])));
+        index += 1U;
+    }
     return (1);
 }
 

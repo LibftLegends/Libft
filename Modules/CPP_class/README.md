@@ -4,7 +4,7 @@ The `CPP_class` module contains lifecycle-managed C++ utility classes used acros
 
 ## Strings
 
-- `ft_string` - Owning mutable string with lifecycle, assignment, append, comparison, indexing, conversion to `const char *`, `c_str`, `data`, `size`, `empty`, `find`, `erase`, `push_back`, `back`, `resize_length`, `substr`, `from_error`, error getters, and optional thread safety.
+- `ft_string` - Owning mutable string with lifecycle, assignment, append, comparison, indexing, conversion to `const char *`, `c_str`, `data`, `size`, `empty`, `find`, `erase`, `push_back`, `back`, `resize_length`, `substr`, `from_error`, error getters, and optional thread safety. `assign(const ft_string &)` replaces the text of an initialized string, reusing its buffer when possible and preserving its text if growth fails.
 - `ft_string_proxy` - Error-propagating proxy returned by string concatenation operators. It supports chained `operator+`, conversion to `ft_string *`, and `get_error`.
 - Free string operators - `operator+` overloads combine `ft_string`, `ft_string_proxy`, C strings, and characters; comparison overloads compare C strings with `ft_string`.
 

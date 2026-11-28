@@ -1,6 +1,6 @@
 #include "card_game_replay.hpp"
 #include "../CMA/CMA.hpp"
-#include "../File/file_utils.hpp"
+#include "../File/file_internal.hpp"
 
 static const uint32_t CARD_GAME_REPLAY_MAGIC = 0x43524732U;
 static const uint32_t CARD_GAME_REPLAY_VERSION = 12U;
@@ -15,6 +15,7 @@ static const uint32_t CARD_GAME_REPLAY_V5_EVENT_BYTES = 128U;
 static const uint32_t CARD_GAME_REPLAY_V6_EVENT_BYTES = 136U;
 static const uint32_t CARD_GAME_REPLAY_V4_EVENT_BYTES = 124U;
 static const uint32_t CARD_GAME_REPLAY_LEGACY_EVENT_BYTES = 120U;
+static constexpr uint32_t CARD_GAME_REPLAY_CHECKSUM_SEED = 2166136261U;
 
 static void replay_write_u32(uint8_t *output, uint32_t *offset,
     uint32_t value) noexcept
@@ -66,13 +67,9 @@ static int32_t replay_read_u64(const uint8_t *input, uint32_t input_size,
 }
 
 static uint32_t replay_checksum(const uint8_t *input,
-    uint32_t input_size) noexcept
+    uint32_t input_size, uint32_t hash = CARD_GAME_REPLAY_CHECKSUM_SEED) noexcept
 {
-    uint32_t hash;
-    uint32_t index;
-
-    hash = 2166136261U;
-    index = 0U;
+    uint32_t index = 0U;
     while (index < input_size)
     {
         hash ^= input[index];
@@ -85,7 +82,7 @@ static uint32_t replay_checksum(const uint8_t *input,
 card_game_replay::card_game_replay() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _header(),
       _event_count(0U), _event_capacity(0U), _events(ft_nullptr),
-      _has_result(FT_FALSE), _result()
+      _session_id(0U), _has_result(FT_FALSE), _result()
 {
     return ;
 }
@@ -99,6 +96,12 @@ card_game_replay::~card_game_replay() noexcept
 int32_t card_game_replay::initialize(
     const card_game_replay_header &header) noexcept
 {
+    return (this->initialize_with_capacity(header, FT_CARD_GAME_REPLAY_INITIAL_CAPACITY));
+}
+
+int32_t card_game_replay::initialize_with_capacity(
+    const card_game_replay_header &header, uint32_t capacity) noexcept
+{
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
     if (header.visibility_mode != CARD_GAME_REPLAY_FULL_INFORMATION
@@ -106,7 +109,10 @@ int32_t card_game_replay::initialize(
         return (FT_ERR_INVALID_ARGUMENT);
     this->_header = header;
     this->_event_count = 0U;
-    this->_event_capacity = FT_CARD_GAME_REPLAY_INITIAL_CAPACITY;
+    this->_event_capacity = capacity;
+    if (this->_event_capacity < FT_CARD_GAME_REPLAY_INITIAL_CAPACITY)
+        this->_event_capacity = FT_CARD_GAME_REPLAY_INITIAL_CAPACITY;
+    this->_session_id = 0U;
     this->_has_result = FT_FALSE;
     ft_bzero(&this->_result, sizeof(this->_result));
     this->_events = static_cast<card_game_replay_event *>(cma_malloc(
@@ -128,6 +134,7 @@ int32_t card_game_replay::destroy() noexcept
     this->_events = ft_nullptr;
     this->_event_count = 0U;
     this->_event_capacity = 0U;
+    this->_session_id = 0U;
     this->_has_result = FT_FALSE;
     ft_bzero(&this->_result, sizeof(this->_result));
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -185,19 +192,9 @@ int32_t card_game_replay::validate_event(
         && event.private_size != 0U
         && event.private_owner_id != this->_header.viewer_player_id)
         return (FT_ERR_PERMISSION_DENIED);
-    if (event.session_id != 0U)
-    {
-        uint32_t index;
-
-        index = 0U;
-        while (index < this->_event_count)
-        {
-            if (this->_events[index].session_id != 0U
-                && this->_events[index].session_id != event.session_id)
-                return (FT_ERR_INVALID_ARGUMENT);
-            index += 1U;
-        }
-    }
+    if (event.session_id != 0U && this->_session_id != 0U
+        && event.session_id != this->_session_id)
+        return (FT_ERR_INVALID_ARGUMENT);
     return (FT_ERR_SUCCESS);
 }
 
@@ -229,6 +226,8 @@ int32_t card_game_replay::append(const card_game_replay_event &event) noexcept
         ft_bzero(this->_events[this->_event_count].private_data
             + event.private_size,
             FT_CARD_GAME_REPLAY_PRIVATE_BYTES - event.private_size);
+    if (event.session_id != 0U)
+        this->_session_id = event.session_id;
     this->_event_count += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -351,7 +350,7 @@ int32_t card_game_replay::project_player_view(uint32_t viewer_player_id,
     header.visibility_mode = CARD_GAME_REPLAY_PLAYER_VIEW;
     header.viewer_player_id = viewer_player_id;
     header.source_replay_hash = this->_header.source_replay_hash;
-    result = candidate.initialize(header);
+    result = candidate.initialize_with_capacity(header, this->_event_count);
     if (result != FT_ERR_SUCCESS)
         return (result);
     if (this->_has_result != FT_FALSE)
@@ -383,6 +382,7 @@ int32_t card_game_replay::project_player_view(uint32_t viewer_player_id,
     output._event_count = candidate._event_count;
     output._event_capacity = candidate._event_capacity;
     output._events = candidate._events;
+    output._session_id = candidate._session_id;
     output._has_result = candidate._has_result;
     output._result = candidate._result;
     candidate._events = ft_nullptr;
@@ -391,22 +391,9 @@ int32_t card_game_replay::project_player_view(uint32_t viewer_player_id,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_replay::serialize(uint8_t *output,
-    uint32_t output_capacity, uint32_t *output_size) const noexcept
+void card_game_replay::write_serialized_header(uint8_t *output) const noexcept
 {
-    uint32_t offset;
-    uint32_t index;
-    uint32_t checksum;
-    const card_game_replay_event *event;
-
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
-        || output == ft_nullptr || output_size == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (this->_event_count > FT_CARD_GAME_MAX_REPLAY_EVENTS
-        || output_capacity < CARD_GAME_REPLAY_HEADER_BYTES
-            + this->_event_count * CARD_GAME_REPLAY_V12_EVENT_BYTES + 4U)
-        return (FT_ERR_FULL);
-    offset = 0U;
+    uint32_t offset = 0U;
     replay_write_u32(output, &offset, CARD_GAME_REPLAY_MAGIC);
     replay_write_u32(output, &offset, CARD_GAME_REPLAY_VERSION);
     replay_write_u32(output, &offset, this->_header.profile_id);
@@ -424,38 +411,61 @@ int32_t card_game_replay::serialize(uint8_t *output,
     replay_write_u32(output, &offset, this->_result.winner_player_id);
     replay_write_u64(output, &offset, this->_result.final_state_hash);
     replay_write_u64(output, &offset, this->_result.duration_epoch);
-    index = 0U;
+    return ;
+}
+
+static void replay_write_event(uint8_t *output, const card_game_replay_event &event) noexcept
+{
+    uint32_t offset = 0U;
+    replay_write_u64(output, &offset, event.sequence);
+    replay_write_u64(output, &offset, event.expected_state_sequence);
+    replay_write_u32(output, &offset, event.player_id);
+    replay_write_u32(output, &offset,
+        static_cast<uint32_t>(event.command_type));
+    replay_write_u32(output, &offset, event.card_id);
+    replay_write_u32(output, &offset, event.source_instance_id);
+    replay_write_u32(output, &offset, event.target_instance);
+    replay_write_u32(output, &offset, event.draw_count);
+    replay_write_u32(output, &offset, event.required_discard_count);
+    replay_write_u64(output, &offset, event.authoritative_epoch);
+    replay_write_u64(output, &offset, event.state_hash_before);
+    replay_write_u64(output, &offset, event.state_hash_after);
+    replay_write_u32(output, &offset, event.private_owner_id);
+    replay_write_u32(output, &offset, event.private_size);
+    ft_memcpy(output + offset, event.private_data,
+        FT_CARD_GAME_REPLAY_PRIVATE_BYTES);
+    offset += FT_CARD_GAME_REPLAY_PRIVATE_BYTES;
+    replay_write_u32(output, &offset, event.result_value);
+    replay_write_u64(output, &offset, event.session_id);
+    replay_write_u64(output, &offset, event.request_id);
+    ft_memcpy(output + offset, event.play_payload,
+        FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
+    offset += FT_CARD_GAME_COMMAND_PAYLOAD_BYTES;
+    replay_write_u32(output, &offset, event.destination_zone_id);
+    return ;
+}
+
+int32_t card_game_replay::serialize(uint8_t *output,
+    uint32_t output_capacity, uint32_t *output_size) const noexcept
+{
+    if (output == ft_nullptr || output_size == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    uint32_t required_size;
+    const int32_t status = this->serialized_size(&required_size);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    if (output_capacity < required_size)
+        return (FT_ERR_FULL);
+    this->write_serialized_header(output);
+    uint32_t offset = CARD_GAME_REPLAY_HEADER_BYTES;
+    uint32_t index = 0U;
     while (index < this->_event_count)
     {
-        event = &this->_events[index];
-        replay_write_u64(output, &offset, event->sequence);
-        replay_write_u64(output, &offset, event->expected_state_sequence);
-        replay_write_u32(output, &offset, event->player_id);
-        replay_write_u32(output, &offset,
-            static_cast<uint32_t>(event->command_type));
-        replay_write_u32(output, &offset, event->card_id);
-        replay_write_u32(output, &offset, event->source_instance_id);
-        replay_write_u32(output, &offset, event->target_instance);
-        replay_write_u32(output, &offset, event->draw_count);
-        replay_write_u32(output, &offset, event->required_discard_count);
-        replay_write_u64(output, &offset, event->authoritative_epoch);
-        replay_write_u64(output, &offset, event->state_hash_before);
-        replay_write_u64(output, &offset, event->state_hash_after);
-        replay_write_u32(output, &offset, event->private_owner_id);
-        replay_write_u32(output, &offset, event->private_size);
-        ft_memcpy(output + offset, event->private_data,
-            FT_CARD_GAME_REPLAY_PRIVATE_BYTES);
-        offset += FT_CARD_GAME_REPLAY_PRIVATE_BYTES;
-        replay_write_u32(output, &offset, event->result_value);
-        replay_write_u64(output, &offset, event->session_id);
-        replay_write_u64(output, &offset, event->request_id);
-        ft_memcpy(output + offset, event->play_payload,
-            FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
-        offset += FT_CARD_GAME_COMMAND_PAYLOAD_BYTES;
-        replay_write_u32(output, &offset, event->destination_zone_id);
-        index += 1U;
+        replay_write_event(output + offset, this->_events[index]);
+        offset += CARD_GAME_REPLAY_V12_EVENT_BYTES;
+        ++index;
     }
-    checksum = replay_checksum(output, offset);
+    const uint32_t checksum = replay_checksum(output, offset);
     replay_write_u32(output, &offset, checksum);
     *output_size = offset;
     return (FT_ERR_SUCCESS);
@@ -479,29 +489,48 @@ int32_t card_game_replay::serialized_size(uint32_t *size) const noexcept
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_replay::write_serialized_file(int32_t descriptor) const noexcept
+{
+    uint8_t buffer[32768];
+    this->write_serialized_header(buffer);
+    uint32_t used = CARD_GAME_REPLAY_HEADER_BYTES;
+    uint32_t index = 0U;
+    uint32_t checksum = CARD_GAME_REPLAY_CHECKSUM_SEED;
+    while (index < this->_event_count)
+    {
+        if (used > sizeof(buffer) - CARD_GAME_REPLAY_V12_EVENT_BYTES - 4U)
+        {
+            checksum = replay_checksum(buffer, used, checksum);
+            const int32_t status = file_write_all_to_descriptor(descriptor,
+                reinterpret_cast<const char *>(buffer), used);
+            if (status != FT_ERR_SUCCESS)
+                return (status);
+            used = 0U;
+        }
+        replay_write_event(buffer + used, this->_events[index]);
+        used += CARD_GAME_REPLAY_V12_EVENT_BYTES;
+        ++index;
+    }
+    checksum = replay_checksum(buffer, used, checksum);
+    replay_write_u32(buffer, &used, checksum);
+    return (file_write_all_to_descriptor(descriptor, reinterpret_cast<const char *>(buffer), used));
+}
+
 int32_t card_game_replay::save_file(const char *path) const noexcept
 {
-    uint8_t *serialized_data;
-    uint32_t serialized_size_value;
-    int32_t result;
-
     if (path == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    result = this->serialized_size(&serialized_size_value);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    serialized_data = static_cast<uint8_t *>(cma_malloc(
-        static_cast<ft_size_t>(serialized_size_value)));
-    if (serialized_data == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    result = this->serialize(serialized_data, serialized_size_value,
-        &serialized_size_value);
-    if (result == FT_ERR_SUCCESS)
-        result = file_write_all_atomic(path,
-            reinterpret_cast<const char *>(serialized_data),
-            serialized_size_value);
-    cma_free(serialized_data);
-    return (result);
+    uint32_t size;
+    const int32_t status = this->serialized_size(&size);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    const card_game_replay *source = this;
+    return (file_write_all_atomic_stream(path, size,
+        [](int32_t descriptor, void *context) -> int32_t
+        {
+            const auto replay = *static_cast<const card_game_replay *const *>(context);
+            return (replay->write_serialized_file(descriptor));
+        }, &source));
 }
 
 int32_t card_game_replay::load_file(const char *path) noexcept
@@ -647,7 +676,7 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
     if (input_size != CARD_GAME_REPLAY_HEADER_BYTES
         + event_count * event_size + 4U)
         return (FT_ERR_INVALID_ARGUMENT);
-    result = candidate.initialize(header);
+    result = candidate.initialize_with_capacity(header, event_count);
     if (result != FT_ERR_SUCCESS)
         return (result);
     candidate._has_result = static_cast<ft_bool>(has_result);
@@ -806,6 +835,7 @@ int32_t card_game_replay::deserialize(const uint8_t *input,
     this->_event_count = candidate._event_count;
     this->_event_capacity = candidate._event_capacity;
     this->_events = candidate._events;
+    this->_session_id = candidate._session_id;
     this->_has_result = candidate._has_result;
     this->_result = candidate._result;
     candidate._events = ft_nullptr;

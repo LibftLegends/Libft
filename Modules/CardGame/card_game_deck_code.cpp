@@ -1,7 +1,7 @@
 #include "card_game_deck_code.hpp"
-#include "../Encoding/encoding.hpp"
+#include "../Encoding/encoding_internal.hpp"
 #include "../Crypto/crypto_primitives.hpp"
-#include "../CMA/CMA.hpp"
+#include <algorithm>
 
 static int32_t deck_code_write_u32(uint8_t *output, uint32_t capacity,
     uint32_t *offset, uint32_t value) noexcept
@@ -56,19 +56,19 @@ static int32_t deck_code_read_u32(const uint8_t *input, uint32_t input_size,
     return (FT_ERR_OUT_OF_RANGE);
 }
 
-static uint32_t deck_code_crc32c(const uint8_t *input,
-    uint32_t input_size) noexcept
+struct deck_code_crc_table
 {
-    uint32_t crc;
-    uint32_t byte_index;
-    uint32_t bit_index;
+    uint32_t entries[256];
+};
 
-    crc = 0xFFFFFFFFU;
-    byte_index = 0U;
-    while (byte_index < input_size)
+static constexpr deck_code_crc_table deck_code_make_crc_table() noexcept
+{
+    deck_code_crc_table table{};
+    uint32_t entry_index = 0U;
+    while (entry_index < 256U)
     {
-        crc ^= input[byte_index];
-        bit_index = 0U;
+        uint32_t crc = entry_index;
+        uint32_t bit_index = 0U;
         while (bit_index < 8U)
         {
             if ((crc & 1U) != 0U)
@@ -77,35 +77,36 @@ static uint32_t deck_code_crc32c(const uint8_t *input,
                 crc >>= 1U;
             bit_index += 1U;
         }
-        byte_index += 1U;
+        table.entries[entry_index] = crc;
+        ++entry_index;
+    }
+    return (table);
+}
+
+static uint32_t deck_code_crc32c(const uint8_t *input,
+    uint32_t input_size) noexcept
+{
+    static constexpr deck_code_crc_table TABLE = deck_code_make_crc_table();
+    uint32_t crc = 0xFFFFFFFFU;
+    uint32_t byte_index = 0U;
+    while (byte_index < input_size)
+    {
+        crc = (crc >> 8U) ^ TABLE.entries[(crc ^ input[byte_index]) & 255U];
+        ++byte_index;
     }
     return (crc ^ 0xFFFFFFFFU);
 }
 
 static void deck_code_sort_zone(card_game_deck_zone *zone) noexcept
 {
-    uint32_t index;
-    uint32_t next_index;
-    card_game_deck_entry value;
-
-    index = 1U;
-    while (index < zone->entry_count)
-    {
-        value = zone->entries[index];
-        next_index = index;
-        while (next_index > 0U
-            && (zone->entries[next_index - 1U].definition_id > value.definition_id
-                || (zone->entries[next_index - 1U].definition_id
-                    == value.definition_id
-                    && zone->entries[next_index - 1U].printing_id
-                        > value.printing_id)))
+    std::sort(zone->entries, zone->entries + zone->entry_count,
+        [](const card_game_deck_entry &first, const card_game_deck_entry &second)
         {
-            zone->entries[next_index] = zone->entries[next_index - 1U];
-            next_index -= 1U;
-        }
-        zone->entries[next_index] = value;
-        index += 1U;
-    }
+            return (first.definition_id < second.definition_id
+                || (first.definition_id == second.definition_id
+                    && first.printing_id < second.printing_id));
+        });
+    return ;
 }
 
 static void deck_code_sort_zones(card_game_deck *deck) noexcept
@@ -273,7 +274,7 @@ static int32_t card_game_deck_build_binary(const card_game_deck &source,
 static int32_t card_game_deck_parse_binary(const uint8_t *input,
     uint32_t input_size, card_game_deck *deck) noexcept
 {
-    card_game_deck candidate;
+    card_game_deck candidate{};
     uint32_t offset;
     uint32_t zone_index;
     uint32_t entry_index;
@@ -296,11 +297,6 @@ static int32_t card_game_deck_parse_binary(const uint8_t *input,
     result = deck_code_read_u32(input, input_size - 4U, &offset, &value);
     if (result != FT_ERR_SUCCESS || value != FT_CARD_GAME_DECK_CODE_VERSION)
         return (FT_ERR_INVALID_ARGUMENT);
-    candidate.profile_id = 0U;
-    candidate.format_id = 0U;
-    candidate.corpus_version = 0U;
-    candidate.flags = 0U;
-    candidate.zone_count = 0U;
     total_cards = 0U;
     result = deck_code_read_u32(input, input_size - 4U, &offset,
         &candidate.profile_id);
@@ -399,8 +395,8 @@ int32_t card_game_deck_encode(const card_game_deck &deck,
     ft_string *output) noexcept
 {
     uint8_t binary[FT_CARD_GAME_DECK_CODE_MAX_BYTES];
+    char encoded[((FT_CARD_GAME_DECK_CODE_MAX_BYTES + 2U) / 3U) * 4U + 1U];
     uint32_t binary_size;
-    char *encoded;
     ft_string temporary;
     int32_t result;
 
@@ -409,11 +405,11 @@ int32_t card_game_deck_encode(const card_game_deck &deck,
     result = card_game_deck_build_binary(deck, binary, &binary_size, FT_TRUE);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    encoded = encoding_base64url_encode(binary, binary_size, FT_FALSE);
-    if (encoded == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
+    result = encoding_base64url_encode_into(binary, binary_size, FT_FALSE,
+        encoded, sizeof(encoded));
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     result = temporary.initialize(encoded);
-    cma_free(encoded);
     if (result != FT_ERR_SUCCESS)
         return (result);
     return (output->move(temporary));
@@ -422,30 +418,16 @@ int32_t card_game_deck_encode(const card_game_deck &deck,
 int32_t card_game_deck_decode(const ft_string &input,
     card_game_deck *deck) noexcept
 {
-    uint8_t *binary;
+    uint8_t binary[FT_CARD_GAME_DECK_CODE_MAX_BYTES];
     ft_size_t binary_size;
-    card_game_deck candidate;
-    int32_t result;
 
     if (deck == ft_nullptr || input.is_initialised() == FT_FALSE
         || input.size() > FT_CARD_GAME_DECK_CODE_MAX_TEXT_BYTES)
         return (FT_ERR_INVALID_ARGUMENT);
-    binary_size = 0U;
-    binary = encoding_base64url_decode(input.c_str(), input.size(),
-        &binary_size);
-    if (binary == ft_nullptr || binary_size > FT_CARD_GAME_DECK_CODE_MAX_BYTES)
-    {
-        if (binary != ft_nullptr)
-            cma_free(binary);
+    if (encoding_base64url_decode_into(input.c_str(), input.size(), binary,
+            sizeof(binary), &binary_size) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    }
-    result = card_game_deck_parse_binary(binary,
-        static_cast<uint32_t>(binary_size), &candidate);
-    cma_free(binary);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    *deck = candidate;
-    return (FT_ERR_SUCCESS);
+    return (card_game_deck_parse_binary(binary, static_cast<uint32_t>(binary_size), deck));
 }
 
 int32_t card_game_deck_hash(const card_game_deck &deck,

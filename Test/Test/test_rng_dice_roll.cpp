@@ -70,3 +70,31 @@ FT_TEST(test_ft_dice_roll_single_face_returns_number)
     FT_ASSERT_EQ(5, result);
     return (1);
 }
+
+FT_TEST(test_ft_dice_roll_overflow_stops_at_the_same_engine_draw)
+{
+    constexpr uint32_t SEED = 1337U;
+    constexpr int32_t MAXIMUM_DICE = 20;
+    std::mt19937 reference(SEED);
+    std::uniform_int_distribution<int32_t> distribution(0, INT32_MAX);
+    int32_t expected_sum = 0;
+    int32_t index = 0;
+    while (index < MAXIMUM_DICE)
+    {
+        const int32_t roll = (distribution(reference) % INT32_MAX) + 1;
+        if (expected_sum > INT32_MAX - roll)
+            break ;
+        expected_sum += roll;
+        index += 1;
+    }
+    FT_ASSERT(index < MAXIMUM_DICE);
+    const int32_t expected_next = distribution(reference);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_enable_random_engine_thread_safety());
+    ft_seed_random_engine(SEED);
+    const int32_t result = ft_dice_roll(MAXIMUM_DICE, INT32_MAX);
+    const int32_t next_value = ft_random_int();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_disable_random_engine_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, result);
+    FT_ASSERT_EQ(expected_next, next_value);
+    return (1);
+}

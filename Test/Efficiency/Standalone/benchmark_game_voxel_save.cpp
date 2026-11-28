@@ -3,6 +3,7 @@
 #include "../../../Modules/Compatebility/compatebility_internal.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
 #include <cstdio>
 #include <vector>
 
@@ -58,6 +59,7 @@ static int32_t run(int32_t overrides)
     }
     Samples codec, temp, write, close, rename, read;
     ft_size_t size = 0U;
+    uint64_t checksum = 14695981039346656037ULL;
     if (overrides > 10)
         rounds = 48;
     while (iteration < rounds)
@@ -98,6 +100,17 @@ static int32_t run(int32_t overrides)
             return (10);
         }
         const auto decoded_at = Clock::now();
+        if (iteration == 0)
+        {
+            const uint8_t *bytes = payload.data();
+            ft_size_t index = 0U;
+            while (index < size)
+            {
+                checksum ^= bytes[index];
+                checksum *= 1099511628211ULL;
+                ++index;
+            }
+        }
         codec.push_back(micros(started, encoded));
         temp.push_back(micros(encoded, temporary_opened));
         write.push_back(micros(temporary_opened, written));
@@ -108,8 +121,8 @@ static int32_t run(int32_t overrides)
     }
     if (file_delete(DESTINATION))
         return (11);
-    std::printf("overrides=%d bytes=" FT_UINT64_DECIMAL_FORMAT " samples=%d\n",
-        overrides, size, rounds);
+    std::printf("overrides=%d bytes=" FT_UINT64_DECIMAL_FORMAT " samples=%d checksum=%" PRIu64 "\n",
+        overrides, size, rounds, checksum);
     show("encode", codec);
     show("temp", temp);
     show("write", write);

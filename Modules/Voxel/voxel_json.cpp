@@ -1,6 +1,5 @@
 #include "voxel_api.hpp"
-#include "../Advanced/advanced.hpp"
-#include "../CMA/CMA.hpp"
+#include "../Basic/basic.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -130,152 +129,104 @@ static int32_t voxel_json_commit(ft_string &output,
     return (error_code);
 }
 
-static int32_t voxel_json_add_separator(ft_string &output,
-    ft_bool &first) noexcept
+static constexpr ft_size_t VOXEL_JSON_U32_DIGITS = 10U;
+
+static char *voxel_json_u32_decimal(uint32_t value, char *end) noexcept
 {
-    int32_t error_code = FT_ERR_SUCCESS;
-
-    if (first == FT_FALSE)
-        error_code = output.append(",");
-    first = FT_FALSE;
-    return (error_code);
-}
-
-static ft_size_t voxel_json_u32_decimal_digits(uint32_t value,
-    char *digits) noexcept
-{
-    ft_size_t length = 0U;
-
     do
     {
-        digits[length] = static_cast<char>('0' + (value % 10U));
-        value = value / 10U;
-        length = length + 1U;
+        *--end = static_cast<char>('0' + (value % 10U));
+        value /= 10U;
     }
     while (value != 0U);
-    return (length);
+    return (end);
 }
 
-static int32_t voxel_json_append_u32_decimal(ft_string &output,
-    uint32_t value) noexcept
+template <ft_size_t KeySize>
+static int32_t voxel_json_add_field(ft_string &output, const char (&key)[KeySize],
+    const char *value, ft_size_t value_size, ft_bool &first, const char *suffix,
+    ft_size_t suffix_size) noexcept
 {
-    char digits[10];
-    ft_size_t length = voxel_json_u32_decimal_digits(value, digits);
-    ft_size_t index = 0U;
-
-    while (index < length / 2U)
+    constexpr ft_size_t MAX_VALUE_SIZE = VOXEL_JSON_U32_DIGITS + 1U;
+    constexpr ft_size_t MAX_SYNTAX_SIZE = 4U;
+    char field[KeySize - 1U + VOXEL_JSON_U32_DIGITS + MAX_VALUE_SIZE + MAX_SYNTAX_SIZE];
+    char *cursor = field;
+    if (first == FT_FALSE)
+        *cursor++ = ',';
+    first = FT_FALSE;
+    *cursor++ = '"';
+    ft_memcpy(cursor, key, KeySize - 1U);
+    cursor += KeySize - 1U;
+    if (suffix_size != 0U)
     {
-        char temporary = digits[index];
-
-        digits[index] = digits[length - index - 1U];
-        digits[length - index - 1U] = temporary;
-        index = index + 1U;
+        ft_memcpy(cursor, suffix, suffix_size);
+        cursor += suffix_size;
     }
-    return (output.append(digits, length));
+    *cursor++ = '"';
+    *cursor++ = ':';
+    ft_memcpy(cursor, value, value_size);
+    cursor += value_size;
+    return (output.append(field, static_cast<ft_size_t>(cursor - field)));
 }
 
-static int32_t voxel_json_add_i32(ft_string &output, const char *key,
-    int32_t value, ft_bool &first) noexcept
+template <ft_size_t KeySize>
+static int32_t voxel_json_add_i32(ft_string &output, const char (&key)[KeySize],
+    int32_t value, ft_bool &first, const char *suffix = ft_nullptr,
+    ft_size_t suffix_size = 0U) noexcept
 {
-    char *value_text = ft_nullptr;
-    int32_t error_code = voxel_json_add_separator(output, first);
-
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\"");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append(key);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\":");
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        value_text = adv_itoa(value);
-        if (value_text == ft_nullptr)
-            return (FT_ERR_NO_MEMORY);
-    }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append(value_text);
-    if (value_text != ft_nullptr)
-        cma_free(value_text);
-    return (error_code);
+    char digits[VOXEL_JSON_U32_DIGITS + 1U];
+    char *const end = digits + sizeof(digits);
+    uint32_t magnitude = static_cast<uint32_t>(value);
+    if (value < 0)
+        magnitude = 0U - magnitude;
+    char *start = voxel_json_u32_decimal(magnitude, end);
+    if (value < 0)
+        *--start = '-';
+    return (voxel_json_add_field(output, key, start, static_cast<ft_size_t>(end - start),
+        first, suffix, suffix_size));
 }
 
-static int32_t voxel_json_add_u32(ft_string &output, const char *key,
+template <ft_size_t KeySize>
+static int32_t voxel_json_add_u32(ft_string &output, const char (&key)[KeySize],
     uint32_t value, ft_bool &first) noexcept
 {
-    int32_t error_code = voxel_json_add_separator(output, first);
-
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\"");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append(key);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = voxel_json_append_u32_decimal(output, value);
-    return (error_code);
+    char digits[VOXEL_JSON_U32_DIGITS];
+    char *const end = digits + sizeof(digits);
+    const char *start = voxel_json_u32_decimal(value, end);
+    return (voxel_json_add_field(output, key, start, static_cast<ft_size_t>(end - start),
+        first, ft_nullptr, 0U));
 }
 
-static int32_t voxel_json_add_bool(ft_string &output, const char *key,
-    ft_bool value, ft_bool &first) noexcept
+template <ft_size_t KeySize>
+static int32_t voxel_json_add_bool(ft_string &output, const char (&key)[KeySize],
+    ft_bool value, ft_bool &first, const char *suffix = ft_nullptr,
+    ft_size_t suffix_size = 0U) noexcept
 {
-    int32_t error_code = voxel_json_add_separator(output, first);
-    const char *value_text = "false";
-
     if (value == FT_TRUE)
-        value_text = "true";
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\"");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append(key);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append("\":");
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = output.append(value_text);
-    return (error_code);
+        return (voxel_json_add_field(output, key, "true", 4U, first, suffix, suffix_size));
+    return (voxel_json_add_field(output, key, "false", 5U, first, suffix, suffix_size));
 }
 
+template <ft_size_t KeySize>
 static int32_t voxel_json_add_indexed_i32(ft_string &output,
-    const char *prefix, uint32_t index, int32_t value,
-    ft_bool &first) noexcept
+    const char (&prefix)[KeySize], uint32_t index, int32_t value, ft_bool &first) noexcept
 {
-    ft_string key;
-    int32_t error_code = key.initialize(prefix);
-
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = voxel_json_append_u32_decimal(key, index);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key.destroy();
-        return (error_code);
-    }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = voxel_json_add_i32(output, key.c_str(), value, first);
-    (void)key.destroy();
-    return (error_code);
+    char suffix[VOXEL_JSON_U32_DIGITS];
+    char *const end = suffix + sizeof(suffix);
+    const char *start = voxel_json_u32_decimal(index, end);
+    return (voxel_json_add_i32(output, prefix, value, first, start,
+        static_cast<ft_size_t>(end - start)));
 }
 
+template <ft_size_t KeySize>
 static int32_t voxel_json_add_indexed_bool(ft_string &output,
-    const char *prefix, uint32_t index, ft_bool value,
-    ft_bool &first) noexcept
+    const char (&prefix)[KeySize], uint32_t index, ft_bool value, ft_bool &first) noexcept
 {
-    ft_string key;
-    int32_t error_code = key.initialize(prefix);
-
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = voxel_json_append_u32_decimal(key, index);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key.destroy();
-        return (error_code);
-    }
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = voxel_json_add_bool(output, key.c_str(), value, first);
-    (void)key.destroy();
-    return (error_code);
+    char suffix[VOXEL_JSON_U32_DIGITS];
+    char *const end = suffix + sizeof(suffix);
+    const char *start = voxel_json_u32_decimal(index, end);
+    return (voxel_json_add_bool(output, prefix, value, first, start,
+        static_cast<ft_size_t>(end - start)));
 }
 
 static int32_t voxel_json_finish(ft_string &output) noexcept
@@ -288,10 +239,7 @@ static int32_t voxel_json_write_file(const char *file_path,
 {
     int32_t flags;
     int32_t file_descriptor;
-    ft_size_t offset = 0;
-    int64_t write_result;
     int32_t open_error;
-    int32_t write_error;
 #ifdef LIBFT_TEST_BUILD
     int32_t injected_system_error;
     ft_size_t injected_partial_after;
@@ -306,14 +254,14 @@ static int32_t voxel_json_write_file(const char *file_path,
         flags = O_WRONLY | O_CREAT | O_TRUNC;
     else
         return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t size = output.size();
 #ifdef LIBFT_TEST_BUILD
     test_operation = VOXEL_JSON_TEST_FILE_OPEN_REPLACE;
     if (mode == VOXEL_JSON_FILE_CREATE_ONLY)
         test_operation = VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY;
     if (g_voxel_json_test_file_failure.operation
             == VOXEL_JSON_TEST_FILE_PARTIAL_WRITE
-        && g_voxel_json_test_file_failure.partial_write_after
-            >= output.size())
+        && g_voxel_json_test_file_failure.partial_write_after >= size)
         return (FT_ERR_INVALID_ARGUMENT);
     if (voxel_json_test_take_file_failure(test_operation,
             injected_system_error,
@@ -323,8 +271,9 @@ static int32_t voxel_json_write_file(const char *file_path,
     if (su_open_with_error(file_path, flags, 0644, &file_descriptor,
             &open_error) != FT_ERR_SUCCESS)
         return (open_error);
-    while (offset < output.size())
+    if (size != 0U)
     {
+        const char *data = output.c_str();
 #ifdef LIBFT_TEST_BUILD
         if (voxel_json_test_take_file_failure(
                 VOXEL_JSON_TEST_FILE_FIRST_WRITE, injected_system_error,
@@ -338,44 +287,25 @@ static int32_t voxel_json_write_file(const char *file_path,
                 injected_system_error,
                 injected_partial_after) == FT_TRUE)
             su_test_inject_write_interrupts(1U);
-        if (g_voxel_json_test_file_failure.operation
-            == VOXEL_JSON_TEST_FILE_PARTIAL_WRITE)
+        if (voxel_json_test_take_file_failure(
+                VOXEL_JSON_TEST_FILE_PARTIAL_WRITE, injected_system_error,
+                injected_partial_after) == FT_TRUE)
         {
-            injected_partial_after =
-                g_voxel_json_test_file_failure.partial_write_after;
-            injected_system_error =
-                g_voxel_json_test_file_failure.system_error;
-            voxel_json_test_clear_file_failure();
-            if (injected_partial_after <= offset)
-            {
-                (void)su_close(file_descriptor);
-                return (cmp_map_system_error_to_ft(
-                    injected_system_error));
-            }
-            ft_size_t partial_count = injected_partial_after - offset;
-            if (partial_count > output.size() - offset)
-                partial_count = output.size() - offset;
-            if (su_write(file_descriptor, output.c_str() + offset,
-                    partial_count) != static_cast<int64_t>(partial_count))
-            {
-                (void)su_close(file_descriptor);
-                return (cmp_map_system_error_to_ft(
-                    injected_system_error));
-            }
+            (void)su_write(file_descriptor, data, injected_partial_after);
             (void)su_close(file_descriptor);
             return (cmp_map_system_error_to_ft(injected_system_error));
         }
 #endif
-        write_result = su_write_with_error(file_descriptor,
-            output.c_str() + offset, output.size() - offset, &write_error);
-        if (write_result <= 0)
+        int32_t write_error;
+        // The shared write helper completes short writes and retries interruptions.
+        const int64_t write_result = su_write_with_error(file_descriptor, data, size, &write_error);
+        if (write_result < 0)
         {
             (void)su_close(file_descriptor);
             if (write_error == FT_ERR_SUCCESS)
                 return (FT_ERR_IO);
             return (write_error);
         }
-        offset = offset + static_cast<ft_size_t>(write_result);
     }
 #ifdef LIBFT_TEST_BUILD
     if (voxel_json_test_take_file_failure(

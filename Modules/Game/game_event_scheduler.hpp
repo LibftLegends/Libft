@@ -43,29 +43,18 @@ class game_event_scheduler
         private:
     #endif
         mutable ft_priority_queue<ft_sharedptr<game_event> *, game_event_compare_ptr> _events;
+        ft_priority_queue<ft_sharedptr<game_event> *, game_event_compare_ptr> _pending_events;
         static thread_local int32_t _last_error;
         mutable pt_recursive_mutex *_mutex;
         mutable ft_bool _profiling_enabled;
         mutable t_event_scheduler_profile _profile;
-        mutable ft_vector<ft_sharedptr<game_event> *> _ready_cache;
+        ft_vector<ft_sharedptr<game_event> > _ready_cache;
         uint8_t _initialised_state;
 
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
         void reset_profile_locked() const noexcept;
-        void record_profile_locked(ft_size_t ready_count,
-                ft_size_t rescheduled_count,
-                ft_size_t queue_depth,
-                int64_t duration_ns) const noexcept;
-        void finalize_update(ft_vector<ft_sharedptr<game_event> *> &events,
-                ft_size_t ready_count,
-                ft_size_t rescheduled_count,
-                ft_size_t queue_depth,
-                ft_bool profiling_active,
-                ft_bool start_valid,
-                t_high_resolution_time_point start_time) noexcept;
-
     public:
         game_event_scheduler() noexcept;
         game_event_scheduler(const game_event_scheduler &other) noexcept = delete;
@@ -87,6 +76,7 @@ class game_event_scheduler
         void reset_profile() noexcept;
         void snapshot_profile(t_event_scheduler_profile &out) const noexcept;
 
+        // On failure the output is cleared and get_error() reports the failure.
         void dump_events(ft_vector<ft_sharedptr<game_event> > &out) const noexcept;
         ft_size_t size() const noexcept;
         void clear() noexcept;
@@ -102,6 +92,9 @@ int32_t log_event_to_file(const game_event &event, const char *file_path) noexce
 void log_event_to_buffer(const game_event &event, ft_string &buffer) noexcept;
 
 json_group *serialize_event_scheduler(const ft_sharedptr<game_event_scheduler> &scheduler);
+int32_t serialize_event_scheduler_buffer(const ft_sharedptr<game_event_scheduler> &scheduler,
+    ft_string &output) noexcept;
+// Appends loaded events. If a row fails, the scheduler keeps the earlier rows.
 int32_t deserialize_event_scheduler(ft_sharedptr<game_event_scheduler> &scheduler, json_group *group);
 
 #endif

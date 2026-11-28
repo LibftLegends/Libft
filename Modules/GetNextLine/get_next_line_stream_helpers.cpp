@@ -17,20 +17,14 @@ static int32_t append_line_to_vector(ft_vector<ft_string> &lines, char *line_buf
 {
     ft_string line_string;
     int32_t initialize_error;
-    int32_t push_error;
 
-    if (!line_buffer)
+    if (line_buffer == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     initialize_error = line_string.initialize(line_buffer);
-    if (line_buffer)
-        cma_free(line_buffer);
+    cma_free(line_buffer);
     if (initialize_error != FT_ERR_SUCCESS)
         return (initialize_error);
-    lines.push_back(line_string);
-    push_error = lines.get_error();
-    if (push_error != FT_ERR_SUCCESS)
-        return (push_error);
-    return (FT_ERR_SUCCESS);
+    return (lines.push_back(ft_move(line_string)));
 }
 
 int32_t ft_read_file_lines(int32_t file_descriptor, ft_vector<ft_string> &lines, ft_size_t buffer_size)

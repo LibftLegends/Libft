@@ -36,6 +36,81 @@ s_shared_lifetime_probe::~s_shared_lifetime_probe()
     return ;
 }
 
+FT_TEST(test_ft_sharedptr_retained_visit_releases_array_after_handle_reset)
+{
+    std::atomic<uint32_t> destructions(0U);
+    auto *array = new s_shared_lifetime_probe[2];
+    array[0].destructions = &destructions;
+    array[1].destructions = &destructions;
+    ft_sharedptr<s_shared_lifetime_probe> handle(array, FT_TRUE, 2U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, handle.enable_thread_safety());
+
+    ft_bool visited = FT_FALSE;
+    uint32_t destroyed_during_visit = 2U;
+    const int32_t result = handle.visit_retained(
+        [&handle, &destructions, &visited, &destroyed_during_visit, array](
+            s_shared_lifetime_probe &value) noexcept
+        {
+            visited = &value == array;
+            handle.reset();
+            destroyed_during_visit = destructions.load();
+            return ;
+        });
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(FT_TRUE, visited);
+    FT_ASSERT_EQ(0U, destroyed_during_visit);
+    FT_ASSERT_EQ(2U, destructions.load());
+    FT_ASSERT_EQ(FT_ERR_INVALID_POINTER, handle.visit_retained(
+        [&visited](s_shared_lifetime_probe &) noexcept
+        {
+            visited = FT_FALSE;
+            return ;
+        }));
+    FT_ASSERT_EQ(FT_TRUE, visited);
+    return (1);
+}
+
+FT_TEST(test_ft_sharedptr_retained_visit_propagates_handle_lock_failure)
+{
+    ft_sharedptr<uint32_t> handle(new uint32_t(17U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, handle.enable_thread_safety());
+    ft_bool visited = FT_FALSE;
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = handle.visit_retained(
+        [&visited](uint32_t &) noexcept
+        {
+            visited = FT_TRUE;
+            return ;
+        });
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(FT_FALSE, visited);
+    FT_ASSERT_EQ(1, handle.use_count());
+    return (1);
+}
+
+FT_TEST(test_ft_sharedptr_const_retained_visit_keeps_object_alive)
+{
+    std::atomic<uint32_t> destructions(0U);
+    auto *probe = new s_shared_lifetime_probe();
+    probe->destructions = &destructions;
+    ft_sharedptr<s_shared_lifetime_probe> owner(probe);
+    const auto &read_only_owner = owner;
+    uint32_t destroyed_during_visit = 1U;
+    const int32_t result = read_only_owner.visit_retained(
+        [&owner, &destroyed_during_visit](const s_shared_lifetime_probe &value) noexcept
+        {
+            owner.reset();
+            destroyed_during_visit = value.destructions->load();
+        });
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(0U, destroyed_during_visit);
+    FT_ASSERT_EQ(1U, destructions.load());
+    return (1);
+}
+
 FT_TEST(test_ft_sharedptr_proxies_and_concurrent_release_preserve_lifetime)
 {
     std::atomic<uint32_t> destructions(0U);

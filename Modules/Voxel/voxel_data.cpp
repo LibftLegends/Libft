@@ -1388,54 +1388,35 @@ static const voxel_tree_template_block VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1[] 
     {0, 8, 0, VOXEL_GENERATOR_PINE_LEAVES_BLOCK}
 };
 
-static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE =
+template <ft_size_t BlockCount>
+static constexpr voxel_tree_template voxel_builtin_tree_template(
+    const voxel_tree_template_block (&blocks)[BlockCount]) noexcept
 {
-    VOXEL_SMALL_OAK_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS)
-        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS[0]))
-};
+    static_assert(BlockCount <= VOXEL_MAX_TREE_TEMPLATE_BLOCKS,
+        "Built-in tree template exceeds owned capacity");
+    return (voxel_tree_template{blocks, static_cast<uint32_t>(BlockCount)});
+}
 
-static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE =
-{
-    VOXEL_SMALL_PINE_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS)
-        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE =
+    voxel_builtin_tree_template(VOXEL_SMALL_OAK_TREE_BLOCKS);
 
-static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE =
-{
-    VOXEL_SMALL_CACTUS_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS)
-        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE =
+    voxel_builtin_tree_template(VOXEL_SMALL_PINE_TREE_BLOCKS);
 
-static const voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE =
-{
-    VOXEL_LARGE_OAK_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS)
-        / sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE =
+    voxel_builtin_tree_template(VOXEL_SMALL_CACTUS_TREE_BLOCKS);
 
-static const voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE_VARIANT_1 =
-{
-    VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1)
-        / sizeof(VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1[0]))
-};
+static constexpr voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE =
+    voxel_builtin_tree_template(VOXEL_LARGE_OAK_TREE_BLOCKS);
 
-static const voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE =
-{
-    VOXEL_LARGE_PINE_TREE_BLOCKS,
-    static_cast<uint32_t>(sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS)
-        / sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS[0]))
-};
+static constexpr voxel_tree_template VOXEL_LARGE_OAK_TREE_TEMPLATE_VARIANT_1 =
+    voxel_builtin_tree_template(VOXEL_LARGE_OAK_TREE_BLOCKS_VARIANT_1);
 
-static const voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE_VARIANT_1 =
-{
-    VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1)
-        / sizeof(VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1[0]))
-};
+static constexpr voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE =
+    voxel_builtin_tree_template(VOXEL_LARGE_PINE_TREE_BLOCKS);
+
+static constexpr voxel_tree_template VOXEL_LARGE_PINE_TREE_TEMPLATE_VARIANT_1 =
+    voxel_builtin_tree_template(VOXEL_LARGE_PINE_TREE_BLOCKS_VARIANT_1);
 
 static const voxel_tree_template_block VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1[] =
 {
@@ -1529,52 +1510,31 @@ static const voxel_tree_template_block VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[
     {1, 2, 0, VOXEL_GENERATOR_CACTUS_BLOCK}
 };
 
-static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_1 =
-{
-    VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1)
-        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_1 =
+    voxel_builtin_tree_template(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_1);
 
-static const voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_2 =
-{
-    VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2)
-        / sizeof(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_OAK_TREE_TEMPLATE_VARIANT_2 =
+    voxel_builtin_tree_template(VOXEL_SMALL_OAK_TREE_BLOCKS_VARIANT_2);
 
-static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_1 =
-{
-    VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1)
-        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_1 =
+    voxel_builtin_tree_template(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_1);
 
-static const voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_2 =
-{
-    VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2)
-        / sizeof(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_PINE_TREE_TEMPLATE_VARIANT_2 =
+    voxel_builtin_tree_template(VOXEL_SMALL_PINE_TREE_BLOCKS_VARIANT_2);
 
-static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1 =
-{
-    VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1)
-        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_1 =
+    voxel_builtin_tree_template(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_1);
 
-static const voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2 =
-{
-    VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2,
-    static_cast<uint32_t>(sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2)
-        / sizeof(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2[0]))
-};
+static constexpr voxel_tree_template VOXEL_SMALL_CACTUS_TREE_TEMPLATE_VARIANT_2 =
+    voxel_builtin_tree_template(VOXEL_SMALL_CACTUS_TREE_BLOCKS_VARIANT_2);
 
 uint64_t voxel_seed_value(const char *seed_string) noexcept
 {
     return (static_cast<uint64_t>(rng_seed_value(seed_string)));
 }
+
+static constexpr uint64_t VOXEL_NOISE_X_MULTIPLIER = UINT64_C(0x9E3779B97F4A7C15);
+static constexpr uint64_t VOXEL_NOISE_Z_MULTIPLIER = UINT64_C(0xBF58476D1CE4E5B9);
 
 uint64_t voxel_feature_seed(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, uint64_t salt) noexcept
@@ -1583,64 +1543,57 @@ uint64_t voxel_feature_seed(uint64_t seed_value, int32_t world_block_x,
 
     feature_seed = voxel_mix_u64(seed_value ^ salt
         ^ (static_cast<uint64_t>(static_cast<int64_t>(world_block_x))
-            * UINT64_C(0x9E3779B97F4A7C15))
+            * VOXEL_NOISE_X_MULTIPLIER)
         ^ (static_cast<uint64_t>(static_cast<int64_t>(world_block_z))
-            * UINT64_C(0xBF58476D1CE4E5B9)));
+            * VOXEL_NOISE_Z_MULTIPLIER));
     return (feature_seed);
+}
+
+static double voxel_signed_unit_noise_from_key(uint64_t key) noexcept
+{
+    const uint64_t mixed_value = voxel_mix_u64(voxel_mix_u64(key));
+    return (static_cast<double>(mixed_value >> 11)
+        * (1.0 / 9007199254740992.0) * 2.0 - 1.0);
 }
 
 double voxel_signed_unit_noise(uint64_t seed_value, int32_t grid_x,
     int32_t grid_z) noexcept
 {
-    uint64_t mixed_value;
-
-    mixed_value = voxel_mix_u64(seed_value
-        ^ (static_cast<uint64_t>(static_cast<int64_t>(grid_x))
-            * UINT64_C(0x9E3779B97F4A7C15))
-        ^ (static_cast<uint64_t>(static_cast<int64_t>(grid_z))
-            * UINT64_C(0xBF58476D1CE4E5B9)));
-    mixed_value = voxel_mix_u64(mixed_value);
-    return (static_cast<double>(mixed_value >> 11)
-        * (1.0 / 9007199254740992.0) * 2.0 - 1.0);
+    return (voxel_signed_unit_noise_from_key(seed_value
+        ^ (static_cast<uint64_t>(grid_x) * VOXEL_NOISE_X_MULTIPLIER)
+        ^ (static_cast<uint64_t>(grid_z) * VOXEL_NOISE_Z_MULTIPLIER)));
 }
 
 double voxel_value_noise(uint64_t seed_value, int32_t world_block_x,
     int32_t world_block_z, int32_t scale) noexcept
 {
-    int32_t grid_x0;
-    int32_t grid_z0;
-    int32_t grid_x1;
-    int32_t grid_z1;
-    int32_t local_x;
-    int32_t local_z;
-    double factor_x;
-    double factor_z;
-    double smooth_x;
-    double smooth_z;
-    double noise_top;
-    double noise_bottom;
-    double noise_left;
-    double noise_right;
-    double noise_value;
-
-    grid_x0 = voxel_floor_div(world_block_x, scale);
-    grid_z0 = voxel_floor_div(world_block_z, scale);
-    grid_x1 = grid_x0 + 1;
-    grid_z1 = grid_z0 + 1;
-    local_x = world_block_x - (grid_x0 * scale);
-    local_z = world_block_z - (grid_z0 * scale);
-    factor_x = static_cast<double>(local_x) / static_cast<double>(scale);
-    factor_z = static_cast<double>(local_z) / static_cast<double>(scale);
-    smooth_x = voxel_smooth_factor(factor_x);
-    smooth_z = voxel_smooth_factor(factor_z);
-    noise_left = voxel_signed_unit_noise(seed_value, grid_x0, grid_z0);
-    noise_right = voxel_signed_unit_noise(seed_value, grid_x1, grid_z0);
-    noise_top = voxel_lerp(noise_left, noise_right, smooth_x);
-    noise_left = voxel_signed_unit_noise(seed_value, grid_x0, grid_z1);
-    noise_right = voxel_signed_unit_noise(seed_value, grid_x1, grid_z1);
-    noise_bottom = voxel_lerp(noise_left, noise_right, smooth_x);
-    noise_value = voxel_lerp(noise_top, noise_bottom, smooth_z);
-    return (noise_value);
+    int32_t grid_x = world_block_x / scale;
+    int32_t grid_z = world_block_z / scale;
+    int32_t local_x = world_block_x % scale;
+    int32_t local_z = world_block_z % scale;
+    if (local_x < 0)
+    {
+        --grid_x;
+        local_x += scale;
+    }
+    if (local_z < 0)
+    {
+        --grid_z;
+        local_z += scale;
+    }
+    const double smooth_x = voxel_smooth_factor(static_cast<double>(local_x) / scale);
+    const double smooth_z = voxel_smooth_factor(static_cast<double>(local_z) / scale);
+    // Step the unsigned products to share work between corners without overflowing grid indices.
+    const uint64_t left = static_cast<uint64_t>(grid_x) * VOXEL_NOISE_X_MULTIPLIER;
+    const uint64_t right = left + VOXEL_NOISE_X_MULTIPLIER;
+    const uint64_t grid_z_product = static_cast<uint64_t>(grid_z) * VOXEL_NOISE_Z_MULTIPLIER;
+    const uint64_t top = seed_value ^ grid_z_product;
+    const uint64_t bottom = seed_value ^ (grid_z_product + VOXEL_NOISE_Z_MULTIPLIER);
+    const double noise_top = voxel_lerp(voxel_signed_unit_noise_from_key(top ^ left),
+        voxel_signed_unit_noise_from_key(top ^ right), smooth_x);
+    const double noise_bottom = voxel_lerp(voxel_signed_unit_noise_from_key(bottom ^ left),
+        voxel_signed_unit_noise_from_key(bottom ^ right), smooth_x);
+    return (voxel_lerp(noise_top, noise_bottom, smooth_z));
 }
 
 voxel_biome voxel_pick_biome(uint64_t seed_value,
@@ -1811,29 +1764,21 @@ static uint32_t voxel_normalise_tree_variant(uint32_t variant_index,
 const voxel_block_metadata &voxel_get_block_metadata(uint32_t block_id)
     noexcept
 {
-    const voxel_block_metadata *runtime_metadata;
-
-    runtime_metadata = voxel_runtime_find_block_metadata(block_id);
+    if (block_id < static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT))
+        return (VOXEL_BLOCK_REGISTRY[block_id]);
+    const voxel_block_metadata *runtime_metadata =
+        voxel_runtime_find_block_metadata(block_id);
     if (runtime_metadata != ft_nullptr)
         return (*runtime_metadata);
-    if (block_id >= static_cast<uint32_t>(sizeof(VOXEL_BLOCK_REGISTRY)
-            / sizeof(VOXEL_BLOCK_REGISTRY[0])))
-    {
-        voxel_abort_unknown_block_id(block_id,
-            "voxel_get_block_metadata");
-        return (VOXEL_BLOCK_REGISTRY[GAME_VOXEL_AIR_BLOCK]);
-    }
-    return (VOXEL_BLOCK_REGISTRY[block_id]);
+    voxel_abort_unknown_block_id(block_id, "voxel_get_block_metadata");
+    return (VOXEL_BLOCK_REGISTRY[GAME_VOXEL_AIR_BLOCK]);
 }
 
 ft_bool voxel_block_is_known(uint32_t block_id) noexcept
 {
-    if (voxel_runtime_block_is_known(block_id) == FT_TRUE)
+    if (block_id < static_cast<uint32_t>(VOXEL_BUILTIN_BLOCK_COUNT))
         return (FT_TRUE);
-    if (block_id >= static_cast<uint32_t>(sizeof(VOXEL_BLOCK_REGISTRY)
-            / sizeof(VOXEL_BLOCK_REGISTRY[0])))
-        return (FT_FALSE);
-    return (FT_TRUE);
+    return (voxel_runtime_block_is_known(block_id));
 }
 
 ft_bool voxel_block_is_solid(uint32_t block_id) noexcept
@@ -2295,6 +2240,19 @@ int32_t voxel_generation_config::initialize(
     while (index < VOXEL_MAX_FEATURE_RULES)
     {
         this->features[index].initialize(other.features[index]);
+        if (other.features[index].template_data != ft_nullptr)
+        {
+            uint32_t template_index = 0U;
+            while (template_index < this->tree_template_count)
+            {
+                if (other.features[index].template_data == &other.tree_templates[template_index])
+                {
+                    this->features[index].template_data = &this->tree_templates[template_index];
+                    break ;
+                }
+                ++template_index;
+            }
+        }
         index += 1U;
     }
     index = 0U;
@@ -2933,6 +2891,11 @@ int32_t voxel_generation_config::set_biome_tree_template_override(
         if (this->biomes[biome_index].tree_template
             == &this->tree_templates[template_index])
         {
+            if (voxel_tree_templates_equal(*value, this->tree_templates[template_index]) == FT_TRUE)
+                return (FT_ERR_SUCCESS);
+            if (voxel_generation_config_count_template_references(*this,
+                    &this->tree_templates[template_index]) > 1U)
+                break ;
             error_code = voxel_copy_tree_template(*value,
                     this->tree_template_blocks[template_index],
                     &this->tree_templates[template_index]);
@@ -2963,6 +2926,7 @@ int32_t voxel_generation_config::set_feature(uint32_t feature_index,
     int32_t error_code;
     uint32_t template_index;
     const voxel_tree_template *old_template;
+    ft_bool copy_template = FT_TRUE;
 
     if (voxel_config_require_initialised(*this) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
@@ -3005,6 +2969,13 @@ int32_t voxel_generation_config::set_feature(uint32_t feature_index,
                 break ;
             template_index += 1U;
         }
+        if (template_index < this->tree_template_count)
+        {
+            if (voxel_tree_templates_equal(*feature.template_data, this->tree_templates[template_index]) == FT_TRUE)
+                copy_template = FT_FALSE;
+            else if (voxel_generation_config_count_template_references(*this, old_template) > 1U)
+                template_index = this->tree_template_count;
+        }
         if (template_index >= this->tree_template_count)
         {
             if (this->tree_template_count >= VOXEL_MAX_TREE_TEMPLATES)
@@ -3014,8 +2985,7 @@ int32_t voxel_generation_config::set_feature(uint32_t feature_index,
     }
     else
         template_index = this->tree_template_count;
-    if (feature.template_data != ft_nullptr
-        && template_index < this->tree_template_count)
+    if (feature.template_data != ft_nullptr && copy_template == FT_TRUE)
     {
         error_code = voxel_copy_tree_template(*feature.template_data,
             this->tree_template_blocks[template_index],
@@ -3203,8 +3173,9 @@ static void voxel_signature_add_template(uint64_t &signature,
     return ;
 }
 
-uint32_t voxel_generation_config_signature(
-    const voxel_generation_config &config) noexcept
+static uint32_t voxel_configuration_signature(
+    const voxel_generation_config &config, ft_bool cross_chunk_features,
+    ft_bool has_cross_chunk_writer) noexcept
 {
     uint64_t signature;
     uint32_t index;
@@ -3344,10 +3315,8 @@ uint32_t voxel_generation_config_signature(
     signature ^= static_cast<uint64_t>(config.layers.snow_cap_depth) << 48;
     signature ^= static_cast<uint64_t>(static_cast<uint32_t>(
         config.layers.snow_cap_minimum_height)) << 52;
-    signature ^= static_cast<uint64_t>(config.allow_cross_chunk_features)
-        << 7;
-    signature ^= static_cast<uint64_t>(config.cross_chunk_block_writer
-        != ft_nullptr) << 8;
+    signature ^= static_cast<uint64_t>(cross_chunk_features) << 7;
+    signature ^= static_cast<uint64_t>(has_cross_chunk_writer) << 8;
     voxel_signature_add(signature, static_cast<uint64_t>(
         config.biome_selector != ft_nullptr));
     index = 0U;
@@ -3434,10 +3403,16 @@ uint32_t voxel_generation_config_signature(
             config.features[index].template_data);
         index += 1U;
     }
-    voxel_signature_add(signature, static_cast<uint64_t>(
-        config.cross_chunk_block_writer != ft_nullptr));
+    voxel_signature_add(signature, static_cast<uint64_t>(has_cross_chunk_writer));
     signature = voxel_mix_u64(signature);
     return (static_cast<uint32_t>(signature ^ (signature >> 32)));
+}
+
+uint32_t voxel_generation_config_signature(
+    const voxel_generation_config &config) noexcept
+{
+    return (voxel_configuration_signature(config, config.allow_cross_chunk_features,
+        config.cross_chunk_block_writer != ft_nullptr));
 }
 
 static ft_bool voxel_template_is_valid(
@@ -3485,6 +3460,20 @@ int32_t voxel_generation_config_add_tree_template(
     return (FT_ERR_SUCCESS);
 }
 
+static const voxel_tree_template *voxel_rebase_removed_template(
+    const voxel_generation_config &config, const voxel_tree_template *reference,
+    uint32_t removed_index) noexcept
+{
+    // References to external templates stay as they are.
+    const uintptr_t offset = reinterpret_cast<uintptr_t>(reference)
+        - reinterpret_cast<uintptr_t>(config.tree_templates);
+    const uintptr_t index = offset / sizeof(voxel_tree_template);
+    if (index > removed_index && index < config.tree_template_count
+        && reference == &config.tree_templates[index])
+        return (&config.tree_templates[index - 1U]);
+    return (reference);
+}
+
 int32_t voxel_generation_config_remove_tree_template(
     voxel_generation_config &config, uint32_t template_index) noexcept
 {
@@ -3497,7 +3486,8 @@ int32_t voxel_generation_config_remove_tree_template(
 
     if (voxel_config_require_initialised(config) != FT_ERR_SUCCESS)
         return (FT_ERR_NOT_INITIALISED);
-    if (template_index >= config.tree_template_count)
+    if (template_index >= config.tree_template_count
+        || config.tree_template_count > VOXEL_MAX_TREE_TEMPLATES)
         return (FT_ERR_OUT_OF_RANGE);
     feature_index = 0U;
     while (feature_index < VOXEL_MAX_FEATURE_RULES)
@@ -3513,6 +3503,9 @@ int32_t voxel_generation_config_remove_tree_template(
         if (config.biomes[biome_index].tree_template
             == &config.tree_templates[template_index])
             config.biomes[biome_index].tree_template = ft_nullptr;
+        else
+            config.biomes[biome_index].tree_template = voxel_rebase_removed_template(
+                config, config.biomes[biome_index].tree_template, template_index);
         kept_count = 0U;
         biome_template_index = 0U;
         while (biome_template_index
@@ -3533,31 +3526,22 @@ int32_t voxel_generation_config_remove_tree_template(
         config.biomes[biome_index].tree_template_count = kept_count;
         biome_index += 1U;
     }
+    feature_index = 0U;
+    while (feature_index < VOXEL_MAX_FEATURE_RULES)
+    {
+        config.features[feature_index].template_data = voxel_rebase_removed_template(
+            config, config.features[feature_index].template_data, template_index);
+        feature_index += 1U;
+    }
+    const uint32_t moved_count = config.tree_template_count - template_index - 1U;
+    if (moved_count != 0U)
+        ft_memmove(&config.tree_template_blocks[template_index],
+            &config.tree_template_blocks[template_index + 1U],
+            moved_count * sizeof(config.tree_template_blocks[0]));
     index = template_index;
     while (index + 1U < config.tree_template_count)
     {
-        biome_index = 0U;
-        while (biome_index < VOXEL_MAX_CUSTOM_BIOMES)
-        {
-            if (config.biomes[biome_index].tree_template
-                == &config.tree_templates[index + 1U])
-                config.biomes[biome_index].tree_template =
-                    &config.tree_templates[index];
-            biome_index += 1U;
-        }
-        feature_index = 0U;
-        while (feature_index < VOXEL_MAX_FEATURE_RULES)
-        {
-            if (config.features[feature_index].template_data
-                == &config.tree_templates[index + 1U])
-                config.features[feature_index].template_data =
-                    &config.tree_templates[index];
-            feature_index += 1U;
-        }
         config.tree_templates[index] = config.tree_templates[index + 1U];
-        ft_memcpy(config.tree_template_blocks[index],
-            config.tree_template_blocks[index + 1U],
-            sizeof(config.tree_template_blocks[index]));
         config.tree_templates[index].blocks = config.tree_template_blocks[index];
         index += 1U;
     }
@@ -3839,7 +3823,7 @@ ft_bool voxel_generation_config_is_valid(
 }
 
 voxel_generation_context::voxel_generation_context() noexcept
-    : _config(), _configuration_signature(0U),
+    : _config(), _configuration_signature(0U), _region_configuration_signature(0U),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     return ;
@@ -3862,6 +3846,11 @@ int32_t voxel_generation_context::initialize(
         return (FT_ERR_INVALID_ARGUMENT);
     this->_configuration_signature = voxel_generation_config_signature(
         this->_config);
+    this->_region_configuration_signature = this->_configuration_signature;
+    if (this->_config.allow_cross_chunk_features != FT_TRUE
+        || this->_config.cross_chunk_block_writer == ft_nullptr)
+        this->_region_configuration_signature = voxel_configuration_signature(
+            this->_config, FT_TRUE, FT_TRUE);
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -3870,6 +3859,7 @@ int32_t voxel_generation_context::destroy() noexcept
 {
     this->_config.destroy();
     this->_configuration_signature = 0U;
+    this->_region_configuration_signature = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
 }
@@ -3907,6 +3897,11 @@ const voxel_generation_config &voxel_generation_context::config() const noexcept
 uint32_t voxel_generation_context::configuration_signature() const noexcept
 {
     return (this->_configuration_signature);
+}
+
+uint32_t voxel_generation_context::region_configuration_signature() const noexcept
+{
+    return (this->_region_configuration_signature);
 }
 
 int32_t voxel_generation_context_initialize(

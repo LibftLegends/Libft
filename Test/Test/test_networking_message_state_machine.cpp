@@ -4,6 +4,7 @@
 #include "../../Modules/Networking/networking_handshake.hpp"
 #include "../../Modules/Networking/networking_test_hooks.hpp"
 #include "../../Modules/Crypto/crypto_test_hooks.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Errno/errno.hpp"
 
 enum class networking_reference_connection_phase : uint8_t
@@ -136,6 +137,126 @@ FT_TEST(test_networking_handshake_state_machine_rejects_invalid_transitions)
     FT_ASSERT_EQ(FT_TRUE, server.test_secret_state_is_wiped());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, client_hello.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, server_hello.destroy());
+    return (1);
+}
+
+FT_TEST(test_networking_handshake_retry_preserves_hello_and_transcript_bytes)
+{
+    constexpr ft_size_t HELLO_SIZE = 80U;
+    constexpr ft_size_t PREFIXED_HELLO_SIZE = 88U;
+    const uint8_t expected_header[] = {
+        0x4CU, 0x46U, 0x54U, 0x48U, 2U, 0U, 0U, 0U,
+        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U
+    };
+    uint8_t cookie[40] = {0x81U, 0x62U, 0x43U};
+    networking_handshake client;
+    networking_handshake server;
+    ft_vector<uint8_t> client_hello;
+    ft_vector<uint8_t> retry_hello;
+    ft_vector<uint8_t> server_hello;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.initialize(networking_handshake_role::CLIENT,
+        UINT64_C(0x0102030405060708)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(networking_handshake_role::SERVER, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.get_local_hello(client_hello));
+    FT_ASSERT_EQ(HELLO_SIZE, client_hello.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected_header, client_hello.begin(),
+        sizeof(expected_header)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.set_retry_cookie(cookie));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, retry_hello.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, retry_hello.push_back(0xABU));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t failed_copy = client.get_local_hello(retry_hello);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_copy);
+    FT_ASSERT_EQ(1U, retry_hello.size());
+    FT_ASSERT_EQ(0xABU, retry_hello[0U]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.get_local_hello(retry_hello));
+    FT_ASSERT_EQ(HELLO_SIZE + sizeof(cookie), retry_hello.size());
+    FT_ASSERT_EQ(0, ft_memcmp(client_hello.begin(), retry_hello.begin(), HELLO_SIZE));
+    FT_ASSERT_EQ(0, ft_memcmp(cookie, retry_hello.begin() + HELLO_SIZE, sizeof(cookie)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.get_local_hello(server_hello));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t failed_accept = server.accept_peer_hello(retry_hello.begin(),
+        retry_hello.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_accept);
+    FT_ASSERT(server.get_state() == networking_handshake_state::HELLO_READY);
+    FT_ASSERT_EQ(0U, server.get_peer_connection_id());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.accept_peer_hello(retry_hello.begin(),
+        retry_hello.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.accept_peer_hello(server_hello.begin(),
+        server_hello.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.derive_keys());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.derive_keys());
+
+    uint8_t expected_transcript[2U * PREFIXED_HELLO_SIZE] = {};
+    expected_transcript[7U] = HELLO_SIZE;
+    expected_transcript[PREFIXED_HELLO_SIZE + 7U] = HELLO_SIZE;
+    ft_memcpy(expected_transcript + 8U, client_hello.begin(), HELLO_SIZE);
+    ft_memcpy(expected_transcript + PREFIXED_HELLO_SIZE + 8U,
+        server_hello.begin(), HELLO_SIZE);
+    networking_crypto_backend backend;
+    uint8_t send_key[32];
+    uint8_t receive_key[32];
+    uint8_t send_iv[12];
+    uint8_t receive_iv[12];
+    uint8_t expected_finished[32];
+    uint8_t actual_finished[32];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.get_traffic_keys(send_key, receive_key,
+        send_iv, receive_iv));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, backend.hmac_sha256(send_key, sizeof(send_key),
+        expected_transcript, sizeof(expected_transcript), expected_finished));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, client.create_finished(actual_finished));
+    FT_ASSERT_EQ(0, ft_memcmp(expected_finished, actual_finished, sizeof(actual_finished)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.verify_finished(actual_finished));
+    return (1);
+}
+
+FT_TEST(test_networking_handshake_move_transfers_live_buffers_without_allocating)
+{
+    networking_handshake source;
+    networking_handshake peer;
+    networking_handshake destination;
+    ft_vector<uint8_t> source_hello;
+    ft_vector<uint8_t> peer_hello;
+    uint8_t source_finished[32];
+    uint8_t moved_finished[32];
+    uint8_t peer_finished[32];
+    const uint8_t cookie[40] = {0x85U};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(networking_handshake_role::CLIENT, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.initialize(networking_handshake_role::SERVER, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(networking_handshake_role::SERVER, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.set_retry_cookie(cookie));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_local_hello(source_hello));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.get_local_hello(peer_hello));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        source.accept_peer_hello(peer_hello.begin(), peer_hello.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        peer.accept_peer_hello(source_hello.begin(), source_hello.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.derive_keys());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.derive_keys());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.create_finished(source_finished));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.create_finished(peer_finished));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t move_result = destination.move(source);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, move_result);
+    FT_ASSERT(source.get_state() == networking_handshake_state::IDLE);
+    FT_ASSERT(source.test_secret_state_is_wiped());
+    FT_ASSERT(destination.get_state() == networking_handshake_state::KEYS_DERIVED);
+    FT_ASSERT_EQ(2U, destination.get_peer_connection_id());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        destination.accept_peer_hello(peer_hello.begin(), peer_hello.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.create_finished(moved_finished));
+    FT_ASSERT_EQ(0, ft_memcmp(source_finished, moved_finished, sizeof(moved_finished)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, peer.verify_finished(moved_finished));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.verify_finished(peer_finished));
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, destination.move(source));
+    FT_ASSERT(destination.get_state() == networking_handshake_state::FINISHED);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(networking_handshake_role::CLIENT, 4U));
     return (1);
 }
 

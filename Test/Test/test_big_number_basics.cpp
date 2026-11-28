@@ -28,6 +28,78 @@ FT_TEST(test_big_number_default_state)
     return (1);
 }
 
+FT_TEST(test_big_number_decimal_assign_reports_invalid_input_and_failed_growth)
+{
+    ft_big_number number;
+    INIT_BIG_NUMBER(number);
+    number.assign("123");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    number.assign("4x");
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ft_big_number::get_error());
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "123"));
+    cma_set_alloc_limit(16U);
+    number.assign("12345678901234567890123456789012345678901234567890");
+    const int32_t error_code = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error_code);
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "123"));
+    cma_set_alloc_limit(16U);
+    number.assign("000000000000000000000000000000000000000000000042");
+    const int32_t padded_error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, padded_error);
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "42"));
+    return (1);
+}
+
+FT_TEST(test_big_number_copy_preserves_values_on_failure_and_reuses_storage)
+{
+    constexpr char source_digits[] = "12345678901234567890123456789012345678901234567890";
+    ft_big_number source;
+    ft_big_number destination;
+    ft_big_number fresh;
+    ft_big_number empty_value;
+    INIT_BIG_NUMBER(source);
+    INIT_BIG_NUMBER(destination);
+    INIT_BIG_NUMBER(empty_value);
+    source.assign(source_digits);
+    destination.assign("-7");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+
+    cma_set_alloc_limit(16U);
+    destination = source;
+    const int32_t assignment_error = ft_big_number::get_error();
+    const ft_bool assignment_preserved_mutex = destination.is_thread_safe();
+    const ft_bool assignment_preserved_value = destination.is_negative()
+        && std::strcmp(destination.c_str(), "7") == 0;
+    const int32_t reinitialize_error = destination.initialize(source);
+    const int32_t initialize_error = fresh.initialize(source);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, assignment_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, reinitialize_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, initialize_error);
+    FT_ASSERT_EQ(FT_TRUE, assignment_preserved_mutex);
+    FT_ASSERT_EQ(FT_TRUE, assignment_preserved_value);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT_EQ(ft_nullptr, destination._mutex);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fresh.initialize(source));
+    destination = empty_value;
+    FT_ASSERT_EQ(FT_TRUE, destination.empty());
+    cma_set_alloc_limit(16U);
+    destination = source;
+    const int32_t reuse_error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reuse_error);
+    source.assign("11");
+    FT_ASSERT_EQ(0, std::strcmp(destination.c_str(), source_digits));
+    FT_ASSERT_EQ(0, std::strcmp(fresh.c_str(), source_digits));
+    FT_ASSERT_EQ(FT_FALSE, destination.is_negative());
+    return (1);
+}
+
 FT_TEST(test_big_number_assign_trim)
 {
     ft_big_number number;
@@ -133,6 +205,49 @@ FT_TEST(test_big_number_append_invalid_digit)
     INIT_BIG_NUMBER(number);
 
     number.append_digit('x');
+    return (1);
+}
+
+FT_TEST(test_big_number_append_is_atomic_and_supports_borrowed_digits)
+{
+    ft_big_number number;
+    INIT_BIG_NUMBER(number);
+    number.assign("123456789012345");
+    cma_set_alloc_limit(16U);
+    number.append_digit('6');
+    const int32_t digit_error = ft_big_number::get_error();
+    number.append("a67b8");
+    const int32_t text_error = ft_big_number::get_error();
+    number.append_unsigned(1234U);
+    const int32_t unsigned_error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, digit_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, text_error);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, unsigned_error);
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "123456789012345"));
+
+    cma_set_alloc_limit(18U);
+    number.append_digit('6');
+    const int32_t exact_capacity_error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exact_capacity_error);
+    number.append(number.c_str());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "12345678901234561234567890123456"));
+    return (1);
+}
+
+FT_TEST(test_big_number_append_filters_text_and_normalizes_leading_zeros)
+{
+    ft_big_number number;
+    INIT_BIG_NUMBER(number);
+    number.append("a0b000c");
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "0"));
+    number.append("a0001b2c3");
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "123"));
+    number.append_unsigned(UINT64_MAX);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(0, std::strcmp(number.c_str(), "12318446744073709551615"));
     return (1);
 }
 

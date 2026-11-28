@@ -99,3 +99,41 @@ FT_TEST(test_game_crafting_snapshot_query_rejects_inconsistent_snapshot)
 	return (1);
 }
 
+FT_TEST(test_game_crafting_snapshot_query_validates_unsorted_slots_and_instance_ids)
+{
+    game_crafting crafting;
+    game_inventory_snapshot snapshot = {};
+    ft_vector<game_crafting_missing_ingredient> missing;
+    game_crafting_query_result query = {};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.initialize());
+    snapshot.next_slot = 12;
+    snapshot.current_weight = 3;
+    snapshot.used_slots = 3U;
+    game_inventory_item_snapshot item = {};
+    item.item_id = 31;
+    item.stack_size = 1;
+    item.max_stack = 1;
+    item.width = 1;
+    item.height = 1;
+    item.slot = 11;
+    item.instance_id = 80U;
+    snapshot.items.push_back(item);
+    item.slot = 3;
+    item.instance_id = 7U;
+    snapshot.items.push_back(item);
+    item.slot = 11;
+    item.instance_id = 80U;
+    snapshot.items.push_back(item);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        crafting.query_recipe_at_station_snapshot(601, snapshot, 0, &query, &missing));
+    snapshot.items[2].slot = 0;
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS,
+        crafting.query_recipe_at_station_snapshot(601, snapshot, 0, &query, &missing));
+    snapshot.items[2].instance_id = 50U;
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        crafting.query_recipe_at_station_snapshot(601, snapshot, 0, &query, &missing));
+    FT_ASSERT_EQ(FT_FALSE, query.found);
+    FT_ASSERT_EQ(0U, missing.size());
+    return (1);
+}
+

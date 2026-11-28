@@ -35,6 +35,29 @@ struct game_voxel_block_override
     uint32_t current_block_id;
 };
 
+struct game_voxel_generated_column_block
+{
+    int32_t local_y;
+    uint32_t block_id;
+};
+
+struct game_voxel_generated_block
+{
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+    uint32_t block_id;
+};
+
+struct game_voxel_generated_column_check
+{
+    int32_t first_y;
+    int32_t last_y;
+    // Called under the chunk write lock. The predicate must not re-enter the chunk.
+    ft_bool (*accepts)(int32_t local_y, uint32_t block_id, const void *user_data) noexcept;
+    const void *user_data;
+};
+
 class game_voxel_chunk_section
 {
 #ifdef LIBFT_TEST_BUILD
@@ -43,20 +66,25 @@ class game_voxel_chunk_section
     private:
 #endif
         uint32_t    _uniform_block_id;
+        // The palette owns the allocation and the indices follow it in storage.
         uint32_t    *_palette;
         uint8_t     *_indices;
         uint16_t    _palette_size;
         uint8_t     _initialised_state;
+        uint8_t     _uniform_candidate;
+        uint16_t    _uniform_candidate_count;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
-        int32_t materialize(uint32_t second_block_id) noexcept;
+        int32_t allocate_payload() noexcept;
         int32_t find_or_add_palette_index(uint32_t block_id,
             uint8_t *palette_index) noexcept;
-        void collapse_if_uniform() noexcept;
+        void collapse_to_candidate() noexcept;
         int32_t copy_payload(const game_voxel_chunk_section &other) noexcept;
-        void copy_row(uint32_t *output, uint16_t first_index,
-            uint32_t count) const noexcept;
+        void copy_rows(uint32_t *output, uint32_t first_index,
+            uint32_t width, uint32_t block_stride) const noexcept;
+        template <typename Reader>
+        int32_t deserialize_from(Reader &buffer) noexcept;
 
         friend class game_voxel_chunk;
 
@@ -116,11 +144,32 @@ class game_voxel_chunk
         static uint16_t local_index(int32_t local_x, int32_t local_y,
             int32_t local_z) noexcept;
         int32_t grow_player_overrides(uint32_t minimum_capacity) noexcept;
+        uint32_t player_override_first() const noexcept;
+        void compact_player_overrides(uint32_t first, ft_bool rebuild_index) noexcept;
+        uint32_t *player_override_index_table() const noexcept;
+        uint32_t player_override_bucket(const uint32_t *table, uint16_t coordinate,
+            uint32_t mask) const noexcept;
+        void rebuild_player_override_index() noexcept;
+        void index_player_override(uint32_t index) noexcept;
+        void remove_player_override_from_index(uint32_t *table, uint32_t index) noexcept;
+        void shift_player_override_index(uint32_t *table, uint32_t first,
+            uint32_t end, ft_bool forward) noexcept;
         int32_t find_player_override(uint16_t local_index,
             uint32_t *override_index) const noexcept;
         void remove_player_override(uint32_t override_index) noexcept;
+        friend class game_voxel_region;
+        friend class game_world_delta_channel;
+        friend int32_t game_world_delta_snapshot_serialize(const game_voxel_chunk &chunk,
+            ft_byte_buffer &buffer) noexcept;
+        friend int32_t game_world_delta_snapshot_deserialize(game_voxel_chunk &chunk,
+            ft_byte_buffer &buffer) noexcept;
+        int32_t serialize_locked(ft_byte_buffer &buffer) const noexcept;
         int32_t serialize_internal(ft_byte_buffer &buffer) const noexcept;
-        int32_t deserialize_internal(ft_byte_buffer &buffer) noexcept;
+        int32_t deserialize_view(const uint8_t *data, ft_size_t size) noexcept;
+        template <typename Reader>
+        int32_t deserialize_from(Reader &buffer) noexcept;
+        template <typename Reader>
+        int32_t deserialize_internal(Reader &buffer) noexcept;
         int32_t read_block_locked(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t *block_id) const noexcept;
         int32_t copy_blocks_locked(uint32_t *blocks_out,
@@ -132,8 +181,21 @@ class game_voxel_chunk
             uint32_t block_count, uint32_t local_x) const noexcept;
         int32_t copy_z_border_locked(uint32_t *blocks_out,
             uint32_t block_count, uint32_t local_z) const noexcept;
+        struct block_edit_state
+        {
+            uint32_t current_block_id;
+            uint32_t generated_block_id;
+            uint32_t override_index;
+        };
+        block_edit_state inspect_block_edit(uint16_t chunk_index,
+            uint32_t current_block_id) const noexcept;
+        int32_t apply_block_edit_at(uint16_t chunk_index, uint32_t block_id,
+            const block_edit_state &state) noexcept;
         int32_t apply_block_edit_locked(int32_t local_x, int32_t local_y,
-            int32_t local_z, const game_block_edit_op &edit) noexcept;
+            int32_t local_z, uint32_t block_id) noexcept;
+        int32_t apply_authoritative_block_change_with_revision(
+            const game_block_change_request &request, game_block_delta *delta_out,
+            uint64_t *revision_before) noexcept;
         int32_t apply_authoritative_block_change_locked(
             const game_block_change_request &request,
             game_block_delta *delta_out) noexcept;
@@ -141,6 +203,8 @@ class game_voxel_chunk
             const game_block_delta &delta) noexcept;
         int32_t write_generated_block_locked(int32_t local_x,
             int32_t local_y, int32_t local_z, uint32_t block_id) noexcept;
+        int32_t write_generated_block_at(uint16_t chunk_index, uint32_t block_id) noexcept;
+        int32_t clear_generated_blocks_locked() noexcept;
         int32_t get_generated_block_locked(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t *block_id) const noexcept;
         ft_bool is_block_player_modified_locked(int32_t local_x,
@@ -185,6 +249,17 @@ class game_voxel_chunk
             const game_block_delta &delta) noexcept;
         int32_t write_generated_block(int32_t local_x, int32_t local_y,
             int32_t local_z, uint32_t block_id) noexcept;
+        // Checks all destinations before writing in order under one write lock.
+        // A rejected block skips the whole batch. The predicate must not re-enter the chunk.
+        int32_t write_generated_blocks_if(const game_voxel_generated_block *blocks,
+            uint32_t count, ft_bool (*accepts)(uint32_t block_id) noexcept) noexcept;
+        // Validates coordinates first, then writes in order under one chunk lock.
+        int32_t write_generated_column(int32_t local_x, int32_t local_z,
+            const game_voxel_generated_column_block *blocks, uint32_t count) noexcept;
+        int32_t write_generated_column(int32_t local_x, int32_t local_z,
+            const game_voxel_generated_column_block *blocks, uint32_t count,
+            const game_voxel_generated_column_check *check, ft_bool *applied) noexcept;
+        int32_t clear_generated_blocks() noexcept;
         ft_bool is_dirty() const noexcept;
         void clear_dirty() noexcept;
         void clear_persistence_dirty() noexcept;

@@ -1,31 +1,17 @@
-#include "roll.hpp"
 #include "math_internal.hpp"
-#include "../Printf/printf.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
-int32_t math_roll_excecute_md(char *string, int32_t *index, int32_t string_boundary)
+int32_t math_roll_execute_md(char *expression, int32_t &length)
 {
-    int32_t error = 0;
-
-    while (*index < string_boundary)
+    int32_t index = 0;
+    while (index < length && expression[index] != ')')
     {
-        if (DEBUG == 1)
-            pf_printf("MD i=%d and j=%d\n", *index, string_boundary);
-        if (!string[*index] || string[*index] == ')')
-            break ;
-        if (string[*index] == '*' || string[*index] == '/')
+        if (expression[index] == '*' || expression[index] == '/')
         {
-            if (math_process_sign(string, index, string_boundary, &error))
+            if (math_process_sign(expression, length, index))
                 return (1);
-            math_calculate_j(string, &string_boundary);
-            *index = 0;
         }
         else
-            (*index)++;
+            index += 1;
     }
-    math_calculate_j(string, &string_boundary);
-    if (DEBUG == 1)
-        pf_printf("The result after md is %s\n", string);
     return (0);
 }

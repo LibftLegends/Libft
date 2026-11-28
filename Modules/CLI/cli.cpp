@@ -4,22 +4,6 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static ft_size_t cli_strlen(const char *string)
-{
-    ft_size_t length;
-
-    if (string == ft_nullptr)
-    {
-        return (0);
-    }
-    length = 0;
-    while (string[length] != '\0')
-    {
-        length++;
-    }
-    return (length);
-}
-
 static ft_bool cli_streq(const char *left, const char *right)
 {
     ft_size_t index;
@@ -116,61 +100,34 @@ static ft_bool cli_bool_from_string(const char *value, ft_bool *result)
 
 static ft_bool cli_int64_from_string(const char *value, int64_t *result)
 {
-    ft_size_t index;
-    int64_t sign;
+    if (value == ft_nullptr || result == ft_nullptr
+        || (cli_is_digit(value[0]) == FT_FALSE && value[0] != '+' && value[0] != '-'))
+        return (FT_FALSE);
+    char *end = ft_nullptr;
     int64_t parsed_value;
-
-    if (value == ft_nullptr || result == ft_nullptr || value[0] == '\0')
-    {
+    if (ft_parse_int64(value, &end, &parsed_value) != FT_ERR_SUCCESS || *end != '\0')
         return (FT_FALSE);
-    }
-    index = 0;
-    sign = 1;
-    if (value[index] == '-' || value[index] == '+')
-    {
-        if (value[index] == '-')
-        {
-            sign = -1;
-        }
-        index++;
-    }
-    if (value[index] == '\0')
-    {
-        return (FT_FALSE);
-    }
-    parsed_value = 0;
-    while (value[index] != '\0')
-    {
-        if (cli_is_digit(value[index]) == FT_FALSE)
-        {
-            return (FT_FALSE);
-        }
-        parsed_value = (parsed_value * 10) + static_cast<int64_t>(value[index] - '0');
-        index++;
-    }
-    *result = parsed_value * sign;
+    *result = parsed_value;
     return (FT_TRUE);
 }
 
 static ft_bool cli_uint64_from_string(const char *value, uint64_t *result)
 {
-    ft_size_t index;
-    uint64_t parsed_value;
-
+    constexpr uint64_t CUTOFF = UINT64_MAX / 10U;
+    constexpr uint64_t LAST_DIGIT = UINT64_MAX % 10U;
     if (value == ft_nullptr || result == ft_nullptr || value[0] == '\0')
-    {
         return (FT_FALSE);
-    }
-    index = 0;
-    parsed_value = 0;
+    uint64_t parsed_value = 0;
+    ft_size_t index = 0;
     while (value[index] != '\0')
     {
         if (cli_is_digit(value[index]) == FT_FALSE)
-        {
             return (FT_FALSE);
-        }
-        parsed_value = (parsed_value * 10U) + static_cast<uint64_t>(value[index] - '0');
-        index++;
+        const auto digit = static_cast<uint64_t>(value[index] - '0');
+        if (parsed_value > CUTOFF || (parsed_value == CUTOFF && digit > LAST_DIGIT))
+            return (FT_FALSE);
+        parsed_value = parsed_value * 10U + digit;
+        ++index;
     }
     *result = parsed_value;
     return (FT_TRUE);
@@ -313,22 +270,7 @@ static void cli_reset_command(cli_command *command)
 
 cli_option *cli_find_option(cli_command *command, const char *long_name)
 {
-    ft_size_t index;
-
-    if (command == ft_nullptr || long_name == ft_nullptr)
-    {
-        return (ft_nullptr);
-    }
-    index = 0;
-    while (index < command->option_count)
-    {
-        if (cli_streq(command->options[index].long_name, long_name) == FT_TRUE)
-        {
-            return (command->options + index);
-        }
-        index++;
-    }
-    return (ft_nullptr);
+    return (const_cast<cli_option *>(cli_find_option_const(command, long_name)));
 }
 
 const cli_option *cli_find_option_const(const cli_command *command,
@@ -375,36 +317,16 @@ static cli_option *cli_find_short_option(cli_command *command, char short_name)
 static cli_option *cli_find_long_option_with_length(cli_command *command,
     const char *long_name, ft_size_t name_length)
 {
-    ft_size_t index;
-    ft_size_t character_index;
-    ft_bool matches;
-
     if (command == ft_nullptr || long_name == ft_nullptr)
-    {
         return (ft_nullptr);
-    }
-    index = 0;
+    ft_size_t index = 0;
     while (index < command->option_count)
     {
-        if (cli_strlen(command->options[index].long_name) == name_length)
-        {
-            character_index = 0;
-            matches = FT_TRUE;
-            while (character_index < name_length)
-            {
-                if (command->options[index].long_name[character_index]
-                    != long_name[character_index])
-                {
-                    matches = FT_FALSE;
-                }
-                character_index++;
-            }
-            if (matches == FT_TRUE)
-            {
-                return (command->options + index);
-            }
-        }
-        index++;
+        const char *candidate = command->options[index].long_name;
+        if (candidate != ft_nullptr && ft_strncmp(candidate, long_name, name_length) == 0
+            && candidate[name_length] == '\0')
+            return (command->options + index);
+        ++index;
     }
     return (ft_nullptr);
 }
@@ -562,11 +484,7 @@ static int32_t cli_parse_long_option(cli_command *command, ft_size_t *argument_i
     if (equal_sign != ft_nullptr)
     {
         value = equal_sign + 1;
-        option_name_length = 0;
-        while (option_name + option_name_length < equal_sign)
-        {
-            option_name_length++;
-        }
+        option_name_length = static_cast<ft_size_t>(equal_sign - option_name);
         option = cli_find_long_option_with_length(command, option_name,
                 option_name_length);
     }

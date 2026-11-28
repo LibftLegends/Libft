@@ -1,4 +1,5 @@
 #include "card_game_internal.hpp"
+#include <algorithm>
 
 int32_t card_game_engine::find_host_intent_definition(uint32_t type_id,
     uint32_t version,
@@ -186,6 +187,21 @@ int32_t card_game_engine::get_next_host_intent_sequence(
     return (FT_ERR_SUCCESS);
 }
 
+uint32_t card_game_engine::host_intent_record_index(uint32_t index) const noexcept
+{
+    return ((this->_host_intent_record_head + index)
+        & (this->_host_intent_record_capacity - 1U));
+}
+
+uint32_t card_game_engine::host_intent_first_range_count() const noexcept
+{
+    const uint32_t tail_space = this->_host_intent_record_capacity
+        - this->_host_intent_record_head;
+    if (this->_host_intent_record_count < tail_space)
+        return (this->_host_intent_record_count);
+    return (tail_space);
+}
+
 int32_t card_game_engine::inspect_pending_host_intent(uint32_t index,
     card_game_host_intent_record *record) const noexcept
 {
@@ -194,7 +210,7 @@ int32_t card_game_engine::inspect_pending_host_intent(uint32_t index,
         return (FT_ERR_INVALID_ARGUMENT);
     if (index >= this->_host_intent_record_count)
         return (FT_ERR_NOT_FOUND);
-    *record = this->_host_intent_records[index];
+    *record = this->_host_intent_records[this->host_intent_record_index(index)];
     return (FT_ERR_SUCCESS);
 }
 
@@ -206,7 +222,7 @@ int32_t card_game_engine::peek_pending_host_intent(
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_host_intent_record_count == 0U)
         return (FT_ERR_NOT_FOUND);
-    *record = this->_host_intent_records[0U];
+    *record = this->_host_intent_records[this->_host_intent_record_head];
     return (FT_ERR_SUCCESS);
 }
 
@@ -216,16 +232,13 @@ int32_t card_game_engine::acknowledge_host_intent(uint64_t sequence) noexcept
         return (FT_ERR_NOT_INITIALISED);
     if (this->_host_intent_record_count == 0U)
         return (FT_ERR_NOT_FOUND);
-    if (this->_host_intent_records[0U].sequence != sequence)
+    if (this->_host_intent_records[this->_host_intent_record_head].sequence
+        != sequence)
         return (FT_ERR_INVALID_STATE);
     if (this->_state_sequence == UINT64_MAX)
         return (FT_ERR_FULL);
     this->_host_intent_record_count -= 1U;
-    if (this->_host_intent_record_count != 0U)
-        ft_memmove(this->_host_intent_records,
-            this->_host_intent_records + 1U,
-            static_cast<ft_size_t>(this->_host_intent_record_count)
-                * sizeof(card_game_host_intent_record));
+    this->_host_intent_record_head = this->host_intent_record_index(1U);
     this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -233,6 +246,11 @@ int32_t card_game_engine::acknowledge_host_intent(uint64_t sequence) noexcept
 int32_t card_game_engine::reserve_host_intent_records(
     uint32_t required_count) noexcept
 {
+    static_assert(FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY != 0U
+        && (FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY
+            & (FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY - 1U)) == 0U);
+    static_assert(FT_CARD_GAME_MAX_OPERATIONS >= FT_CARD_GAME_HOST_INTENT_INITIAL_CAPACITY
+        && (FT_CARD_GAME_MAX_OPERATIONS & (FT_CARD_GAME_MAX_OPERATIONS - 1U)) == 0U);
     card_game_host_intent_record *records;
     uint32_t capacity;
 
@@ -257,15 +275,31 @@ int32_t card_game_engine::reserve_host_intent_records(
             * sizeof(card_game_host_intent_record)));
     if (records == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    if (this->_host_intent_record_count != 0U)
-        ft_memcpy(records, this->_host_intent_records,
-            static_cast<ft_size_t>(this->_host_intent_record_count)
-                * sizeof(card_game_host_intent_record));
+    const uint32_t first_count = this->host_intent_first_range_count();
+    if (first_count != 0U)
+        ft_memcpy(records, this->_host_intent_records + this->_host_intent_record_head,
+            static_cast<ft_size_t>(first_count) * sizeof(*records));
+    ft_memcpy(records + first_count, this->_host_intent_records,
+        static_cast<ft_size_t>(this->_host_intent_record_count - first_count)
+            * sizeof(*records));
     if (this->_host_intent_records != ft_nullptr)
         cma_free(this->_host_intent_records);
     this->_host_intent_records = records;
     this->_host_intent_record_capacity = capacity;
+    this->_host_intent_record_head = 0U;
     return (FT_ERR_SUCCESS);
+}
+
+void card_game_engine::store_host_intent(const card_game_host_intent &intent) noexcept
+{
+    const uint32_t index = this->host_intent_record_index(this->_host_intent_record_count);
+    card_game_host_intent_record &record = this->_host_intent_records[index];
+    record.sequence = this->_next_host_intent_sequence;
+    record.action_request_id = this->_active_action_request_id;
+    record.intent = intent;
+    this->_host_intent_record_count += 1U;
+    this->_next_host_intent_sequence += 1U;
+    return ;
 }
 
 int32_t card_game_engine::emit_event(uint32_t event_type,
@@ -421,9 +455,40 @@ int32_t card_game_engine::apply_operation(
     return (FT_ERR_INVALID_ARGUMENT);
 }
 
+uint32_t card_game_engine::find_event_effect_position(uint32_t event_type) const noexcept
+{
+    const uint16_t *begin = this->_event_effect_order;
+    const uint16_t *end = begin + this->_event_effect_count;
+    const uint16_t *position = std::lower_bound(begin, end, event_type,
+        [this](uint16_t effect_id, uint32_t type)
+        {
+            return (this->_effect_event_types[effect_id] < type);
+        });
+    if (position == end || this->_effect_event_types[*position] != event_type)
+        return (this->_event_effect_count);
+    return (static_cast<uint32_t>(position - begin));
+}
+
 int32_t card_game_engine::resolve_events() noexcept
 {
-    uint32_t event_index;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_event_effect_count == 0U)
+    {
+        this->_event_count = 0U;
+        return (FT_ERR_SUCCESS);
+    }
+    uint32_t event_index = 0U;
+    while (event_index < this->_event_count
+        && this->find_event_effect_position(this->_events[event_index].event_type)
+            == this->_event_effect_count)
+        event_index += 1U;
+    if (event_index == this->_event_count)
+    {
+        this->_event_count = 0U;
+        return (FT_ERR_SUCCESS);
+    }
+
     card_game_operation_buffer operations;
     card_game_operation_buffer pending_host_intents;
     card_game_effect_context context;
@@ -433,28 +498,25 @@ int32_t card_game_engine::resolve_events() noexcept
     int32_t restore_error;
     card_game_snapshot before_state;
     uint32_t operation_index;
-    uint32_t processed_effect_count;
-    uint32_t selected_effect_index;
-    uint32_t candidate_index;
-    uint32_t selected_priority;
     card_game_usage_limit usage_limit;
     ft_bool usage_limit_bound;
     int32_t usage_error;
-    ft_bool processed_effects[FT_CARD_GAME_MAX_EFFECTS];
 
     error_code = operations.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = pending_host_intents.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     snapshot_error = this->get_snapshot(&before_state);
     if (snapshot_error != FT_ERR_SUCCESS)
         return (snapshot_error);
-    event_index = 0U;
     while (event_index < this->_event_count)
     {
         context.event_type = this->_events[event_index].event_type;
+        uint32_t effect_position = this->find_event_effect_position(context.event_type);
+        if (effect_position == this->_event_effect_count)
+        {
+            event_index += 1U;
+            continue ;
+        }
         context.source_instance = this->_events[event_index].source_instance;
         context.target_instance = this->_events[event_index].target_instance;
         context.active_player = this->_active_player;
@@ -462,32 +524,27 @@ int32_t card_game_engine::resolve_events() noexcept
         context.action_request_id = this->_active_action_request_id;
         ft_memcpy(context.play_payload, this->_active_play_payload,
             FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
-        ft_bzero(processed_effects, sizeof(processed_effects));
-        processed_effect_count = 0U;
+        uint64_t processed_effects[(FT_CARD_GAME_MAX_EFFECTS + 63U) / 64U]{};
+        uint32_t processed_effect_count = 0U;
+        uint64_t revision = this->_event_effect_revision;
         while (processed_effect_count < this->_effect_count)
         {
-            selected_effect_index = UINT32_MAX;
-            selected_priority = UINT32_MAX;
-            candidate_index = 0U;
-            while (candidate_index < this->_effect_count)
+            if (revision != this->_event_effect_revision)
             {
-                if (processed_effects[candidate_index] == FT_FALSE
-                    && this->_effect_callbacks[candidate_index] != ft_nullptr
-                    && this->_effect_event_types[candidate_index]
-                        == context.event_type
-                    && (selected_effect_index == UINT32_MAX
-                        || this->_effect_priorities[candidate_index]
-                            < selected_priority))
-                {
-                    selected_effect_index = candidate_index;
-                    selected_priority =
-                        this->_effect_priorities[candidate_index];
-                }
-                candidate_index += 1U;
+                effect_position = this->find_event_effect_position(context.event_type);
+                revision = this->_event_effect_revision;
             }
-            if (selected_effect_index == UINT32_MAX)
+            if (effect_position == this->_event_effect_count)
                 break ;
-            processed_effects[selected_effect_index] = FT_TRUE;
+            const uint32_t selected_effect_index = this->_event_effect_order[effect_position];
+            if (this->_effect_event_types[selected_effect_index] != context.event_type)
+                break ;
+            effect_position += 1U;
+            uint64_t &processed_word = processed_effects[selected_effect_index / 64U];
+            const uint64_t processed_bit = UINT64_C(1) << (selected_effect_index % 64U);
+            if ((processed_word & processed_bit) != 0U)
+                continue ;
+            processed_word |= processed_bit;
             processed_effect_count += 1U;
             {
                 usage_limit_bound = FT_FALSE;
@@ -583,6 +640,9 @@ int32_t card_game_engine::resolve_events() noexcept
                     {
                         error_code = this->validate_host_intent(
                             operation.host_intent);
+                        if (error_code == FT_ERR_SUCCESS
+                            && pending_host_intents.size() == 0U)
+                            error_code = pending_host_intents.initialize();
                         if (error_code == FT_ERR_SUCCESS)
                             error_code = pending_host_intents.append(
                                 operation);
@@ -661,14 +721,7 @@ int32_t card_game_engine::resolve_events() noexcept
                     return (restore_error);
                 return (FT_ERR_INVALID_STATE);
             }
-            this->_host_intent_records[this->_host_intent_record_count]
-                .sequence = this->_next_host_intent_sequence;
-            this->_host_intent_records[this->_host_intent_record_count]
-                .action_request_id = this->_active_action_request_id;
-            this->_host_intent_records[this->_host_intent_record_count]
-                .intent = operation.host_intent;
-            this->_host_intent_record_count += 1U;
-            this->_next_host_intent_sequence += 1U;
+            this->store_host_intent(operation.host_intent);
             operation_index += 1U;
         }
     }
@@ -678,79 +731,50 @@ int32_t card_game_engine::resolve_events() noexcept
 
 int32_t card_game_engine::advance_phase() noexcept
 {
-    card_game_snapshot before_state;
-    int32_t emit_error;
-    int32_t resolve_error;
-    int32_t restore_error;
-    int32_t snapshot_error;
-    ft_bool phase_found;
-    uint32_t index;
-
     if (this->_initialised_state != 2U || this->_phase_count == 0U)
         return (FT_ERR_INVALID_STATE);
-    if (this->is_command_allowed(CARD_GAME_COMMAND_ADVANCE_PHASE)
-        == FT_FALSE)
+    uint32_t current_index = 0U;
+    while (current_index < this->_phase_count
+        && this->_phases[current_index].phase_id != this->_current_phase_id)
+        ++current_index;
+    if (current_index == this->_phase_count)
         return (FT_ERR_PERMISSION_DENIED);
-    snapshot_error = this->get_snapshot(&before_state);
-    if (snapshot_error != FT_ERR_SUCCESS)
-        return (snapshot_error);
-    phase_found = FT_FALSE;
-    index = 0U;
-    while (index < this->_phase_count)
-    {
-        if (this->_phases[index].phase_id == this->_current_phase_id)
-        {
-            if (this->_phases[index].exit_event_type != 0U)
-            {
-                emit_error = this->emit_event(
-                    this->_phases[index].exit_event_type, 0U, 0U);
-                if (emit_error != FT_ERR_SUCCESS)
-                {
-                    restore_error = this->apply_snapshot_internal(before_state);
-                    if (restore_error != FT_ERR_SUCCESS)
-                        return (restore_error);
-                    return (emit_error);
-                }
-            }
-            this->_current_phase_id = this->_phases[index].next_phase_id;
-            phase_found = FT_TRUE;
-            break ;
-        }
-        index += 1U;
-    }
-    if (phase_found == FT_FALSE)
+    const card_game_phase_definition &current = this->_phases[current_index];
+    if (current.allowed_command_mask != 0U
+        && (current.allowed_command_mask & CARD_GAME_COMMAND_ADVANCE_PHASE) == 0U)
+        return (FT_ERR_PERMISSION_DENIED);
+    uint32_t next_index = 0U;
+    while (next_index < this->_phase_count
+        && this->_phases[next_index].phase_id != current.next_phase_id)
+        ++next_index;
+    if (next_index == this->_phase_count)
         return (FT_ERR_NOT_FOUND);
-    index = 0U;
-    while (index < this->_phase_count)
+    const card_game_phase_definition &next = this->_phases[next_index];
+    if (current.exit_event_type == 0U && next.entry_event_type == 0U
+        && (this->_event_count == 0U || this->_event_effect_count == 0U))
     {
-        if (this->_phases[index].phase_id == this->_current_phase_id)
-        {
-            if (this->_phases[index].entry_event_type != 0U)
-            {
-                emit_error = this->emit_event(
-                    this->_phases[index].entry_event_type, 0U, 0U);
-                if (emit_error != FT_ERR_SUCCESS)
-                {
-                    restore_error = this->apply_snapshot_internal(before_state);
-                    if (restore_error != FT_ERR_SUCCESS)
-                        return (restore_error);
-                    return (emit_error);
-                }
-            }
-            resolve_error = this->resolve_events();
-            if (resolve_error != FT_ERR_SUCCESS)
-            {
-                restore_error = this->apply_snapshot_internal(before_state);
-                if (restore_error != FT_ERR_SUCCESS)
-                    return (restore_error);
-                return (resolve_error);
-            }
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
+        this->_current_phase_id = next.phase_id;
+        this->_event_count = 0U;
+        return (FT_ERR_SUCCESS);
     }
-    restore_error = this->apply_snapshot_internal(before_state);
+    card_game_snapshot before_state;
+    int32_t result = this->get_snapshot(&before_state);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (current.exit_event_type != 0U)
+        result = this->emit_event(current.exit_event_type, 0U, 0U);
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->_current_phase_id = next.phase_id;
+        if (next.entry_event_type != 0U)
+            result = this->emit_event(next.entry_event_type, 0U, 0U);
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = this->resolve_events();
+    if (result == FT_ERR_SUCCESS)
+        return (FT_ERR_SUCCESS);
+    const int32_t restore_error = this->apply_snapshot_internal(before_state);
     if (restore_error != FT_ERR_SUCCESS)
         return (restore_error);
-    return (FT_ERR_NOT_FOUND);
+    return (result);
 }

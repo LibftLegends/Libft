@@ -32,6 +32,11 @@ class game_dialogue_script
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        static int32_t clone_line(const game_dialogue_line *line,
+            ft_sharedptr<game_dialogue_line> &owned_line) noexcept;
+        template <typename LineType>
+        static int32_t stage_lines(const ft_vector<LineType> &source,
+            ft_vector<ft_sharedptr<game_dialogue_line>> &staged) noexcept;
 
     public:
         game_dialogue_script() noexcept;

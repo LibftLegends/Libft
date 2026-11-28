@@ -2,9 +2,6 @@
 #include "../Errno/errno.hpp"
 #include <random>
 #include <exception>
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
 
 static int32_t rng_fill_from_random_device(unsigned char *buffer, ft_size_t length)
 {
@@ -36,23 +33,15 @@ static int32_t rng_fill_from_random_device(unsigned char *buffer, ft_size_t leng
 
 int32_t rng_secure_bytes_with_fallback(unsigned char *buffer, ft_size_t length, int32_t *fallback_used)
 {
-    int32_t result;
-    int32_t fallback_result;
-
-    if (buffer == ft_nullptr && length > 0)
-    {
-        if (fallback_used != ft_nullptr)
-            *fallback_used = 0;
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
     if (fallback_used != ft_nullptr)
         *fallback_used = 0;
-    result = rng_secure_bytes(buffer, length);
-    if (result == FT_ERR_SUCCESS)
-        return (FT_ERR_SUCCESS);
     if (length == 0)
         return (FT_ERR_SUCCESS);
-    fallback_result = rng_fill_from_random_device(buffer, length);
+    if (buffer == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (rng_secure_bytes(buffer, length) == FT_ERR_SUCCESS)
+        return (FT_ERR_SUCCESS);
+    const int32_t fallback_result = rng_fill_from_random_device(buffer, length);
     if (fallback_result != FT_ERR_SUCCESS)
         return (fallback_result);
     if (fallback_used != ft_nullptr)
@@ -60,47 +49,36 @@ int32_t rng_secure_bytes_with_fallback(unsigned char *buffer, ft_size_t length, 
     return (FT_ERR_SUCCESS);
 }
 
-int32_t rng_secure_uint64(uint64_t *value, int32_t *fallback_used)
+template<typename IntegerType>
+static int32_t rng_secure_integer(IntegerType *value, int32_t *fallback_used)
 {
-    int32_t result;
-
     if (value == ft_nullptr)
     {
         if (fallback_used != ft_nullptr)
             *fallback_used = 0;
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    unsigned char buffer[sizeof(uint64_t)];
-    result = rng_secure_bytes_with_fallback(buffer, sizeof(uint64_t), fallback_used);
+    unsigned char buffer[sizeof(IntegerType)];
+    const int32_t result = rng_secure_bytes_with_fallback(buffer, sizeof(buffer), fallback_used);
     if (result != FT_ERR_SUCCESS)
         return (result);
     ft_size_t index = 0;
-    uint64_t assembled_value = 0;
-    while (index < sizeof(uint64_t))
+    IntegerType assembled_value = 0U;
+    while (index < sizeof(buffer))
     {
-        uint64_t shifted_value = static_cast<uint64_t>(buffer[index]);
-        shifted_value <<= (index * 8);
-        assembled_value |= shifted_value;
-        index++;
+        assembled_value |= static_cast<IntegerType>(buffer[index]) << (index * 8U);
+        index += 1U;
     }
     *value = assembled_value;
     return (FT_ERR_SUCCESS);
 }
 
+int32_t rng_secure_uint64(uint64_t *value, int32_t *fallback_used)
+{
+    return (rng_secure_integer(value, fallback_used));
+}
+
 int32_t rng_secure_uint32(uint32_t *value, int32_t *fallback_used)
 {
-    int32_t result;
-
-    if (value == ft_nullptr)
-    {
-        if (fallback_used != ft_nullptr)
-            *fallback_used = 0;
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    uint64_t wide_value = 0;
-    result = rng_secure_uint64(&wide_value, fallback_used);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    *value = static_cast<uint32_t>(wide_value & 0xFFFFFFFFu);
-    return (FT_ERR_SUCCESS);
+    return (rng_secure_integer(value, fallback_used));
 }

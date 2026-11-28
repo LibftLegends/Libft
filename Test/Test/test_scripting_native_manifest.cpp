@@ -54,6 +54,7 @@ FT_TEST(test_scripting_native_manifest_hash_is_deterministic_and_pointer_indepen
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         second.get_native_manifest_hash(&second_hash));
     FT_ASSERT_EQ(first_hash, second_hash);
+    FT_ASSERT_EQ(UINT64_C(0x93AEE23179C29EAA), first_hash);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second.destroy());
     return (1);
@@ -114,5 +115,45 @@ FT_TEST(test_scripting_native_manifest_hash_rejects_invalid_lifecycle_and_output
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED,
         engine.get_native_manifest_hash(&hash));
+    return (1);
+}
+
+FT_TEST(test_scripting_native_lookup_preserves_names_and_ids_across_move)
+{
+    scripting_engine source;
+    scripting_engine destination;
+    char longest_name[FT_SCRIPTING_MAX_NATIVE_NAME_BYTES];
+    char oversized_name[FT_SCRIPTING_MAX_NATIVE_NAME_BYTES + 1U];
+    ft_memset(longest_name, 'x', sizeof(longest_name) - 1U);
+    longest_name[sizeof(longest_name) - 1U] = '\0';
+    ft_memset(oversized_name, 'x', sizeof(oversized_name) - 1U);
+    oversized_name[sizeof(oversized_name) - 1U] = '\0';
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    uint32_t native_id = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_native("alpha",
+        scripting_manifest_native_a, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(0U, native_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_native(longest_name,
+        scripting_manifest_native_a, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(1U, native_id);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, source.register_native(oversized_name,
+        scripting_manifest_native_a, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(1U, native_id);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, source.register_native(longest_name,
+        scripting_manifest_native_b, ft_nullptr, &native_id));
+    uint64_t source_hash;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_native_manifest_hash(&source_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    uint64_t destination_hash;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_native_manifest_hash(&destination_hash));
+    FT_ASSERT_EQ(source_hash, destination_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.find_native("alpha!", 5U, &native_id));
+    FT_ASSERT_EQ(0U, native_id);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, destination.find_native("alpha!", 6U, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.find_native(longest_name,
+        FT_SCRIPTING_MAX_NATIVE_NAME_BYTES - 1U, &native_id));
+    FT_ASSERT_EQ(1U, native_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, source.find_native("alpha", 5U, &native_id));
     return (1);
 }

@@ -15,16 +15,18 @@ class game_experience_table
     #endif
         int32_t             *_levels;
         int32_t             _count;
+        int32_t             _invalid_pairs;
         static thread_local int32_t _last_error;
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
 
         static int32_t set_error(int32_t error_code) noexcept;
-        ft_bool is_valid(int32_t count, const int32_t *array) const noexcept;
+        int32_t count_invalid_pairs(int32_t count) const noexcept;
         int32_t resize_locked(int32_t new_count,
-                          ft_bool validate_existing = FT_TRUE) noexcept;
+                          ft_bool retain_levels = FT_TRUE) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        friend class game_character;
 
     public:
         game_experience_table() noexcept;

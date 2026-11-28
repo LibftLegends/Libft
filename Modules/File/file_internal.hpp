@@ -10,6 +10,8 @@ typedef int32_t (*file_replace_write_callback)(int32_t descriptor, void *context
 // The callback writes to a fresh sibling file. Ownership of the descriptor stays here.
 int32_t file_replace_stream(const char *path, ft_bool durable,
     file_replace_write_callback write_contents, void *context);
+int32_t file_write_all_atomic_stream(const char *path, ft_size_t size,
+    file_replace_write_callback write_contents, void *context);
 ft_bool file_directory_is_dot_entry(const char *name) noexcept;
 int32_t file_directory_read_entry(file_dir *stream, const file_dirent **entry_out);
 ft_bool file_directory_prefix_matches(const char *path, const ft_string &prefix) noexcept;

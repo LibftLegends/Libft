@@ -8,6 +8,7 @@
 #include "../Template/function.hpp"
 #include "../Template/vector.hpp"
 #include "../Template/map.hpp"
+#include "../Template/shared_ptr.hpp"
 #include "../CPP_class/class_string.hpp"
 #include "../Basic/basic.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -23,6 +24,7 @@ struct ft_game_hook_metadata
     ft_string argument_contract;
 
     int32_t initialize(const ft_game_hook_metadata &other) noexcept;
+    int32_t initialize(ft_game_hook_metadata &&other) noexcept;
     int32_t destroy() noexcept;
 };
 
@@ -43,6 +45,7 @@ struct ft_game_hook_listener_entry
     ft_function<void(ft_game_hook_context&)> callback;
 
     int32_t initialize(const ft_game_hook_listener_entry &other) noexcept;
+    int32_t initialize(ft_game_hook_listener_entry &&other) noexcept;
     int32_t destroy() noexcept;
 };
 
@@ -61,10 +64,25 @@ class game_hooks
     #else
         private:
     #endif
+        using hook_callback = ft_function<void(ft_game_hook_context &)>;
+        using callback_owner = ft_sharedptr<hook_callback>;
+
+        struct listener_record
+        {
+            ft_game_hook_metadata metadata;
+            int32_t priority;
+            callback_owner callback;
+
+            int32_t initialize(const listener_record &other) noexcept;
+            int32_t initialize(listener_record &&other) noexcept;
+            int32_t set_callback(hook_callback &&function) noexcept;
+            int32_t clone_callback() noexcept;
+        };
+
         ft_function<void(game_character&, game_item&)> _legacy_item_crafted;
         ft_function<void(game_character&, int32_t, uint8_t)> _legacy_character_damaged;
         ft_function<void(game_world&, game_event&)> _legacy_event_triggered;
-        ft_map<ft_string, ft_vector<ft_game_hook_listener_entry> > _listener_catalog;
+        ft_map<ft_string, ft_vector<listener_record> > _listener_catalog;
         ft_vector<ft_game_hook_metadata> _catalog_metadata;
         pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
@@ -78,8 +96,24 @@ class game_hooks
 
         void remove_listener_unlocked(const ft_string &hook_identifier,
             const ft_string &listener_name) noexcept;
-        void insert_listener_unlocked(const ft_game_hook_listener_entry &entry) noexcept;
-        void append_metadata_unlocked(const ft_game_hook_metadata &metadata) noexcept;
+        ft_size_t find_metadata_index_unlocked(const ft_string &hook_identifier,
+            const ft_string &listener_name) const noexcept;
+        void insert_listener_unlocked(listener_record &entry) noexcept;
+        int32_t insert_callback_unlocked(listener_record &entry,
+            ft_bool &replaced) noexcept;
+        int32_t clone_listener_callbacks_unlocked() noexcept;
+        int32_t move_catalog_metadata_unlocked(game_hooks &other) noexcept;
+        void invoke_listeners(const ft_vector<listener_record> &listeners,
+            ft_bool lock_acquired, ft_game_hook_context &context) const noexcept;
+        template <typename Callback>
+        void set_legacy_callback(Callback &stored_callback, Callback &&callback,
+            hook_callback (*make_adapter)(Callback &&) noexcept, const char *hook_identifier,
+            const char *listener_name, const char *description, const char *argument_contract) noexcept;
+        template <typename Callback>
+        Callback get_legacy_callback(const Callback &stored_callback) const noexcept;
+        template <typename Identifier>
+        void invoke_hook_by_key(const Identifier &identifier,
+            ft_game_hook_context &context) const noexcept;
 
     public:
         game_hooks() noexcept;
@@ -92,6 +126,7 @@ class game_hooks
         int32_t initialize() noexcept;
         int32_t initialize(const game_hooks &other) noexcept;
         int32_t initialize(game_hooks &&other) noexcept;
+        // Moving requires exclusive access to both registries.
         int32_t move(game_hooks &other) noexcept;
         int32_t destroy() noexcept;
         int32_t enable_thread_safety() noexcept;
@@ -118,6 +153,7 @@ class game_hooks
             const ft_string &listener_name) noexcept;
         ft_vector<ft_game_hook_metadata> *get_catalog_metadata() const noexcept;
         ft_vector<ft_game_hook_metadata> *get_catalog_metadata_for(const ft_string &hook_identifier) const noexcept;
+        // Listener changes take effect for subsequent invocations.
         void invoke_hook(const ft_string &hook_identifier,
             ft_game_hook_context &context) const noexcept;
 

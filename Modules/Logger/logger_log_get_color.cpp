@@ -6,5 +6,5 @@
 
 ft_bool ft_log_get_color()
 {
-    return (g_use_color);
+    return (g_use_color.load(std::memory_order_relaxed));
 }

@@ -89,6 +89,51 @@ FT_TEST(test_game_crafting_locked_recipe_requires_unlock)
     return (1);
 }
 
+FT_TEST(test_game_crafting_legacy_preserves_slots_and_advances_revision)
+{
+    game_crafting crafting;
+    game_inventory inventory;
+    ft_sharedptr<game_item> output;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.initialize(4, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, register_test_recipe(crafting, 51, 7, 2, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, make_crafting_test_item(8, 1, &output));
+    game_inventory_snapshot snapshot = {};
+    snapshot.capacity = 4U;
+    snapshot.next_slot = 512;
+    snapshot.used_slots = 3U;
+    snapshot.current_weight = 6;
+    snapshot.revision = 37U;
+    game_inventory_item_snapshot item = {};
+    item.slot = 400;
+    item.item_id = 7;
+    item.stack_size = 3;
+    item.max_stack = 64;
+    item.width = 1;
+    item.height = 1;
+    snapshot.items.push_back(item);
+    item.slot = 7;
+    item.stack_size = 1;
+    snapshot.items.push_back(item);
+    item.slot = 14;
+    item.item_id = 9;
+    item.stack_size = 2;
+    snapshot.items.push_back(item);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.restore_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, crafting.craft_item(inventory, 51, output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, inventory.get_snapshot(snapshot));
+    FT_ASSERT_EQ(4U, snapshot.items.size());
+    FT_ASSERT_EQ(400, snapshot.items[0].slot);
+    FT_ASSERT_EQ(1, snapshot.items[0].stack_size);
+    FT_ASSERT_EQ(7, snapshot.items[1].slot);
+    FT_ASSERT_EQ(1, snapshot.items[1].stack_size);
+    FT_ASSERT_EQ(14, snapshot.items[2].slot);
+    FT_ASSERT_EQ(512, snapshot.items[3].slot);
+    FT_ASSERT_EQ(5, snapshot.current_weight);
+    FT_ASSERT_EQ(38U, snapshot.revision);
+    return (1);
+}
+
 FT_TEST(test_game_crafting_failed_output_keeps_inputs)
 {
     game_crafting crafting;

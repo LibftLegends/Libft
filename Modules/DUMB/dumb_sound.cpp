@@ -40,46 +40,6 @@ static uint32_t destroy_recursive_mutex(pt_recursive_mutex **mutex_pointer)
     return (destroy_error);
 }
 
-static int32_t lock_ordered_mutexes(pt_recursive_mutex *mutex_left,
-    pt_recursive_mutex *mutex_right, pt_recursive_mutex **first_mutex,
-    pt_recursive_mutex **second_mutex)
-{
-    int32_t lock_error;
-
-    if (reinterpret_cast<uintptr_t>(mutex_left)
-        <= reinterpret_cast<uintptr_t>(mutex_right))
-    {
-        *first_mutex = mutex_left;
-        *second_mutex = mutex_right;
-    }
-    else
-    {
-        *first_mutex = mutex_right;
-        *second_mutex = mutex_left;
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(*first_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (*second_mutex == *first_mutex)
-        return (FT_ERR_SUCCESS);
-    lock_error = pt_recursive_mutex_lock_if_not_null(*second_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(*first_mutex);
-        return (lock_error);
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static void unlock_ordered_mutexes(pt_recursive_mutex *first_mutex,
-    pt_recursive_mutex *second_mutex)
-{
-    if (second_mutex != first_mutex)
-        (void)pt_recursive_mutex_unlock_if_not_null(second_mutex);
-    (void)pt_recursive_mutex_unlock_if_not_null(first_mutex);
-    return ;
-}
-
 ft_sound_device::ft_sound_device(void)
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
@@ -147,43 +107,6 @@ int32_t ft_sound_device::initialize(const ft_sound_device &other)
 
 int32_t ft_sound_device::initialize(ft_sound_device &&other)
 {
-    uint32_t destroy_error;
-
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state,
-            "ft_sound_device::initialize(ft_sound_device &&) source",
-            "called with uninitialised source object");
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (this == &other)
-        return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        {
-            destroy_error = this->destroy();
-            if (destroy_error != FT_ERR_SUCCESS)
-                return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_SUCCESS);
-    }
-    if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state,
-            "ft_sound_device::initialize(ft_sound_device &&) source",
-            "called with source object that is not initialised");
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
-    if (this->initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
     return (this->move(other));
 }
 
@@ -201,12 +124,6 @@ int32_t ft_sound_device::destroy(void)
 
 int32_t ft_sound_device::move(ft_sound_device &other)
 {
-    int32_t lock_error;
-    int32_t destroy_error;
-    pt_recursive_mutex *first_mutex;
-    pt_recursive_mutex *second_mutex;
-    pt_recursive_mutex *old_destination_mutex;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "ft_sound_device::move source",
@@ -230,32 +147,21 @@ int32_t ft_sound_device::move(ft_sound_device &other)
     }
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        destroy_error = this->destroy();
+        const int32_t destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
             return (destroy_error);
     }
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        if (this->initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_STATE);
-    }
-    lock_error = lock_ordered_mutexes(this->_mutex, other._mutex,
-        &first_mutex, &second_mutex);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    pt_recursive_mutex *source_mutex = other._mutex;
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(source_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
         return (lock_error);
-    }
-    old_destination_mutex = this->_mutex;
-    this->_mutex = other._mutex;
+
+    this->_mutex = source_mutex;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._mutex = ft_nullptr;
-    unlock_ordered_mutexes(first_mutex, second_mutex);
-    if (old_destination_mutex != ft_nullptr
-        && old_destination_mutex != this->_mutex)
-    {
-        (void)destroy_recursive_mutex(&old_destination_mutex);
-    }
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    (void)pt_recursive_mutex_unlock_if_not_null(source_mutex);
     return (FT_ERR_SUCCESS);
 }
 

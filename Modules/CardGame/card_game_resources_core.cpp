@@ -45,8 +45,10 @@ int32_t card_game_resource_ledger::move(
     this->_pool_count = other._pool_count;
     this->_unit_count = other._unit_count;
     this->_next_unit_id = other._next_unit_id;
-    ft_memcpy(this->_pools, other._pools, sizeof(this->_pools));
-    ft_memcpy(this->_units, other._units, sizeof(this->_units));
+    ft_memcpy(this->_pools, other._pools,
+        this->_pool_count * sizeof(*this->_pools));
+    ft_memcpy(this->_units, other._units,
+        this->_unit_count * sizeof(*this->_units));
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (other.destroy());
 }
@@ -79,6 +81,11 @@ int32_t card_game_resource_ledger::find_unit(uint32_t unit_id,
 
     if (index == ft_nullptr || unit_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    if (unit_id <= this->_unit_count && this->_units[unit_id - 1U].unit_id == unit_id)
+    {
+        *index = unit_id - 1U;
+        return (FT_ERR_SUCCESS);
+    }
     current_index = 0U;
     while (current_index < this->_unit_count)
     {
@@ -104,45 +111,6 @@ ft_bool card_game_resource_ledger::unit_matches(
     if ((unit.tags & requirement.forbidden_tags) != 0U)
         return (FT_FALSE);
     return (FT_TRUE);
-}
-
-int32_t card_game_resource_ledger::rebuild_pool(uint32_t pool_index) noexcept
-{
-    uint32_t unit_index;
-    uint64_t current_amount;
-    uint64_t locked_amount;
-    uint64_t temporary_amount;
-
-    if (pool_index >= this->_pool_count)
-        return (FT_ERR_OUT_OF_RANGE);
-    current_amount = 0U;
-    locked_amount = 0U;
-    temporary_amount = 0U;
-    unit_index = 0U;
-    while (unit_index < this->_unit_count)
-    {
-        if (this->_units[unit_index].owner_id
-            == this->_pools[pool_index].owner_id
-            && this->_units[unit_index].resource_type_id
-            == this->_pools[pool_index].resource_type_id)
-        {
-            current_amount += this->_units[unit_index].amount;
-            locked_amount += this->_units[unit_index].locked_amount;
-            if (this->_units[unit_index].temporary != FT_FALSE)
-                temporary_amount += this->_units[unit_index].amount;
-        }
-        unit_index += 1U;
-    }
-    if (current_amount > UINT32_MAX || locked_amount > UINT32_MAX
-        || temporary_amount > UINT32_MAX)
-        return (FT_ERR_OUT_OF_RANGE);
-    this->_pools[pool_index].current_amount =
-        static_cast<uint32_t>(current_amount);
-    this->_pools[pool_index].locked_amount =
-        static_cast<uint32_t>(locked_amount);
-    this->_pools[pool_index].temporary_amount =
-        static_cast<uint32_t>(temporary_amount);
-    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_resource_ledger::register_pool(uint32_t owner_id,

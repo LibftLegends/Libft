@@ -37,9 +37,11 @@ static int32_t benchmark_chunk_copy(game_voxel_chunk &chunk)
     return (chunk.write_block(2, 17, 3, 0U));
 }
 
-static int32_t benchmark_frustum(chunk_mesh &mesh)
+static int32_t benchmark_frustum(chunk_mesh &mesh, ft_bool thread_safe)
 {
-    constexpr uint32_t ITERATIONS = 1000000U;
+    uint32_t iterations = 1000000U;
+    if (thread_safe != FT_FALSE)
+        iterations = 60000U;
     geometry_frustum frustum;
     if (frustum.planes[0].normal.initialize(1, 0, 0)
         || frustum.planes[1].normal.initialize(-1, 0, 0)
@@ -52,6 +54,8 @@ static int32_t benchmark_frustum(chunk_mesh &mesh)
     while (index < 6U)
     {
         frustum.planes[index].distance = 1.0;
+        if (thread_safe != FT_FALSE && frustum.planes[index].normal.enable_thread_safety())
+            return (1);
         ++index;
     }
     mesh.has_occupied_bounds = FT_TRUE;
@@ -59,14 +63,17 @@ static int32_t benchmark_frustum(chunk_mesh &mesh)
     uint32_t visible = 0U;
     index = 0U;
     const auto started = benchmark_clock::now();
-    while (index < ITERATIONS)
+    while (index < iterations)
     {
         visible += chunk_mesh_intersects_frustum(frustum, mesh,
             -static_cast<int32_t>(index % 4U), 0, 0);
         ++index;
     }
-    print_average("voxel_frustum_cull", started, ITERATIONS);
-    return (visible != ITERATIONS / 4U * 3U);
+    if (thread_safe == FT_FALSE)
+        print_average("voxel_frustum_cull", started, iterations);
+    else
+        print_average("voxel_frustum_cull_locked", started, iterations);
+    return (visible != iterations / 4U * 3U);
 }
 
 static int32_t benchmark_checkerboard(game_voxel_chunk &chunk, chunk_mesh &mesh)
@@ -109,14 +116,82 @@ static int32_t benchmark_checkerboard(game_voxel_chunk &chunk, chunk_mesh &mesh)
     return (0);
 }
 
+static int32_t benchmark_sparse_mesh(game_voxel_chunk &chunk, chunk_mesh &mesh)
+{
+    constexpr uint32_t ITERATIONS = 100U;
+    if (chunk.write_block(1, 15, 1, VOXEL_GENERATOR_STONE_BLOCK)
+        || chunk.write_block(1, 48, 1, VOXEL_GENERATOR_STONE_BLOCK)
+        || chunk.write_block(1, 200, 1, VOXEL_GENERATOR_LADDER_BLOCK))
+        return (1);
+    const auto started = benchmark_clock::now();
+    uint32_t iteration = 0U;
+    while (iteration < ITERATIONS)
+    {
+        if (chunk_mesh_generate_from_chunk(mesh, chunk))
+            return (1);
+        iteration += 1U;
+    }
+    print_average("voxel_mesh_sparse", started, ITERATIONS);
+    if (mesh.vertices.size() != 56U || mesh.indices.size() != 84U
+        || mesh.vertices[48].block_id != VOXEL_GENERATOR_LADDER_BLOCK)
+        return (1);
+    if (chunk.write_block(1, 15, 1, GAME_VOXEL_AIR_BLOCK)
+        || chunk.write_block(1, 48, 1, GAME_VOXEL_AIR_BLOCK)
+        || chunk.write_block(1, 200, 1, GAME_VOXEL_AIR_BLOCK))
+        return (1);
+    return (0);
+}
+
+static int32_t benchmark_local_mesh_replacement()
+{
+    constexpr uint32_t ITERATIONS = 65U;
+    game_voxel_chunk chunk;
+    chunk_mesh mesh;
+    chunk_mesh replacement;
+    const chunk_mesh_bounds bounds = {0, 0, 0, 3, 3, 3};
+    if (chunk.initialize() || chunk_mesh_initialize(mesh) || chunk_mesh_initialize(replacement)
+        || chunk.write_block(1, 1, 1, VOXEL_GENERATOR_STONE_BLOCK))
+        return (1);
+    uint32_t index = 0U;
+    while (index < 280U)
+    {
+        const int32_t x = 5 + static_cast<int32_t>(index % 5U) * 2;
+        const int32_t y = 5 + static_cast<int32_t>((index / 5U) % 8U) * 2;
+        const int32_t z = 1 + static_cast<int32_t>(index / 40U) * 2;
+        if (chunk.write_block(x, y, z, VOXEL_GENERATOR_STONE_BLOCK))
+            return (1);
+        index += 1U;
+    }
+    if (chunk_mesh_generate_from_chunk(mesh, chunk)
+        || chunk.write_block(1, 1, 1, VOXEL_GENERATOR_WATER_BLOCK)
+        || chunk_mesh_generate_from_chunk_in_bounds(replacement, chunk, bounds))
+        return (1);
+    const auto started = benchmark_clock::now();
+    uint32_t iteration = 0U;
+    while (iteration < ITERATIONS)
+    {
+        if (chunk_mesh_replace_in_bounds(mesh, replacement, bounds))
+            return (1);
+        iteration += 1U;
+    }
+    print_average("voxel_mesh_replace", started, ITERATIONS);
+    if (mesh.solid_indices.size() != 280U * 36U || mesh.water_indices.size() != 6U)
+        return (1);
+    if (chunk_mesh_destroy(replacement) || chunk_mesh_destroy(mesh) || chunk.destroy())
+        return (1);
+    return (0);
+}
+
 int main()
 {
     game_voxel_chunk chunk;
     chunk_mesh mesh;
     if (chunk.initialize() || chunk_mesh_initialize(mesh))
         return (1);
-    const ft_bool failed = benchmark_chunk_copy(chunk) || benchmark_frustum(mesh)
-        || benchmark_checkerboard(chunk, mesh);
+    const ft_bool failed = benchmark_chunk_copy(chunk)
+        || benchmark_frustum(mesh, FT_FALSE) || benchmark_frustum(mesh, FT_TRUE)
+        || benchmark_sparse_mesh(chunk, mesh) || benchmark_checkerboard(chunk, mesh)
+        || benchmark_local_mesh_replacement();
     const int32_t mesh_error = chunk_mesh_destroy(mesh);
     const int32_t chunk_error = chunk.destroy();
     return (failed || mesh_error || chunk_error);

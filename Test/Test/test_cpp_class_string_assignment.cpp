@@ -68,3 +68,23 @@ FT_TEST(test_cpp_class_string_self_append_preserves_source)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.destroy());
     return (1);
 }
+FT_TEST(test_ft_string_assign_handles_empty_and_self_with_locks)
+{
+    ft_string target;
+    ft_string source;
+    ft_string empty;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.initialize("reserved text"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize("short"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, empty.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.assign(source));
+    FT_ASSERT_EQ(5U, target.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.assign(target));
+    FT_ASSERT_EQ(5U, target.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.assign(empty));
+    FT_ASSERT_EQ(0U, target.size());
+    FT_ASSERT_EQ('\0', target.c_str()[0]);
+    FT_ASSERT_EQ(FT_TRUE, target.is_thread_safe());
+    return (1);
+}

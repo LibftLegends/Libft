@@ -67,3 +67,32 @@ FT_TEST(test_cli_generate_completion_script_includes_nested_paths)
     FT_ASSERT(std::strstr(buffer, "--no-verbose") != ft_nullptr);
     return (1);
 }
+
+FT_TEST(test_cli_generate_completion_script_bounds_nested_paths)
+{
+    cli_command command;
+    cli_command parents[1];
+    cli_command children[2];
+    char parent_name[254];
+    char buffer[4096];
+
+    ft_memset(parent_name, 'p', sizeof(parent_name) - 1);
+    parent_name[sizeof(parent_name) - 1] = '\0';
+    reset_command(&command, "tool", ft_nullptr, 0);
+    reset_command(parents, parent_name, ft_nullptr, 0);
+    reset_command(children, "first", ft_nullptr, 0);
+    reset_command(children + 1, "x", ft_nullptr, 0);
+    command.subcommands = parents;
+    command.subcommand_count = 1;
+    parents[0].subcommands = children;
+    parents[0].subcommand_count = 2;
+
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE,
+        cli_generate_completion_script(&command, "tool", buffer, sizeof(buffer)));
+    parent_name[249] = '\0';
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        cli_generate_completion_script(&command, "tool", buffer, sizeof(buffer)));
+    FT_ASSERT(std::strstr(buffer, ".first\")") != ft_nullptr);
+    FT_ASSERT(std::strstr(buffer, ".x\")") != ft_nullptr);
+    return (1);
+}

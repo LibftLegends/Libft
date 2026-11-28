@@ -3,6 +3,7 @@
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/File/file_utils.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include "test_cma_failure_injection.hpp"
 
 static card_game_replay_event card_game_replay_test_event(uint64_t sequence,
     uint32_t player_id) noexcept
@@ -153,6 +154,69 @@ FT_TEST(test_card_game_replay_file_round_trip_is_transactional)
     return (1);
 }
 
+FT_TEST(test_card_game_replay_presizes_restore_and_retains_session_validation)
+{
+    constexpr uint32_t COUNT = 300U;
+    static uint8_t serialized[100000];
+    static test_cma_failure_controller controller;
+    card_game_replay_header header{};
+    header.visibility_mode = CARD_GAME_REPLAY_FULL_INFORMATION;
+    card_game_replay source;
+    card_game_replay restored;
+    card_game_replay projected;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(header));
+    uint32_t index = 0U;
+    while (index < COUNT)
+    {
+        card_game_replay_event event = card_game_replay_test_event(index + 1U, 1U);
+        if (index % 2U != 0U)
+            event.session_id = 23U;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.append(event));
+        ++index;
+    }
+    uint32_t size = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize(serialized, sizeof(serialized), &size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_begin(controller));
+    const int32_t result = restored.deserialize(serialized, size);
+    const ft_size_t allocations = test_cma_failure_controller_attempt_count(
+        controller, TEST_CMA_FAILURE_ALLOCATE);
+    card_game_replay_event next = card_game_replay_test_event(COUNT + 1U, 1U);
+    next.session_id = 24U;
+    const int32_t rejected_session = restored.append(next);
+    const uint32_t restored_count = restored.event_count();
+    (void)restored.destroy();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_destroy(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(1U, allocations);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, rejected_session);
+    FT_ASSERT_EQ(COUNT, restored_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.project_player_view(1U, projected));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, projected.append(next));
+    next.session_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, projected.append(next));
+
+    const char *path = "card_game_replay_stream_test.bin";
+    (void)file_delete(path);
+    cma_set_alloc_limit(1024U);
+    const int32_t saved = source.save_file(path);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, saved);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.append(next));
+    cma_set_alloc_limit(1U);
+    const int32_t rejected_save = source.save_file(path);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, rejected_save);
+    ft_string file_data;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_data.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(path, file_data));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    FT_ASSERT_EQ(size, file_data.size());
+    FT_ASSERT_EQ(0, ft_memcmp(serialized, file_data.data(), size));
+    return (1);
+}
+
 FT_TEST(test_card_game_replay_reconstructs_authoritative_commands)
 {
     card_game_engine source;
@@ -299,6 +363,10 @@ FT_TEST(test_card_game_submit_action_is_idempotent_and_serialized)
         &restored_record));
     FT_ASSERT_EQ(action.request_id, restored_record.request_id);
     FT_ASSERT_EQ(action.session_id, restored_record.session_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.submit_action(action, &action_result,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_TRUE, action_result.replayed);
+    FT_ASSERT_EQ(stable_hash, action_result.state_hash);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.initialize(rules));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.register_phase(first_phase));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.register_phase(second_phase));
@@ -312,6 +380,85 @@ FT_TEST(test_card_game_submit_action_is_idempotent_and_serialized)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, target.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_command_journals_reject_duplicates_and_invalid_replay_hashes)
+{
+    card_game_engine source;
+    card_game_engine target;
+    const card_game_rules rules{2U, 2U, 20U, 1U, 3U, 10U};
+    const card_game_phase_definition phase{
+        1U, 1U, 0U, 0U, CARD_GAME_COMMAND_ADVANCE_PHASE};
+    card_game_action action{};
+    card_game_action_result result{};
+    card_game_command_record records[2];
+    uint8_t journal[FT_CARD_GAME_REPLAY_HEADER_BYTES
+        + 2U * FT_CARD_GAME_REPLAY_V13_RECORD_BYTES];
+    uint32_t size;
+    uint32_t count;
+    uint64_t before_hash;
+    uint64_t after_hash;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_phase(phase));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(1U));
+    action.schema_version = 2U;
+    action.request_id = 11U;
+    action.command.command_sequence = 1U;
+    action.command.type = CARD_GAME_INTENT_ADVANCE_PHASE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_action(action, &result, ft_nullptr));
+    action.schema_version = 3U;
+    action.session_id = 7U;
+    action.command.command_sequence = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.submit_action(action, &result, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_command_record(0U, &records[0]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_command_record(1U, &records[1]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.serialize_command_records(
+        journal, sizeof(journal), &size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.register_phase(phase));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_state_hash(&before_hash));
+    records[1].session_id = 0U;
+    cma_set_alloc_limit(1U);
+    const int32_t replay_error = target.replay_command_records(records, 2U,
+        ft_nullptr);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, replay_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_state_hash(&after_hash));
+    FT_ASSERT_EQ(before_hash, after_hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_command_record_count(&count));
+    FT_ASSERT_EQ(0U, count);
+    records[1].session_id = 7U;
+    uint64_t *hashes[] = {&records[1].rules_hash, &records[1].state_hash_before,
+        &records[1].state_hash_after};
+    uint32_t hash_index = 0U;
+    while (hash_index < sizeof(hashes) / sizeof(hashes[0]))
+    {
+        *hashes[hash_index] ^= 1U;
+        FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
+            target.replay_command_records(records, 2U, ft_nullptr));
+        *hashes[hash_index] ^= 1U;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_state_hash(&after_hash));
+        FT_ASSERT_EQ(before_hash, after_hash);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_command_record_count(&count));
+        FT_ASSERT_EQ(0U, count);
+        ++hash_index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.replay_command_records(records, 2U,
+        ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.deserialize_command_records(journal, size));
+    constexpr uint32_t SESSION_OFFSET = 2U * sizeof(uint64_t);
+    ft_bzero(journal + FT_CARD_GAME_REPLAY_HEADER_BYTES
+        + FT_CARD_GAME_REPLAY_V13_RECORD_BYTES + SESSION_OFFSET,
+        sizeof(uint64_t));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        target.deserialize_command_records(journal, size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_command_record_count(&count));
+    FT_ASSERT_EQ(2U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, target.get_command_record(1U, &records[1]));
+    FT_ASSERT_EQ(7U, records[1].session_id);
     return (1);
 }
 

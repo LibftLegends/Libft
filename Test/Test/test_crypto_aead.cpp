@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Crypto/crypto_aead.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Errno/errno.hpp"
 
 FT_TEST(test_crypto_aead_empty_and_block_boundary_roundtrips)
@@ -57,6 +58,34 @@ FT_TEST(test_crypto_aead_empty_and_block_boundary_roundtrips)
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ciphertext.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, recovered.destroy());
+    return (1);
+}
+
+FT_TEST(test_crypto_aead_authenticates_short_spans_without_heap)
+{
+    const uint8_t key[32] = {0x11U};
+    const uint8_t nonce[12] = {0x22U};
+    const uint8_t associated_data[] = {1U, 2U, 3U};
+    const uint8_t plaintext[] = {0x81U, 0x82U, 0x83U};
+    uint8_t tag[16];
+    ft_vector<uint8_t> ciphertext;
+    ft_vector<uint8_t> recovered;
+    const int32_t limit_result = cma_set_alloc_limit(1U);
+    const int32_t seal_result = crypto_chacha20_poly1305_seal(key, nonce,
+        associated_data, sizeof(associated_data), plaintext, sizeof(plaintext),
+        ciphertext, tag);
+    int32_t open_result = FT_ERR_INVALID_STATE;
+    if (seal_result == FT_ERR_SUCCESS)
+        open_result = crypto_chacha20_poly1305_open(key, nonce,
+            associated_data, sizeof(associated_data), ciphertext.begin(),
+            ciphertext.size(), tag, recovered);
+    const int32_t reset_result = cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, limit_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reset_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, seal_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, open_result);
+    FT_ASSERT_EQ(sizeof(plaintext), recovered.size());
+    FT_ASSERT_EQ(0, ft_memcmp(plaintext, recovered.begin(), sizeof(plaintext)));
     return (1);
 }
 

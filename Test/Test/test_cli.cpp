@@ -70,6 +70,52 @@ FT_TEST(test_cli_parse_typed_long_and_short_options)
     return (1);
 }
 
+FT_TEST(test_cli_parse_inline_long_option_requires_exact_match)
+{
+    cli_option options[4];
+    cli_command command;
+    reset_option(options + 0, "tar", '\0', CLI_OPTION_STRING);
+    reset_option(options + 1, "target-more", '\0', CLI_OPTION_STRING);
+    reset_option(options + 2, "targez", '\0', CLI_OPTION_STRING);
+    reset_option(options + 3, "target", '\0', CLI_OPTION_STRING);
+    reset_command(&command, "tool", options, 4);
+    const char *arguments[] = {"tool", "--target=world=backup"};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cli_parse(&command, 2, arguments));
+    FT_ASSERT_EQ(FT_FALSE, options[0].present);
+    FT_ASSERT_EQ(FT_FALSE, options[1].present);
+    FT_ASSERT_EQ(FT_FALSE, options[2].present);
+    FT_ASSERT_STR_EQ("world=backup", options[3].value_string);
+    arguments[1] = "--targ=world";
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, cli_parse(&command, 2, arguments));
+    return (1);
+}
+
+FT_TEST(test_cli_parse_integer_boundaries_rejects_overflow)
+{
+    cli_option options[2];
+    cli_command command;
+    reset_option(options + 0, "signed", '\0', CLI_OPTION_INT64);
+    reset_option(options + 1, "unsigned", '\0', CLI_OPTION_UINT64);
+    reset_command(&command, "tool", options, 2);
+    const char *arguments[] = {"tool", "--signed=-9223372036854775808",
+        "--unsigned=18446744073709551615"};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cli_parse(&command, 3, arguments));
+    FT_ASSERT_EQ(FT_LLONG_MIN, options[0].value_int64);
+    FT_ASSERT_EQ(UINT64_MAX, options[1].value_uint64);
+    arguments[1] = "--signed=+9223372036854775807";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cli_parse(&command, 3, arguments));
+    FT_ASSERT_EQ(FT_LLONG_MAX, options[0].value_int64);
+    arguments[2] = "--unsigned=18446744073709551616";
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, cli_parse(&command, 3, arguments));
+    arguments[1] = "--signed=-9223372036854775809";
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, cli_parse(&command, 2, arguments));
+    arguments[1] = "--signed=9223372036854775808";
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, cli_parse(&command, 2, arguments));
+    arguments[1] = "--signed= 1";
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, cli_parse(&command, 2, arguments));
+    return (1);
+}
+
 FT_TEST(test_cli_parse_env_and_default_values)
 {
     cli_option options[2];

@@ -65,6 +65,59 @@ FT_TEST(test_card_game_engine_deck_operations_preserve_order)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_deck_remove_erases_first_matching_definition)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_deck_card card{};
+    card_game_deck_test_rules(rules);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_register_deck_test_cards(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_bottom_instance(0U, 10U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top_instance(0U, 20U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_bottom_instance(0U, 30U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_get_instance(0U, 30U, &card));
+    FT_ASSERT_EQ(30U, card.instance_id);
+    FT_ASSERT_EQ(2U, card.card_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_remove(0U, 2U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.deck_get_instance(0U, 20U, &card));
+    FT_ASSERT_EQ(30U, card.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_inspect(0U, 0U, &card));
+    FT_ASSERT_EQ(10U, card.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_inspect(0U, 1U, &card));
+    FT_ASSERT_EQ(30U, card.instance_id);
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_deck_insert_preserves_global_ids_and_rolls_back_failure)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_deck_card card{};
+    uint32_t shared_instance = 0U;
+    card_game_deck_test_rules(rules);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, card_game_register_deck_test_cards(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        engine.register_zone({7U, 2U, 1U << CARD_GAME_CREATURE, FT_FALSE}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.zone_push_bottom(0U, 7U, 1U, &shared_instance));
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS,
+        engine.deck_push_bottom_instance(1U, shared_instance, 1U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND,
+        engine.deck_push_bottom_instance(1U, shared_instance, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        engine.deck_push_bottom_instance(1U, shared_instance + 1U, 2U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deck_insert_at(0U, 1U, 3U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.deck_push_top(0U, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_bottom(0U, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_inspect(0U, 0U, &card));
+    FT_ASSERT_EQ(shared_instance + 2U, card.instance_id);
+    FT_ASSERT_EQ(3U, card.card_id);
+    return (1);
+}
+
 FT_TEST(test_card_game_engine_custom_instance_snapshot_round_trip)
 {
     card_game_engine source;
@@ -629,6 +682,9 @@ FT_TEST(test_card_game_engine_rejects_conflicting_start_overrides_transactionall
     override_rule.source_id = 202U;
     override_rule.value = 30U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(override_rule));
+    override_rule.source_id = 203U;
+    override_rule.priority = 5U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(override_rule));
     start_config.opening_hand_size = 0U;
     start_config.starting_health = 20U;
     start_config.starting_mana = 5U;
@@ -640,5 +696,32 @@ FT_TEST(test_card_game_engine_rejects_conflicting_start_overrides_transactionall
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(
         override_rule));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_start_override_adds_after_set_with_overflow_check)
+{
+    card_game_engine engine;
+    card_game_rules rules;
+    card_game_deck_test_rules(rules);
+    const card_game_match_start_config config{
+        0U, 1U, 5U, 0U, FT_FALSE, FT_FALSE};
+    const card_game_start_override global_add{
+        1U, CARD_GAME_START_ALL_PLAYERS, CARD_GAME_START_HEALTH,
+        CARD_GAME_START_OVERRIDE_ADD, UINT32_MAX, 0U};
+    const card_game_start_override inactive_add{
+        2U, 1U, CARD_GAME_START_HEALTH, CARD_GAME_START_OVERRIDE_ADD, 1U, 0U};
+    const card_game_start_override scoped_set{
+        3U, 0U, CARD_GAME_START_HEALTH, CARD_GAME_START_OVERRIDE_SET, 0U, 0U};
+    uint32_t health;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(global_add));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(inactive_add));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, engine.start_match(1U, config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(scoped_set));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U, config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(0U, &health));
+    FT_ASSERT_EQ(UINT32_MAX, health);
     return (1);
 }

@@ -392,6 +392,16 @@ void game_goal::add_progress(int32_t delta) noexcept
 }
 
 
+int32_t game_goal::read_completion(ft_bool &completed) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    completed = this->_progress >= this->_target;
+    return (this->unlock_internal(lock_acquired));
+}
+
 game_achievement::game_achievement() noexcept
     : _id(0), _goals(), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
@@ -787,271 +797,211 @@ void game_achievement::set_goals(const ft_map<int32_t, game_goal> &goals) noexce
 
 int32_t game_achievement::get_goal(int32_t id) const noexcept
 {
-    const Pair<int32_t, game_goal> *entry;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t target_value;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::get_goal");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::get_goal");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    int32_t target = 0;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
+        result = this->_goals.visit_value(id, [&target](const game_goal &goal) noexcept
+        {
+            const int32_t value = goal.get_target();
+            const int32_t error = goal.get_error();
+            if (error == FT_ERR_SUCCESS)
+                target = value;
+            return (error);
+        });
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
     }
-    target_value = entry->value.get_target();
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (target_value);
+    this->set_error(result);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (target);
+}
+
+static int32_t insert_missing_goal(ft_map<int32_t, game_goal> &goals,
+    int32_t id, int32_t target, int32_t progress) noexcept
+{
+    game_goal goal;
+    const int32_t result = goal.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (target != 0)
+        goal.set_target(target);
+    if (progress != 0)
+        goal.set_progress(progress);
+    goals.insert(id, goal);
+    return (goals.get_error());
 }
 
 void game_achievement::set_goal(int32_t id, int32_t goal) noexcept
 {
-    Pair<int32_t, game_goal> *entry;
-    game_goal             new_goal;
-    ft_bool                lock_acquired;
-    int32_t                 lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::set_goal");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::set_goal");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
-        if (new_goal.initialize() != FT_ERR_SUCCESS)
+        result = this->_goals.visit_value(id, [goal](game_goal &existing) noexcept
         {
-            (void)this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_INVALID_STATE);
-            return ;
-        }
-        new_goal.set_target(goal);
-        new_goal.set_progress(0);
-        this->_goals.insert(id, new_goal);
-        (void)new_goal.destroy();
+            existing.set_target(goal);
+            return (existing.get_error());
+        });
+        if (result == FT_ERR_NOT_FOUND)
+            result = insert_missing_goal(this->_goals, id, goal, 0);
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-        return ;
     }
-    entry->value.set_target(goal);
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 int32_t game_achievement::get_progress(int32_t id) const noexcept
 {
-    const Pair<int32_t, game_goal> *entry;
-    ft_bool                       lock_acquired;
-    int32_t                        lock_error;
-    int32_t                        progress_value;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::get_progress");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::get_progress");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return (0);
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    int32_t progress = 0;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return (0);
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
+        result = this->_goals.visit_value(id, [&progress](const game_goal &goal) noexcept
+        {
+            const int32_t value = goal.get_progress();
+            const int32_t error = goal.get_error();
+            if (error == FT_ERR_SUCCESS)
+                progress = value;
+            return (error);
+        });
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (0);
     }
-    progress_value = entry->value.get_progress();
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (progress_value);
+    this->set_error(result);
+    return (progress);
 }
 
 void game_achievement::set_progress(int32_t id, int32_t progress) noexcept
 {
-    Pair<int32_t, game_goal> *entry;
-    game_goal             new_goal;
-    ft_bool                lock_acquired;
-    int32_t                 lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::set_progress");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::set_progress");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
-        if (new_goal.initialize() != FT_ERR_SUCCESS)
+        result = this->_goals.visit_value(id, [progress](game_goal &existing) noexcept
         {
-            (void)this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_INVALID_STATE);
-            return ;
-        }
-        new_goal.set_target(0);
-        new_goal.set_progress(progress);
-        this->_goals.insert(id, new_goal);
-        (void)new_goal.destroy();
+            existing.set_progress(progress);
+            return (existing.get_error());
+        });
+        if (result == FT_ERR_NOT_FOUND)
+            result = insert_missing_goal(this->_goals, id, 0, progress);
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-        return ;
     }
-    entry->value.set_progress(progress);
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 void game_achievement::add_progress(int32_t id, int32_t value) noexcept
 {
-    Pair<int32_t, game_goal> *entry;
-    game_goal             new_goal;
-    ft_bool                lock_acquired;
-    int32_t                 lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::add_progress");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::add_progress");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
-        if (new_goal.initialize() != FT_ERR_SUCCESS)
+        result = this->_goals.visit_value(id, [value](game_goal &existing) noexcept
         {
-            (void)this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_INVALID_STATE);
-            return ;
-        }
-        new_goal.set_target(0);
-        new_goal.set_progress(value);
-        this->_goals.insert(id, new_goal);
-        (void)new_goal.destroy();
+            existing.add_progress(value);
+            return (existing.get_error());
+        });
+        if (result == FT_ERR_NOT_FOUND)
+            result = insert_missing_goal(this->_goals, id, 0, value);
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-        return ;
     }
-    entry->value.add_progress(value);
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 ft_bool game_achievement::is_goal_complete(int32_t id) const noexcept
 {
-    const Pair<int32_t, game_goal> *entry;
-
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_bool is_complete_flag;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::is_goal_complete");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::is_goal_complete");
     if (id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return (FT_FALSE);
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool completed = FT_FALSE;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return (FT_FALSE);
-    }
-    entry = this->_goals.find(id);
-    if (entry == this->_goals.end())
-    {
+        result = this->_goals.visit_value(id, [&completed](const game_goal &goal) noexcept
+        {
+            return (goal.read_completion(completed));
+        });
         (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_FALSE);
     }
-    is_complete_flag = (entry->value.get_progress() >= entry->value.get_target());
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (is_complete_flag);
+    this->set_error(result);
+    return (completed);
 }
 
 ft_bool game_achievement::is_complete() const noexcept
 {
-    const Pair<int32_t, game_goal> *goal_entry;
-    const Pair<int32_t, game_goal> *goals_end;
-    ft_size_t                    goals_count;
-    ft_size_t                    index;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_achievement::is_complete");
-    goals_count = this->_goals.size();
-    goals_end = this->_goals.end();
-    if (goals_count == 0)
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_achievement::is_complete");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_TRUE);
-    }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
+        this->set_error(result);
         return (FT_FALSE);
     }
-    goal_entry = goals_end - goals_count;
-    index = 0;
-    while (index < goals_count)
+    ft_bool completed = FT_FALSE;
+    ft_bool goals_locked = FT_FALSE;
+    result = this->_goals.lock(&goals_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        if (goal_entry->value.get_progress() < goal_entry->value.get_target())
+        completed = FT_TRUE;
+        ft_size_t remaining = this->_goals.size();
+        const Pair<int32_t, game_goal> *entry = this->_goals.end();
+        if (remaining > 0U)
+            entry -= remaining;
+        while (remaining > 0U && completed)
         {
-            (void)this->unlock_internal(lock_acquired);
-            this->set_error(FT_ERR_SUCCESS);
-            return (FT_FALSE);
+            result = entry->value.read_completion(completed);
+            if (result != FT_ERR_SUCCESS)
+                completed = FT_FALSE;
+            ++entry;
+            --remaining;
         }
-        goal_entry++;
-        index += 1;
+        (void)this->_goals.unlock(goals_locked);
     }
     (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_TRUE);
+    this->set_error(result);
+    return (completed);
 }

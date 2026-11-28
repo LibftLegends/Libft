@@ -1,4 +1,5 @@
 #include "card_game_internal.hpp"
+#include "../Buffer/buffer_endian.hpp"
 #include "../Errno/errno_internal.hpp"
 #include <cstring>
 #include <limits>
@@ -11,92 +12,108 @@ namespace
 	static const std::size_t CARD_GAME_SNAPSHOT_HEADER_BYTES = 16U;
 	static const std::size_t CARD_GAME_SNAPSHOT_CHECKSUM_BYTES = 8U;
 
-	class card_game_snapshot_writer
-	{
-	  private:
-		std::vector<uint8_t> &_bytes;
+    class card_game_snapshot_writer
+    {
+        private:
+            std::vector<uint8_t> &_bytes;
+            std::size_t _offset;
 
-	  public:
-		explicit card_game_snapshot_writer(std::vector<uint8_t> &bytes) noexcept
-			: _bytes(bytes) {}
+        public:
+            explicit card_game_snapshot_writer(std::vector<uint8_t> &bytes) noexcept;
+            ft_bool u8(uint8_t value) noexcept;
+            ft_bool u32(uint32_t value) noexcept;
+            ft_bool u64(uint64_t value) noexcept;
+            std::size_t offset() const noexcept;
+    };
 
-		bool u8(uint8_t value)
-		{
-			if (_bytes.size() >= FT_CARD_GAME_MAX_SNAPSHOT_BYTES)
-				return (false);
-			_bytes.push_back(value);
-			return (true);
-		}
-		bool u32(uint32_t value)
-		{
-			for (uint32_t shift = 0U; shift < 32U; shift += 8U)
-				if (!u8(static_cast<uint8_t>(value >> shift)))
-					return (false);
-			return (true);
-		}
-		bool u64(uint64_t value)
-		{
-			for (uint32_t shift = 0U; shift < 64U; shift += 8U)
-				if (!u8(static_cast<uint8_t>(value >> shift)))
-					return (false);
-			return (true);
-		}
-	};
+    class card_game_snapshot_reader
+    {
+        private:
+            const uint8_t *_bytes;
+            std::size_t _size;
+            std::size_t _offset;
 
-	class card_game_snapshot_reader
-	{
-	  private:
-		const uint8_t *_bytes;
-		std::size_t _size;
-		std::size_t _offset;
+        public:
+            card_game_snapshot_reader(const uint8_t *bytes, std::size_t size) noexcept;
+            ft_bool u8(uint8_t *value) noexcept;
+            ft_bool u32(uint32_t *value) noexcept;
+            ft_bool u64(uint64_t *value) noexcept;
+            std::size_t remaining() const noexcept;
+    };
 
-	  public:
-		card_game_snapshot_reader(const uint8_t *bytes,
-			std::size_t size) noexcept : _bytes(bytes), _size(size), _offset(0U) {}
+    card_game_snapshot_writer::card_game_snapshot_writer(std::vector<uint8_t> &bytes) noexcept
+        : _bytes(bytes), _offset(0U)
+    {
+        return ;
+    }
 
-		bool u8(uint8_t *value) noexcept
-		{
-			if (value == ft_nullptr || _offset >= _size)
-				return (false);
-			*value = _bytes[_offset++];
-			return (true);
-		}
-		bool u32(uint32_t *value) noexcept
-		{
-			uint32_t index;
-			uint32_t result = 0U;
-			uint8_t byte;
+    ft_bool card_game_snapshot_writer::u8(uint8_t value) noexcept
+    {
+        if (this->_offset == this->_bytes.size())
+            return (FT_FALSE);
+        this->_bytes[this->_offset++] = value;
+        return (FT_TRUE);
+    }
 
-			if (value == ft_nullptr)
-				return (false);
-			for (index = 0U; index < 4U; ++index)
-			{
-				if (!u8(&byte))
-					return (false);
-				result |= static_cast<uint32_t>(byte) << (index * 8U);
-			}
-			*value = result;
-			return (true);
-		}
-		bool u64(uint64_t *value) noexcept
-		{
-			uint32_t index;
-			uint64_t result = 0U;
-			uint8_t byte;
+    ft_bool card_game_snapshot_writer::u32(uint32_t value) noexcept
+    {
+        if (this->_bytes.size() - this->_offset < sizeof(value))
+            return (FT_FALSE);
+        buffer_store_le<uint32_t>(this->_bytes.data() + this->_offset, value);
+        this->_offset += sizeof(value);
+        return (FT_TRUE);
+    }
 
-			if (value == ft_nullptr)
-				return (false);
-			for (index = 0U; index < 8U; ++index)
-			{
-				if (!u8(&byte))
-					return (false);
-				result |= static_cast<uint64_t>(byte) << (index * 8U);
-			}
-			*value = result;
-			return (true);
-		}
-		std::size_t offset() const noexcept { return (_offset); }
-	};
+    ft_bool card_game_snapshot_writer::u64(uint64_t value) noexcept
+    {
+        if (this->_bytes.size() - this->_offset < sizeof(value))
+            return (FT_FALSE);
+        buffer_store_le<uint64_t>(this->_bytes.data() + this->_offset, value);
+        this->_offset += sizeof(value);
+        return (FT_TRUE);
+    }
+
+    std::size_t card_game_snapshot_writer::offset() const noexcept
+    {
+        return (this->_offset);
+    }
+
+    card_game_snapshot_reader::card_game_snapshot_reader(const uint8_t *bytes, std::size_t size) noexcept
+        : _bytes(bytes), _size(size), _offset(0U)
+    {
+        return ;
+    }
+
+    ft_bool card_game_snapshot_reader::u8(uint8_t *value) noexcept
+    {
+        if (value == ft_nullptr || this->_offset == this->_size)
+            return (FT_FALSE);
+        *value = this->_bytes[this->_offset++];
+        return (FT_TRUE);
+    }
+
+    ft_bool card_game_snapshot_reader::u32(uint32_t *value) noexcept
+    {
+        if (value == ft_nullptr || this->_size - this->_offset < sizeof(*value))
+            return (FT_FALSE);
+        *value = buffer_load_le<uint32_t>(this->_bytes + this->_offset);
+        this->_offset += sizeof(*value);
+        return (FT_TRUE);
+    }
+
+    ft_bool card_game_snapshot_reader::u64(uint64_t *value) noexcept
+    {
+        if (value == ft_nullptr || this->_size - this->_offset < sizeof(*value))
+            return (FT_FALSE);
+        *value = buffer_load_le<uint64_t>(this->_bytes + this->_offset);
+        this->_offset += sizeof(*value);
+        return (FT_TRUE);
+    }
+
+    std::size_t card_game_snapshot_reader::remaining() const noexcept
+    {
+        return (this->_size - this->_offset);
+    }
 
 	static uint64_t card_game_snapshot_checksum(const uint8_t *bytes,
 		std::size_t size) noexcept
@@ -403,17 +420,16 @@ namespace
 		return (true);
 	}
 
-	static bool allocate_array(void **memory, uint32_t count,
-		std::size_t element_size) noexcept
-	{
-		if (memory == ft_nullptr || element_size == 0U
-			|| static_cast<uint64_t>(count) * element_size
-				> std::numeric_limits<ft_size_t>::max())
-			return (false);
-		*memory = count == 0U ? ft_nullptr
-			: cma_malloc(count * element_size);
-		return (count == 0U || *memory != ft_nullptr);
-	}
+    template <typename Record>
+    ft_bool allocate_array(Record *&memory, uint32_t count) noexcept
+    {
+        if (count == 0U)
+            return (FT_TRUE);
+        if (count > std::numeric_limits<ft_size_t>::max() / sizeof(Record))
+            return (FT_FALSE);
+        memory = static_cast<Record *>(cma_malloc(static_cast<ft_size_t>(count) * sizeof(Record)));
+        return (memory != ft_nullptr);
+    }
 }
 
 card_game_host_intent_snapshot::card_game_host_intent_snapshot() noexcept
@@ -432,16 +448,39 @@ card_game_host_intent_snapshot::~card_game_host_intent_snapshot() noexcept
 int32_t card_game_host_intent_snapshot::initialize(
     const card_game_host_intent_record *records, uint32_t count) noexcept
 {
-    card_game_host_intent_record *owned_records;
+    return (this->initialize_ranges(records, count, ft_nullptr, 0U));
+}
 
+int32_t card_game_host_intent_snapshot::initialize_ranges(
+    const card_game_host_intent_record *first, uint32_t first_count,
+    const card_game_host_intent_record *second, uint32_t second_count) noexcept
+{
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state,
             "card_game_host_intent_snapshot::initialize",
             "called while object is already initialised");
-    if (count > FT_CARD_GAME_MAX_OPERATIONS
-        || (count != 0U && records == ft_nullptr))
+    if (first_count > FT_CARD_GAME_MAX_OPERATIONS
+        || second_count > FT_CARD_GAME_MAX_OPERATIONS - first_count
+        || (first_count != 0U && first == ft_nullptr)
+        || (second_count != 0U && second == ft_nullptr))
         return (FT_ERR_INVALID_ARGUMENT);
-    owned_records = ft_nullptr;
+    const uint32_t count = first_count + second_count;
+    const int32_t result = this->initialize_storage(count);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (count != 0U)
+    {
+        ft_memcpy(this->_records, first,
+            static_cast<ft_size_t>(first_count) * sizeof(*this->_records));
+        ft_memcpy(this->_records + first_count, second,
+            static_cast<ft_size_t>(second_count) * sizeof(*this->_records));
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_host_intent_snapshot::initialize_storage(uint32_t count) noexcept
+{
+    card_game_host_intent_record *owned_records = ft_nullptr;
     if (count != 0U)
     {
         owned_records = static_cast<card_game_host_intent_record *>(
@@ -452,9 +491,6 @@ int32_t card_game_host_intent_snapshot::initialize(
             this->_initialised_state = FT_CLASS_STATE_DESTROYED;
             return (FT_ERR_NO_MEMORY);
         }
-        ft_memcpy(owned_records, records,
-            static_cast<ft_size_t>(count)
-                * sizeof(card_game_host_intent_record));
     }
     this->_records = owned_records;
     this->_count = count;
@@ -565,8 +601,12 @@ int32_t card_game_engine::get_snapshot(
             static_cast<ft_size_t>(this->_event_count)
                 * sizeof(card_game_event));
     }
-    result = candidate->host_intents.initialize(
-        this->_host_intent_records, this->_host_intent_record_count);
+    const uint32_t first_count = this->host_intent_first_range_count();
+    const card_game_host_intent_record *first_records = this->_host_intent_records;
+    if (first_count != 0U)
+        first_records += this->_host_intent_record_head;
+    result = candidate->host_intents.initialize_ranges(first_records, first_count,
+        this->_host_intent_records, this->_host_intent_record_count - first_count);
     if (result != FT_ERR_SUCCESS)
     {
         card_game_destroy_snapshot(candidate);
@@ -692,6 +732,57 @@ int32_t card_game_engine::get_snapshot(
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t card_game_snapshot_wire_size(const card_game_snapshot &snapshot,
+    uint32_t host_count, std::size_t *size) noexcept
+{
+    constexpr uint64_t U32 = sizeof(uint32_t);
+    constexpr uint64_t U64 = sizeof(uint64_t);
+    uint64_t bytes = CARD_GAME_SNAPSHOT_HEADER_BYTES + CARD_GAME_SNAPSHOT_CHECKSUM_BYTES
+        + 12U * U32 + 4U * U64;  // Global state.
+    bytes += snapshot.modifier_count * 10U * U32;
+    bytes += snapshot.event_count * (U64 + 3U * U32);
+    bytes += U32 + host_count * (2U * U64 + 3U * U32);
+    uint32_t index = 0U;
+    while (index < host_count)
+    {
+        card_game_host_intent_record record;
+        if (snapshot.host_intents.get_record(index, &record) != FT_ERR_SUCCESS
+            || record.intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+            return (FT_ERR_INVALID_STATE);
+        bytes += record.intent.field_count * (U32 + U64);
+        ++index;
+    }
+    index = 0U;
+    while (index < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        const card_game_player_snapshot &player = snapshot.players[index];
+        bytes += 5U * U32 + player.board_count * 8U * U32
+            + (static_cast<uint64_t>(player.deck_count) + player.hand_count) * 2U * U32;
+        ++index;
+    }
+    bytes += (3U + 2U * FT_CARD_GAME_MAX_PLAYERS * FT_CARD_GAME_MAX_ZONES) * U32
+        + snapshot.zones.definition_count * 4U * U32
+        + snapshot.zones.entry_count * 2U * U32;
+    bytes += 3U * U32 + snapshot.resources.pool_count * 7U * U32
+        + snapshot.resources.unit_count * (8U * U32 + 2U * U64);
+    bytes += 2U * U32 + snapshot.allowances.count * (10U * U32 + U64);
+    bytes += 2U * U32 + snapshot.choices.count * (7U * U32 + U64);
+    index = 0U;
+    while (index < snapshot.choices.count)
+    {
+        const uint32_t count = snapshot.choices.choices[index].option_count;
+        if (count > FT_CARD_GAME_MAX_CHOICE_OPTIONS)
+            return (FT_ERR_OUT_OF_RANGE);
+        bytes += count * 3U * U32;
+        ++index;
+    }
+    bytes += 3U * U32 + snapshot.usage_limits.count * (8U * U32 + U64);
+    if (bytes > FT_CARD_GAME_MAX_SNAPSHOT_BYTES)
+        return (FT_ERR_OUT_OF_RANGE);
+    *size = static_cast<std::size_t>(bytes);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::serialize_snapshot(
 	std::vector<uint8_t> &bytes_out) const noexcept
 {
@@ -716,9 +807,13 @@ int32_t card_game_engine::serialize_snapshot(
 		|| host_count > FT_CARD_GAME_MAX_OPERATIONS
 		|| this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS)
 		return (FT_ERR_INVALID_STATE);
-	try
-	{
-		staged.reserve(4096U);
+    std::size_t wire_size;
+    result = card_game_snapshot_wire_size(snapshot, host_count, &wire_size);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    try
+    {
+        staged.resize(wire_size);
 		if (!writer.u8('G') || !writer.u8('C') || !writer.u8('G')
 			|| !writer.u8('S')
 			|| !writer.u32(CARD_GAME_SNAPSHOT_SERIAL_VERSION)
@@ -864,229 +959,239 @@ int32_t card_game_engine::serialize_snapshot(
 	{
 		return (FT_ERR_NO_MEMORY);
 	}
-	if (staged.size() > FT_CARD_GAME_MAX_SNAPSHOT_BYTES
-		- CARD_GAME_SNAPSHOT_CHECKSUM_BYTES)
-		return (FT_ERR_OUT_OF_RANGE);
-	const uint64_t checksum = card_game_snapshot_checksum(staged.data(),
-		staged.size());
-	try
-	{
-		for (uint32_t shift = 0U; shift < 64U; shift += 8U)
-			staged.push_back(static_cast<uint8_t>(checksum >> shift));
-	}
-	catch (const std::bad_alloc &)
-	{
-		return (FT_ERR_NO_MEMORY);
-	}
-	bytes_out.swap(staged);
-	return (FT_ERR_SUCCESS);
+    const std::size_t payload_size = wire_size - CARD_GAME_SNAPSHOT_CHECKSUM_BYTES;
+    if (writer.offset() != payload_size)
+        return (FT_ERR_INVALID_STATE);
+    const uint64_t checksum = card_game_snapshot_checksum(staged.data(), payload_size);
+    if (!writer.u64(checksum))
+        return (FT_ERR_INVALID_STATE);
+    bytes_out.swap(staged);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_engine::restore_snapshot(const uint8_t *bytes,
-	std::size_t byte_count) noexcept
+    std::size_t byte_count) noexcept
 {
-	card_game_snapshot snapshot;
-	card_game_snapshot_reader reader(bytes, byte_count);
-	uint32_t version;
-	uint32_t host_count;
-	uint32_t player;
-	uint32_t zone;
-	uint32_t index;
-	uint32_t flag;
-	uint8_t signature[4];
-	uint64_t rules_hash;
-	uint64_t stored_checksum;
-	uint32_t host_index;
-	std::vector<card_game_host_intent_record> host_records;
-	int32_t result;
+    card_game_snapshot snapshot;
+    uint32_t version;
+    uint32_t host_count;
+    uint32_t player;
+    uint32_t zone;
+    uint32_t index;
+    uint32_t flag;
+    uint8_t signature[4];
+    uint64_t rules_hash;
+    uint32_t host_index;
+    int32_t result;
 
-	if (bytes == ft_nullptr || byte_count < CARD_GAME_SNAPSHOT_HEADER_BYTES
-		+ CARD_GAME_SNAPSHOT_CHECKSUM_BYTES
-		|| byte_count > FT_CARD_GAME_MAX_SNAPSHOT_BYTES)
-		return (FT_ERR_INVALID_ARGUMENT);
-	stored_checksum = 0U;
-	for (index = 0U; index < CARD_GAME_SNAPSHOT_CHECKSUM_BYTES; ++index)
-		stored_checksum |= static_cast<uint64_t>(
-			bytes[byte_count - CARD_GAME_SNAPSHOT_CHECKSUM_BYTES + index])
-			<< (index * 8U);
-	if (stored_checksum != card_game_snapshot_checksum(bytes,
-		byte_count - CARD_GAME_SNAPSHOT_CHECKSUM_BYTES))
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < 4U; ++index)
-		if (!reader.u8(&signature[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (signature[0] != 'G' || signature[1] != 'C' || signature[2] != 'G'
-		|| signature[3] != 'S' || !reader.u32(&version)
-		|| (version != CARD_GAME_SNAPSHOT_SERIAL_VERSION
-			&& version != CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY)
-		|| !reader.u64(&rules_hash))
-		return (FT_ERR_INVALID_ARGUMENT);
-	uint64_t current_rules_hash;
-	if (this->get_rules_hash(&current_rules_hash) != FT_ERR_SUCCESS
-		|| current_rules_hash != rules_hash)
-		return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.format_version)
-		|| !reader.u64(&snapshot.state_sequence)
-		|| !reader.u32(&snapshot.player_count)
-		|| snapshot.player_count > FT_CARD_GAME_MAX_PLAYERS
-		|| !reader.u32(&snapshot.turn_number)
-		|| !reader.u32(&snapshot.active_player)
-		|| !reader.u32(&snapshot.current_phase_id)
-		|| !reader.u32(&snapshot.event_count)
-		|| snapshot.event_count > FT_CARD_GAME_MAX_EVENTS
-		|| !reader.u64(&snapshot.event_sequence)
-		|| !reader.u64(&snapshot.random_state)
-		|| !reader.u32(&snapshot.next_deck_instance_id)
-		|| !reader.u32(&snapshot.next_modifier_id)
-		|| !reader.u32(&snapshot.modifier_count)
-		|| snapshot.modifier_count > FT_CARD_GAME_MAX_MODIFIERS
-		|| !reader.u64(&snapshot.next_host_intent_sequence)
-		|| !reader.u32(&snapshot.pending_discard_player_id)
-		|| !reader.u32(&snapshot.pending_discard_count)
-		|| !reader.u32(&snapshot.pending_discard_zone_id))
-		return (FT_ERR_INVALID_ARGUMENT);
-	snapshot.event_capacity = snapshot.event_count;
-	if (!allocate_array(reinterpret_cast<void **>(&snapshot.events),
-		snapshot.event_count, sizeof(card_game_event)))
-		return (FT_ERR_NO_MEMORY);
-	for (index = 0U; index < snapshot.modifier_count; ++index)
-		if (!read_modifier(reader, &snapshot.modifiers[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.event_count; ++index)
-		if (!reader.u64(&snapshot.events[index].sequence)
-			|| !reader.u32(&snapshot.events[index].event_type)
-			|| !reader.u32(&snapshot.events[index].source_instance)
-			|| !reader.u32(&snapshot.events[index].target_instance))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&host_count) || host_count > FT_CARD_GAME_MAX_OPERATIONS)
-		return (FT_ERR_INVALID_ARGUMENT);
-	try
-	{
-		host_records.resize(host_count);
-	}
-	catch (const std::bad_alloc &)
-	{
-		return (FT_ERR_NO_MEMORY);
-	}
-	for (host_index = 0U; host_index < host_count; ++host_index)
-		if (!read_host_intent(reader, &host_records[host_index], version))
-			return (FT_ERR_INVALID_ARGUMENT);
-	result = snapshot.host_intents.initialize(host_records.data(), host_count);
-	if (result != FT_ERR_SUCCESS)
-		return (result);
-	for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
-	{
-		card_game_player_snapshot &value = snapshot.players[player];
+    if (bytes == ft_nullptr || byte_count < CARD_GAME_SNAPSHOT_HEADER_BYTES
+        + CARD_GAME_SNAPSHOT_CHECKSUM_BYTES
+        || byte_count > FT_CARD_GAME_MAX_SNAPSHOT_BYTES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const std::size_t payload_size = byte_count - CARD_GAME_SNAPSHOT_CHECKSUM_BYTES;
+    if (buffer_load_le<uint64_t>(bytes + payload_size)
+        != card_game_snapshot_checksum(bytes, payload_size))
+        return (FT_ERR_INVALID_ARGUMENT);
+    card_game_snapshot_reader reader(bytes, payload_size);
+    for (index = 0U; index < 4U; ++index)
+        if (!reader.u8(&signature[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+    if (signature[0] != 'G' || signature[1] != 'C' || signature[2] != 'G'
+        || signature[3] != 'S' || !reader.u32(&version)
+        || (version != CARD_GAME_SNAPSHOT_SERIAL_VERSION
+            && version != CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY)
+        || !reader.u64(&rules_hash))
+        return (FT_ERR_INVALID_ARGUMENT);
+    uint64_t current_rules_hash;
+    if (this->get_rules_hash(&current_rules_hash) != FT_ERR_SUCCESS
+        || current_rules_hash != rules_hash)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!reader.u32(&snapshot.format_version)
+        || !reader.u64(&snapshot.state_sequence)
+        || !reader.u32(&snapshot.player_count)
+        || snapshot.player_count > FT_CARD_GAME_MAX_PLAYERS
+        || !reader.u32(&snapshot.turn_number)
+        || !reader.u32(&snapshot.active_player)
+        || !reader.u32(&snapshot.current_phase_id)
+        || !reader.u32(&snapshot.event_count)
+        || snapshot.event_count > FT_CARD_GAME_MAX_EVENTS
+        || !reader.u64(&snapshot.event_sequence)
+        || !reader.u64(&snapshot.random_state)
+        || !reader.u32(&snapshot.next_deck_instance_id)
+        || !reader.u32(&snapshot.next_modifier_id)
+        || !reader.u32(&snapshot.modifier_count)
+        || snapshot.modifier_count > FT_CARD_GAME_MAX_MODIFIERS
+        || !reader.u64(&snapshot.next_host_intent_sequence)
+        || !reader.u32(&snapshot.pending_discard_player_id)
+        || !reader.u32(&snapshot.pending_discard_count)
+        || !reader.u32(&snapshot.pending_discard_zone_id))
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.modifier_count * 40ULL + snapshot.event_count * 20ULL > reader.remaining())
+        return (FT_ERR_INVALID_ARGUMENT);
+    snapshot.event_capacity = snapshot.event_count;
+    if (!allocate_array(snapshot.events, snapshot.event_count))
+        return (FT_ERR_NO_MEMORY);
+    for (index = 0U; index < snapshot.modifier_count; ++index)
+        if (!read_modifier(reader, &snapshot.modifiers[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+    for (index = 0U; index < snapshot.event_count; ++index)
+        if (!reader.u64(&snapshot.events[index].sequence)
+            || !reader.u32(&snapshot.events[index].event_type)
+            || !reader.u32(&snapshot.events[index].source_instance)
+            || !reader.u32(&snapshot.events[index].target_instance))
+            return (FT_ERR_INVALID_ARGUMENT);
+    uint32_t host_minimum_bytes = 28U;
+    if (version == CARD_GAME_SNAPSHOT_SERIAL_VERSION_LEGACY)
+        host_minimum_bytes = 20U;
+    if (!reader.u32(&host_count) || host_count > FT_CARD_GAME_MAX_OPERATIONS
+        || host_count > reader.remaining() / host_minimum_bytes)
+        return (FT_ERR_INVALID_ARGUMENT);
+    result = snapshot.host_intents.initialize_storage(host_count);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    host_index = 0U;
+    while (host_index < host_count)
+    {
+        card_game_host_intent_record *record = ::new (
+            snapshot.host_intents._records + host_index) card_game_host_intent_record{};
+        if (!read_host_intent(reader, record, version))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++host_index;
+    }
+    for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
+    {
+        card_game_player_snapshot &value = snapshot.players[player];
 
-		if (!reader.u32(&value.board_count)
-			|| value.board_count > FT_CARD_GAME_MAX_CARDS
-			|| !reader.u32(&value.deck_count)
-			|| value.deck_count > FT_CARD_GAME_MAX_CARDS
-			|| !reader.u32(&value.hand_count)
-			|| value.hand_count > FT_CARD_GAME_MAX_CARDS
-			|| !reader.u32(&value.health) || !reader.u32(&value.mana))
-			return (FT_ERR_INVALID_ARGUMENT);
-		for (index = 0U; index < value.board_count; ++index)
-			if (!reader.u32(&value.board[index])
-				|| !read_instance(reader, &value.instances[index]))
-				return (FT_ERR_INVALID_ARGUMENT);
-		for (index = 0U; index < value.deck_count; ++index)
-			if (!reader.u32(&value.deck[index])
-				|| !reader.u32(&value.deck_instance_ids[index]))
-				return (FT_ERR_INVALID_ARGUMENT);
-		for (index = 0U; index < value.hand_count; ++index)
-			if (!reader.u32(&value.hand[index])
-				|| !reader.u32(&value.hand_instance_ids[index]))
-				return (FT_ERR_INVALID_ARGUMENT);
-	}
-	if (!reader.u32(&snapshot.zones.definition_count)
-		|| snapshot.zones.definition_count > FT_CARD_GAME_MAX_ZONES)
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.zones.definition_count; ++index)
-	{
-		card_game_zone_store_definition &definition =
-			snapshot.zones.definitions[index];
+        if (!reader.u32(&value.board_count)
+            || value.board_count > FT_CARD_GAME_MAX_CARDS
+            || !reader.u32(&value.deck_count)
+            || value.deck_count > FT_CARD_GAME_MAX_CARDS
+            || !reader.u32(&value.hand_count)
+            || value.hand_count > FT_CARD_GAME_MAX_CARDS
+            || !reader.u32(&value.health) || !reader.u32(&value.mana))
+            return (FT_ERR_INVALID_ARGUMENT);
+        for (index = 0U; index < value.board_count; ++index)
+            if (!reader.u32(&value.board[index])
+                || !read_instance(reader, &value.instances[index]))
+                return (FT_ERR_INVALID_ARGUMENT);
+        for (index = 0U; index < value.deck_count; ++index)
+            if (!reader.u32(&value.deck[index])
+                || !reader.u32(&value.deck_instance_ids[index]))
+                return (FT_ERR_INVALID_ARGUMENT);
+        for (index = 0U; index < value.hand_count; ++index)
+            if (!reader.u32(&value.hand[index])
+                || !reader.u32(&value.hand_instance_ids[index]))
+                return (FT_ERR_INVALID_ARGUMENT);
+    }
+    if (!reader.u32(&snapshot.zones.definition_count)
+        || snapshot.zones.definition_count > FT_CARD_GAME_MAX_ZONES)
+        return (FT_ERR_INVALID_ARGUMENT);
+    for (index = 0U; index < snapshot.zones.definition_count; ++index)
+    {
+        card_game_zone_store_definition &definition =
+            snapshot.zones.definitions[index];
 
-		if (!reader.u32(&definition.zone_id)
-			|| !reader.u32(&definition.capacity)
-			|| !reader.u32(&definition.allowed_card_type_mask)
-			|| !reader.u32(&flag) || flag > 1U)
-			return (FT_ERR_INVALID_ARGUMENT);
-		definition.owner_scoped = static_cast<ft_bool>(flag);
-	}
-	for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
-		for (zone = 0U; zone < FT_CARD_GAME_MAX_ZONES; ++zone)
-			if (!reader.u32(&snapshot.zones.counts[player][zone]))
-				return (FT_ERR_INVALID_ARGUMENT);
-	for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
-		for (zone = 0U; zone < FT_CARD_GAME_MAX_ZONES; ++zone)
-			if (!reader.u32(&snapshot.zones.offsets[player][zone]))
-				return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.zones.entry_count)
-		|| !reader.u32(&snapshot.zones.entry_capacity)
-		|| snapshot.zones.entry_count > snapshot.zones.entry_capacity
-		|| snapshot.zones.entry_capacity
-			> FT_CARD_GAME_MAX_PLAYERS * FT_CARD_GAME_MAX_ZONES
-				* FT_CARD_GAME_MAX_CARDS)
-		return (FT_ERR_INVALID_ARGUMENT);
-	if (!allocate_array(reinterpret_cast<void **>(&snapshot.zones.entries),
-		snapshot.zones.entry_capacity, sizeof(card_game_zone_entry)))
-		return (FT_ERR_NO_MEMORY);
-	for (index = 0U; index < snapshot.zones.entry_count; ++index)
-		if (!reader.u32(&snapshot.zones.entries[index].instance_id)
-			|| !reader.u32(&snapshot.zones.entries[index].card_id))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.resources.pool_count)
-		|| snapshot.resources.pool_count > FT_CARD_GAME_MAX_RESOURCE_POOLS
-		|| !reader.u32(&snapshot.resources.unit_count)
-		|| snapshot.resources.unit_count > FT_CARD_GAME_MAX_RESOURCE_UNITS
-		|| !reader.u32(&snapshot.resources.next_unit_id)
-		|| !allocate_array(reinterpret_cast<void **>(&snapshot.resources.pools),
-			snapshot.resources.pool_count, sizeof(card_game_resource_pool))
-		|| !allocate_array(reinterpret_cast<void **>(&snapshot.resources.units),
-			snapshot.resources.unit_count, sizeof(card_game_resource_unit)))
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.resources.pool_count; ++index)
-		if (!read_pool(reader, &snapshot.resources.pools[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.resources.unit_count; ++index)
-		if (!read_unit(reader, &snapshot.resources.units[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.allowances.count)
-		|| snapshot.allowances.count > FT_CARD_GAME_MAX_ALLOWANCES
-		|| !reader.u32(&snapshot.allowances.next_id)
-		|| !allocate_array(reinterpret_cast<void **>(
-			&snapshot.allowances.allowances), snapshot.allowances.count,
-			sizeof(card_game_action_allowance)))
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.allowances.count; ++index)
-		if (!read_allowance(reader, &snapshot.allowances.allowances[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.choices.count)
-		|| snapshot.choices.count > FT_CARD_GAME_MAX_CHOICES
-		|| !reader.u32(&snapshot.choices.next_id)
-		|| !allocate_array(reinterpret_cast<void **>(&snapshot.choices.choices),
-			snapshot.choices.count, sizeof(card_game_choice)))
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.choices.count; ++index)
-		if (!read_choice(reader, &snapshot.choices.choices[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (!reader.u32(&snapshot.usage_limits.count)
-		|| snapshot.usage_limits.count > FT_CARD_GAME_MAX_USAGE_LIMITS
-		|| !reader.u32(&snapshot.usage_limits.next_id)
-		|| !reader.u32(&snapshot.usage_limits.capacity)
-		|| snapshot.usage_limits.capacity < snapshot.usage_limits.count
-		|| snapshot.usage_limits.capacity > FT_CARD_GAME_MAX_USAGE_LIMITS
-		|| !allocate_array(reinterpret_cast<void **>(
-			&snapshot.usage_limits.limits), snapshot.usage_limits.capacity,
-			sizeof(card_game_usage_limit)))
-		return (FT_ERR_INVALID_ARGUMENT);
-	for (index = 0U; index < snapshot.usage_limits.count; ++index)
-		if (!read_usage_limit(reader, &snapshot.usage_limits.limits[index]))
-			return (FT_ERR_INVALID_ARGUMENT);
-	if (reader.offset() != byte_count - CARD_GAME_SNAPSHOT_CHECKSUM_BYTES)
-		return (FT_ERR_INVALID_ARGUMENT);
-	return (this->apply_snapshot(snapshot));
+        if (!reader.u32(&definition.zone_id)
+            || !reader.u32(&definition.capacity)
+            || !reader.u32(&definition.allowed_card_type_mask)
+            || !reader.u32(&flag) || flag > 1U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        definition.owner_scoped = static_cast<ft_bool>(flag);
+    }
+    for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
+        for (zone = 0U; zone < FT_CARD_GAME_MAX_ZONES; ++zone)
+            if (!reader.u32(&snapshot.zones.counts[player][zone]))
+                return (FT_ERR_INVALID_ARGUMENT);
+    for (player = 0U; player < FT_CARD_GAME_MAX_PLAYERS; ++player)
+        for (zone = 0U; zone < FT_CARD_GAME_MAX_ZONES; ++zone)
+            if (!reader.u32(&snapshot.zones.offsets[player][zone]))
+                return (FT_ERR_INVALID_ARGUMENT);
+    if (!reader.u32(&snapshot.zones.entry_count)
+        || !reader.u32(&snapshot.zones.entry_capacity)
+        || snapshot.zones.entry_count > snapshot.zones.entry_capacity
+        || snapshot.zones.entry_capacity
+            > FT_CARD_GAME_MAX_PLAYERS * FT_CARD_GAME_MAX_ZONES
+                * FT_CARD_GAME_MAX_CARDS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (snapshot.zones.entry_count > reader.remaining() / 8U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    snapshot.zones.entry_capacity = snapshot.zones.entry_count;
+    if (!allocate_array(snapshot.zones.entries, snapshot.zones.entry_count))
+        return (FT_ERR_NO_MEMORY);
+    for (index = 0U; index < snapshot.zones.entry_count; ++index)
+        if (!reader.u32(&snapshot.zones.entries[index].instance_id)
+            || !reader.u32(&snapshot.zones.entries[index].card_id))
+            return (FT_ERR_INVALID_ARGUMENT);
+    if (!reader.u32(&snapshot.resources.pool_count)
+        || snapshot.resources.pool_count > FT_CARD_GAME_MAX_RESOURCE_POOLS
+        || !reader.u32(&snapshot.resources.unit_count)
+        || snapshot.resources.unit_count > FT_CARD_GAME_MAX_RESOURCE_UNITS
+        || !reader.u32(&snapshot.resources.next_unit_id)
+        || snapshot.resources.pool_count * 28ULL + snapshot.resources.unit_count * 48ULL
+            > reader.remaining())
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!allocate_array(snapshot.resources.pools, snapshot.resources.pool_count)
+        || !allocate_array(snapshot.resources.units, snapshot.resources.unit_count))
+        return (FT_ERR_NO_MEMORY);
+    index = 0U;
+    while (index < snapshot.resources.pool_count)
+    {
+        if (!read_pool(reader, &snapshot.resources.pools[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+    }
+    for (index = 0U; index < snapshot.resources.unit_count; ++index)
+        if (!read_unit(reader, &snapshot.resources.units[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+    if (!reader.u32(&snapshot.allowances.count)
+        || snapshot.allowances.count > FT_CARD_GAME_MAX_ALLOWANCES
+        || !reader.u32(&snapshot.allowances.next_id)
+        || snapshot.allowances.count > reader.remaining() / 48U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!allocate_array(snapshot.allowances.allowances, snapshot.allowances.count))
+        return (FT_ERR_NO_MEMORY);
+    index = 0U;
+    while (index < snapshot.allowances.count)
+    {
+        if (!read_allowance(reader, &snapshot.allowances.allowances[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+    }
+    if (!reader.u32(&snapshot.choices.count)
+        || snapshot.choices.count > FT_CARD_GAME_MAX_CHOICES
+        || !reader.u32(&snapshot.choices.next_id)
+        || snapshot.choices.count > reader.remaining() / 36U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!allocate_array(snapshot.choices.choices, snapshot.choices.count))
+        return (FT_ERR_NO_MEMORY);
+    index = 0U;
+    while (index < snapshot.choices.count)
+    {
+        if (!read_choice(reader, &snapshot.choices.choices[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+    }
+    if (!reader.u32(&snapshot.usage_limits.count)
+        || snapshot.usage_limits.count > FT_CARD_GAME_MAX_USAGE_LIMITS
+        || !reader.u32(&snapshot.usage_limits.next_id)
+        || !reader.u32(&snapshot.usage_limits.capacity)
+        || snapshot.usage_limits.capacity < snapshot.usage_limits.count
+        || snapshot.usage_limits.capacity > FT_CARD_GAME_MAX_USAGE_LIMITS
+        || snapshot.usage_limits.count > reader.remaining() / 40U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    snapshot.usage_limits.capacity = snapshot.usage_limits.count;
+    if (!allocate_array(snapshot.usage_limits.limits, snapshot.usage_limits.count))
+        return (FT_ERR_NO_MEMORY);
+    index = 0U;
+    while (index < snapshot.usage_limits.count)
+    {
+        if (!read_usage_limit(reader, &snapshot.usage_limits.limits[index]))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
+    }
+    if (reader.remaining() != 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (this->apply_snapshot(snapshot));
 }
 
 int32_t card_game_engine::get_rules_hash(uint64_t *hash) const noexcept
@@ -1310,9 +1415,244 @@ int32_t card_game_engine::get_script_environment_hash(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t card_game_zone_store::append_state_hash(uint64_t &hash) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    card_game_hash_u32(&hash, this->_definition_count);
+    uint32_t zone_index = 0U;
+    while (zone_index < this->_definition_count)
+    {
+        const card_game_zone_store_definition &definition = this->_definitions[zone_index];
+        card_game_hash_u32(&hash, definition.zone_id);
+        card_game_hash_u32(&hash, definition.capacity);
+        card_game_hash_u32(&hash, definition.allowed_card_type_mask);
+        card_game_hash_u32(&hash, static_cast<uint32_t>(definition.owner_scoped));
+        ++zone_index;
+    }
+    uint32_t entry_count = 0U;
+    uint32_t player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        zone_index = 0U;
+        while (zone_index < this->_definition_count)
+        {
+            entry_count += this->_zones[player_id][zone_index].size();
+            ++zone_index;
+        }
+        ++player_id;
+    }
+    card_game_hash_u32(&hash, entry_count);
+    uint32_t offset = 0U;
+    player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        zone_index = 0U;
+        while (zone_index < FT_CARD_GAME_MAX_ZONES)
+        {
+            uint32_t count = 0U;
+            if (zone_index < this->_definition_count)
+                count = this->_zones[player_id][zone_index].size();
+            card_game_hash_u32(&hash, count);
+            card_game_hash_u32(&hash, offset);
+            offset += count;
+            ++zone_index;
+        }
+        ++player_id;
+    }
+    player_id = 0U;
+    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        zone_index = 0U;
+        while (zone_index < this->_definition_count)
+        {
+            const card_game_ordered_zone &zone = this->_zones[player_id][zone_index];
+            const uint32_t count = zone.size();
+            uint32_t index = 0U;
+            while (index < count)
+            {
+                const card_game_zone_entry &entry = zone._cards[zone.storage_index(index)];
+                card_game_hash_u32(&hash, entry.instance_id);
+                card_game_hash_u32(&hash, entry.card_id);
+                ++index;
+            }
+            ++zone_index;
+        }
+        ++player_id;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_resource_ledger::append_state_hash(uint64_t &hash) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    uint32_t index;
+    card_game_hash_u32(&hash, this->_pool_count);
+    card_game_hash_u32(&hash, this->_unit_count);
+    card_game_hash_u32(&hash, this->_next_unit_id);
+    index = 0U;
+    while (index < this->_pool_count)
+    {
+        card_game_hash_u32(&hash,
+            this->_pools[index].pool_id);
+        card_game_hash_u32(&hash,
+            this->_pools[index].owner_id);
+        card_game_hash_u32(&hash,
+            this->_pools[index].resource_type_id);
+        card_game_hash_u32(&hash,
+            this->_pools[index].maximum_amount);
+        card_game_hash_u32(&hash,
+            this->_pools[index].current_amount);
+        card_game_hash_u32(&hash,
+            this->_pools[index].locked_amount);
+        card_game_hash_u32(&hash,
+            this->_pools[index].temporary_amount);
+        index += 1U;
+    }
+    index = 0U;
+    while (index < this->_unit_count)
+    {
+        card_game_hash_u32(&hash,
+            this->_units[index].unit_id);
+        card_game_hash_u32(&hash,
+            this->_units[index].owner_id);
+        card_game_hash_u32(&hash,
+            this->_units[index].resource_type_id);
+        card_game_hash_u32(&hash,
+            this->_units[index].amount);
+        card_game_hash_u32(&hash,
+            this->_units[index].tags);
+        card_game_hash_u64(&hash,
+            this->_units[index].expiry_epoch);
+        card_game_hash_u64(&hash,
+            this->_units[index].unlock_epoch);
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_units[index].temporary));
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_units[index].locked));
+        card_game_hash_u32(&hash,
+            this->_units[index].locked_amount);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_allowance_ledger::append_state_hash(uint64_t &hash) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    uint32_t index;
+    card_game_hash_u32(&hash, this->_count);
+    card_game_hash_u32(&hash, this->_next_id);
+    index = 0U;
+    while (index < this->_count)
+    {
+        card_game_hash_u32(&hash,
+            this->_allowances[index].allowance_id);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].owner_id);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].action_id);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].action_tags);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].remaining_uses);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].maximum_uses);
+        card_game_hash_u64(&hash,
+            this->_allowances[index].expiry_epoch);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].source_instance);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].source_effect_id);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].predicate_id);
+        card_game_hash_u32(&hash,
+            this->_allowances[index].predicate_context_id);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_choice_ledger::append_state_hash(uint64_t &hash) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    uint32_t index;
+    card_game_hash_u32(&hash, this->_count);
+    card_game_hash_u32(&hash, this->_next_id);
+    index = 0U;
+    while (index < this->_count)
+    {
+        card_game_hash_u32(&hash,
+            this->_choices[index].choice_id);
+        card_game_hash_u32(&hash,
+            this->_choices[index].player_id);
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_choices[index].kind));
+        card_game_hash_u32(&hash,
+            this->_choices[index].option_count);
+        card_game_hash_u64(&hash,
+            this->_choices[index].deadline_epoch);
+        card_game_hash_u32(&hash,
+            this->_choices[index].default_option_id);
+        card_game_hash_u32(&hash,
+            this->_choices[index].selected_option_id);
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_choices[index].resolved));
+        uint32_t option_index = 0U;
+        while (option_index < this->_choices[index].option_count)
+        {
+            card_game_hash_u32(&hash,
+                this->_choices[index].options[option_index].option_id);
+            card_game_hash_u32(&hash,
+                this->_choices[index].options[option_index].value_a);
+            card_game_hash_u32(&hash,
+                this->_choices[index].options[option_index].value_b);
+            option_index += 1U;
+        }
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_usage_limit_ledger::append_state_hash(uint64_t &hash) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    uint32_t index;
+    card_game_hash_u32(&hash, this->_count);
+    card_game_hash_u32(&hash, this->_next_id);
+    index = 0U;
+    while (index < this->_count)
+    {
+        card_game_hash_u32(&hash,
+            this->_limits[index].limit_id);
+        card_game_hash_u32(&hash,
+            this->_limits[index].key_id);
+        card_game_hash_u32(&hash,
+            this->_limits[index].subject_id);
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_limits[index].scope));
+        card_game_hash_u64(&hash,
+            this->_limits[index].window_epoch);
+        card_game_hash_u32(&hash,
+            this->_limits[index].maximum_uses);
+        card_game_hash_u32(&hash,
+            this->_limits[index].used_uses);
+        card_game_hash_u32(&hash,
+            static_cast<uint32_t>(this->_limits[index]
+                .attempt_policy));
+        card_game_hash_u32(&hash,
+            this->_limits[index].source_instance);
+        index += 1U;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
 {
-    card_game_snapshot *snapshot;
     uint64_t calculated_hash;
     uint32_t player_id;
     uint32_t event_index;
@@ -1320,53 +1660,33 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
     uint32_t deck_index;
     uint32_t hand_index;
     uint32_t index;
-    uint32_t host_intent_count;
     uint32_t host_intent_index;
     uint32_t field_index;
-    card_game_host_intent_record host_intent_record;
 
     if (this->_initialised_state != 2U || hash == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    snapshot = card_game_create_snapshot();
-    if (snapshot == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    if (this->get_snapshot(snapshot) != FT_ERR_SUCCESS)
-    {
-        card_game_destroy_snapshot(snapshot);
-        return (FT_ERR_INVALID_STATE);
-    }
     calculated_hash = 1469598103934665603ULL;
-    card_game_hash_u32(&calculated_hash, snapshot->format_version);
-    card_game_hash_u64(&calculated_hash, snapshot->state_sequence);
-    card_game_hash_u32(&calculated_hash, snapshot->player_count);
-    card_game_hash_u32(&calculated_hash, snapshot->turn_number);
-    card_game_hash_u32(&calculated_hash, snapshot->active_player);
-    card_game_hash_u32(&calculated_hash, snapshot->current_phase_id);
-    card_game_hash_u32(&calculated_hash, snapshot->event_count);
-    card_game_hash_u64(&calculated_hash, snapshot->event_sequence);
-    card_game_hash_u64(&calculated_hash, snapshot->random_state);
+    card_game_hash_u32(&calculated_hash, FT_CARD_GAME_STATE_FORMAT_VERSION);
+    card_game_hash_u64(&calculated_hash, this->_state_sequence);
+    card_game_hash_u32(&calculated_hash, this->_player_count);
+    card_game_hash_u32(&calculated_hash, this->_turn_number);
+    card_game_hash_u32(&calculated_hash, this->_active_player);
+    card_game_hash_u32(&calculated_hash, this->_current_phase_id);
+    card_game_hash_u32(&calculated_hash, this->_event_count);
+    card_game_hash_u64(&calculated_hash, this->_event_sequence);
+    card_game_hash_u64(&calculated_hash, this->_random_state);
     card_game_hash_u64(&calculated_hash,
-        snapshot->next_host_intent_sequence);
+        this->_next_host_intent_sequence);
     card_game_hash_u32(&calculated_hash,
-        snapshot->pending_discard_player_id);
-    card_game_hash_u32(&calculated_hash, snapshot->pending_discard_count);
-    card_game_hash_u32(&calculated_hash, snapshot->pending_discard_zone_id);
-    if (snapshot->host_intents.get_count(&host_intent_count)
-        != FT_ERR_SUCCESS)
-    {
-        card_game_destroy_snapshot(snapshot);
-        return (FT_ERR_INVALID_STATE);
-    }
-    card_game_hash_u32(&calculated_hash, host_intent_count);
+        this->_pending_discard_player_id);
+    card_game_hash_u32(&calculated_hash, this->_pending_discard_count);
+    card_game_hash_u32(&calculated_hash, this->_pending_discard_zone_id);
+    card_game_hash_u32(&calculated_hash, this->_host_intent_record_count);
     host_intent_index = 0U;
-    while (host_intent_index < host_intent_count)
+    while (host_intent_index < this->_host_intent_record_count)
     {
-        if (snapshot->host_intents.get_record(host_intent_index,
-                &host_intent_record) != FT_ERR_SUCCESS)
-        {
-            card_game_destroy_snapshot(snapshot);
-            return (FT_ERR_INVALID_STATE);
-        }
+        const card_game_host_intent_record &host_intent_record =
+            this->_host_intent_records[this->host_intent_record_index(host_intent_index)];
         card_game_hash_u64(&calculated_hash, host_intent_record.sequence);
         card_game_hash_u64(&calculated_hash,
             host_intent_record.action_request_id);
@@ -1389,265 +1709,96 @@ int32_t card_game_engine::get_state_hash(uint64_t *hash) const noexcept
         }
         host_intent_index += 1U;
     }
-    card_game_hash_u32(&calculated_hash, snapshot->next_deck_instance_id);
-    card_game_hash_u32(&calculated_hash, snapshot->next_modifier_id);
-    card_game_hash_u32(&calculated_hash, snapshot->modifier_count);
+    card_game_hash_u32(&calculated_hash, this->_next_deck_instance_id);
+    card_game_hash_u32(&calculated_hash, this->_next_modifier_id);
+    card_game_hash_u32(&calculated_hash, this->_modifier_count);
     index = 0U;
-    while (index < snapshot->modifier_count)
+    while (index < this->_modifier_count)
     {
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].modifier_id);
+            this->_modifiers[index].modifier_id);
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].source_effect_id);
+            this->_modifiers[index].source_effect_id);
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].target_player_id);
+            this->_modifiers[index].target_player_id);
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].target_instance_id);
+            this->_modifiers[index].target_instance_id);
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].target_instance_index);
+            this->_modifiers[index].target_instance_index);
         card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->modifiers[index].attack_delta));
+            static_cast<uint32_t>(this->_modifiers[index].attack_delta));
         card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->modifiers[index].health_delta));
+            static_cast<uint32_t>(this->_modifiers[index].health_delta));
         card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->modifiers[index].duration));
+            static_cast<uint32_t>(this->_modifiers[index].duration));
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].created_turn);
+            this->_modifiers[index].created_turn);
         card_game_hash_u32(&calculated_hash,
-            snapshot->modifiers[index].created_phase_id);
+            this->_modifiers[index].created_phase_id);
         index += 1U;
     }
     event_index = 0U;
-    while (event_index < snapshot->event_count)
+    while (event_index < this->_event_count)
     {
         card_game_hash_u64(&calculated_hash,
-            snapshot->events[event_index].sequence);
+            this->_events[event_index].sequence);
         card_game_hash_u32(&calculated_hash,
-            snapshot->events[event_index].event_type);
+            this->_events[event_index].event_type);
         card_game_hash_u32(&calculated_hash,
-            snapshot->events[event_index].source_instance);
+            this->_events[event_index].source_instance);
         card_game_hash_u32(&calculated_hash,
-            snapshot->events[event_index].target_instance);
+            this->_events[event_index].target_instance);
         event_index += 1U;
     }
     player_id = 0U;
-    while (player_id < snapshot->player_count)
+    while (player_id < this->_player_count)
     {
+        const uint32_t deck_count = this->_decks[player_id].size();
         card_game_hash_u32(&calculated_hash,
-            snapshot->players[player_id].board_count);
+            this->_board_count[player_id]);
+        card_game_hash_u32(&calculated_hash, deck_count);
         card_game_hash_u32(&calculated_hash,
-            snapshot->players[player_id].deck_count);
+            this->_hand_count[player_id]);
         card_game_hash_u32(&calculated_hash,
-            snapshot->players[player_id].hand_count);
+            this->_health[player_id]);
         card_game_hash_u32(&calculated_hash,
-            snapshot->players[player_id].health);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->players[player_id].mana);
+            this->_mana[player_id]);
         board_index = 0U;
-        while (board_index < snapshot->players[player_id].board_count)
+        while (board_index < this->_board_count[player_id])
         {
             card_game_hash_u32(&calculated_hash,
-                snapshot->players[player_id].board[board_index]);
+                this->_board[player_id][board_index]);
             card_game_hash_instance(&calculated_hash,
-                snapshot->players[player_id].instances[board_index]);
+                this->_instances[player_id][board_index]);
             board_index += 1U;
         }
         deck_index = 0U;
-        while (deck_index < snapshot->players[player_id].deck_count)
+        while (deck_index < deck_count)
         {
-            card_game_hash_u32(&calculated_hash,
-                snapshot->players[player_id].deck[deck_index]);
-            card_game_hash_u32(&calculated_hash,
-                snapshot->players[player_id].deck_instance_ids[deck_index]);
-            deck_index += 1U;
+            card_game_zone_entry entry;
+            if (this->_decks[player_id].get_entry(deck_index, &entry) != FT_ERR_SUCCESS)
+                return (FT_ERR_INVALID_STATE);
+            card_game_hash_u32(&calculated_hash, entry.card_id);
+            card_game_hash_u32(&calculated_hash, entry.instance_id);
+            ++deck_index;
         }
         hand_index = 0U;
-        while (hand_index < snapshot->players[player_id].hand_count)
+        while (hand_index < this->_hand_count[player_id])
         {
             card_game_hash_u32(&calculated_hash,
-                snapshot->players[player_id].hand[hand_index]);
+                this->_hand[player_id][hand_index].card_id);
             card_game_hash_u32(&calculated_hash,
-                snapshot->players[player_id]
-                    .hand_instance_ids[hand_index]);
+                this->_hand[player_id][hand_index].instance_id);
             hand_index += 1U;
         }
         player_id += 1U;
     }
-    card_game_hash_u32(&calculated_hash, snapshot->zones.definition_count);
-    index = 0U;
-    while (index < snapshot->zones.definition_count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->zones.definitions[index].zone_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->zones.definitions[index].capacity);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->zones.definitions[index].allowed_card_type_mask);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->zones.definitions[index]
-                .owner_scoped));
-        index += 1U;
-    }
-    card_game_hash_u32(&calculated_hash, snapshot->zones.entry_count);
-    player_id = 0U;
-    while (player_id < FT_CARD_GAME_MAX_PLAYERS)
-    {
-        index = 0U;
-        while (index < FT_CARD_GAME_MAX_ZONES)
-        {
-            card_game_hash_u32(&calculated_hash,
-            snapshot->zones.counts[player_id][index]);
-            card_game_hash_u32(&calculated_hash,
-            snapshot->zones.offsets[player_id][index]);
-            index += 1U;
-        }
-        player_id += 1U;
-    }
-    index = 0U;
-    while (index < snapshot->zones.entry_count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->zones.entries[index].instance_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->zones.entries[index].card_id);
-        index += 1U;
-    }
-    card_game_hash_u32(&calculated_hash, snapshot->resources.pool_count);
-    card_game_hash_u32(&calculated_hash, snapshot->resources.unit_count);
-    card_game_hash_u32(&calculated_hash, snapshot->resources.next_unit_id);
-    index = 0U;
-    while (index < snapshot->resources.pool_count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].pool_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].owner_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].resource_type_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].maximum_amount);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].current_amount);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].locked_amount);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.pools[index].temporary_amount);
-        index += 1U;
-    }
-    index = 0U;
-    while (index < snapshot->resources.unit_count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].unit_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].owner_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].resource_type_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].amount);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].tags);
-        card_game_hash_u64(&calculated_hash,
-            snapshot->resources.units[index].expiry_epoch);
-        card_game_hash_u64(&calculated_hash,
-            snapshot->resources.units[index].unlock_epoch);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->resources.units[index].temporary));
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->resources.units[index].locked));
-        card_game_hash_u32(&calculated_hash,
-            snapshot->resources.units[index].locked_amount);
-        index += 1U;
-    }
-    card_game_hash_u32(&calculated_hash, snapshot->allowances.count);
-    card_game_hash_u32(&calculated_hash, snapshot->allowances.next_id);
-    index = 0U;
-    while (index < snapshot->allowances.count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].allowance_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].owner_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].action_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].action_tags);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].remaining_uses);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].maximum_uses);
-        card_game_hash_u64(&calculated_hash,
-            snapshot->allowances.allowances[index].expiry_epoch);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].source_instance);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].source_effect_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].predicate_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->allowances.allowances[index].predicate_context_id);
-        index += 1U;
-    }
-    card_game_hash_u32(&calculated_hash, snapshot->choices.count);
-    card_game_hash_u32(&calculated_hash, snapshot->choices.next_id);
-    index = 0U;
-    while (index < snapshot->choices.count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->choices.choices[index].choice_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->choices.choices[index].player_id);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->choices.choices[index].kind));
-        card_game_hash_u32(&calculated_hash,
-            snapshot->choices.choices[index].option_count);
-        card_game_hash_u64(&calculated_hash,
-            snapshot->choices.choices[index].deadline_epoch);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->choices.choices[index].default_option_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->choices.choices[index].selected_option_id);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->choices.choices[index].resolved));
-        uint32_t option_index = 0U;
-        while (option_index < snapshot->choices.choices[index].option_count)
-        {
-            card_game_hash_u32(&calculated_hash,
-                snapshot->choices.choices[index].options[option_index].option_id);
-            card_game_hash_u32(&calculated_hash,
-                snapshot->choices.choices[index].options[option_index].value_a);
-            card_game_hash_u32(&calculated_hash,
-                snapshot->choices.choices[index].options[option_index].value_b);
-            option_index += 1U;
-        }
-        index += 1U;
-    }
-    card_game_hash_u32(&calculated_hash, snapshot->usage_limits.count);
-    card_game_hash_u32(&calculated_hash, snapshot->usage_limits.next_id);
-    index = 0U;
-    while (index < snapshot->usage_limits.count)
-    {
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].limit_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].key_id);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].subject_id);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->usage_limits.limits[index].scope));
-        card_game_hash_u64(&calculated_hash,
-            snapshot->usage_limits.limits[index].window_epoch);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].maximum_uses);
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].used_uses);
-        card_game_hash_u32(&calculated_hash,
-            static_cast<uint32_t>(snapshot->usage_limits.limits[index]
-                .attempt_policy));
-        card_game_hash_u32(&calculated_hash,
-            snapshot->usage_limits.limits[index].source_instance);
-        index += 1U;
-    }
+    if (this->_zone_store.append_state_hash(calculated_hash) != FT_ERR_SUCCESS
+        || this->_resources.append_state_hash(calculated_hash) != FT_ERR_SUCCESS
+        || this->_allowances.append_state_hash(calculated_hash) != FT_ERR_SUCCESS
+        || this->_choices.append_state_hash(calculated_hash) != FT_ERR_SUCCESS
+        || this->_usage_limits.append_state_hash(calculated_hash) != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_STATE);
     *hash = calculated_hash;
-    return (card_game_destroy_snapshot(snapshot));
+    return (FT_ERR_SUCCESS);
 }

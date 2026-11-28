@@ -1,5 +1,74 @@
 #include "card_game_internal.hpp"
 
+static ft_bool card_game_command_request_ids_unique(uint64_t *begin,
+    uint64_t *end) noexcept
+{
+    if (end - begin < 2)
+        return (FT_TRUE);
+    std::sort(begin, end);
+    return (std::adjacent_find(begin, end) == end);
+}
+
+static int32_t card_game_validate_command_requests(
+    const card_game_command_record *records, uint32_t record_count) noexcept
+{
+    uint64_t bound_session_id = 0U;
+    uint32_t request_count = 0U;
+    uint32_t index = 0U;
+    while (index < record_count)
+    {
+        const card_game_command_record &record = records[index];
+        if (record.session_id != 0U)
+        {
+            if (record.request_id == 0U
+                || (bound_session_id != 0U
+                    && bound_session_id != record.session_id))
+                return (FT_ERR_INVALID_ARGUMENT);
+            bound_session_id = record.session_id;
+        }
+        if (record.request_id != 0U)
+            ++request_count;
+        ++index;
+    }
+    if (request_count < 2U)
+        return (FT_ERR_SUCCESS);
+    constexpr uint32_t LOCAL_REQUEST_CAPACITY = 32U;
+    uint64_t local_requests[LOCAL_REQUEST_CAPACITY];
+    uint64_t *request_ids = local_requests;
+    if (request_count > LOCAL_REQUEST_CAPACITY)
+    {
+        request_ids = static_cast<uint64_t *>(cma_malloc(
+            static_cast<ft_size_t>(request_count) * sizeof(uint64_t)));
+        if (request_ids == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    // Legacy requests and requests bound to the session have separate ID spaces.
+    uint32_t legacy_end = 0U;
+    uint32_t session_begin = request_count;
+    index = 0U;
+    while (index < record_count)
+    {
+        const card_game_command_record &record = records[index];
+        if (record.request_id != 0U)
+        {
+            if (record.session_id == 0U)
+                request_ids[legacy_end++] = record.request_id;
+            else
+                request_ids[--session_begin] = record.request_id;
+        }
+        ++index;
+    }
+    const ft_bool unique = card_game_command_request_ids_unique(
+            request_ids, request_ids + legacy_end)
+        && card_game_command_request_ids_unique(
+            request_ids + session_begin, request_ids + request_count);
+    if (request_ids != local_requests)
+        cma_free(request_ids);
+    if (unique == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t card_game_engine::grow_command_records() noexcept
 {
     card_game_command_record *records;
@@ -40,13 +109,7 @@ int32_t card_game_engine::append_draw_host_intent(
         this->_host_intent_record_count + 1U);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    this->_host_intent_records[this->_host_intent_record_count].sequence =
-        this->_next_host_intent_sequence;
-    this->_host_intent_records[this->_host_intent_record_count]
-        .action_request_id = this->_active_action_request_id;
-    this->_host_intent_records[this->_host_intent_record_count].intent = intent;
-    this->_host_intent_record_count += 1U;
-    this->_next_host_intent_sequence += 1U;
+    this->store_host_intent(intent);
     this->_state_sequence += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -58,7 +121,8 @@ int32_t card_game_engine::resolve_draw_command(uint32_t player_id,
     uint32_t index;
     int32_t result;
 
-    if (draw_count == 0U || draw_count > FT_CARD_GAME_MAX_DRAW_COUNT
+    if (player_id >= this->_player_count
+        || draw_count == 0U || draw_count > FT_CARD_GAME_MAX_DRAW_COUNT
         || required_discard_count
             > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -69,6 +133,7 @@ int32_t card_game_engine::resolve_draw_command(uint32_t player_id,
     result = this->get_snapshot(&before_state);
     if (result != FT_ERR_SUCCESS)
         return (result);
+    // The command owns rollback for every draw attempt in the batch.
     index = 0U;
     while (index < draw_count)
     {
@@ -77,25 +142,28 @@ int32_t card_game_engine::resolve_draw_command(uint32_t player_id,
         {
             int32_t restore_error = this->apply_snapshot_internal(before_state);
 
-            return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (result);
         }
         index += 1U;
     }
     if (required_discard_count != 0U
         && this->_hand_count[player_id] != 0U)
     {
+        if (this->_state_sequence == UINT64_MAX)
+        {
+            int32_t restore_error = this->apply_snapshot_internal(before_state);
+
+            if (restore_error != FT_ERR_SUCCESS)
+                return (restore_error);
+            return (FT_ERR_FULL);
+        }
         this->_pending_discard_player_id = player_id;
         this->_pending_discard_count = required_discard_count;
         if (this->_pending_discard_count > this->_hand_count[player_id])
             this->_pending_discard_count = this->_hand_count[player_id];
         this->_pending_discard_zone_id = this->_draw_policy.discard_zone_id;
-        if (this->_state_sequence == UINT64_MAX)
-        {
-            int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-            return (restore_error == FT_ERR_SUCCESS ? FT_ERR_FULL
-                : restore_error);
-        }
         this->_state_sequence += 1U;
     }
     return (FT_ERR_SUCCESS);
@@ -103,7 +171,6 @@ int32_t card_game_engine::resolve_draw_command(uint32_t player_id,
 
 int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
 {
-    card_game_snapshot before_state;
     card_game_zone_entry entry;
     card_game_deck_card drawn_card;
     card_game_host_intent intent;
@@ -112,29 +179,17 @@ int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
     uint32_t index;
     uint32_t card_type_id;
     ft_bool hand_full;
-    ft_bool will_emit_intent;
-    ft_bool deck_card_popped;
     int32_t result;
 
     if (this->_draw_policy_configured != FT_TRUE)
         return (this->draw_to_hand(player_id, &drawn_card));
-    if (player_id >= this->_player_count)
-        return (FT_ERR_INVALID_ARGUMENT);
     deck_count = this->_decks[player_id].size();
     discard_count = 0U;
     if (this->_draw_policy.reshuffle_discard == FT_TRUE)
         discard_count = this->_zone_store.size(player_id,
             this->_draw_policy.discard_zone_id);
     hand_full = (this->_hand_count[player_id] >= this->_rules.max_hand_size);
-    will_emit_intent = FT_FALSE;
-    if (hand_full == FT_TRUE && deck_count + discard_count > 0U)
-        will_emit_intent = FT_TRUE;
-    else if (deck_count + discard_count == 0U)
-        will_emit_intent = FT_TRUE;
-    result = this->get_snapshot(&before_state);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
-    if (will_emit_intent == FT_TRUE)
+    if (hand_full == FT_TRUE || (deck_count == 0U && discard_count == 0U))
     {
         if (this->_host_intent_record_count == UINT32_MAX
             || this->_next_host_intent_sequence == UINT64_MAX)
@@ -146,8 +201,9 @@ int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
     }
     if (deck_count == 0U && discard_count > 0U)
     {
-        if (discard_count > FT_CARD_GAME_MAX_CARDS - deck_count)
-            result = FT_ERR_FULL;
+        if (discard_count > FT_CARD_GAME_MAX_CARDS)
+            return (FT_ERR_FULL);
+        result = FT_ERR_SUCCESS;
         index = 0U;
         while (result == FT_ERR_SUCCESS && index < discard_count)
         {
@@ -172,11 +228,7 @@ int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
         if (result == FT_ERR_SUCCESS)
             result = this->shuffle_deck(player_id);
         if (result != FT_ERR_SUCCESS)
-        {
-            int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-            return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-        }
+            return (result);
     }
     deck_count = this->_decks[player_id].size();
     if (deck_count == 0U)
@@ -189,47 +241,21 @@ int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
         intent.fields[0].value = player_id;
         intent.fields[1].type = CARD_GAME_HOST_INTENT_U32;
         intent.fields[1].value = 0U;
-        result = this->append_draw_host_intent(intent);
-        if (result != FT_ERR_SUCCESS)
-        {
-            int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-            return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-        }
-        return (FT_ERR_SUCCESS);
+        return (this->append_draw_host_intent(intent));
     }
     if (hand_full == FT_TRUE)
     {
-        ft_bzero(&entry, sizeof(entry));
-        deck_card_popped = FT_FALSE;
         result = this->_decks[player_id].get_entry(0U, &entry);
         if (result == FT_ERR_SUCCESS)
             result = this->find_card_type_id(entry.card_id, &card_type_id);
         if (result == FT_ERR_SUCCESS)
-        {
             result = this->_decks[player_id].pop_top_entry(&entry);
-            if (result == FT_ERR_SUCCESS)
-                deck_card_popped = FT_TRUE;
-            if (result == FT_ERR_SUCCESS)
-                result = this->_zone_store.insert_top(player_id,
-                    this->_draw_policy.burned_zone_id, entry, card_type_id);
-            if (result != FT_ERR_SUCCESS)
-            {
-                if (deck_card_popped == FT_TRUE)
-                    (void)this->_decks[player_id].push_top_entry(entry);
-                int32_t restore_error =
-                    this->apply_snapshot_internal(before_state);
-
-                return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-            }
-            this->_state_sequence += 1U;
-        }
+        if (result == FT_ERR_SUCCESS)
+            result = this->_zone_store.insert_top(player_id,
+                this->_draw_policy.burned_zone_id, entry, card_type_id);
         if (result != FT_ERR_SUCCESS)
-        {
-            int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-            return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-        }
+            return (result);
+        this->_state_sequence += 1U;
         ft_bzero(&intent, sizeof(intent));
         intent.type_id = this->_draw_policy.overflow_event_type_id;
         intent.version = this->_draw_policy.overflow_event_version;
@@ -238,40 +264,38 @@ int32_t card_game_engine::resolve_draw_attempt(uint32_t player_id) noexcept
         intent.fields[0].value = player_id;
         intent.fields[1].type = CARD_GAME_HOST_INTENT_U32;
         intent.fields[1].value = entry.instance_id;
-        result = this->append_draw_host_intent(intent);
-        if (result != FT_ERR_SUCCESS)
-        {
-            int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-            return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-        }
-        return (FT_ERR_SUCCESS);
+        return (this->append_draw_host_intent(intent));
     }
-    result = this->draw_to_hand(player_id, &drawn_card);
-    if (result != FT_ERR_SUCCESS)
-    {
-        int32_t restore_error = this->apply_snapshot_internal(before_state);
-
-        return (restore_error == FT_ERR_SUCCESS ? result : restore_error);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->draw_to_hand(player_id, &drawn_card));
 }
 
 int32_t card_game_engine::submit_command(
     const card_game_command &command, void *context) noexcept
+{
+    return (this->submit_command_internal(command, context, ft_nullptr));
+}
+
+int32_t card_game_engine::submit_command_internal(
+    const card_game_command &command, void *context,
+    const card_game_command_record *expected_record) noexcept
 {
     int32_t command_error;
     uint64_t rules_hash;
     uint64_t state_hash_before;
     uint64_t state_hash_after;
     uint32_t command_result_value;
-    uint32_t hand_index;
-    uint32_t hand_instance_id;
+    uint32_t hand_index = 0U;
     uint32_t resolved_choice_count;
     uint32_t pending_choice_count;
     uint32_t pending_global_choice_count;
     ft_bool system_expiry_command;
 
+    if (expected_record != ft_nullptr
+        && (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
+            || rules_hash != expected_record->rules_hash
+            || this->get_state_hash(&state_hash_before) != FT_ERR_SUCCESS
+            || state_hash_before != expected_record->state_hash_before))
+        return (FT_ERR_INVALID_STATE);
     if (this->_initialised_state != 2U
         || command.command_sequence == 0U
         || command.command_sequence <= this->_last_command_sequence)
@@ -321,7 +345,8 @@ int32_t card_game_engine::submit_command(
         }
     }
     if (command.type == CARD_GAME_INTENT_DRAW_CARD
-        && (command.draw_count == 0U
+        && (command.card_id != 0U || command.source_instance_id != 0U
+            || command.target_instance != 0U || command.draw_count == 0U
             || command.draw_count > FT_CARD_GAME_MAX_DRAW_COUNT
             || command.required_discard_count
                 > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT))
@@ -345,6 +370,19 @@ int32_t card_game_engine::submit_command(
     if (command.type == CARD_GAME_INTENT_RESOLVE_EXPIRED_CHOICES
         && (command.card_id != 0U || command.target_instance != 0U))
         return (FT_ERR_INVALID_ARGUMENT);
+    if (command.type == CARD_GAME_INTENT_PLAY_CARD)
+    {
+        while (hand_index < this->_hand_count[command.player_id])
+        {
+            const card_game_deck_card &card = this->_hand[command.player_id][hand_index];
+            if (card.card_id == command.card_id && (command.source_instance_id == 0U
+                    || card.instance_id == command.source_instance_id))
+                break ;
+            ++hand_index;
+        }
+        if (hand_index == this->_hand_count[command.player_id])
+            return (FT_ERR_NOT_FOUND);
+    }
     command_result_value = 0U;
     ft_bzero(this->_active_play_payload,
         FT_CARD_GAME_COMMAND_PAYLOAD_BYTES);
@@ -354,40 +392,13 @@ int32_t card_game_engine::submit_command(
         if (command_error != FT_ERR_SUCCESS)
             return (command_error);
     }
-    if (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
-        || this->get_state_hash(&state_hash_before) != FT_ERR_SUCCESS)
+    if (expected_record == ft_nullptr
+        && (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
+            || this->get_state_hash(&state_hash_before) != FT_ERR_SUCCESS))
         return (FT_ERR_INVALID_STATE);
     if (command.type == CARD_GAME_INTENT_PLAY_CARD)
-    {
-        hand_instance_id = 0U;
-        hand_index = 0U;
-        while (hand_index < this->_hand_count[command.player_id])
-        {
-            if (command.source_instance_id != 0U
-                && this->_hand[command.player_id][hand_index].instance_id
-                    == command.source_instance_id
-                && this->_hand[command.player_id][hand_index].card_id
-                    == command.card_id)
-            {
-                hand_instance_id = this->_hand[command.player_id]
-                    [hand_index].instance_id;
-                break ;
-            }
-            if (command.source_instance_id == 0U
-                && this->_hand[command.player_id][hand_index].card_id
-                    == command.card_id)
-            {
-                hand_instance_id = this->_hand[command.player_id]
-                    [hand_index].instance_id;
-                break ;
-            }
-            hand_index += 1U;
-        }
-        if (hand_instance_id == 0U)
-            return (FT_ERR_NOT_FOUND);
-        command_error = this->play_card_from_hand(command.player_id,
-            hand_instance_id, command.target_instance, context);
-    }
+        command_error = this->play_hand_card_at(command.player_id, hand_index,
+            command.target_instance, context);
     else if (command.type == CARD_GAME_INTENT_PLAY_EFFECT)
     {
         card_game_snapshot before_state = {};
@@ -462,12 +473,6 @@ int32_t card_game_engine::submit_command(
     }
     else if (command.type == CARD_GAME_INTENT_DRAW_CARD)
     {
-        if (command.card_id != 0U || command.source_instance_id != 0U
-            || command.target_instance != 0U
-            || command.draw_count == 0U
-            || command.required_discard_count
-                > FT_CARD_GAME_MAX_REQUIRED_DISCARD_COUNT)
-            return (FT_ERR_INVALID_ARGUMENT);
         if (this->is_command_allowed(CARD_GAME_COMMAND_DRAW_CARD)
             == FT_FALSE)
             return (FT_ERR_PERMISSION_DENIED);
@@ -577,8 +582,8 @@ int32_t card_game_engine::submit_action_internal(
     card_game_action effective_action;
     card_game_command prior_command;
     card_game_command requested_command;
+    const card_game_command_record *prior_record;
     uint32_t index;
-    uint64_t bound_session_id;
     int32_t error_code;
 
     if (this->_initialised_state != 2U || result == ft_nullptr
@@ -606,24 +611,20 @@ int32_t card_game_engine::submit_action_internal(
     }
     else if (authoritative_epoch != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    bound_session_id = 0U;
+    prior_record = ft_nullptr;
     index = 0U;
     while (index < this->_command_record_count)
     {
-        const uint64_t record_session_id =
-            this->_command_records[index].session_id;
+        const card_game_command_record &record = this->_command_records[index];
 
-        if (record_session_id != 0U)
-        {
-            if (bound_session_id != 0U
-                && bound_session_id != record_session_id)
-                return (FT_ERR_INVALID_STATE);
-            bound_session_id = record_session_id;
-        }
+        if (record.session_id != 0U && record.session_id != action.session_id)
+            return (FT_ERR_INVALID_STATE);
+        if (record.session_id == action.session_id
+            && record.request_id == action.request_id
+            && prior_record == ft_nullptr)
+            prior_record = &record;
         index += 1U;
     }
-    if (bound_session_id != 0U && bound_session_id != action.session_id)
-        return (FT_ERR_INVALID_STATE);
     effective_action = action;
     if (effective_action.command.type == CARD_GAME_INTENT_CHOOSE_OPTION)
         effective_action.command.authoritative_epoch = authoritative_epoch;
@@ -639,30 +640,21 @@ int32_t card_game_engine::submit_action_internal(
         effective_action.command.player_id = CARD_GAME_SERVER_ACTOR_ID;
         effective_action.command.authoritative_epoch = authoritative_epoch;
     }
-    index = 0U;
-    while (index < this->_command_record_count)
+    if (prior_record != ft_nullptr)
     {
-        if (this->_command_records[index].session_id == action.session_id
-            && this->_command_records[index].request_id == action.request_id)
-        {
-            prior_command = this->_command_records[index].command;
-            prior_command.authoritative_epoch = 0U;
-            requested_command = effective_action.command;
-            requested_command.authoritative_epoch = 0U;
-            if (card_game_action_commands_equal(
-                    prior_command, requested_command)
-                == FT_FALSE)
-                return (FT_ERR_ALREADY_EXISTS);
-            result->state_hash =
-                this->_command_records[index].state_hash_after;
-            result->session_id = action.session_id;
-            result->request_id = action.request_id;
-            result->result_value =
-                this->_command_records[index].result_value;
-            result->replayed = FT_TRUE;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
+        prior_command = prior_record->command;
+        prior_command.authoritative_epoch = 0U;
+        requested_command = effective_action.command;
+        requested_command.authoritative_epoch = 0U;
+        if (card_game_action_commands_equal(prior_command, requested_command)
+            == FT_FALSE)
+            return (FT_ERR_ALREADY_EXISTS);
+        result->state_hash = prior_record->state_hash_after;
+        result->session_id = action.session_id;
+        result->request_id = action.request_id;
+        result->result_value = prior_record->result_value;
+        result->replayed = FT_TRUE;
+        return (FT_ERR_SUCCESS);
     }
     this->_active_action_request_id = action.request_id;
     error_code = this->submit_command(effective_action.command, context);
@@ -778,7 +770,6 @@ int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
     uint32_t type;
     uint32_t maximum_supported_type;
     uint64_t previous_sequence;
-    uint64_t bound_session_id;
     int32_t read_error;
 
 
@@ -834,7 +825,6 @@ int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
             return (FT_ERR_NO_MEMORY);
     }
     previous_sequence = 0U;
-    bound_session_id = 0U;
     maximum_supported_type = 3U;
     if (version >= 2U)
         maximum_supported_type = 4U;
@@ -880,16 +870,6 @@ int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
             {
                 cma_free(records);
                 return (read_error);
-            }
-            if (record->session_id != 0U)
-            {
-                if (bound_session_id != 0U
-                    && bound_session_id != record->session_id)
-                {
-                    cma_free(records);
-                    return (FT_ERR_INVALID_ARGUMENT);
-                }
-                bound_session_id = record->session_id;
             }
         }
         read_error = card_game_replay_read_u64(input, input_size, &offset,
@@ -1097,50 +1077,33 @@ int32_t card_game_engine::deserialize_command_records(const uint8_t *input,
             return (FT_ERR_INVALID_ARGUMENT);
         }
         previous_sequence = record->command.command_sequence;
-        if (record->request_id != 0U)
-        {
-            uint32_t previous_index;
-
-            previous_index = 0U;
-            while (previous_index < index)
-            {
-                if (records[previous_index].session_id == record->session_id
-                    && records[previous_index].request_id == record->request_id)
-                {
-                    cma_free(records);
-                    return (FT_ERR_INVALID_ARGUMENT);
-                }
-                previous_index += 1U;
-            }
-        }
         index += 1U;
+    }
+    read_error = card_game_validate_command_requests(records, record_count);
+    if (read_error != FT_ERR_SUCCESS)
+    {
+        cma_free(records);
+        return (read_error);
     }
     if (record_count > this->_command_record_capacity)
     {
-        card_game_command_record *new_records;
-
-        new_records = static_cast<card_game_command_record *>(cma_malloc(
-            static_cast<ft_size_t>(record_count)
-                * sizeof(card_game_command_record)));
-        if (new_records == ft_nullptr)
-        {
-            cma_free(records);
-            return (FT_ERR_NO_MEMORY);
-        }
         cma_free(this->_command_records);
-        this->_command_records = new_records;
+        this->_command_records = records;
         this->_command_record_capacity = record_count;
     }
-    if (record_count != 0U)
-        ft_memcpy(this->_command_records, records,
-            static_cast<ft_size_t>(record_count)
-                * sizeof(card_game_command_record));
+    else
+    {
+        if (record_count != 0U)
+            ft_memcpy(this->_command_records, records,
+                static_cast<ft_size_t>(record_count)
+                    * sizeof(card_game_command_record));
+        cma_free(records);
+    }
     if (record_count > 0U)
         this->_last_command_sequence = this->_command_records[record_count - 1U]
             .command.command_sequence;
     else
         this->_last_command_sequence = 0U;
-    cma_free(records);
     this->_command_record_count = record_count;
     return (FT_ERR_SUCCESS);
 }
@@ -1150,11 +1113,6 @@ int32_t card_game_engine::replay_command_records(
     void *context) noexcept
 {
     uint32_t index;
-    uint64_t rules_hash;
-    uint64_t state_hash;
-    uint64_t bound_session_id;
-    card_game_command_record executed_record;
-    card_game_snapshot starting_snapshot;
     int32_t command_error;
     int32_t restore_error;
 
@@ -1165,86 +1123,42 @@ int32_t card_game_engine::replay_command_records(
     if (this->_command_record_count != 0U
         || this->_last_command_sequence != 0U)
         return (FT_ERR_INVALID_STATE);
+    if (record_count == 0U)
+        return (FT_ERR_SUCCESS);
+    command_error = card_game_validate_command_requests(records, record_count);
+    if (command_error != FT_ERR_SUCCESS)
+        return (command_error);
+    card_game_snapshot starting_snapshot;
     if (this->get_snapshot(&starting_snapshot) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
-    bound_session_id = 0U;
     index = 0U;
     while (index < record_count)
     {
-        uint32_t previous_index;
-
-        previous_index = 0U;
-        while (records[index].request_id != 0U
-            && previous_index < index)
-        {
-            if (records[previous_index].session_id
-                    == records[index].session_id
-                && records[previous_index].request_id
-                    == records[index].request_id)
-            {
-                restore_error = this->apply_snapshot_internal(starting_snapshot);
-                if (restore_error != FT_ERR_SUCCESS)
-                    return (restore_error);
-                return (FT_ERR_INVALID_ARGUMENT);
-            }
-            previous_index += 1U;
-        }
-        if (records[index].session_id != 0U)
-        {
-            if (records[index].request_id == 0U
-                || (bound_session_id != 0U
-                    && bound_session_id != records[index].session_id))
-            {
-                restore_error = this->apply_snapshot_internal(starting_snapshot);
-                if (restore_error != FT_ERR_SUCCESS)
-                    return (restore_error);
-                return (FT_ERR_INVALID_ARGUMENT);
-            }
-            bound_session_id = records[index].session_id;
-        }
-        if (this->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS
-            || rules_hash != records[index].rules_hash
-            || this->get_state_hash(&state_hash) != FT_ERR_SUCCESS
-            || state_hash != records[index].state_hash_before)
-        {
-            restore_error = this->apply_snapshot_internal(starting_snapshot);
-            this->_command_record_count = 0U;
-            this->_last_command_sequence = 0U;
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (FT_ERR_INVALID_STATE);
-        }
-        this->_active_action_request_id = records[index].request_id;
-        command_error = this->submit_command(records[index].command, context);
+        const card_game_command_record &expected = records[index];
+        this->_active_action_request_id = expected.request_id;
+        command_error = this->submit_command_internal(expected.command,
+            context, &expected);
         this->_active_action_request_id = 0U;
         if (command_error != FT_ERR_SUCCESS)
+            break ;
+        card_game_command_record &executed =
+            this->_command_records[this->_command_record_count - 1U];
+        if (executed.state_hash_after != expected.state_hash_after
+            || executed.result_value != expected.result_value)
         {
-            restore_error = this->apply_snapshot_internal(starting_snapshot);
-            this->_command_record_count = 0U;
-            this->_last_command_sequence = 0U;
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (command_error);
+            command_error = FT_ERR_INVALID_STATE;
+            break ;
         }
-        this->_command_records[this->_command_record_count - 1U].request_id =
-            records[index].request_id;
-        this->_command_records[this->_command_record_count - 1U].session_id =
-            records[index].session_id;
-        command_error = this->get_command_record(
-            this->_command_record_count - 1U, &executed_record);
-        if (command_error != FT_ERR_SUCCESS
-            || executed_record.state_hash_after
-                != records[index].state_hash_after
-            || executed_record.result_value != records[index].result_value)
-        {
-            restore_error = this->apply_snapshot_internal(starting_snapshot);
-            this->_command_record_count = 0U;
-            this->_last_command_sequence = 0U;
-            if (restore_error != FT_ERR_SUCCESS)
-                return (restore_error);
-            return (FT_ERR_INVALID_STATE);
-        }
+        executed.request_id = expected.request_id;
+        executed.session_id = expected.session_id;
         index += 1U;
     }
-    return (FT_ERR_SUCCESS);
+    if (command_error == FT_ERR_SUCCESS)
+        return (FT_ERR_SUCCESS);
+    restore_error = this->apply_snapshot_internal(starting_snapshot);
+    this->_command_record_count = 0U;
+    this->_last_command_sequence = 0U;
+    if (restore_error != FT_ERR_SUCCESS)
+        return (restore_error);
+    return (command_error);
 }

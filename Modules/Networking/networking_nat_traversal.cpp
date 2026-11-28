@@ -80,6 +80,22 @@ static ft_bool networking_nat_same_candidate(
         return (FT_FALSE);
     return (networking_nat_same_endpoint(left.endpoint, right.endpoint));
 }
+
+static networking_nat_candidate *networking_nat_find_candidate(
+    networking_nat_candidate *candidates, ft_size_t count,
+    const networking_nat_candidate &candidate) noexcept
+{
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        if (networking_nat_same_candidate(candidates[index], candidate)
+            != FT_FALSE)
+            return (&candidates[index]);
+        index += 1U;
+    }
+    return (ft_nullptr);
+}
+
 networking_nat_candidate::networking_nat_candidate() noexcept
     : endpoint(), type(networking_nat_candidate_type::HOST), priority(0U),
       component(1U), foundation(0U), measured_rtt_milliseconds(0U)
@@ -584,42 +600,33 @@ int32_t networking_nat_traversal::move(networking_nat_traversal &other) noexcept
 int32_t networking_nat_traversal::add_local_candidate(
     const networking_nat_candidate &candidate) noexcept
 {
-    ft_size_t index;
-    int32_t result;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
         || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
         || candidate.component == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
-    index = 0U;
-    while (index < this->_local_candidates.size())
+    const ft_size_t count = this->_local_candidates.size();
+    networking_nat_candidate *duplicate = networking_nat_find_candidate(
+        this->_local_candidates.begin(), count, candidate);
+    if (duplicate != ft_nullptr)
     {
-        if (networking_nat_same_candidate(this->_local_candidates[index],
-                candidate) != FT_FALSE)
-        {
-            if (candidate.priority > this->_local_candidates[index].priority)
-                this->_local_candidates[index].priority = candidate.priority;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1U;
+        if (candidate.priority > duplicate->priority)
+            duplicate->priority = candidate.priority;
+        return (FT_ERR_SUCCESS);
     }
-    if (this->_local_candidates.size() >= NETWORKING_NAT_MAX_CANDIDATES)
+    if (count >= NETWORKING_NAT_MAX_CANDIDATES)
         return (FT_ERR_FULL);
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_NAT_CANDIDATE)
         != FT_FALSE)
         return (FT_ERR_NO_MEMORY);
-    result = this->_local_candidates.push_back(candidate);
-    return (result);
+    return (this->_local_candidates.push_back(candidate));
 }
 
 int32_t networking_nat_traversal::gather_candidates(
     networking_nat_candidate_provider &provider) noexcept
 {
     ft_vector<networking_nat_candidate> gathered_candidates;
-    ft_size_t index;
-    ft_size_t comparison_index;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -633,41 +640,50 @@ int32_t networking_nat_traversal::gather_candidates(
         (void)gathered_candidates.destroy();
         return (result);
     }
-    if (gathered_candidates.size() > NETWORKING_NAT_MAX_CANDIDATES)
+    ft_size_t count = gathered_candidates.size();
+    if (count > NETWORKING_NAT_MAX_CANDIDATES)
     {
         (void)gathered_candidates.destroy();
         return (FT_ERR_FULL);
     }
-    index = 0U;
-    while (index < gathered_candidates.size())
+    networking_nat_candidate *candidates = gathered_candidates.begin();
+    ft_size_t unique_count = 0U;
+    ft_size_t index = 0U;
+    while (index < count)
     {
-        if (networking_nat_endpoint_valid(
-                gathered_candidates[index].endpoint) == FT_FALSE
-            || networking_nat_candidate_type_valid(
-                gathered_candidates[index].type) == FT_FALSE
-            || gathered_candidates[index].component == 0U)
+        const networking_nat_candidate &candidate = candidates[index];
+        if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
+            || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
+            || candidate.component == 0U)
         {
             (void)gathered_candidates.destroy();
             return (FT_ERR_INVALID_ARGUMENT);
         }
-        comparison_index = 0U;
-        while (comparison_index < index)
+        networking_nat_candidate *duplicate = networking_nat_find_candidate(
+            candidates, unique_count, candidate);
+        if (duplicate != ft_nullptr)
         {
-            if (networking_nat_same_candidate(
-                    gathered_candidates[comparison_index],
-                    gathered_candidates[index]) != FT_FALSE)
-            {
-                if (gathered_candidates[index].priority
-                    > gathered_candidates[comparison_index].priority)
-                    gathered_candidates[comparison_index].priority =
-                        gathered_candidates[index].priority;
-                gathered_candidates.erase(gathered_candidates.begin() + index);
-                index -= 1U;
-                break ;
-            }
-            comparison_index += 1U;
+            if (candidate.priority > duplicate->priority)
+                duplicate->priority = candidate.priority;
+        }
+        else
+        {
+            if (unique_count != index)
+                candidates[unique_count] = candidate;
+            unique_count += 1U;
         }
         index += 1U;
+    }
+    while (count > unique_count)
+    {
+        gathered_candidates.pop_back();
+        result = gathered_candidates.get_error();
+        if (result != FT_ERR_SUCCESS)
+        {
+            (void)gathered_candidates.destroy();
+            return (result);
+        }
+        count -= 1U;
     }
     result = this->_local_candidates.move(gathered_candidates);
     if (result != FT_ERR_SUCCESS)
@@ -709,34 +725,35 @@ int64_t networking_nat_traversal::candidate_score(
 
 int32_t networking_nat_traversal::select_pair() noexcept
 {
-    int64_t best_score;
-    ft_bool found;
-    ft_size_t local_index;
-    ft_size_t remote_index;
-
-    found = FT_FALSE;
-    best_score = INT64_MIN;
-    local_index = 0U;
-    while (local_index < this->_local_candidates.size())
+    const ft_size_t local_count = this->_local_candidates.size();
+    const ft_size_t remote_count = this->_remote_candidates.size();
+    if (local_count == 0U || remote_count == 0U)
+        return (FT_ERR_NOT_FOUND);
+    const networking_nat_candidate *local_candidates = this->_local_candidates.begin();
+    const networking_nat_candidate *remote_candidates = this->_remote_candidates.begin();
+    ft_size_t best_local_index = 0U;
+    ft_size_t best_remote_index = 0U;
+    int64_t best_score = INT64_MIN;
+    ft_size_t local_index = 0U;
+    while (local_index < local_count)
     {
-        remote_index = 0U;
-        while (remote_index < this->_remote_candidates.size())
+        ft_size_t remote_index = 0U;
+        while (remote_index < remote_count)
         {
             int64_t score = networking_nat_traversal::candidate_score(
-                this->_local_candidates[local_index], this->_remote_candidates[remote_index]);
-            if (found == FT_FALSE || score > best_score)
+                local_candidates[local_index], remote_candidates[remote_index]);
+            if (score > best_score)
             {
                 best_score = score;
-                this->_selected_local = this->_local_candidates[local_index];
-                this->_selected_remote = this->_remote_candidates[remote_index];
-                found = FT_TRUE;
+                best_local_index = local_index;
+                best_remote_index = remote_index;
             }
             remote_index += 1U;
         }
         local_index += 1U;
     }
-    if (found == FT_FALSE)
-        return (FT_ERR_NOT_FOUND);
+    this->_selected_local = local_candidates[best_local_index];
+    this->_selected_remote = remote_candidates[best_remote_index];
     return (FT_ERR_SUCCESS);
 }
 
@@ -753,7 +770,6 @@ int32_t networking_nat_traversal::set_peer_ticket(const networking_nat_peer_tick
 {
     ft_vector<networking_nat_candidate> new_remote_candidates;
     ft_bool new_relay_available;
-    ft_size_t index;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -762,58 +778,47 @@ int32_t networking_nat_traversal::set_peer_ticket(const networking_nat_peer_tick
         || ticket.peer_id == 0U || ticket.attempt_id == 0U
         || ticket.expires_at <= now_milliseconds || ticket.signature.empty())
         return (FT_ERR_PERMISSION_DENIED);
-    if (ticket.candidates.empty())
+    const ft_size_t count = ticket.candidates.size();
+    if (count == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_local_candidates.empty())
         return (FT_ERR_NOT_FOUND);
-    if (ticket.candidates.size() > NETWORKING_NAT_MAX_CANDIDATES)
+    if (count > NETWORKING_NAT_MAX_CANDIDATES)
         return (FT_ERR_FULL);
     result = new_remote_candidates.initialize();
     if (result != FT_ERR_SUCCESS)
         return (result);
     new_relay_available = FT_FALSE;
-    index = 0U;
-    while (index < ticket.candidates.size())
+    ft_size_t unique_count = 0U;
+    ft_size_t index = 0U;
+    while (index < count)
     {
-        ft_size_t candidate_index;
-        ft_bool duplicate_candidate;
-
-        if (networking_nat_endpoint_valid(
-                ticket.candidates[index].endpoint) == FT_FALSE
-            || networking_nat_candidate_type_valid(
-                ticket.candidates[index].type) == FT_FALSE
-            || ticket.candidates[index].component == 0U)
+        const networking_nat_candidate &candidate = ticket.candidates[index];
+        if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
+            || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
+            || candidate.component == 0U)
         {
             (void)new_remote_candidates.destroy();
             return (FT_ERR_INVALID_ARGUMENT);
         }
-        duplicate_candidate = FT_FALSE;
-        candidate_index = 0U;
-        while (candidate_index < new_remote_candidates.size())
+        networking_nat_candidate *duplicate = networking_nat_find_candidate(
+            new_remote_candidates.begin(), unique_count, candidate);
+        if (duplicate != ft_nullptr)
         {
-            if (networking_nat_same_candidate(
-                    new_remote_candidates[candidate_index],
-                    ticket.candidates[index]) != FT_FALSE)
-            {
-                if (ticket.candidates[index].priority
-                    > new_remote_candidates[candidate_index].priority)
-                    new_remote_candidates[candidate_index].priority =
-                        ticket.candidates[index].priority;
-                duplicate_candidate = FT_TRUE;
-                break ;
-            }
-            candidate_index += 1U;
+            if (candidate.priority > duplicate->priority)
+                duplicate->priority = candidate.priority;
         }
-        if (duplicate_candidate == FT_FALSE)
+        else
         {
-            result = new_remote_candidates.push_back(ticket.candidates[index]);
+            result = new_remote_candidates.push_back(candidate);
             if (result != FT_ERR_SUCCESS)
             {
                 (void)new_remote_candidates.destroy();
                 return (result);
             }
+            unique_count += 1U;
         }
-        if (ticket.candidates[index].type == networking_nat_candidate_type::RELAY)
+        if (candidate.type == networking_nat_candidate_type::RELAY)
             new_relay_available = FT_TRUE;
         index += 1U;
     }
@@ -1021,45 +1026,54 @@ int32_t networking_nat_traversal::mark_probe_success(
         return (FT_ERR_INVALID_ARGUMENT);
     if (attempt_id != this->_attempt_id)
         return (FT_ERR_PERMISSION_DENIED);
-    networking_nat_candidate nominated_local;
-    networking_nat_candidate nominated_remote;
-    int64_t best_score;
-    ft_size_t local_index;
-    ft_bool found = FT_FALSE;
-    best_score = 0;
-    local_index = 0U;
-    while (local_index < this->_local_candidates.size())
+    const ft_size_t remote_count = this->_remote_candidates.size();
+    const networking_nat_candidate *remote_candidates = this->_remote_candidates.begin();
+    const networking_nat_candidate *matching_remotes[NETWORKING_NAT_MAX_CANDIDATES];
+    ft_size_t matching_count = 0U;
+    ft_size_t remote_index = 0U;
+    while (remote_index < remote_count)
     {
-        ft_size_t remote_index = 0U;
-        while (remote_index < this->_remote_candidates.size())
+        if (networking_nat_same_endpoint(remote_candidates[remote_index].endpoint,
+                remote) != FT_FALSE)
         {
-            if (networking_nat_same_endpoint(
-                    this->_local_candidates[local_index].endpoint, local)
-                != FT_FALSE
-                && networking_nat_same_endpoint(
-                    this->_remote_candidates[remote_index].endpoint, remote)
-                    != FT_FALSE)
-            {
-                int64_t score = networking_nat_traversal::candidate_score(
-                    this->_local_candidates[local_index],
-                    this->_remote_candidates[remote_index]);
-
-                if (found == FT_FALSE || score > best_score)
-                {
-                    nominated_local = this->_local_candidates[local_index];
-                    nominated_remote = this->_remote_candidates[remote_index];
-                    best_score = score;
-                    found = FT_TRUE;
-                }
-            }
-            remote_index += 1U;
+            matching_remotes[matching_count] = &remote_candidates[remote_index];
+            matching_count += 1U;
         }
-        local_index += 1U;
+        remote_index += 1U;
     }
-    if (found == FT_FALSE)
+    if (matching_count == 0U)
         return (FT_ERR_NOT_FOUND);
-    this->_selected_local = nominated_local;
-    this->_selected_remote = nominated_remote;
+    const ft_size_t local_count = this->_local_candidates.size();
+    const networking_nat_candidate *local_candidates = this->_local_candidates.begin();
+    const networking_nat_candidate *nominated_local = ft_nullptr;
+    const networking_nat_candidate *nominated_remote = ft_nullptr;
+    int64_t best_score = INT64_MIN;
+    ft_size_t local_index = 0U;
+    while (local_index < local_count)
+    {
+        const networking_nat_candidate &local_candidate = local_candidates[local_index];
+        local_index += 1U;
+        if (networking_nat_same_endpoint(local_candidate.endpoint, local) == FT_FALSE)
+            continue ;
+        ft_size_t matching_index = 0U;
+        while (matching_index < matching_count)
+        {
+            const networking_nat_candidate *remote_candidate = matching_remotes[matching_index];
+            int64_t score = networking_nat_traversal::candidate_score(
+                local_candidate, *remote_candidate);
+            if (score > best_score)
+            {
+                nominated_local = &local_candidate;
+                nominated_remote = remote_candidate;
+                best_score = score;
+            }
+            matching_index += 1U;
+        }
+    }
+    if (nominated_local == ft_nullptr)
+        return (FT_ERR_NOT_FOUND);
+    this->_selected_local = *nominated_local;
+    this->_selected_remote = *nominated_remote;
     this->_probing = FT_FALSE;
     if (this->_selected_local.type == networking_nat_candidate_type::RELAY
         || this->_selected_remote.type == networking_nat_candidate_type::RELAY)

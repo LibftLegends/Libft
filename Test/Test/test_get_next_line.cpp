@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/GetNextLine/get_next_line.hpp"
+#include "../../Modules/GetNextLine/gnl_stream.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -12,6 +13,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include <string>
 #ifndef LIBFT_TEST_BUILD
 #endif
 
@@ -54,6 +56,76 @@ static void close_temp_fd(int file_descriptor)
     gnl_clear_stream(file_descriptor);
     close(file_descriptor);
     return ;
+}
+
+FT_TEST(test_get_next_line_reads_long_and_unterminated_lines)
+{
+    const std::string first_line(16384U, 'a');
+    const std::string final_line(8193U, 'z');
+    const std::string content = first_line + "\n\n" + final_line;
+    const int32_t file_descriptor = create_temp_fd_with_content(content.c_str());
+    FT_ASSERT(file_descriptor >= 0);
+    char *line = get_next_line(file_descriptor, 31U);
+    FT_ASSERT(line != ft_nullptr);
+    FT_ASSERT_EQ(first_line.size() + 1U, ft_strlen_size_t(line));
+    FT_ASSERT_EQ(0, ft_memcmp(line, first_line.data(), first_line.size()));
+    FT_ASSERT_EQ('\n', line[first_line.size()]);
+    cma_free(line);
+    line = get_next_line(file_descriptor, 17U);
+    FT_ASSERT(line != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp(line, "\n"));
+    cma_free(line);
+    line = get_next_line(file_descriptor, 23U);
+    FT_ASSERT(line != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp(line, final_line.c_str()));
+    cma_free(line);
+    FT_ASSERT_EQ(ft_nullptr, get_next_line(file_descriptor, 23U));
+    close_temp_fd(file_descriptor);
+    return (1);
+}
+
+FT_TEST(test_read_file_lines_keeps_moved_strings_in_order)
+{
+    const std::string long_line(256U, 'w');
+    const std::string content = long_line + "\nshort\nfinal";
+    const int32_t file_descriptor = create_temp_fd_with_content(content.c_str());
+    FT_ASSERT(file_descriptor >= 0);
+    ft_vector<ft_string> lines;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, lines.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_read_file_lines(file_descriptor, lines, 13U));
+    FT_ASSERT_EQ(3U, lines.size());
+    FT_ASSERT_EQ(long_line.size() + 1U, lines[0].size());
+    FT_ASSERT_EQ(0, ft_memcmp(lines[0].c_str(), long_line.data(), long_line.size()));
+    FT_ASSERT_EQ(0, ft_strcmp(lines[1].c_str(), "short\n"));
+    FT_ASSERT_EQ(0, ft_strcmp(lines[2].c_str(), "final"));
+    close_temp_fd(file_descriptor);
+    return (1);
+}
+
+FT_TEST(test_gnl_stream_reconfiguring_an_owned_file_releases_it)
+{
+    const int32_t file_descriptor = create_temp_fd_with_content("owned\n");
+    FT_ASSERT(file_descriptor >= 0);
+    FILE *file_handle = fdopen(file_descriptor, "rb");
+    FT_ASSERT(file_handle != ft_nullptr);
+    const int32_t next_descriptor = create_temp_fd_with_content("borrowed\n");
+    FT_ASSERT(next_descriptor >= 0);
+
+    gnl_stream stream;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.init_from_file(file_handle, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.init_from_file(file_handle, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, stream.init_from_fd(file_descriptor));
+    FT_ASSERT_EQ(0, fseek(file_handle, 0, SEEK_SET));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.init_from_fd(next_descriptor));
+    FT_ASSERT_EQ(-1, lseek(file_descriptor, 0, SEEK_SET));
+    char character = '\0';
+    FT_ASSERT_EQ(1, stream.read(&character, 1U));
+    FT_ASSERT_EQ('b', character);
+    stream.reset();
+    FT_ASSERT_EQ(0, lseek(next_descriptor, 0, SEEK_SET));
+    close_temp_fd(next_descriptor);
+    return (1);
 }
 
 static void    *failing_leftover_allocator(ft_size_t size)

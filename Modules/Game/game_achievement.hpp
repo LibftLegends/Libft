@@ -24,6 +24,10 @@ class game_goal
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t read_completion(ft_bool &completed) const noexcept;
+
+        friend class game_achievement;
+
 
     public:
         game_goal() noexcept;

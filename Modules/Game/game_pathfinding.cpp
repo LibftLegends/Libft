@@ -8,6 +8,8 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
+#include "../Template/unordered_map.hpp"
+#include "../Template/priority_queue.hpp"
 
 static ft_size_t distance_component(ft_size_t left_value, ft_size_t right_value)
 {
@@ -438,7 +440,8 @@ int32_t game_pathfinding::unlock_internal(ft_bool lock_acquired) const noexcept
 }
 
 game_pathfinding::game_pathfinding() noexcept
-    : _current_path(), _needs_replan(FT_FALSE), _mutex(ft_nullptr),
+    : _current_path(), _cached_grid_identity(0U), _cached_grid_revision(0U),
+      _needs_replan(FT_FALSE), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -502,8 +505,6 @@ int32_t game_pathfinding::destroy() noexcept
 int32_t game_pathfinding::move(game_pathfinding &other) noexcept
 {
     int32_t destroy_error;
-    ft_size_t index;
-    ft_size_t count;
 
     if (&other == this)
         return (FT_ERR_SUCCESS);
@@ -513,6 +514,7 @@ int32_t game_pathfinding::move(game_pathfinding &other) noexcept
         this->set_error(FT_ERR_INVALID_STATE);
         return (FT_ERR_INVALID_STATE);
     }
+    const int32_t source_error = other.get_error();
     destroy_error = this->destroy();
     if (destroy_error != FT_ERR_SUCCESS)
     {
@@ -522,25 +524,25 @@ int32_t game_pathfinding::move(game_pathfinding &other) noexcept
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    this->_current_path.clear();
-    index = 0;
-    count = other._current_path.size();
-    while (index < count)
+    const int32_t move_error = this->_current_path.move(other._current_path);
+    if (move_error != FT_ERR_SUCCESS)
     {
-        this->_current_path.push_back(other._current_path[index]);
-        index += 1;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(move_error));
     }
+    this->_cached_grid_identity = other._cached_grid_identity;
+    this->_cached_grid_revision = other._cached_grid_revision;
     this->_needs_replan = other._needs_replan;
     this->_mutex = other._mutex;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    other._current_path.clear();
+
     other._needs_replan = FT_FALSE;
     other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(other.get_error());
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -609,34 +611,68 @@ void game_pathfinding::unlock(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+static ft_bool path_step_matches(const game_path_step &step, ft_size_t x,
+    ft_size_t y, ft_size_t z) noexcept
+{
+    return (step.get_x() == x && step.get_y() == y && step.get_z() == z);
+}
+
+static int32_t copy_path_steps(const ft_vector<game_path_step> &source,
+    ft_vector<game_path_step> &destination) noexcept
+{
+    if (&source == &destination)
+        return (FT_ERR_SUCCESS);
+    ft_bool source_locked = FT_FALSE;
+    int32_t result = source.lock(&source_locked);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    const ft_size_t step_count = source.size();
+    const game_path_step *step = source.begin();
+    destination.reserve(step_count);
+    result = destination.get_error();
+    if (result == FT_ERR_SUCCESS)
+    {
+        destination.clear();
+        result = destination.get_error();
+        ft_size_t index = 0U;
+        while (result == FT_ERR_SUCCESS && index < step_count)
+        {
+            result = destination.push_back(step[index]);
+            ++index;
+        }
+        if (result != FT_ERR_SUCCESS)
+            destination.clear();
+    }
+    source.unlock(source_locked);
+    return (result);
+}
+
 void game_pathfinding::update_obstacle(ft_size_t x, ft_size_t y, ft_size_t z,
     int32_t value) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t index;
-
     (void)value;
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_pathfinding::update_obstacle");
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         this->set_error(lock_error);
         return ;
     }
-    index = 0;
-    while (index < this->_current_path.size())
+    if (!this->_needs_replan)
     {
-        if (this->_current_path[index].get_x() == x
-            && this->_current_path[index].get_y() == y
-            && this->_current_path[index].get_z() == z)
+        const ft_size_t path_size = this->_current_path.size();
+        const game_path_step *steps = this->_current_path.begin();
+        ft_size_t index = 0U;
+        while (index < path_size)
         {
-            this->_needs_replan = FT_TRUE;
-            this->set_error(FT_ERR_SUCCESS);
-    (void)this->unlock_internal(lock_acquired);
-            return ;
+            if (path_step_matches(steps[index], x, y, z))
+            {
+                this->_needs_replan = FT_TRUE;
+                break ;
+            }
+            ++index;
         }
-        index += 1;
     }
     this->set_error(FT_ERR_SUCCESS);
     (void)this->unlock_internal(lock_acquired);
@@ -648,50 +684,43 @@ int32_t game_pathfinding::recalculate_path(const game_map3d &grid,
     ft_size_t goal_x, ft_size_t goal_y, ft_size_t goal_z,
     ft_vector<game_path_step> &out_path) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t result;
-    ft_size_t index;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_pathfinding::recalculate_path");
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    if (this->_needs_replan == FT_FALSE && this->_current_path.size() > 0)
-    {
-        out_path.clear();
-        index = 0;
-        while (index < this->_current_path.size())
-        {
-            out_path.push_back(this->_current_path[index]);
-            index += 1;
-        }
-        this->set_error(FT_ERR_SUCCESS);
-
-        (void)this->unlock_internal(lock_acquired);
-        return (FT_ERR_SUCCESS);
-    }
-    result = this->astar_grid(grid, start_x, start_y, start_z,
-            goal_x, goal_y, goal_z, out_path);
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    uint64_t grid_identity = 0U;
+    uint64_t grid_revision = 0U;
+    result = grid.read_route_version(grid_identity, grid_revision);
     if (result == FT_ERR_SUCCESS)
     {
-        this->_current_path.clear();
-        index = 0;
-        while (index < out_path.size())
+        const ft_size_t cached_size = this->_current_path.size();
+        if (!this->_needs_replan && cached_size > 0U
+            && grid_identity == this->_cached_grid_identity
+            && grid_revision == this->_cached_grid_revision
+            && path_step_matches(this->_current_path[0], start_x, start_y, start_z)
+            && path_step_matches(this->_current_path[cached_size - 1U], goal_x, goal_y, goal_z))
+            result = copy_path_steps(this->_current_path, out_path);
+        else
         {
-            this->_current_path.push_back(out_path[index]);
-            index += 1;
+            result = this->astar_grid(grid, start_x, start_y, start_z,
+                goal_x, goal_y, goal_z, out_path);
+            this->_needs_replan = FT_TRUE;
+            uint64_t identity_after_search = 0U;
+            uint64_t revision_after_search = 0U;
+            if (result == FT_ERR_SUCCESS
+                && grid.read_route_version(identity_after_search, revision_after_search) == FT_ERR_SUCCESS
+                && grid_identity == identity_after_search && grid_revision == revision_after_search
+                && copy_path_steps(out_path, this->_current_path) == FT_ERR_SUCCESS)
+            {
+                this->_cached_grid_identity = grid_identity;
+                this->_cached_grid_revision = grid_revision;
+                this->_needs_replan = FT_FALSE;
+            }
         }
-        this->_needs_replan = FT_FALSE;
     }
-    else
-        this->_needs_replan = FT_TRUE;
     (void)this->unlock_internal(lock_acquired);
-    this->set_error(result);
-    return (result);
+    return (this->set_error(result));
 }
 
 int32_t game_pathfinding::astar_grid(const game_map3d &grid,
@@ -701,189 +730,168 @@ int32_t game_pathfinding::astar_grid(const game_map3d &grid,
 {
     struct node
     {
-        ft_size_t  x;
-        ft_size_t  y;
-        ft_size_t  z;
-        int32_t     g;
-        int32_t     f;
-        int32_t     parent;
+        ft_size_t x;
+        ft_size_t y;
+        ft_size_t z;
+        ft_size_t g;
+        ft_size_t f;
+        ft_size_t parent;
+        ft_bool open;
+    };
+    struct frontier_entry
+    {
+        ft_size_t priority;
+        ft_size_t node_index;
+    };
+    const auto compare_entries = [](const frontier_entry &left,
+        const frontier_entry &right) noexcept -> ft_bool
+    {
+        if (left.priority != right.priority)
+            return (left.priority > right.priority);
+        return (left.node_index > right.node_index);
     };
 
-    ft_vector<node> nodes;
-    ft_vector<ft_size_t> open_set;
-    int32_t initialize_error;
-
-    if (start_x >= grid.get_width() || start_y >= grid.get_height()
-        || start_z >= grid.get_depth() || goal_x >= grid.get_width()
-        || goal_y >= grid.get_height() || goal_z >= grid.get_depth())
+    const ft_size_t width = grid.get_width();
+    const ft_size_t height = grid.get_height();
+    const ft_size_t depth = grid.get_depth();
+    if (start_x >= width || start_y >= height || start_z >= depth
+        || goal_x >= width || goal_y >= height || goal_z >= depth)
         return (FT_ERR_GAME_INVALID_MOVE);
-    if (grid.get(start_x, start_y, start_z) != 0
-        || grid.get(goal_x, goal_y, goal_z) != 0)
+    if (grid.get(start_x, start_y, start_z) != 0 || grid.get_error() != FT_ERR_SUCCESS
+        || grid.get(goal_x, goal_y, goal_z) != 0 || grid.get_error() != FT_ERR_SUCCESS)
         return (FT_ERR_GAME_INVALID_MOVE);
 
-    initialize_error = nodes.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    initialize_error = open_set.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)nodes.destroy();
-        return (initialize_error);
-    }
     out_path.clear();
-
-    node start_node;
-    start_node.x = start_x;
-    start_node.y = start_y;
-    start_node.z = start_z;
-    start_node.g = 0;
-    start_node.f = static_cast<int32_t>(distance_component(start_x, goal_x)
-            + distance_component(start_y, goal_y)
-            + distance_component(start_z, goal_z));
-    start_node.parent = -1;
-    nodes.push_back(start_node);
-    open_set.push_back(0);
-
-    while (open_set.size() > 0)
+    if (out_path.get_error() != FT_ERR_SUCCESS)
+        return (out_path.get_error());
+    if (start_x == goal_x && start_y == goal_y && start_z == goal_z)
     {
-        ft_size_t best_open;
-        ft_size_t open_index;
-        ft_size_t current_index;
+        game_path_step step;
+        (void)step.initialize();
+        (void)step.set_coordinates(start_x, start_y, start_z);
+        return (out_path.push_back(step));
+    }
+    constexpr ft_size_t MAX_SIZE = FT_SYSTEM_SIZE_MAX;
+    if (width > MAX_SIZE / height || width * height > MAX_SIZE / depth)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t layer_stride = width * height;
+    ft_vector<node> nodes;
+    ft_priority_queue<frontier_entry, decltype(compare_entries)> open_set(0U, compare_entries);
+    ft_unordered_map<ft_size_t, ft_size_t> node_indices;
+    int32_t result = nodes.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = open_set.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = node_indices.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
 
-        best_open = 0;
-        open_index = 0;
-        while (open_index < open_set.size())
+    const node start_node{start_x, start_y, start_z, 0U,
+        distance_component(start_x, goal_x) + distance_component(start_y, goal_y)
+        + distance_component(start_z, goal_z), MAX_SIZE, FT_TRUE};
+    result = nodes.push_back(start_node);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    open_set.push(frontier_entry{start_node.f, 0U});
+    if (open_set.get_error() != FT_ERR_SUCCESS)
+        return (open_set.get_error());
+    node_indices.insert(start_z * layer_stride + start_y * width + start_x, 0U);
+    if (node_indices.get_error() != FT_ERR_SUCCESS)
+        return (node_indices.get_error());
+
+    while (!open_set.empty())
+    {
+        const frontier_entry next = open_set.pop();
+        const ft_size_t current_index = next.node_index;
+        if (!nodes[current_index].open || next.priority != nodes[current_index].f)
+            continue ;
+        nodes[current_index].open = FT_FALSE;
+        const node current_node = nodes[current_index];
+        if (current_node.x == goal_x && current_node.y == goal_y && current_node.z == goal_z)
         {
-            if (nodes[open_set[open_index]].f < nodes[open_set[best_open]].f)
-                best_open = open_index;
-            open_index += 1;
-        }
-        current_index = open_set[best_open];
-
-        if (nodes[current_index].x == goal_x && nodes[current_index].y == goal_y
-            && nodes[current_index].z == goal_z)
-        {
-            ft_vector<game_path_step> reverse_path;
-            ft_size_t trace_index;
-            ft_size_t reverse_index;
-
-            initialize_error = reverse_path.initialize();
-            if (initialize_error != FT_ERR_SUCCESS)
+            game_path_step step;
+            (void)step.initialize();
+            ft_size_t path_index = 0U;
+            ft_size_t trace_index = current_index;
+            while (trace_index != MAX_SIZE)
             {
-                (void)open_set.destroy();
-                (void)nodes.destroy();
-                return (initialize_error);
+                ++path_index;
+                trace_index = nodes[trace_index].parent;
             }
+            out_path.resize(path_index, step);
+            result = out_path.get_error();
+            if (result != FT_ERR_SUCCESS)
+                return (result);
             trace_index = current_index;
-            while (FT_TRUE)
+            while (path_index != 0U)
             {
-                game_path_step step;
-
-                (void)step.initialize();
-                (void)step.set_coordinates(nodes[trace_index].x,
-                    nodes[trace_index].y, nodes[trace_index].z);
-                reverse_path.push_back(step);
-                if (nodes[trace_index].parent == -1)
-                    break ;
-                trace_index = static_cast<ft_size_t>(nodes[trace_index].parent);
+                const node &previous = nodes[trace_index];
+                --path_index;
+                (void)out_path[path_index].set_coordinates(previous.x, previous.y, previous.z);
+                trace_index = previous.parent;
             }
-            reverse_index = reverse_path.size();
-            while (reverse_index > 0)
-            {
-                reverse_index -= 1;
-                out_path.push_back(reverse_path[reverse_index]);
-            }
-            (void)reverse_path.destroy();
-            (void)open_set.destroy();
-            (void)nodes.destroy();
             return (FT_ERR_SUCCESS);
         }
 
-        open_set.erase(open_set.begin() + best_open);
-
-        int32_t direction_x[6] = {1, -1, 0, 0, 0, 0};
-        int32_t direction_y[6] = {0, 0, 1, -1, 0, 0};
-        int32_t direction_z[6] = {0, 0, 0, 0, 1, -1};
-        ft_size_t neighbor_index;
-
-        neighbor_index = 0;
-        while (neighbor_index < 6)
+        static constexpr int32_t DIRECTIONS[6][3] = {
+            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+            {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        ft_size_t neighbor_index = 0U;
+        while (neighbor_index < 6U)
         {
-            ft_size_t neighbor_x;
-            ft_size_t neighbor_y;
-            ft_size_t neighbor_z;
+            const int32_t *direction = DIRECTIONS[neighbor_index];
+            const ft_size_t neighbor_x = current_node.x + static_cast<ft_size_t>(direction[0]);
+            const ft_size_t neighbor_y = current_node.y + static_cast<ft_size_t>(direction[1]);
+            const ft_size_t neighbor_z = current_node.z + static_cast<ft_size_t>(direction[2]);
+            ++neighbor_index;
+            if (neighbor_x >= width || neighbor_y >= height || neighbor_z >= depth
+                || grid.get(neighbor_x, neighbor_y, neighbor_z) != 0
+                || grid.get_error() != FT_ERR_SUCCESS)
+                continue ;
 
-            neighbor_x = nodes[current_index].x;
-            neighbor_y = nodes[current_index].y;
-            neighbor_z = nodes[current_index].z;
-            if (direction_x[neighbor_index] > 0)
-                neighbor_x += 1;
-            else if (direction_x[neighbor_index] < 0)
-                neighbor_x -= 1;
-            if (direction_y[neighbor_index] > 0)
-                neighbor_y += 1;
-            else if (direction_y[neighbor_index] < 0)
-                neighbor_y -= 1;
-            if (direction_z[neighbor_index] > 0)
-                neighbor_z += 1;
-            else if (direction_z[neighbor_index] < 0)
-                neighbor_z -= 1;
-            if (neighbor_x < grid.get_width() && neighbor_y < grid.get_height()
-                && neighbor_z < grid.get_depth()
-                && grid.get(neighbor_x, neighbor_y, neighbor_z) == 0)
+            const ft_size_t key = neighbor_z * layer_stride + neighbor_y * width + neighbor_x;
+            const ft_size_t search_index = node_indices.at(key);
+            const int32_t lookup_error = node_indices.get_error();
+            const ft_size_t tentative_g = current_node.g + 1U;
+            if (lookup_error == FT_ERR_SUCCESS && tentative_g >= nodes[search_index].g)
+                continue ;
+            if (lookup_error != FT_ERR_SUCCESS && lookup_error != FT_ERR_NOT_FOUND)
+                return (lookup_error);
+
+            const ft_size_t remaining = distance_component(neighbor_x, goal_x)
+                + distance_component(neighbor_y, goal_y) + distance_component(neighbor_z, goal_z);
+            ft_size_t priority = MAX_SIZE;
+            if (tentative_g <= MAX_SIZE - remaining)
+                priority = tentative_g + remaining;
+            if (lookup_error == FT_ERR_SUCCESS)
             {
-                ft_bool found;
-                ft_size_t search_index;
-                int32_t tentative_g;
-
-                found = FT_FALSE;
-                search_index = 0;
-                while (search_index < nodes.size())
+                node &existing = nodes[search_index];
+                // Queue the improved priority and discard the old entry when it reaches the top.
+                if (existing.open && priority != existing.f)
                 {
-                    if (nodes[search_index].x == neighbor_x
-                        && nodes[search_index].y == neighbor_y
-                        && nodes[search_index].z == neighbor_z)
-                    {
-                        found = FT_TRUE;
-                        break ;
-                    }
-                    search_index += 1;
+                    open_set.push(frontier_entry{priority, search_index});
+                    if (open_set.get_error() != FT_ERR_SUCCESS)
+                        return (open_set.get_error());
                 }
-                tentative_g = nodes[current_index].g + 1;
-                if (found)
-                {
-                    if (tentative_g < nodes[search_index].g)
-                    {
-                        nodes[search_index].g = tentative_g;
-                        nodes[search_index].f = tentative_g + static_cast<int32_t>(
-                                distance_component(neighbor_x, goal_x)
-                                + distance_component(neighbor_y, goal_y)
-                                + distance_component(neighbor_z, goal_z));
-                        nodes[search_index].parent = static_cast<int32_t>(current_index);
-                    }
-                }
-                else
-                {
-                    node new_node;
-
-                    new_node.x = neighbor_x;
-                    new_node.y = neighbor_y;
-                    new_node.z = neighbor_z;
-                    new_node.g = tentative_g;
-                    new_node.f = tentative_g + static_cast<int32_t>(
-                            distance_component(neighbor_x, goal_x)
-                            + distance_component(neighbor_y, goal_y)
-                            + distance_component(neighbor_z, goal_z));
-                    new_node.parent = static_cast<int32_t>(current_index);
-                    nodes.push_back(new_node);
-                    open_set.push_back(nodes.size() - 1);
-                }
+                existing.g = tentative_g;
+                existing.f = priority;
+                existing.parent = current_index;
+                continue ;
             }
-            neighbor_index += 1;
+            const node new_node{neighbor_x, neighbor_y, neighbor_z, tentative_g, priority,
+                current_index, FT_TRUE};
+            const ft_size_t new_index = nodes.size();
+            result = nodes.push_back(new_node);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+            open_set.push(frontier_entry{priority, new_index});
+            if (open_set.get_error() != FT_ERR_SUCCESS)
+                return (open_set.get_error());
+            node_indices.insert(key, new_index);
+            if (node_indices.get_error() != FT_ERR_SUCCESS)
+                return (node_indices.get_error());
         }
     }
-    (void)open_set.destroy();
-    (void)nodes.destroy();
     return (FT_ERR_GAME_INVALID_MOVE);
 }
 
@@ -891,127 +899,86 @@ int32_t game_pathfinding::dijkstra_graph(const ft_graph<int32_t> &graph,
     ft_size_t start_vertex, ft_size_t goal_vertex,
     ft_vector<ft_size_t> &out_path) const noexcept
 {
-    ft_vector<int32_t> distance;
-    ft_vector<int32_t> previous;
-    ft_vector<ft_size_t> queue;
-    int32_t initialize_error;
-
-    initialize_error = distance.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    initialize_error = previous.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)distance.destroy();
-        return (initialize_error);
-    }
-    initialize_error = queue.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)previous.destroy();
-        (void)distance.destroy();
-        return (initialize_error);
-    }
     out_path.clear();
-    if (start_vertex >= graph.size() || goal_vertex >= graph.size())
-    {
-        (void)queue.destroy();
-        (void)previous.destroy();
-        (void)distance.destroy();
+    if (out_path.get_error() != FT_ERR_SUCCESS)
+        return (out_path.get_error());
+    const ft_size_t vertex_count = graph.size();
+    if (graph.get_error() != FT_ERR_SUCCESS)
+        return (graph.get_error());
+    if (start_vertex >= vertex_count || goal_vertex >= vertex_count)
         return (FT_ERR_GAME_INVALID_MOVE);
-    }
+    if (start_vertex == goal_vertex)
+        return (out_path.push_back(start_vertex));
 
-    distance.resize(graph.size(), -1);
-    previous.resize(graph.size(), -1);
-    distance[start_vertex] = 0;
-    queue.push_back(start_vertex);
+    ft_vector<ft_size_t> previous;
+    ft_vector<ft_size_t> queue;
+    ft_vector<ft_size_t> neighbors;
+    int32_t result = previous.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = queue.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = neighbors.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    previous.resize(vertex_count, vertex_count);
+    if (previous.get_error() != FT_ERR_SUCCESS)
+        return (previous.get_error());
+    previous[start_vertex] = start_vertex;
+    result = queue.push_back(start_vertex);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
 
-    while (queue.size() > 0)
+    ft_size_t queue_index = 0U;
+    ft_bool found = FT_FALSE;
+    // Each edge costs one, so discovery order is also shortest-distance order.
+    while (!found && queue_index < queue.size())
     {
-        ft_size_t best_queue;
-        ft_size_t queue_index;
-        ft_size_t current;
-
-        best_queue = 0;
-        queue_index = 0;
-        while (queue_index < queue.size())
+        const ft_size_t current_vertex = queue[queue_index];
+        ++queue_index;
+        neighbors.clear();
+        graph.neighbors(current_vertex, neighbors);
+        if (graph.get_error() != FT_ERR_SUCCESS)
+            return (graph.get_error());
+        const ft_size_t neighbor_count = neighbors.size();
+        ft_size_t neighbor_index = 0U;
+        while (neighbor_index < neighbor_count)
         {
-            if (distance[queue[queue_index]] < distance[queue[best_queue]])
-                best_queue = queue_index;
-            queue_index += 1;
-        }
-        current = queue[best_queue];
-        queue.erase(queue.begin() + best_queue);
-        if (current == goal_vertex)
-            break ;
-
-        ft_vector<ft_size_t> neighbors;
-        ft_size_t neighbor_index;
-
-        initialize_error = neighbors.initialize();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            (void)queue.destroy();
-            (void)previous.destroy();
-            (void)distance.destroy();
-            return (initialize_error);
-        }
-        graph.neighbors(current, neighbors);
-        neighbor_index = 0;
-        while (neighbor_index < neighbors.size())
-        {
-            ft_size_t neighbor;
-            int32_t alternative_distance;
-
-            neighbor = neighbors[neighbor_index];
-            alternative_distance = distance[current] + 1;
-            if (distance[neighbor] == -1 || alternative_distance < distance[neighbor])
+            const ft_size_t neighbor = neighbors[neighbor_index];
+            ++neighbor_index;
+            if (neighbor >= vertex_count || previous[neighbor] != vertex_count)
+                continue ;
+            previous[neighbor] = current_vertex;
+            if (neighbor == goal_vertex)
             {
-                distance[neighbor] = alternative_distance;
-                previous[neighbor] = static_cast<int32_t>(current);
-                queue.push_back(neighbor);
+                found = FT_TRUE;
+                break ;
             }
-            neighbor_index += 1;
+            result = queue.push_back(neighbor);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
         }
-        (void)neighbors.destroy();
     }
-
-    if (distance[goal_vertex] == -1)
-    {
-        (void)queue.destroy();
-        (void)previous.destroy();
-        (void)distance.destroy();
+    if (!found)
         return (FT_ERR_GAME_INVALID_MOVE);
-    }
 
-    ft_vector<ft_size_t> reverse_path;
-    ft_size_t vertex;
-
-    initialize_error = reverse_path.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    ft_size_t path_length = 1U;
+    ft_size_t vertex = goal_vertex;
+    while (vertex != start_vertex)
     {
-        (void)queue.destroy();
-        (void)previous.destroy();
-        (void)distance.destroy();
-        return (initialize_error);
+        ++path_length;
+        vertex = previous[vertex];
     }
+    out_path.resize(path_length);
+    result = out_path.get_error();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     vertex = goal_vertex;
-    while (FT_TRUE)
+    while (path_length != 0U)
     {
-        reverse_path.push_back(vertex);
-        if (vertex == start_vertex)
-            break ;
-        vertex = static_cast<ft_size_t>(previous[vertex]);
+        --path_length;
+        out_path[path_length] = vertex;
+        vertex = previous[vertex];
     }
-    while (reverse_path.size() > 0)
-    {
-        out_path.push_back(reverse_path[reverse_path.size() - 1]);
-        reverse_path.pop_back();
-    }
-    (void)reverse_path.destroy();
-    (void)queue.destroy();
-    (void)previous.destroy();
-    (void)distance.destroy();
     return (FT_ERR_SUCCESS);
 }
 

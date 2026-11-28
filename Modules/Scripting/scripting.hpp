@@ -122,6 +122,7 @@ class scripting_engine
             scripting_native_callback callback;
             void *user_data;
             ft_bool registered;
+            uint8_t name_length;
         };
 
         uint8_t _initialised_state;
@@ -129,6 +130,8 @@ class scripting_engine
         uint32_t _native_count;
         uint32_t _operation_limit;
         scripting_diagnostic _last_diagnostic;
+        char *_result_string;
+        uint32_t _result_string_capacity;
 
         scripting_engine(const scripting_engine &other) noexcept = delete;
         scripting_engine(scripting_engine &&other) noexcept = delete;
@@ -137,6 +140,15 @@ class scripting_engine
 
         int32_t execute_direct(const char *source,
             scripting_value *result) noexcept;
+        int32_t compile_into(const char *source, scripting_program &program) noexcept;
+        int32_t retain_execution_string(const scripting_program &program,
+            scripting_value &result) noexcept;
+        int32_t verify_program_stack(const scripting_program &program,
+            uint32_t &maximum_stack_depth) const noexcept;
+        int32_t execute_deep_program(const scripting_program &program,
+            scripting_value *result) noexcept;
+        int32_t execute_verified_program(const scripting_program &program,
+            scripting_value *result, scripting_value *stack) noexcept;
 
     public:
         scripting_engine() noexcept;
@@ -149,9 +161,13 @@ class scripting_engine
             scripting_native_callback callback, void *user_data,
             uint32_t *native_id) noexcept;
         int32_t set_operation_limit(uint32_t operation_limit) noexcept;
+        // Literal results borrow engine storage until the next literal result,
+        // move, or destruction. Native-owned strings keep their original lifetime.
         int32_t execute(const char *source, scripting_value *result) noexcept;
+        // A failed compile leaves the caller's program unchanged.
         int32_t compile(const char *source, scripting_program *program) noexcept;
         int32_t verify_program(const scripting_program &program) const noexcept;
+        // The verified program must stay unchanged until execution returns.
         int32_t execute_program(const scripting_program &program,
             scripting_value *result) noexcept;
         int32_t serialize_program(const scripting_program &program,

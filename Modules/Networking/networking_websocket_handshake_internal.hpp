@@ -14,12 +14,13 @@ static constexpr ft_size_t WEBSOCKET_ACCEPT_KEY_LENGTH = 28U;
 static inline ft_bool websocket_compute_accept_key(const char *key, ft_size_t key_length,
     char (&accept)[WEBSOCKET_ACCEPT_KEY_LENGTH + 1U]) noexcept
 {
-    static constexpr char GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    static constexpr char WEBSOCKET_ACCEPT_GUID[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     sha1_digest_state state;
     uint8_t digest[20];
     sha1_digest_initialize(state);
     sha1_digest_update(state, reinterpret_cast<const uint8_t *>(key), key_length);
-    sha1_digest_update(state, reinterpret_cast<const uint8_t *>(GUID), sizeof(GUID) - 1U);
+    sha1_digest_update(state, reinterpret_cast<const uint8_t *>(WEBSOCKET_ACCEPT_GUID),
+        sizeof(WEBSOCKET_ACCEPT_GUID) - 1U);
     sha1_digest_final(state, digest);
     return (compression_base64_encode_into(digest, sizeof(digest), accept, sizeof(accept)));
 }

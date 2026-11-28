@@ -4,7 +4,6 @@
 #include "../Compatebility/compatebility_internal.hpp"
 #include <cerrno>
 #include <cstdio>
-#include <cstring>
 #include <fcntl.h>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -13,19 +12,6 @@
 #ifdef LIBFT_TEST_BUILD
 static ft_bool g_su_service_force_no_fork = FT_FALSE;
 #endif
-static t_su_service_signal_handler g_su_service_signal_handler = ft_nullptr;
-static void *g_su_service_signal_context = ft_nullptr;
-
-static void su_service_signal_dispatch(int32_t signal_number,
-    void *user_context)
-{
-    (void)user_context;
-    if (g_su_service_signal_handler == ft_nullptr)
-        return ;
-    g_su_service_signal_handler(signal_number,
-        g_su_service_signal_context);
-    return ;
-}
 
 #ifdef LIBFT_TEST_BUILD
 void su_service_force_no_fork(ft_bool enable)
@@ -101,7 +87,6 @@ static int32_t su_service_write_pid_file(const char *pid_file_path,
             *error_code = FT_ERR_SUCCESS;
         return (0);
     }
-    std::memset(buffer, 0, sizeof(buffer));
     pid_error = cmp_service_format_pid_line(buffer, sizeof(buffer), &length);
     if (pid_error != FT_ERR_SUCCESS)
     {
@@ -163,25 +148,11 @@ int32_t su_service_daemonize(const char *working_directory,
 int32_t su_service_install_signal_handlers(t_su_service_signal_handler handler,
     void *user_context)
 {
-    if (handler == ft_nullptr)
-        return (-1);
-    su_service_clear_signal_handlers();
-    g_su_service_signal_handler = handler;
-    g_su_service_signal_context = user_context;
-    if (cmp_service_install_signal_handlers(su_service_signal_dispatch,
-            user_context) != 0)
-    {
-        g_su_service_signal_handler = ft_nullptr;
-        g_su_service_signal_context = ft_nullptr;
-        return (-1);
-    }
-    return (0);
+    return (cmp_service_install_signal_handlers(handler, user_context));
 }
 
 void su_service_clear_signal_handlers(void)
 {
     cmp_service_clear_signal_handlers();
-    g_su_service_signal_handler = ft_nullptr;
-    g_su_service_signal_context = ft_nullptr;
     return ;
 }

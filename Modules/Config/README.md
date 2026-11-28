@@ -21,7 +21,7 @@ It also exposes lightweight reload and file-watch helpers for call chains that w
 - `config_reload_file(const char *filename)` - Alias for `config_load_file(...)` for reload-style call chains.
 - `config_write_file(const config_data *config, const char *filename)` - Writes a configuration table to disk.
 - `config_save_file(const config_data *config, const char *filename)` - Alias for `config_write_file(...)` for save-style call chains.
-- `config_merge(const config_data *base_config, const config_data *override_config)` - Allocates a merged configuration where override entries replace base entries.
+- `config_merge(const config_data *base_config, const config_data *override_config)` - Allocates a new table in base order. An override replaces the value of the first entry with the same section and key. New entries are appended in override order. An absent section or key is distinct from an empty string.
 - `config_watch_file(const char *filename, file_watch_callback callback, void *user_data)` - Creates a file watcher for the directory that contains `filename`.
 
 ## Entry Synchronization

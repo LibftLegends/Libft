@@ -21,45 +21,44 @@ struct voxel_script_execution_context
 };
 
 static int32_t voxel_script_normalize_custom_source(
-    const ft_string &script, ft_string &normalized) noexcept
+    const char *data, ft_size_t size, ft_string &normalized) noexcept
 {
-    const char *data;
-    ft_size_t index;
-    uint32_t parenthesis_depth;
-    int32_t error_code;
-
-    error_code = normalized.initialize();
+    int32_t error_code = normalized.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    data = script.c_str();
-    index = 0U;
-    parenthesis_depth = 0U;
-    while (index < script.size())
+    char output[1024];
+    ft_size_t output_size = 0U;
+    ft_size_t index = 0U;
+    uint32_t parenthesis_depth = 0U;
+    while (index < size)
     {
         if (data[index] == '\n' || data[index] == '\r')
         {
-            if (data[index] == '\n' && index > 0U
-                && data[index - 1U] == '\r')
-            {
-                index += 1U;
-                continue ;
-            }
             if (parenthesis_depth == 0U
                 && (index == 0U || data[index - 1U] != ';'))
-                error_code = normalized.append(';');
+                output[output_size++] = ';';
+            if (data[index] == '\r' && index + 1U < size && data[index + 1U] == '\n')
+                ++index;
         }
         else
         {
-            error_code = normalized.append(data[index]);
             if (data[index] == '(')
                 parenthesis_depth += 1U;
             else if (data[index] == ')' && parenthesis_depth > 0U)
                 parenthesis_depth -= 1U;
+            output[output_size++] = data[index];
         }
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
+        if (output_size == sizeof(output))
+        {
+            error_code = normalized.append(output, output_size);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+            output_size = 0U;
+        }
         index += 1U;
     }
+    if (output_size != 0U)
+        return (normalized.append(output, output_size));
     return (FT_ERR_SUCCESS);
 }
 
@@ -520,8 +519,11 @@ int32_t voxel_script_execute(game_script_bridge &bridge,
     voxel_context.asset_root = asset_root;
     voxel_context.world_block_origin_x = world_block_origin_x;
     voxel_context.world_block_origin_z = world_block_origin_z;
-    normalize_error = voxel_script_normalize_custom_source(script,
-        normalized_script);
+    const char *data = script.c_str();
+    const ft_size_t size = script.size();
+    if (ft_memchr(data, '\n', size) == ft_nullptr && ft_memchr(data, '\r', size) == ft_nullptr)
+        return (bridge.execute_custom_with_user_data(script, ft_nullptr, &voxel_context));
+    normalize_error = voxel_script_normalize_custom_source(data, size, normalized_script);
     if (normalize_error != FT_ERR_SUCCESS)
         return (normalize_error);
     return (bridge.execute_custom_with_user_data(normalized_script,

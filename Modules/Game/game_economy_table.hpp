@@ -31,6 +31,8 @@ class game_economy_table
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        template <typename Operation>
+        int32_t with_table_lock(Operation operation) const noexcept;
         static int32_t set_error(int32_t error_code) noexcept;
 
     public:

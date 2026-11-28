@@ -35,6 +35,7 @@ class game_voxel_region
         int32_t ensure_chunk(uint16_t slot,
             game_voxel_chunk **chunk_out) noexcept;
         int32_t clear_chunks() noexcept;
+        static int32_t stage_region(int32_t descriptor, void *context) noexcept;
 
     public:
         game_voxel_region() noexcept;
@@ -52,6 +53,7 @@ class game_voxel_region
         int32_t move(game_voxel_region &other) noexcept;
         int32_t set_region_storage_path(const char *storage_path) noexcept;
         int32_t load_region(int32_t world_x, int32_t world_z) noexcept;
+        // Publishes the completed region file before clearing dirty flags.
         int32_t save_region() noexcept;
         int32_t load_chunk(int32_t world_chunk_x, int32_t world_chunk_z,
             game_voxel_chunk **chunk_out) noexcept;

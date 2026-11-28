@@ -24,6 +24,11 @@ ssize_t nw_ssl_read(SSL *ssl, void *buf, ft_size_t len);
 
 #ifdef __cplusplus
 }
+
+ssize_t networking_ssl_write_with_status(SSL *ssl, const void *buffer,
+    ft_size_t length, int32_t &ssl_error);
+ssize_t networking_ssl_read_with_status(SSL *ssl, void *buffer,
+    ft_size_t length, int32_t &ssl_error);
 #endif
 
 #endif

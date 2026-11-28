@@ -52,7 +52,6 @@ class networking_handshake
         void clear_secret_state() noexcept;
         int32_t build_local_hello() noexcept;
         int32_t build_transcript() noexcept;
-        int32_t append_u64(ft_vector<uint8_t> &buffer, uint64_t value) noexcept;
 
     public:
         networking_handshake() noexcept;

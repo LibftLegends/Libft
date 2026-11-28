@@ -49,8 +49,13 @@ struct card_game_usage_limit_snapshot
 
 class card_game_usage_limit_ledger
 {
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
     private:
+#endif
         uint8_t _initialised_state;
+        ft_bool _sequential_ids;
         uint32_t _count;
         uint32_t _next_id;
         card_game_usage_limit *_limits;
@@ -65,6 +70,8 @@ class card_game_usage_limit_ledger
             card_game_usage_limit_ledger &&other) = delete;
 
         int32_t find(uint32_t limit_id, uint32_t *index) const noexcept;
+        int32_t find_consumable(uint32_t limit_id, uint32_t amount,
+            uint64_t current_epoch, uint32_t *index) const noexcept;
         int32_t find_matching(uint32_t key_id, uint32_t subject_id,
             card_game_usage_scope scope, uint64_t window_epoch,
             uint32_t *index) const noexcept;
@@ -85,6 +92,8 @@ class card_game_usage_limit_ledger
             card_game_usage_limit_snapshot *destination) noexcept;
         int32_t apply_snapshot(
             const card_game_usage_limit_snapshot &snapshot) noexcept;
+        int32_t append_state_hash(uint64_t &hash) const noexcept;
+        ft_bool matches_snapshot(const card_game_usage_limit_snapshot &snapshot) const noexcept;
         static ft_bool snapshots_equal(
             const card_game_usage_limit_snapshot &first,
             const card_game_usage_limit_snapshot &second) noexcept;

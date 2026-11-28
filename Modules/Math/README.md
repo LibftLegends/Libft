@@ -12,7 +12,11 @@ The `Math` module contains scalar math, statistics, dice/roll parsing, interpola
 
 ## Roll and Dice Helpers
 
-- `roll_parse`, `roll_validate`, and roll utility helpers - Parse and validate dice notation and compute roll-related values.
+- `math_eval` evaluates an integer expression with signed operands, parentheses,
+  and the usual precedence for `+`, `-`, `*`, and `/`. It returns null for
+  invalid syntax, out-of-range intermediate values, division by zero, or dice notation.
+- `math_roll` also evaluates dice expressions such as `2d6` and the one-die shorthand `d6`. Both functions return
+  a CMA-allocated integer on success. The caller releases it with `cma_free`.
 
 ## Interpolation, Integration, and Polynomials
 
@@ -20,7 +24,7 @@ The `Math` module contains scalar math, statistics, dice/roll parsing, interpola
 - `ft_cubic_spline_build(...)` - Allocates and builds a cubic spline from x/y samples.
 - `ft_cubic_spline_evaluate(...)` - Evaluates a spline at an input value.
 - `math_bezier_evaluate(...)` / `math_bezier_evaluate_vector2(...)` - Evaluate scalar or `vector2` Bezier curves.
-- `math_integrate_trapezoidal(...)` / `math_integrate_simpson(...)` - Numerically integrate a callback over a range.
+- `math_integrate_trapezoidal(...)` / `math_integrate_simpson(...)` - Numerically integrate a callback over a finite range. Simpson's method reuses sampled values between refinements, so the callback should return the same value for the same input during a call.
 - `math_polynomial_evaluate(...)` - Evaluate a polynomial.
 - `math_polynomial_solve_quadratic(...)` - Solve a quadratic equation.
 - `math_polynomial_find_root_newton(...)` - Find a polynomial root with Newton iteration.
@@ -35,7 +39,10 @@ The `Math` module contains scalar math, statistics, dice/roll parsing, interpola
 - `apply_sin`, `apply_cos`, `apply_exp`, and `apply_log` - Apply differentiable unary functions.
 - `ft_dual_number_proxy` - Error-propagating proxy for dual-number operator chains.
 - `math_autodiff_univariate(...)` - Computes value and derivative for a unary callback.
-- `math_autodiff_gradient(...)` - Computes multivariate value and gradient.
+- `math_autodiff_gradient(...)` - Computes multivariate value and gradient. The point
+  and gradient may be the same vector. Errors leave the supplied outputs intact.
+- Both differentiation callbacks return an owning pointer to a heap-allocated dual
+  number. The differentiation routine deletes it after reading the result.
 
 ## Linear Algebra
 
@@ -46,8 +53,16 @@ The `Math` module contains scalar math, statistics, dice/roll parsing, interpola
 
 ## FFT and Intervals
 
-- `math_fft.hpp` - FFT-related public helpers for frequency-domain transforms.
+- `math_fft.hpp` - `math_fft` and `math_ifft` transform equally sized, nonempty vectors
+  whose length is a power of two. Their two output vectors must be distinct. Each
+  output may alias an input, including for an in-place transform.
+- `math_convolution` convolves two nonempty real vectors into a vector of length
+  `first.size() + second.size() - 1`. The result may alias either input.
+  Both APIs take initialized vectors and return Libft status codes.
 - `s_ft_interval` - Interval with `lower`, `upper`, and error code fields.
 - `math_interval.hpp` helpers - Create and evaluate interval ranges and interval operations.
+  Multiplication and division find the extrema of the four cross-endpoint results.
+  Division rejects intervals containing zero, and both operations reject undefined
+  endpoint results such as zero times infinity.
 
 All lifecycle math classes expose `initialize`, copy/move initialization, `destroy`, `move`, `enable_thread_safety`, `disable_thread_safety`, and `is_thread_safe` unless noted by the class API.

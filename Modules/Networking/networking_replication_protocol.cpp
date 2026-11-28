@@ -170,7 +170,7 @@ int32_t networking_replication_peer_cursor_serialize(
     replication_store_integer<FT_TRUE>(encoded,
         static_cast<uint16_t>(NETWORKING_REPLICATION_CURSOR_VERSION));
     replication_store_integer<FT_TRUE>(encoded + 2U, static_cast<uint16_t>(cursor.snapshot_acknowledged));
-    replication_store_integer<FT_TRUE>(encoded + 4U, static_cast<uint32_t>(0U));
+    replication_store_integer<FT_TRUE, uint32_t>(encoded + 4U, 0U);
     replication_store_integer<FT_TRUE>(encoded + 8U, cursor.server_instance_id);
     replication_store_integer<FT_TRUE>(encoded + 16U, cursor.session_id);
     replication_store_integer<FT_TRUE>(encoded + 24U, cursor.subscription_id);

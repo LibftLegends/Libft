@@ -32,7 +32,7 @@ The `Compatebility` module contains platform-specific adapters used by higher-le
 
 ## Secure Randomness
 
-- `cmp_rng_secure_bytes(...)` - Uses the platform cryptographic random source. Under `LIBFT_TEST_BUILD`, the Windows provider exposes one-shot failure hooks for provider acquisition, byte generation, and provider release; these hooks are absent from production builds.
+- `cmp_rng_secure_bytes(...)` - Uses the platform cryptographic random source. Windows uses the system-preferred CNG generator and falls back to CryptoAPI if CNG is unavailable or fails. Test builds provide one-shot failure hooks for CryptoAPI acquisition, generation, and release.
 
 ## Stack Trace and Optional SQLite
 

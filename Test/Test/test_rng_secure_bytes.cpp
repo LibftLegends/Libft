@@ -32,6 +32,20 @@ FT_TEST(test_rng_secure_bytes_success)
 #if defined(_WIN32) || defined(_WIN64)
 # include <windows.h>
 
+FT_TEST(test_rng_secure_bytes_windows_preserves_bytes_outside_request)
+{
+    uint8_t guarded_buffer[4098];
+    ft_memset(guarded_buffer, 0xA5U, sizeof(guarded_buffer));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        crypto_random_bytes(guarded_buffer + 1U, sizeof(guarded_buffer) - 2U));
+    FT_ASSERT_EQ(0xA5U, guarded_buffer[0]);
+    FT_ASSERT_EQ(0xA5U, guarded_buffer[sizeof(guarded_buffer) - 1U]);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, rng_secure_bytes(guarded_buffer,
+        static_cast<ft_size_t>(UINT32_MAX) + 1U));
+    FT_ASSERT_EQ(0xA5U, guarded_buffer[0]);
+    return (1);
+}
+
 FT_TEST(test_rng_secure_bytes_windows_failures_wipe_crypto_output)
 {
     uint8_t buffer[32];
