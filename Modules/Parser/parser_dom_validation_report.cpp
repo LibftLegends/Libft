@@ -11,6 +11,7 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
+#include "../Template/move.hpp"
 
 thread_local int32_t ft_dom_validation_report::_last_error = FT_ERR_SUCCESS;
 
@@ -48,6 +49,16 @@ int32_t ft_dom_schema_rule::destroy() noexcept
     this->type = FT_DOM_NODE_NULL;
     this->required = false;
     return (this->path.destroy());
+}
+
+int32_t ft_dom_schema_rule::initialize(ft_dom_schema_rule &&other) noexcept
+{
+    const int32_t status = this->path.initialize(ft_move(other.path));
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    this->type = other.type;
+    this->required = other.required;
+    return (FT_ERR_SUCCESS);
 }
 
 ft_dom_validation_error::ft_dom_validation_error() noexcept
@@ -233,6 +244,21 @@ ft_dom_validation_report::~ft_dom_validation_report() noexcept
     return ;
 }
 
+int32_t ft_dom_validation_report::reset() noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_validation_report::reset");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+    this->_errors.clear();
+    const int32_t status = this->_errors.get_error();
+    if (status == FT_ERR_SUCCESS)
+        this->_valid = FT_TRUE;
+    (void)this->unlock_internal(lock_acquired);
+    return (set_error(status));
+}
+
 void ft_dom_validation_report::mark_valid() noexcept
 {
     ft_bool lock_acquired;
@@ -303,11 +329,9 @@ int32_t ft_dom_validation_report::add_error(const ft_string &path,
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (set_error(lock_error));
-    this->_errors.push_back(error_entry);
+    const int32_t status = this->_errors.push_back(error_entry);
     (void)this->unlock_internal(lock_acquired);
-    if (this->_errors.get_error() != FT_ERR_SUCCESS)
-        return (set_error(this->_errors.get_error()));
-    return (set_error(FT_ERR_SUCCESS));
+    return (set_error(status));
 }
 
 const ft_vector<ft_dom_validation_error> &ft_dom_validation_report::errors() const noexcept

@@ -260,8 +260,7 @@ void ft_document_sink::unlock(ft_bool lock_acquired) const noexcept
 
 
 ft_file_document_source::ft_file_document_source() noexcept
-    : _path(), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _path()
 {
     return ;
 }
@@ -281,8 +280,13 @@ int32_t ft_file_document_source::initialize() noexcept
         errno_abort_lifecycle(this->_initialised_state, "ft_file_document_source::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    const int32_t status = this->_path.initialize();
+    if (status != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (status);
+    }
+    return (ft_document_source::initialize());
 }
 
 int32_t ft_file_document_source::destroy() noexcept
@@ -291,83 +295,11 @@ int32_t ft_file_document_source::destroy() noexcept
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    this->_path.clear();
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (disable_error);
-}
-
-int32_t ft_file_document_source::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_source::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_source::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_file_document_source::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_file_document_source::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_source::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_source::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_source::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_file_document_source::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_source::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
+    disable_error = ft_document_source::destroy();
+    const int32_t path_error = this->_path.destroy();
+    if (disable_error != FT_ERR_SUCCESS)
+        return (disable_error);
+    return (path_error);
 }
 
 void ft_file_document_source::set_path(const char *file_path) noexcept
@@ -396,71 +328,50 @@ const char *ft_file_document_source::get_path() const noexcept
 
 int32_t ft_file_document_source::read_all(ft_string &output)
 {
-    su_file *file_stream;
-    int64_t file_size_long;
-    ft_size_t file_size;
-    char *content_pointer;
-    ft_size_t read_count;
-    int32_t error_code;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_source::read_all");
-    file_stream = su_fopen(this->_path.c_str());
-    if (file_stream == ft_nullptr)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    su_file *stream = su_fopen(this->_path.c_str());
+    (void)this->unlock_internal(lock_acquired);
+    if (!stream)
         return (FT_ERR_IO);
-    file_size_long = 0;
-    file_size = 0;
-    content_pointer = ft_nullptr;
-    read_count = 0;
-    error_code = FT_ERR_SUCCESS;
-    if (su_fseek(file_stream, 0, SEEK_END) != 0)
-        error_code = FT_ERR_IO;
-    if (error_code == FT_ERR_SUCCESS)
+
+    int64_t stream_size = -1;
+    if (su_fseek(stream, 0, SEEK_END) == 0)
+        stream_size = su_ftell(stream);
+    if (stream_size < 0 || su_fseek(stream, 0, SEEK_SET) != 0)
+        status = FT_ERR_IO;
+
+    const ft_size_t size = static_cast<ft_size_t>(stream_size);
+    char *buffer = ft_nullptr;
+    if (status == FT_ERR_SUCCESS && size >= SIZE_MAX)
+        status = FT_ERR_OUT_OF_RANGE;
+    if (status == FT_ERR_SUCCESS)
     {
-        file_size_long = su_ftell(file_stream);
-        if (file_size_long < 0)
-            error_code = FT_ERR_IO;
+        buffer = static_cast<char *>(cma_malloc(size + 1));
+        if (!buffer)
+            status = FT_ERR_NO_MEMORY;
+        else if (su_fread(buffer, 1, size, stream) != size)
+            status = FT_ERR_IO;
     }
-    if (error_code == FT_ERR_SUCCESS && su_fseek(file_stream, 0, SEEK_SET) != 0)
-        error_code = FT_ERR_IO;
-    if (error_code == FT_ERR_SUCCESS)
+    if (su_fclose(stream) != 0 && status == FT_ERR_SUCCESS)
+        status = FT_ERR_IO;
+    if (status == FT_ERR_SUCCESS)
     {
-        if (file_size_long > static_cast<int64_t>(static_cast<ft_size_t>(-1)))
-            error_code = FT_ERR_OUT_OF_RANGE;
+        buffer[size] = '\0';
+        status = ft_string_take_owned_buffer(output, buffer, size);
+        if (status == FT_ERR_SUCCESS)
+            return (FT_ERR_SUCCESS);
     }
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        file_size = static_cast<ft_size_t>(file_size_long);
-        content_pointer = static_cast<char *>(cma_malloc(file_size + 1));
-        if (content_pointer == ft_nullptr)
-            error_code = FT_ERR_NO_MEMORY;
-    }
-    if (error_code == FT_ERR_SUCCESS)
-    {
-        read_count = su_fread(content_pointer, 1, file_size, file_stream);
-        if (read_count != file_size)
-            error_code = FT_ERR_IO;
-    }
-    if (error_code == FT_ERR_SUCCESS)
-        content_pointer[file_size] = '\0';
-    if (su_fclose(file_stream) != 0 && error_code == FT_ERR_SUCCESS)
-        error_code = FT_ERR_IO;
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        if (content_pointer != ft_nullptr)
-            cma_free(content_pointer);
-        return (error_code);
-    }
-    output.assign(content_pointer, file_size);
-    cma_free(content_pointer);
-    if (output.get_error() != FT_ERR_SUCCESS)
-        return (output.get_error());
-    return (FT_ERR_SUCCESS);
+    cma_free(buffer);
+    return (status);
 }
 
 
 ft_file_document_sink::ft_file_document_sink() noexcept
-    : _path(), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _path()
 {
     return ;
 }
@@ -480,8 +391,13 @@ int32_t ft_file_document_sink::initialize() noexcept
         errno_abort_lifecycle(this->_initialised_state, "ft_file_document_sink::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    const int32_t status = this->_path.initialize();
+    if (status != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (status);
+    }
+    return (ft_document_sink::initialize());
 }
 
 int32_t ft_file_document_sink::destroy() noexcept
@@ -490,83 +406,11 @@ int32_t ft_file_document_sink::destroy() noexcept
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    this->_path.clear();
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (disable_error);
-}
-
-int32_t ft_file_document_sink::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_sink::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_sink::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_file_document_sink::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_file_document_sink::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_sink::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_file_document_sink::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_sink::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_file_document_sink::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_sink::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
+    disable_error = ft_document_sink::destroy();
+    const int32_t path_error = this->_path.destroy();
+    if (disable_error != FT_ERR_SUCCESS)
+        return (disable_error);
+    return (path_error);
 }
 
 void ft_file_document_sink::set_path(const char *file_path) noexcept
@@ -595,34 +439,27 @@ const char *ft_file_document_sink::get_path() const noexcept
 
 int32_t ft_file_document_sink::write_all(const char *data_pointer, ft_size_t data_length)
 {
-    su_file *file_stream;
-    ft_size_t written_count;
-    int32_t error_code;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_file_document_sink::write_all");
     if (data_pointer == ft_nullptr && data_length != 0)
         return (FT_ERR_INVALID_ARGUMENT);
-    file_stream = su_fopen(this->_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (file_stream == ft_nullptr)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    su_file *stream = su_fopen(this->_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    (void)this->unlock_internal(lock_acquired);
+    if (!stream)
         return (FT_ERR_IO);
-    written_count = 0;
-    error_code = FT_ERR_SUCCESS;
-    if (data_length > 0)
-    {
-        written_count = su_fwrite(data_pointer, 1, data_length, file_stream);
-        if (written_count != data_length)
-            error_code = FT_ERR_IO;
-    }
-    if (su_fclose(file_stream) != 0 && error_code == FT_ERR_SUCCESS)
-        error_code = FT_ERR_IO;
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (FT_ERR_SUCCESS);
+
+    if (data_length != 0 && su_fwrite(data_pointer, 1, data_length, stream) != data_length)
+        status = FT_ERR_IO;
+    if (su_fclose(stream) != 0 && status == FT_ERR_SUCCESS)
+        status = FT_ERR_IO;
+    return (status);
 }
 
 ft_memory_document_source::ft_memory_document_source() noexcept
-    : _data_pointer(ft_nullptr), _data_length(0), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _data_pointer(ft_nullptr), _data_length(0)
 {
     return ;
 }
@@ -635,101 +472,16 @@ ft_memory_document_source::~ft_memory_document_source()
 }
 
 
-int32_t ft_memory_document_source::initialize() noexcept
-{
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(this->_initialised_state, "ft_memory_document_source::initialize", "called while object is already initialised");
-        return (FT_ERR_INVALID_STATE);
-    }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
-}
-
 int32_t ft_memory_document_source::destroy() noexcept
 {
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
+    disable_error = ft_document_source::destroy();
     this->_data_pointer = ft_nullptr;
     this->_data_length = 0;
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (disable_error);
-}
-
-int32_t ft_memory_document_source::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_source::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_source::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_memory_document_source::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_memory_document_source::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_source::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_source::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_source::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_memory_document_source::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_source::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
 }
 
 void ft_memory_document_source::set_data(const char *data_pointer,
@@ -763,32 +515,32 @@ ft_size_t ft_memory_document_source::get_length() const noexcept
 
 int32_t ft_memory_document_source::read_all(ft_string &output)
 {
-    int32_t error_code;
-    ft_size_t bytes_read;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_source::read_all");
     parser_observability_emit("memory_source_read_all", "memory",
         FT_OBSERVABILITY_TRACE_START, FT_ERR_SUCCESS, 0, 0);
-    if (this->_data_pointer == ft_nullptr && this->_data_length != 0)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    ft_size_t bytes_read = 0;
+    if (status == FT_ERR_SUCCESS)
     {
-        parser_observability_emit("memory_source_read_all", "memory",
-            FT_OBSERVABILITY_TRACE_FINISH, FT_ERR_INVALID_ARGUMENT, 0, 0);
-        return (FT_ERR_INVALID_ARGUMENT);
+        if (!this->_data_pointer && this->_data_length != 0)
+            status = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            status = output.assign(this->_data_pointer, this->_data_length);
+            if (status == FT_ERR_SUCCESS)
+                bytes_read = this->_data_length;
+        }
+        (void)this->unlock_internal(lock_acquired);
     }
-    output.assign(this->_data_pointer, this->_data_length);
-    error_code = output.get_error();
-    bytes_read = 0;
-    if (error_code == FT_ERR_SUCCESS)
-        bytes_read = this->_data_length;
     parser_observability_emit("memory_source_read_all", "memory",
-        FT_OBSERVABILITY_TRACE_FINISH, error_code, bytes_read, 0);
-    return (error_code);
+        FT_OBSERVABILITY_TRACE_FINISH, status, bytes_read, 0);
+    return (status);
 }
 
 
 ft_memory_document_sink::ft_memory_document_sink() noexcept
-    : _storage_pointer(ft_nullptr), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _storage_pointer(ft_nullptr)
 {
     return ;
 }
@@ -801,100 +553,15 @@ ft_memory_document_sink::~ft_memory_document_sink()
 }
 
 
-int32_t ft_memory_document_sink::initialize() noexcept
-{
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(this->_initialised_state, "ft_memory_document_sink::initialize", "called while object is already initialised");
-        return (FT_ERR_INVALID_STATE);
-    }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
-}
-
 int32_t ft_memory_document_sink::destroy() noexcept
 {
     int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
+    disable_error = ft_document_sink::destroy();
     this->_storage_pointer = ft_nullptr;
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (disable_error);
-}
-
-int32_t ft_memory_document_sink::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_sink::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_sink::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_memory_document_sink::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_memory_document_sink::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_sink::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_memory_document_sink::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_sink::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_memory_document_sink::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_sink::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
 }
 
 void ft_memory_document_sink::set_storage(ft_string *storage_pointer) noexcept
@@ -920,39 +587,100 @@ ft_string *ft_memory_document_sink::get_storage() const noexcept
 
 int32_t ft_memory_document_sink::write_all(const char *data_pointer, ft_size_t data_length)
 {
-    int32_t error_code;
-    ft_size_t bytes_written;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_memory_document_sink::write_all");
     parser_observability_emit("memory_sink_write_all", "memory",
         FT_OBSERVABILITY_TRACE_START, FT_ERR_SUCCESS, 0, 0);
-    if (this->_storage_pointer == ft_nullptr)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    ft_size_t bytes_written = 0;
+    if (status == FT_ERR_SUCCESS)
     {
-        parser_observability_emit("memory_sink_write_all", "memory",
-            FT_OBSERVABILITY_TRACE_FINISH, FT_ERR_INVALID_STATE, 0, 0);
-        return (FT_ERR_INVALID_STATE);
+        if (!this->_storage_pointer)
+            status = FT_ERR_INVALID_STATE;
+        else if (!data_pointer && data_length != 0)
+            status = FT_ERR_INVALID_ARGUMENT;
+        else
+        {
+            status = this->_storage_pointer->assign(data_pointer, data_length);
+            if (status == FT_ERR_SUCCESS)
+                bytes_written = data_length;
+        }
+        (void)this->unlock_internal(lock_acquired);
     }
-    if (data_pointer == ft_nullptr && data_length != 0)
-    {
-        parser_observability_emit("memory_sink_write_all", "memory",
-            FT_OBSERVABILITY_TRACE_FINISH, FT_ERR_INVALID_ARGUMENT, 0, 0);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    this->_storage_pointer->assign(data_pointer, data_length);
-    error_code = this->_storage_pointer->get_error();
-    bytes_written = 0;
-    if (error_code == FT_ERR_SUCCESS)
-        bytes_written = data_length;
     parser_observability_emit("memory_sink_write_all", "memory",
-        FT_OBSERVABILITY_TRACE_FINISH, error_code, 0, bytes_written);
-    return (error_code);
+        FT_OBSERVABILITY_TRACE_FINISH, status, 0, bytes_written);
+    return (status);
 }
 
 
 #if NETWORKING_HAS_OPENSSL
+struct parser_http_endpoint
+{
+    ft_string host_storage;
+    ft_string path_storage;
+    ft_string port_storage;
+    const char *host;
+    const char *path;
+    const char *port;
+    ft_bool use_ssl;
+};
+
+static int32_t parser_http_capture_endpoint(parser_http_endpoint &endpoint,
+    const ft_string &host, const ft_string &path, const ft_string &port,
+    ft_bool use_ssl, ft_bool copy_configuration) noexcept
+{
+    if (host.empty() || path.empty())
+        return (FT_ERR_INVALID_STATE);
+    endpoint.host = host.c_str();
+    endpoint.path = path.c_str();
+    endpoint.port = ft_nullptr;
+    endpoint.use_ssl = use_ssl;
+    if (!port.empty())
+        endpoint.port = port.c_str();
+    if (!copy_configuration)
+        return (FT_ERR_SUCCESS);
+
+    int32_t status = endpoint.host_storage.initialize(host);
+    if (status == FT_ERR_SUCCESS)
+        status = endpoint.path_storage.initialize(path);
+    if (status == FT_ERR_SUCCESS && endpoint.port)
+        status = endpoint.port_storage.initialize(port);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    endpoint.host = endpoint.host_storage.c_str();
+    endpoint.path = endpoint.path_storage.c_str();
+    if (endpoint.port)
+        endpoint.port = endpoint.port_storage.c_str();
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t parser_http_initialize_option(ft_string &option, const char *value) noexcept
+{
+    if (!value || value[0] == '\0')
+        return (option.initialize());
+    return (option.initialize(value));
+}
+
+static void parser_http_configure(ft_string &host_storage, ft_string &path_storage,
+    ft_string &port_storage, ft_bool &ssl_storage, const char *host,
+    const char *path, const char *port, ft_bool use_ssl) noexcept
+{
+    ft_string new_host;
+    ft_string new_path;
+    ft_string new_port;
+    if (parser_http_initialize_option(new_host, host) != FT_ERR_SUCCESS
+        || parser_http_initialize_option(new_path, path) != FT_ERR_SUCCESS
+        || parser_http_initialize_option(new_port, port) != FT_ERR_SUCCESS)
+        return ;
+    (void)host_storage.move(new_host);
+    (void)path_storage.move(new_path);
+    (void)port_storage.move(new_port);
+    ssl_storage = use_ssl;
+    return ;
+}
+
 ft_http_document_source::ft_http_document_source() noexcept
-    : _host(), _path(), _port(), _use_ssl(false), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _host(), _path(), _port(), _use_ssl(false)
 {
     return ;
 }
@@ -972,96 +700,38 @@ int32_t ft_http_document_source::initialize() noexcept
         errno_abort_lifecycle(this->_initialised_state, "ft_http_document_source::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    int32_t status = this->_host.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = this->_path.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = this->_port.initialize();
+    if (status != FT_ERR_SUCCESS)
+    {
+        (void)this->_host.destroy();
+        (void)this->_path.destroy();
+        (void)this->_port.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (status);
+    }
+    return (ft_document_source::initialize());
 }
 
 int32_t ft_http_document_source::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    this->_host.clear();
-    this->_path.clear();
-    this->_port.clear();
+    const int32_t disable_error = ft_document_source::destroy();
+    const int32_t host_error = this->_host.destroy();
+    const int32_t path_error = this->_path.destroy();
+    const int32_t port_error = this->_port.destroy();
     this->_use_ssl = FT_FALSE;
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (disable_error);
-}
-
-int32_t ft_http_document_source::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_source::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_source::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_http_document_source::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_http_document_source::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_source::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_source::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_source::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_http_document_source::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_source::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
+    if (disable_error != FT_ERR_SUCCESS)
+        return (disable_error);
+    if (host_error != FT_ERR_SUCCESS)
+        return (host_error);
+    if (path_error != FT_ERR_SUCCESS)
+        return (path_error);
+    return (port_error);
 }
 
 void ft_http_document_source::configure(const char *host, const char *path,
@@ -1075,19 +745,8 @@ void ft_http_document_source::configure(const char *host, const char *path,
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return ;
-    if (host == ft_nullptr)
-        this->_host.clear();
-    else
-        this->_host = host;
-    if (path == ft_nullptr)
-        this->_path.clear();
-    else
-        this->_path = path;
-    if (port == ft_nullptr)
-        this->_port.clear();
-    else
-        this->_port = port;
-    this->_use_ssl = use_ssl;
+    parser_http_configure(this->_host, this->_path, this->_port, this->_use_ssl,
+        host, path, port, use_ssl);
     (void)this->unlock_internal(lock_acquired);
     return ;
 }
@@ -1120,30 +779,30 @@ ft_bool ft_http_document_source::is_ssl_enabled() const noexcept
 
 int32_t ft_http_document_source::read_all(ft_string &output)
 {
-    ft_string response;
-    const char *port_pointer;
-    int32_t request_status;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_source::read_all");
-    if (this->_host.size() == 0 || this->_path.size() == 0)
-        return (FT_ERR_INVALID_STATE);
-    port_pointer = ft_nullptr;
-    if (this->_port.size() > 0)
-        port_pointer = this->_port.c_str();
-    request_status = http_get(this->_host.c_str(), this->_path.c_str(), response,
-        this->_use_ssl, port_pointer);
-    if (request_status != 0)
-        return (request_status);
-    output = response;
-    if (output.get_error() != FT_ERR_SUCCESS)
-        return (output.get_error());
-    return (FT_ERR_SUCCESS);
+    parser_http_endpoint endpoint;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = parser_http_capture_endpoint(endpoint, this->_host, this->_path,
+        this->_port, this->_use_ssl, this->is_thread_safe());
+    (void)this->unlock_internal(lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+
+    ft_string response;
+    status = response.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = http_get_body(endpoint.host, endpoint.path, response, endpoint.use_ssl, endpoint.port);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    return (output.move(response));
 }
 
 
 ft_http_document_sink::ft_http_document_sink() noexcept
-    : _host(), _path(), _port(), _use_ssl(false), _mutex(ft_nullptr),
-      _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+    : _host(), _path(), _port(), _use_ssl(false)
 {
     return ;
 }
@@ -1163,96 +822,38 @@ int32_t ft_http_document_sink::initialize() noexcept
         errno_abort_lifecycle(this->_initialised_state, "ft_http_document_sink::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    int32_t status = this->_host.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = this->_path.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = this->_port.initialize();
+    if (status != FT_ERR_SUCCESS)
+    {
+        (void)this->_host.destroy();
+        (void)this->_path.destroy();
+        (void)this->_port.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (status);
+    }
+    return (ft_document_sink::initialize());
 }
 
 int32_t ft_http_document_sink::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    this->_host.clear();
-    this->_path.clear();
-    this->_port.clear();
+    const int32_t disable_error = ft_document_sink::destroy();
+    const int32_t host_error = this->_host.destroy();
+    const int32_t path_error = this->_path.destroy();
+    const int32_t port_error = this->_port.destroy();
     this->_use_ssl = FT_FALSE;
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (disable_error);
-}
-
-int32_t ft_http_document_sink::enable_thread_safety() noexcept
-{
-    pt_recursive_mutex *mutex_pointer;
-    int32_t initialize_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_sink::enable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-    if (mutex_pointer == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    initialize_error = mutex_pointer->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        delete mutex_pointer;
-        return (initialize_error);
-    }
-    this->_mutex = mutex_pointer;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_sink::disable_thread_safety() noexcept
-{
-    int32_t destroy_error;
-
-    if (this->_mutex == ft_nullptr)
-        return (FT_ERR_SUCCESS);
-    destroy_error = this->_mutex->destroy();
-    delete this->_mutex;
-    this->_mutex = ft_nullptr;
-    return (destroy_error);
-}
-
-ft_bool ft_http_document_sink::is_thread_safe() const noexcept
-{
-    return (this->_mutex != ft_nullptr);
-}
-
-int32_t ft_http_document_sink::lock_internal(ft_bool *lock_acquired) const noexcept
-{
-    int32_t lock_error;
-
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = false;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = true;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_sink::unlock_internal(ft_bool lock_acquired) const noexcept
-{
-    if (lock_acquired == false)
-        return (FT_ERR_SUCCESS);
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t ft_http_document_sink::lock(ft_bool *lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_sink::lock");
-    return (this->lock_internal(lock_acquired));
-}
-
-void ft_http_document_sink::unlock(ft_bool lock_acquired) const noexcept
-{
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_sink::unlock");
-    (void)this->unlock_internal(lock_acquired);
-    return ;
+    if (disable_error != FT_ERR_SUCCESS)
+        return (disable_error);
+    if (host_error != FT_ERR_SUCCESS)
+        return (host_error);
+    if (path_error != FT_ERR_SUCCESS)
+        return (path_error);
+    return (port_error);
 }
 
 void ft_http_document_sink::configure(const char *host, const char *path,
@@ -1266,19 +867,8 @@ void ft_http_document_sink::configure(const char *host, const char *path,
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return ;
-    if (host == ft_nullptr)
-        this->_host.clear();
-    else
-        this->_host = host;
-    if (path == ft_nullptr)
-        this->_path.clear();
-    else
-        this->_path = path;
-    if (port == ft_nullptr)
-        this->_port.clear();
-    else
-        this->_port = port;
-    this->_use_ssl = use_ssl;
+    parser_http_configure(this->_host, this->_path, this->_port, this->_use_ssl,
+        host, path, port, use_ssl);
     (void)this->unlock_internal(lock_acquired);
     return ;
 }
@@ -1311,27 +901,22 @@ ft_bool ft_http_document_sink::is_ssl_enabled() const noexcept
 
 int32_t ft_http_document_sink::write_all(const char *data_pointer, ft_size_t data_length)
 {
-    ft_string body;
-    ft_string response;
-    const char *port_pointer;
-    int32_t request_status;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_http_document_sink::write_all");
-    if (this->_host.size() == 0 || this->_path.size() == 0)
-        return (FT_ERR_INVALID_STATE);
-    if (data_pointer == ft_nullptr && data_length != 0)
+    parser_http_endpoint endpoint;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = parser_http_capture_endpoint(endpoint, this->_host, this->_path,
+        this->_port, this->_use_ssl, this->is_thread_safe());
+    (void)this->unlock_internal(lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    if (!data_pointer && data_length != 0)
         return (FT_ERR_INVALID_ARGUMENT);
-    body.assign(data_pointer, data_length);
-    if (body.get_error() != FT_ERR_SUCCESS)
-        return (body.get_error());
-    port_pointer = ft_nullptr;
-    if (this->_port.size() > 0)
-        port_pointer = this->_port.c_str();
-    request_status = http_post(this->_host.c_str(), this->_path.c_str(), body,
-        response, this->_use_ssl, port_pointer);
-    if (request_status != 0)
-        return (request_status);
-    return (FT_ERR_SUCCESS);
+
+    return (http_post_body(endpoint.host, endpoint.path, data_pointer, data_length,
+        endpoint.use_ssl, endpoint.port));
 }
 
 #endif

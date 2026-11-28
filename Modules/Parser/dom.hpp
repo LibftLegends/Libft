@@ -35,6 +35,10 @@ class ft_dom_node
         uint8_t _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        template <typename Text>
+        int32_t add_attribute_unlocked(const Text &key, const Text &value) noexcept;
+        template <typename Matches>
+        ft_dom_node *find_child_if(const Matches &matches) const noexcept;
 
     public:
         ft_dom_node() noexcept;
@@ -70,6 +74,7 @@ class ft_dom_node
         const ft_vector<ft_string> &get_attribute_keys() const noexcept;
         const ft_vector<ft_string> &get_attribute_values() const noexcept;
         ft_dom_node *find_child(const ft_string &name) const noexcept;
+        ft_dom_node *find_child(const char *name, ft_size_t length) const noexcept;
 
 };
 
@@ -105,6 +110,8 @@ class ft_dom_document
         void unlock(ft_bool lock_acquired) const noexcept;
 
         void set_root(ft_dom_node *root) noexcept;
+        // Ownership transfers on success.
+        int32_t replace_root(ft_dom_node *root) noexcept;
         ft_dom_node *get_root() const noexcept;
         void clear() noexcept;
 
@@ -119,6 +126,7 @@ struct ft_dom_schema_rule
     ft_dom_schema_rule() noexcept;
     ~ft_dom_schema_rule() noexcept;
     int32_t initialize(const ft_dom_schema_rule &other) noexcept;
+    int32_t initialize(ft_dom_schema_rule &&other) noexcept;
     int32_t destroy() noexcept;
 };
 
@@ -166,6 +174,7 @@ class ft_dom_validation_report
         void unlock(ft_bool lock_acquired) const noexcept;
         int32_t get_error() const noexcept;
         const char *get_error_str() const noexcept;
+        int32_t reset() noexcept;
 
         void mark_valid() noexcept;
         void mark_invalid() noexcept;
@@ -190,7 +199,7 @@ class ft_dom_schema
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
         int32_t validate_rule(const ft_dom_schema_rule &rule, const ft_dom_node *node,
-            const ft_string &base_path, ft_dom_validation_report &report) const noexcept;
+            ft_dom_validation_report &report) const noexcept;
 
     public:
         ft_dom_schema() noexcept;

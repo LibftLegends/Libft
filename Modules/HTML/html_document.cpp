@@ -5,6 +5,7 @@
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
+#include "../Template/vector.hpp"
 #include <new>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -18,104 +19,62 @@ int32_t html_document::set_error(int32_t error_code) noexcept
     return (error_code);
 }
 
-static void html_free_attribute_list(html_attr *attribute) noexcept
+struct html_clone_frame
 {
-    html_attr *current_attribute;
+    const html_node *source_sibling;
+    html_node **destination_link;
+};
 
-    current_attribute = attribute;
-    while (current_attribute != ft_nullptr)
-    {
-        html_attr *next_attribute;
-        int32_t release_result;
-
-        next_attribute = current_attribute->next;
-        release_result = cma_checked_free(current_attribute->key);
-        if (release_result != FT_ERR_SUCCESS)
-            release_result = FT_ERR_SUCCESS;
-        release_result = cma_checked_free(current_attribute->value);
-        if (release_result != FT_ERR_SUCCESS)
-            release_result = FT_ERR_SUCCESS;
-        delete current_attribute;
-        current_attribute = next_attribute;
-    }
-    return ;
-}
-
-static html_attr *html_clone_attribute_list(const html_attr *source_attribute) noexcept
+static int32_t html_clone_node_list(const html_node *source_node, html_node **destination_link) noexcept
 {
-    html_attr *head_attribute;
-    html_attr *tail_attribute;
-    html_attr *new_attribute;
-
-    head_attribute = ft_nullptr;
-    tail_attribute = ft_nullptr;
-    while (source_attribute != ft_nullptr)
+    if (source_node == ft_nullptr)
+        return (FT_ERR_SUCCESS);
+    ft_vector<html_clone_frame> deferred_siblings;
+    int32_t status = deferred_siblings.initialize();
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    while (source_node)
     {
-        if (source_attribute->key == ft_nullptr || source_attribute->value == ft_nullptr)
-        {
-            html_free_attribute_list(head_attribute);
-            return (ft_nullptr);
-        }
-        new_attribute = html_create_attr(source_attribute->key, source_attribute->value);
-        if (new_attribute == ft_nullptr)
-        {
-            html_free_attribute_list(head_attribute);
-            return (ft_nullptr);
-        }
-        if (head_attribute == ft_nullptr)
-            head_attribute = new_attribute;
-        else
-            tail_attribute->next = new_attribute;
-        tail_attribute = new_attribute;
-        source_attribute = source_attribute->next;
-    }
-    return (head_attribute);
-}
-
-static html_node *html_clone_node_list(const html_node *source_node) noexcept
-{
-    html_node *head_node;
-    html_node *tail_node;
-
-    head_node = ft_nullptr;
-    tail_node = ft_nullptr;
-    while (source_node != ft_nullptr)
-    {
-        html_node *new_node;
-
-        if (source_node->tag == ft_nullptr)
-        {
-            html_free_nodes(head_node);
-            return (ft_nullptr);
-        }
-        new_node = html_create_node(source_node->tag, source_node->text);
+        html_node *new_node = html_create_node(source_node->tag, source_node->text);
         if (new_node == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        *destination_link = new_node;
+
+        const html_attr *source_attribute = source_node->attributes;
+        html_attr **attribute_link = &new_node->attributes;
+        while (source_attribute)
         {
-            html_free_nodes(head_node);
-            return (ft_nullptr);
+            html_attr *new_attribute = html_create_attr(source_attribute->key, source_attribute->value);
+            if (new_attribute == ft_nullptr)
+                return (FT_ERR_NO_MEMORY);
+            *attribute_link = new_attribute;
+            attribute_link = &new_attribute->next;
+            source_attribute = source_attribute->next;
         }
-        new_node->attributes = html_clone_attribute_list(source_node->attributes);
-        if (source_node->attributes != ft_nullptr && new_node->attributes == ft_nullptr)
+
+        if (source_node->children)
         {
-            html_free_nodes(new_node);
-            html_free_nodes(head_node);
-            return (ft_nullptr);
+            if (source_node->next)
+            {
+                status = deferred_siblings.push_back({source_node->next, &new_node->next});
+                if (status != FT_ERR_SUCCESS)
+                    return (status);
+            }
+            destination_link = &new_node->children;
+            source_node = source_node->children;
+            continue ;
         }
-        new_node->children = html_clone_node_list(source_node->children);
-        if (source_node->children != ft_nullptr && new_node->children == ft_nullptr)
-        {
-            html_free_nodes(new_node);
-            html_free_nodes(head_node);
-            return (ft_nullptr);
-        }
-        if (head_node == ft_nullptr)
-            head_node = new_node;
-        else
-            tail_node->next = new_node;
-        tail_node = new_node;
+        destination_link = &new_node->next;
         source_node = source_node->next;
+        if (!source_node && !deferred_siblings.empty())
+        {
+            const html_clone_frame frame = deferred_siblings[deferred_siblings.size() - 1];
+            deferred_siblings.pop_back();
+            destination_link = frame.destination_link;
+            source_node = frame.source_sibling;
+        }
     }
-    return (head_node);
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t html_document_lock_two(const pt_recursive_mutex *first_mutex,
@@ -226,12 +185,14 @@ int32_t html_document::initialize(const html_document &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (lock_error);
     }
-    cloned_root = html_clone_node_list(other._root);
+    cloned_root = ft_nullptr;
+    const int32_t clone_error = html_clone_node_list(other._root, &cloned_root);
     html_document_unlock_two(this->_mutex, other._mutex);
-    if (other._root != ft_nullptr && cloned_root == ft_nullptr)
+    if (clone_error != FT_ERR_SUCCESS)
     {
+        html_free_nodes(cloned_root);
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (clone_error);
     }
     this->_root = cloned_root;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -240,45 +201,37 @@ int32_t html_document::initialize(const html_document &other) noexcept
 
 int32_t html_document::initialize(html_document &&other) noexcept
 {
-    int32_t destroy_error;
-    int32_t move_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "html_document::initialize(move)", "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
-    move_error = this->move(other);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (move_error);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->move(other));
 }
 
 int32_t html_document::move(html_document &other) noexcept
 {
-    int32_t lock_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "html_document::move", "source is uninitialised");
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
+    }
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_root = ft_nullptr;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    lock_error = html_document_lock_two(this->_mutex, other._mutex);
+    const int32_t lock_error = html_document_lock_two(this->_mutex, other._mutex);
     if (lock_error != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_INTERNAL);
+    }
     this->_root = other._root;
     other._root = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -677,8 +630,9 @@ void html_document::clear() noexcept
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return ;
-    html_free_nodes(this->_root);
+    html_node *root = this->_root;
     this->_root = ft_nullptr;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    html_free_nodes(root);
     return ;
 }

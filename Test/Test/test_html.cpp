@@ -267,6 +267,41 @@ FT_TEST(test_html_free_nodes_deep_tree)
     return (1);
 }
 
+FT_TEST(test_html_add_child_appends_chain_and_remove_attr_unlinks_first_match)
+{
+    html_node *root = html_create_node("root", ft_nullptr);
+    FT_ASSERT(root != ft_nullptr);
+    html_node *first = html_create_node("first", ft_nullptr);
+    html_add_child(root, first);
+    html_node *second = html_create_node("second", ft_nullptr);
+    html_node *third = html_create_node("third", ft_nullptr);
+    if (second)
+    {
+        second->next = third;
+        html_add_child(root, second);
+    }
+    else
+        html_add_child(root, third);
+    html_attr *leading = html_create_attr("keep", "first");
+    html_attr *removed = html_create_attr("id", "removed");
+    html_attr *retained = html_create_attr("id", "retained");
+    html_add_attr(root, leading);
+    html_add_attr(root, removed);
+    html_add_attr(root, retained);
+    const ft_bool complete = first && second && third && leading && removed && retained;
+    if (!complete)
+    {
+        html_free_nodes(root);
+        FT_ASSERT(complete);
+    }
+    html_remove_attr(root, "id");
+    const ft_bool structure_preserved = root->children == first && first->next == second
+        && second->next == third && root->attributes == leading && leading->next == retained;
+    html_free_nodes(root);
+    FT_ASSERT_EQ(FT_TRUE, structure_preserved);
+    return (1);
+}
+
 int test_html_find_by_attr(void)
 {
     html_node *root = html_create_node("div", ft_nullptr);

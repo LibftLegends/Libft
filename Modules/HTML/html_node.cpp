@@ -1,4 +1,3 @@
-#include <cstdlib>
 #include <new>
 #include "html_parser.hpp"
 #include "../CMA/CMA.hpp"
@@ -21,9 +20,9 @@ static void html_release_string(char *string)
 
 html_node *html_create_node(const char *tag_name, const char *text_content)
 {
-    html_node *new_node;
-
-    new_node = new(std::nothrow) html_node;
+    if (tag_name == ft_nullptr)
+        return (ft_nullptr);
+    html_node *new_node = new(std::nothrow) html_node;
     if (!new_node)
         return (ft_nullptr);
     new_node->tag = adv_strdup(tag_name);
@@ -50,6 +49,8 @@ html_node *html_create_node(const char *tag_name, const char *text_content)
 
 html_attr *html_create_attr(const char *key, const char *value)
 {
+    if (key == ft_nullptr || value == ft_nullptr)
+        return (ft_nullptr);
     html_attr *new_attr = new(std::nothrow) html_attr;
     if (!new_attr)
         return (ft_nullptr);
@@ -90,67 +91,39 @@ void html_add_attr(html_node *target_node, html_attr *new_attribute)
 
 void html_remove_attr(html_node *target_node, const char *key)
 {
-    html_attr *previous_attribute;
-    html_attr *current_attribute;
-
     if (target_node == ft_nullptr || key == ft_nullptr)
         return ;
-    previous_attribute = ft_nullptr;
-    current_attribute = target_node->attributes;
-    while (current_attribute)
+    html_attr **attribute_link = &target_node->attributes;
+    while (*attribute_link)
     {
-        html_attr *next_attribute;
-
-        next_attribute = current_attribute->next;
+        html_attr *current_attribute = *attribute_link;
         if (current_attribute->key && ft_strcmp(current_attribute->key, key) == 0)
         {
-            if (previous_attribute)
-                previous_attribute->next = next_attribute;
-            else
-                target_node->attributes = next_attribute;
+            *attribute_link = current_attribute->next;
             html_release_string(current_attribute->key);
             html_release_string(current_attribute->value);
             delete current_attribute;
             return ;
         }
-        previous_attribute = current_attribute;
-        current_attribute = next_attribute;
+        attribute_link = &current_attribute->next;
     }
     return ;
 }
 
 void html_add_child(html_node *parent_node, html_node *child_node)
 {
-    html_node *last_child;
-
-    if (parent_node == ft_nullptr || child_node == ft_nullptr)
+    if (parent_node == ft_nullptr)
         return ;
-    if (!parent_node->children)
-    {
-        parent_node->children = child_node;
-        return ;
-    }
-    last_child = parent_node->children;
-    while (last_child->next)
-        last_child = last_child->next;
-    last_child->next = child_node;
+    html_append_node(&parent_node->children, child_node);
     return ;
 }
 
 void html_append_node(html_node **head_node, html_node *new_node)
 {
-    html_node *current_node;
-
     if (!head_node || new_node == ft_nullptr)
         return ;
-    if (!(*head_node))
-    {
-        *head_node = new_node;
-        return ;
-    }
-    current_node = *head_node;
-    while (current_node->next)
-        current_node = current_node->next;
-    current_node->next = new_node;
+    while (*head_node)
+        head_node = &(*head_node)->next;
+    *head_node = new_node;
     return ;
 }

@@ -6,21 +6,11 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
 
-static void yaml_serializer_delete_string(ft_string *string) noexcept
-{
-    if (string == ft_nullptr)
-        return ;
-    (void)string->destroy();
-    delete string;
-    return ;
-}
-
 int32_t yaml_serialize_to_string(yaml_serialize_callback serialize_callback,
     void *user_data, ft_string &output) noexcept
 {
     yaml_value root;
     int32_t operation_error;
-    ft_string *serialized;
 
     if (serialize_callback == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -30,16 +20,7 @@ int32_t yaml_serialize_to_string(yaml_serialize_callback serialize_callback,
     operation_error = serialize_callback(root, user_data);
     if (operation_error != FT_ERR_SUCCESS)
         return (operation_error);
-    serialized = yaml_write_to_string(&root);
-    if (serialized == ft_nullptr)
-        return (FT_ERR_INVALID_STATE);
-    output = *serialized;
-    yaml_serializer_delete_string(serialized);
-    if (output.is_initialised() == FT_FALSE)
-        return (FT_ERR_INVALID_STATE);
-    if (output.get_error() != FT_ERR_SUCCESS)
-        return (output.get_error());
-    return (FT_ERR_SUCCESS);
+    return (yaml_write_to_string(&root, output));
 }
 
 int32_t yaml_serialize_to_backend(yaml_serialize_callback serialize_callback,

@@ -9,6 +9,7 @@
 #include <cstdint>
 
 class pt_recursive_mutex;
+class ft_dom_document;
 
 struct xml_namespace_entry;
 
@@ -49,6 +50,10 @@ class xml_document
         void record_operation_error(int32_t error_code) const noexcept;
         int32_t lock(ft_bool *lock_acquired) const noexcept;
         void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t serialize(ft_string &buffer) const noexcept;
+        int32_t replace_from_dom(const ft_dom_document &dom) noexcept;
+        friend int32_t xml_document_to_dom(const xml_document &document, ft_dom_document &dom) noexcept;
+        friend int32_t xml_document_from_dom(const ft_dom_document &dom, xml_document &document) noexcept;
 
     public:
         xml_document() noexcept;
@@ -68,6 +73,7 @@ class xml_document
         int32_t load_from_file(const char *file_path) noexcept;
         int32_t load_from_backend(ft_document_source &source) noexcept;
         char *write_to_string() const noexcept;
+        int32_t write_to_string(ft_string &output) const noexcept;
         int32_t write_to_file(const char *file_path) const noexcept;
         int32_t write_to_backend(ft_document_sink &sink) const noexcept;
         xml_node *get_root() const noexcept;

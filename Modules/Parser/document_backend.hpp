@@ -16,6 +16,9 @@ class ft_document_source
     private:
 #endif
         pt_recursive_mutex *_mutex;
+#ifndef LIBFT_TEST_BUILD
+    protected:
+#endif
         uint8_t _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
@@ -28,14 +31,14 @@ class ft_document_source
         ft_document_source(ft_document_source &&other) noexcept = delete;
         ft_document_source &operator=(ft_document_source &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;
         int32_t lock(ft_bool *lock_acquired) const noexcept;
         void unlock(ft_bool lock_acquired) const noexcept;
         virtual int32_t read_all(ft_string &output) = 0;
+        virtual int32_t initialize() noexcept;
+        virtual int32_t destroy() noexcept;
 
 };
 
@@ -47,6 +50,9 @@ class ft_document_sink
     private:
 #endif
         pt_recursive_mutex *_mutex;
+#ifndef LIBFT_TEST_BUILD
+    protected:
+#endif
         uint8_t _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
@@ -59,14 +65,14 @@ class ft_document_sink
         ft_document_sink(ft_document_sink &&other) noexcept = delete;
         ft_document_sink &operator=(ft_document_sink &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;
         int32_t lock(ft_bool *lock_acquired) const noexcept;
         void unlock(ft_bool lock_acquired) const noexcept;
         virtual int32_t write_all(const char *data_pointer, ft_size_t data_length) = 0;
+        virtual int32_t initialize() noexcept;
+        virtual int32_t destroy() noexcept;
 
 };
 
@@ -78,10 +84,6 @@ class ft_file_document_source : public ft_document_source
     private:
 #endif
         ft_string _path;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_file_document_source() noexcept;
@@ -93,13 +95,8 @@ class ft_file_document_source : public ft_document_source
         
         ft_file_document_source &operator=(ft_file_document_source &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t initialize() noexcept override;
+        int32_t destroy() noexcept override;
 
         void set_path(const char *file_path) noexcept;
         const char *get_path() const noexcept;
@@ -115,10 +112,6 @@ class ft_file_document_sink : public ft_document_sink
     private:
 #endif
         ft_string _path;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_file_document_sink() noexcept;
@@ -130,13 +123,8 @@ class ft_file_document_sink : public ft_document_sink
         
         ft_file_document_sink &operator=(ft_file_document_sink &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t initialize() noexcept override;
+        int32_t destroy() noexcept override;
 
         void set_path(const char *file_path) noexcept;
         const char *get_path() const noexcept;
@@ -153,10 +141,6 @@ class ft_memory_document_source : public ft_document_source
 #endif
         const char *_data_pointer;
         ft_size_t _data_length;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_memory_document_source() noexcept;
@@ -168,13 +152,7 @@ class ft_memory_document_source : public ft_document_source
         
         ft_memory_document_source &operator=(ft_memory_document_source &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t destroy() noexcept override;
 
         void set_data(const char *data_pointer, ft_size_t data_length) noexcept;
         const char *get_data() const noexcept;
@@ -191,10 +169,6 @@ class ft_memory_document_sink : public ft_document_sink
     private:
 #endif
         ft_string *_storage_pointer;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_memory_document_sink() noexcept;
@@ -206,13 +180,7 @@ class ft_memory_document_sink : public ft_document_sink
         
         ft_memory_document_sink &operator=(ft_memory_document_sink &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t destroy() noexcept override;
 
         void set_storage(ft_string *storage_pointer) noexcept;
         ft_string *get_storage() const noexcept;
@@ -232,10 +200,6 @@ class ft_http_document_source : public ft_document_source
         ft_string _path;
         ft_string _port;
         ft_bool _use_ssl;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_http_document_source() noexcept;
@@ -247,14 +211,10 @@ class ft_http_document_source : public ft_document_source
         
         ft_http_document_source &operator=(ft_http_document_source &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t initialize() noexcept override;
+        int32_t destroy() noexcept override;
 
+        // A failed configuration update leaves the previous endpoint intact.
         void configure(const char *host, const char *path, ft_bool use_ssl, const char *port) noexcept;
         const char *get_host() const noexcept;
         const char *get_path() const noexcept;
@@ -275,10 +235,6 @@ class ft_http_document_sink : public ft_document_sink
         ft_string _path;
         ft_string _port;
         ft_bool _use_ssl;
-        pt_recursive_mutex *_mutex;
-        uint8_t _initialised_state;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
 
     public:
         ft_http_document_sink() noexcept;
@@ -290,14 +246,10 @@ class ft_http_document_sink : public ft_document_sink
         
         ft_http_document_sink &operator=(ft_http_document_sink &&other) = delete;
 
-        int32_t initialize() noexcept;
-        int32_t destroy() noexcept;
-        int32_t enable_thread_safety() noexcept;
-        int32_t disable_thread_safety() noexcept;
-        ft_bool is_thread_safe() const noexcept;
-        int32_t lock(ft_bool *lock_acquired) const noexcept;
-        void unlock(ft_bool lock_acquired) const noexcept;
+        int32_t initialize() noexcept override;
+        int32_t destroy() noexcept override;
 
+        // A failed configuration update leaves the previous endpoint intact.
         void configure(const char *host, const char *path, ft_bool use_ssl, const char *port) noexcept;
         const char *get_host() const noexcept;
         const char *get_path() const noexcept;

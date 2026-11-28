@@ -54,6 +54,7 @@ struct http_buffer_adapter_state
 {
     ft_string   *response;
     ft_bool        header_appended;
+    ft_bool        require_success_status;
     ft_size_t      body_bytes;
     int32_t         status_code;
     int32_t         error_code;
@@ -1149,15 +1150,20 @@ static int32_t http_client_receive_stream(http_client_active_connection &connect
     return (FT_ERR_SUCCESS);
 }
 
+static ft_bool http_client_status_success(int32_t status_code) noexcept
+{
+    return (status_code >= 200 && status_code < 300);
+}
+
 static void http_client_buffering_adapter(int32_t status_code, const ft_string &headers,
     const char *body_chunk, ft_size_t chunk_size, ft_bool finished)
 {
-    if (g_http_buffer_adapter_state.response == NULL
-        || g_http_buffer_adapter_state.error_code != FT_ERR_SUCCESS)
+    if (g_http_buffer_adapter_state.error_code != FT_ERR_SUCCESS)
         return ;
     if (status_code != 0)
         g_http_buffer_adapter_state.status_code = status_code;
-    if (g_http_buffer_adapter_state.header_appended == FT_FALSE && headers.empty() == FT_FALSE)
+    if (g_http_buffer_adapter_state.response && !g_http_buffer_adapter_state.header_appended
+        && !headers.empty())
     {
         g_http_buffer_adapter_state.error_code = g_http_buffer_adapter_state.response->append(headers);
         if (g_http_buffer_adapter_state.error_code != FT_ERR_SUCCESS)
@@ -1166,8 +1172,11 @@ static void http_client_buffering_adapter(int32_t status_code, const ft_string &
     }
     if (chunk_size > 0)
     {
-        g_http_buffer_adapter_state.error_code = g_http_buffer_adapter_state.response->append(
-            body_chunk, chunk_size);
+        if (g_http_buffer_adapter_state.response
+            && (!g_http_buffer_adapter_state.require_success_status
+                || http_client_status_success(g_http_buffer_adapter_state.status_code)))
+            g_http_buffer_adapter_state.error_code = g_http_buffer_adapter_state.response->append(
+                body_chunk, chunk_size);
         if (g_http_buffer_adapter_state.error_code == FT_ERR_SUCCESS)
             g_http_buffer_adapter_state.body_bytes += chunk_size;
     }
@@ -1178,12 +1187,20 @@ static void http_client_buffering_adapter(int32_t status_code, const ft_string &
 
 static void http_client_reset_buffer_adapter_state(void)
 {
-    g_http_buffer_adapter_state.response = NULL;
-    g_http_buffer_adapter_state.header_appended = FT_FALSE;
-    g_http_buffer_adapter_state.body_bytes = 0;
-    g_http_buffer_adapter_state.status_code = 0;
-    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
+    g_http_buffer_adapter_state = {};
     return ;
+}
+
+static int32_t http_client_prepare_buffer_adapter(ft_string *response,
+    ft_bool include_headers, ft_bool require_success_status) noexcept
+{
+    http_client_reset_buffer_adapter_state();
+    g_http_buffer_adapter_state.response = response;
+    g_http_buffer_adapter_state.header_appended = !include_headers;
+    g_http_buffer_adapter_state.require_success_status = require_success_status;
+    if (response)
+        return (response->clear());
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t http_client_finish_with_metrics(const char *method, const char *host,
@@ -1197,6 +1214,9 @@ static int32_t http_client_finish_with_metrics(const char *method, const char *h
 
     if (result == FT_ERR_SUCCESS)
         result = g_http_buffer_adapter_state.error_code;
+    if (result == FT_ERR_SUCCESS && g_http_buffer_adapter_state.require_success_status
+        && !http_client_status_success(g_http_buffer_adapter_state.status_code))
+        result = FT_ERR_INVALID_OPERATION;
     if (!observability_networking_metrics_is_active())
     {
         http_client_reset_buffer_adapter_state();
@@ -1353,62 +1373,50 @@ int32_t http_get_stream(const char *host, const char *path, http_response_handle
     return (FT_ERR_INVALID_OPERATION);
 }
 
-int32_t http_get(const char *host, const char *path, ft_string &response, ft_bool use_ssl, const char *custom_port)
+static int32_t http_client_get_buffered(const char *host, const char *path, ft_string &response,
+    ft_bool use_ssl, const char *custom_port, ft_bool document_body)
 {
-    t_monotonic_time_point start_time;
-    int32_t result;
-
-    start_time = time_monotonic_point_now();
-    response.clear();
-    g_http_buffer_adapter_state.response = &response;
-    g_http_buffer_adapter_state.header_appended = FT_FALSE;
-    g_http_buffer_adapter_state.body_bytes = 0;
-    g_http_buffer_adapter_state.status_code = 0;
-    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
-    result = http_get_stream(host, path, http_client_buffering_adapter, use_ssl, custom_port);
-    return (http_client_finish_with_metrics("GET", host, path, 0, result, start_time));
+    const t_monotonic_time_point start_time = time_monotonic_point_now();
+    int32_t status = http_client_prepare_buffer_adapter(&response, !document_body, document_body);
+    if (status == FT_ERR_SUCCESS)
+        status = http_get_stream(host, path, http_client_buffering_adapter, use_ssl, custom_port);
+    return (http_client_finish_with_metrics("GET", host, path, 0, status, start_time));
 }
 
-int32_t http_post(const char *host, const char *path, const ft_string &body, ft_string &response, ft_bool use_ssl, const char *custom_port)
+int32_t http_get(const char *host, const char *path, ft_string &response, ft_bool use_ssl, const char *custom_port)
 {
-    t_monotonic_time_point start_time;
-    const char *port_string;
-    ft_string request;
-    http_client_active_connection connection;
-    ft_bool allow_keep_alive;
-    int32_t attempt;
-    ft_size_t body_length;
+    return (http_client_get_buffered(host, path, response, use_ssl, custom_port, FT_FALSE));
+}
 
-    start_time = time_monotonic_point_now();
-    response.clear();
-    g_http_buffer_adapter_state.response = &response;
-    g_http_buffer_adapter_state.header_appended = FT_FALSE;
-    g_http_buffer_adapter_state.body_bytes = 0;
-    g_http_buffer_adapter_state.status_code = 0;
-    g_http_buffer_adapter_state.error_code = FT_ERR_SUCCESS;
+int32_t http_get_body(const char *host, const char *path, ft_string &response,
+    ft_bool use_ssl, const char *custom_port)
+{
+    return (http_client_get_buffered(host, path, response, use_ssl, custom_port, FT_TRUE));
+}
+
+static int32_t http_client_post_span(const char *host, const char *path, const char *body,
+    ft_size_t body_length, ft_bool use_ssl, const char *custom_port, t_monotonic_time_point start_time)
+{
+    if (!body && body_length)
+        return (http_client_finish_with_metrics("POST", host, path, body_length,
+            FT_ERR_INVALID_ARGUMENT, start_time));
+    const char *port_string;
     if (custom_port != NULL && custom_port[0] != '\0')
         port_string = custom_port;
     else if (use_ssl)
         port_string = "443";
     else
         port_string = "80";
-    ft_string body_snapshot;
-    const ft_string *source = &body;
-    if (body.is_thread_safe())
-    {
-        const int32_t snapshot_error = body_snapshot.initialize(body);
-        if (snapshot_error != FT_ERR_SUCCESS)
-            return (http_client_finish_with_metrics("POST", host, path, 0,
-                snapshot_error, start_time));
-        source = &body_snapshot;
-    }
-    body_length = source->size();
+    ft_string request;
+    http_client_active_connection connection;
+    ft_bool allow_keep_alive;
+    int32_t attempt;
     int32_t build_error = http_client_build_request_head(request, "POST", host, path,
         &body_length);
     constexpr ft_size_t INLINE_BODY_LIMIT = 1024;
     const ft_bool send_body_separately = body_length > INLINE_BODY_LIMIT;
-    if (build_error == FT_ERR_SUCCESS && !send_body_separately)
-        build_error = request.append(*source);
+    if (build_error == FT_ERR_SUCCESS && !send_body_separately && body_length)
+        build_error = request.append(body, body_length);
     if (build_error != FT_ERR_SUCCESS)
         return (http_client_finish_with_metrics("POST", host, path, body_length,
             build_error, start_time));
@@ -1437,7 +1445,7 @@ int32_t http_post(const char *host, const char *path, const ft_string &body, ft_
         send_result = http_client_send_span(connection, request.c_str(), request.size(),
             write_started);
         if (send_result == FT_ERR_SUCCESS && send_body_separately)
-            send_result = http_client_send_span(connection, source->c_str(), body_length,
+            send_result = http_client_send_span(connection, body, body_length,
                 write_started);
         if (send_result != FT_ERR_SUCCESS)
         {
@@ -1463,6 +1471,32 @@ int32_t http_post(const char *host, const char *path, const ft_string &body, ft_
         return (http_client_finish_with_metrics("POST", host, path, body_length, FT_ERR_SUCCESS, start_time));
     }
     return (http_client_finish_with_metrics("POST", host, path, body_length, FT_ERR_INVALID_OPERATION, start_time));
+}
+
+
+int32_t http_post(const char *host, const char *path, const ft_string &body, ft_string &response,
+    ft_bool use_ssl, const char *custom_port)
+{
+    const t_monotonic_time_point start_time = time_monotonic_point_now();
+    int32_t status = http_client_prepare_buffer_adapter(&response, FT_TRUE, FT_FALSE);
+    ft_string snapshot;
+    const ft_string *source = &body;
+    if (status == FT_ERR_SUCCESS && body.is_thread_safe())
+    {
+        status = snapshot.initialize(body);
+        source = &snapshot;
+    }
+    if (status != FT_ERR_SUCCESS)
+        return (http_client_finish_with_metrics("POST", host, path, 0, status, start_time));
+    return (http_client_post_span(host, path, source->c_str(), source->size(), use_ssl, custom_port, start_time));
+}
+
+int32_t http_post_body(const char *host, const char *path, const char *body, ft_size_t body_length,
+    ft_bool use_ssl, const char *custom_port)
+{
+    const t_monotonic_time_point start_time = time_monotonic_point_now();
+    (void)http_client_prepare_buffer_adapter(ft_nullptr, FT_FALSE, FT_TRUE);
+    return (http_client_post_span(host, path, body, body_length, use_ssl, custom_port, start_time));
 }
 
 

@@ -106,6 +106,15 @@
 - `benchmark_observability_game_metrics.cpp` measures game metric dispatch from four recording threads and verifies all 400,000 callbacks.
 - `benchmark_html_selector.cpp` measures exact attribute selector lookup on one node and a 1,024-sibling list, including near matches that must be skipped.
 - `benchmark_html_writers.cpp` measures string serialization and buffered file serialization for 128 nodes. Build with `LIBFT_TEST_BUILD` to intercept file writes and verify byte totals.
+- `benchmark_xml_writer.cpp` measures backend serialization of a document with 40 KB of text and counts allocations per write.
+- `benchmark_xml_input.cpp` measures parsing of a document with a 32 KiB quoted attribute and a 512 KiB text node.
+- `benchmark_xml_copy.cpp` compares direct tree copying with a serialize-and-parse round trip for 128 text nodes. Run it with `direct` and `roundtrip`.
+- `benchmark_xml_dom_import.cpp` measures DOM-to-XML conversion of 16 elements with 512 KiB of text in total.
+- `benchmark_dom_node_fields.cpp` measures updates to a DOM node's name, text, and existing attribute, including allocations per iteration.
+- `benchmark_dom_path.cpp` measures time and allocations for four-segment DOM paths.
+- `benchmark_parser_file_source.cpp` measures reading 2 MiB into a fresh Libft string, including allocations per read.
+- `benchmark_yaml_reader.cpp` measures splitting and trimming 512 padded lines with 512-byte payloads.
+- `benchmark_yaml_writer.cpp` measures serializing a 512-entry mapping through the memory backend.
 
 Each source is a separate executable. From the Libft root, link it against a freshly built archive for your platform and configuration. This MinGW example uses the archive from a Windows voxel build. Set `$archive` to the path printed by your build and use the corresponding configuration flags.
 

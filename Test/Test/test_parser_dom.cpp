@@ -67,6 +67,52 @@ static void initialize_simple_dom_document(ft_dom_document &document)
     return ;
 }
 
+FT_TEST(test_dom_node_attribute_growth_failure_keeps_keys_and_values_aligned)
+{
+    ft_dom_node node;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.initialize());
+    const ft_size_t capacity = node._attribute_values.capacity();
+    node._attribute_keys.reserve(capacity + 1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node._attribute_keys.get_error());
+    ft_size_t index = 0;
+    while (index < capacity)
+    {
+        const std::string name = "key" + std::to_string(index);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, node.add_attribute(name.c_str(), "value"));
+        ++index;
+    }
+    cma_set_alloc_limit(64);
+    const int32_t status = node.add_attribute("pending", "replacement");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, status);
+    FT_ASSERT_EQ(capacity, node.get_attribute_keys().size());
+    FT_ASSERT_EQ(capacity, node.get_attribute_values().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.add_attribute("pending", "replacement"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.add_attribute("pending", "updated"));
+    FT_ASSERT_EQ(capacity + 1, node.get_attribute_keys().size());
+    FT_ASSERT_STR_EQ("updated", node.get_attribute_values()[capacity].c_str());
+    return (1);
+}
+
+FT_TEST(test_dom_node_destroy_releases_storage_and_allows_reinitialization)
+{
+    ft_dom_node node;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.set_name("node"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.set_value("content"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.add_attribute("key", "value"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.destroy());
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, node._children.is_initialised());
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, node._attribute_keys.is_initialised());
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, node._attribute_values.is_initialised());
+    FT_ASSERT_EQ(FT_FALSE, node._name.is_initialised());
+    FT_ASSERT_EQ(FT_FALSE, node._value.is_initialised());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, node.initialize());
+    FT_ASSERT_EQ(static_cast<ft_size_t>(0), node.get_attribute_keys().size());
+    FT_ASSERT_STR_EQ("", node.get_value().c_str());
+    return (1);
+}
+
 FT_TEST(test_dom_find_path_locates_nested_nodes)
 {
     ft_dom_document document;
@@ -99,6 +145,91 @@ FT_TEST(test_dom_find_path_reports_missing_segments)
     found_node = ft_nullptr;
     FT_ASSERT_EQ(FT_ERR_NOT_FOUND, ft_dom_find_path(root_node, missing_path, &found_node));
     FT_ASSERT(found_node == ft_nullptr);
+    return (1);
+}
+
+FT_TEST(test_dom_find_path_matches_segments_without_allocating)
+{
+    ft_dom_document document;
+    initialize_simple_dom_document(document);
+    const ft_dom_node *root = document.get_root();
+    FT_ASSERT(root != ft_nullptr);
+    const ft_dom_node *child = root->get_children()[0];
+    const char *paths[] = {"child/", "chil", "child//", "/child", ""};
+    const int32_t expected[] = {FT_ERR_SUCCESS, FT_ERR_NOT_FOUND, FT_ERR_INVALID_ARGUMENT,
+        FT_ERR_INVALID_ARGUMENT, FT_ERR_SUCCESS};
+    ft_size_t index = 0;
+    while (index < sizeof(paths) / sizeof(paths[0]))
+    {
+        ft_string path;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, path.initialize(paths[index]));
+        const ft_dom_node *found = ft_nullptr;
+        cma_set_alloc_limit(1);
+        const int32_t status = ft_dom_find_path(root, path, &found);
+        cma_set_alloc_limit(0);
+        FT_ASSERT_EQ(expected[index], status);
+        if (index == 0)
+            FT_ASSERT_EQ(child, found);
+        else if (index == 4)
+            FT_ASSERT_EQ(root, found);
+        else
+            FT_ASSERT_EQ(ft_nullptr, found);
+        ++index;
+    }
+    return (1);
+}
+
+FT_TEST(test_dom_schema_reuses_report_and_validates_existing_rules_without_allocating)
+{
+    ft_dom_document document;
+    initialize_simple_dom_document(document);
+    ft_dom_schema schema;
+    ft_dom_validation_report report;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, report.initialize());
+    ft_string path;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, path.initialize("child"));
+    ft_size_t index = 0;
+    while (index < 12)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.add_rule(path, FT_DOM_NODE_ELEMENT, FT_TRUE));
+        ++index;
+    }
+    ft_dom_node *child = document.get_root()->get_children()[0];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child->set_name("other"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.validate(document, report));
+    FT_ASSERT_EQ(FT_FALSE, report.valid());
+    FT_ASSERT_EQ(static_cast<ft_size_t>(12), report.errors().size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child->set_name("child"));
+    cma_set_alloc_limit(1);
+    const int32_t status = schema.validate(document, report);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, status);
+    FT_ASSERT_EQ(FT_TRUE, report.valid());
+    FT_ASSERT(report.errors().empty());
+    return (1);
+}
+
+FT_TEST(test_dom_schema_propagates_diagnostic_allocation_failure)
+{
+    ft_dom_document document;
+    initialize_simple_dom_document(document);
+    ft_dom_schema schema;
+    ft_dom_validation_report report;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, report.initialize());
+    ft_string path;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, path.initialize("missing"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.add_rule(path, FT_DOM_NODE_ELEMENT, FT_TRUE));
+    cma_set_alloc_limit(1);
+    const int32_t status = schema.validate(document, report);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, status);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, schema.get_error());
+    FT_ASSERT_EQ(FT_FALSE, report.valid());
+    FT_ASSERT(report.errors().empty());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, schema.validate(document, report));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), report.errors().size());
     return (1);
 }
 
@@ -367,6 +498,85 @@ FT_TEST(test_xml_dom_bridge_round_trip)
     matches_expected = std::string(serialized).find("<child>text</child>") != std::string::npos;
     cma_free(serialized);
     FT_ASSERT(matches_expected);
+    return (1);
+}
+
+FT_TEST(test_xml_dom_bridge_preserves_quoted_attributes_mixed_content_and_namespaces)
+{
+    ft_dom_document dom;
+    xml_document document;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, dom.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.enable_thread_safety());
+    ft_dom_node *root = new ft_dom_node();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->initialize());
+    dom.set_root(root);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->set_name("p:root"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->set_value("leading text"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->add_attribute("xmlns:p", "urn:test"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->add_attribute("data", "a\"b'c"));
+    ft_dom_node *child = new ft_dom_node();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child->initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, root->add_child(child));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, child->set_name("p:child"));
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_document_from_dom(dom, document));
+    FT_ASSERT_EQ(FT_TRUE, document.is_thread_safe());
+    const xml_node *xml_root = document.get_root();
+    FT_ASSERT(xml_root != ft_nullptr);
+    FT_ASSERT_STR_EQ("leading text", xml_root->text);
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), xml_root->children.size());
+    FT_ASSERT_STR_EQ("urn:test", xml_root->children[0]->namespace_uri);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_document_to_dom(document, dom));
+    const ft_dom_node *exported = dom.get_root();
+    FT_ASSERT(exported != ft_nullptr);
+    FT_ASSERT_STR_EQ("leading text", exported->get_value().c_str());
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), exported->get_children().size());
+    ft_string key;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, key.initialize("data"));
+    ft_string *value = exported->get_attribute(key);
+    FT_ASSERT(value != ft_nullptr);
+    const ft_bool matches = ft_strcmp("a\"b'c", value->c_str()) == 0;
+    delete value;
+    FT_ASSERT_EQ(FT_TRUE, matches);
+    return (1);
+}
+
+FT_TEST(test_xml_dom_bridge_keeps_existing_destinations_when_conversion_fails)
+{
+    xml_document document;
+    ft_dom_document dom;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, dom.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document.load_from_string("<old/>"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_document_to_dom(document, dom));
+    ft_dom_node *existing_dom = dom.get_root();
+    const xml_node *existing_xml = document.get_root();
+    FT_ASSERT(existing_dom != ft_nullptr && existing_xml != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, existing_dom->set_name("missing:namespace"));
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, xml_document_from_dom(dom, document));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, document.get_error());
+    FT_ASSERT_EQ(existing_xml, document.get_root());
+
+    const std::string text(8192, 'x');
+    const std::string xml = "<incoming>" + text + "</incoming>";
+    xml_document large_xml;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, large_xml.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, large_xml.load_from_string(xml.c_str()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, existing_dom->set_name("incoming"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, existing_dom->set_value(text.c_str()));
+    cma_set_alloc_limit(2048);
+    const int32_t export_status = xml_document_to_dom(large_xml, dom);
+    const int32_t import_status = xml_document_from_dom(dom, document);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, export_status);
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, import_status);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, document.get_error());
+    FT_ASSERT_EQ(existing_dom, dom.get_root());
+    FT_ASSERT_EQ(existing_xml, document.get_root());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, xml_document_from_dom(dom, document));
+    FT_ASSERT_STR_EQ(text.c_str(), document.get_root()->text);
     return (1);
 }
 

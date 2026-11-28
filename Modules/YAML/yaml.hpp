@@ -77,6 +77,7 @@ yaml_value    *yaml_read_from_string(const ft_string &content) noexcept;
 yaml_value    *yaml_read_from_file(const char *file_path) noexcept;
 yaml_value    *yaml_read_from_backend(ft_document_source &source) noexcept;
 ft_string     *yaml_write_to_string(const yaml_value *value) noexcept;
+int32_t        yaml_write_to_string(const yaml_value *value, ft_string &output) noexcept;
 int32_t           yaml_write_to_file(const char *file_path, const yaml_value *value) noexcept;
 int32_t           yaml_write_to_backend(ft_document_sink &sink, const yaml_value *value) noexcept;
 void          yaml_free(yaml_value *value) noexcept;

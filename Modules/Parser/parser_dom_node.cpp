@@ -11,6 +11,7 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
+#include "../Template/move.hpp"
 
 ft_dom_node::ft_dom_node() noexcept
     : _type(FT_DOM_NODE_NULL), _name(), _value(), _children(),
@@ -135,28 +136,32 @@ int32_t ft_dom_node::initialize() noexcept
 
 int32_t ft_dom_node::destroy() noexcept
 {
-    ft_size_t child_index;
-    ft_size_t child_count;
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    disable_error = this->disable_thread_safety();
-    child_index = 0;
-    child_count = this->_children.size();
+    int32_t status = this->disable_thread_safety();
+    ft_size_t child_index = 0;
+    const ft_size_t child_count = this->_children.size();
     while (child_index < child_count)
     {
         delete this->_children[child_index];
         child_index += 1;
     }
-    this->_children.clear();
-    this->_attribute_keys.clear();
-    this->_attribute_values.clear();
-    this->_name = "";
-    this->_value = "";
+    const int32_t release_statuses[] = {
+        this->_children.destroy(),
+        this->_attribute_keys.destroy(),
+        this->_attribute_values.destroy(),
+        this->_name.destroy(),
+        this->_value.destroy()
+    };
+    ft_size_t status_index = 0;
+    while (status == FT_ERR_SUCCESS && status_index < sizeof(release_statuses) / sizeof(release_statuses[0]))
+    {
+        status = release_statuses[status_index];
+        ++status_index;
+    }
     this->_type = FT_DOM_NODE_NULL;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (disable_error);
+    return (status);
 }
 
 int32_t ft_dom_node::enable_thread_safety() noexcept
@@ -274,27 +279,23 @@ int32_t ft_dom_node::set_name(const ft_string &name) noexcept
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
     this->_name = name;
+    const int32_t status = this->_name.get_error();
     (void)this->unlock_internal(lock_acquired);
-    if (this->_name.get_error() != FT_ERR_SUCCESS)
-        return (this->_name.get_error());
-    return (FT_ERR_SUCCESS);
+    return (status);
 }
 
 int32_t ft_dom_node::set_name(const char *name) noexcept
 {
-    ft_string name_string;
-    int32_t string_error;
-    int32_t set_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::set_name(const char *)");
     if (name == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    string_error = name_string.initialize(name);
-    if (string_error != FT_ERR_SUCCESS)
-        return (string_error);
-    set_error = this->set_name(name_string);
-    (void)name_string.destroy();
-    return (set_error);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t status = this->_name.assign(name, ft_strlen_size_t(name));
+    (void)this->unlock_internal(lock_acquired);
+    return (status);
 }
 
 const ft_string &ft_dom_node::get_name() const noexcept
@@ -314,27 +315,23 @@ int32_t ft_dom_node::set_value(const ft_string &value) noexcept
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
     this->_value = value;
+    const int32_t status = this->_value.get_error();
     (void)this->unlock_internal(lock_acquired);
-    if (this->_value.get_error() != FT_ERR_SUCCESS)
-        return (this->_value.get_error());
-    return (FT_ERR_SUCCESS);
+    return (status);
 }
 
 int32_t ft_dom_node::set_value(const char *value) noexcept
 {
-    ft_string value_string;
-    int32_t string_error;
-    int32_t set_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::set_value(const char *)");
     if (value == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    string_error = value_string.initialize(value);
-    if (string_error != FT_ERR_SUCCESS)
-        return (string_error);
-    set_error = this->set_value(value_string);
-    (void)value_string.destroy();
-    return (set_error);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t status = this->_value.assign(value, ft_strlen_size_t(value));
+    (void)this->unlock_internal(lock_acquired);
+    return (status);
 }
 
 const ft_string &ft_dom_node::get_value() const noexcept
@@ -355,9 +352,9 @@ int32_t ft_dom_node::add_child(ft_dom_node *child) noexcept
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    this->_children.push_back(child);
+    const int32_t status = this->_children.push_back(child);
     (void)this->unlock_internal(lock_acquired);
-    return (this->_children.get_error());
+    return (status);
 }
 
 const ft_vector<ft_dom_node*> &ft_dom_node::get_children() const noexcept
@@ -366,137 +363,113 @@ const ft_vector<ft_dom_node*> &ft_dom_node::get_children() const noexcept
     return (this->_children);
 }
 
+template <typename Text>
+static ft_size_t dom_find_attribute_index(const ft_vector<ft_string> &keys, const Text &key) noexcept
+{
+    const ft_size_t count = keys.size();
+    ft_size_t index = 0;
+    while (index < count)
+    {
+        if (keys[index] == key)
+            return (index);
+        ++index;
+    }
+    return (FT_SYSTEM_SIZE_MAX);
+}
+
+static int32_t dom_assign_attribute(ft_string &output, const ft_string &value) noexcept
+{
+    output = value;
+    return (output.get_error());
+}
+
+static int32_t dom_assign_attribute(ft_string &output, const char *value) noexcept
+{
+    return (output.assign(value, ft_strlen_size_t(value)));
+}
+
+template <typename Text>
+int32_t ft_dom_node::add_attribute_unlocked(const Text &key, const Text &value) noexcept
+{
+    const ft_size_t index = dom_find_attribute_index(this->_attribute_keys, key);
+    if (index != FT_SYSTEM_SIZE_MAX)
+        return (dom_assign_attribute(this->_attribute_values[index], value));
+
+    ft_string owned_key;
+    ft_string owned_value;
+    int32_t status = owned_key.initialize(key);
+    if (status == FT_ERR_SUCCESS)
+        status = owned_value.initialize(value);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = this->_attribute_keys.push_back(ft_move(owned_key));
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = this->_attribute_values.push_back(ft_move(owned_value));
+    if (status != FT_ERR_SUCCESS)
+        this->_attribute_keys.pop_back();
+    return (status);
+}
+
 int32_t ft_dom_node::add_attribute(const ft_string &key, const ft_string &value) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t key_index;
-    ft_size_t key_count;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::add_attribute(ft_string,ft_string)");
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    key_index = 0;
-    key_count = this->_attribute_keys.size();
-    while (key_index < key_count)
-    {
-        if (this->_attribute_keys[key_index] == key)
-        {
-            this->_attribute_values[key_index] = value;
-            (void)this->unlock_internal(lock_acquired);
-            return (this->_attribute_values[key_index].get_error());
-        }
-        key_index += 1;
-    }
-    this->_attribute_keys.push_back(key);
-    if (this->_attribute_keys.get_error() != FT_ERR_SUCCESS)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        return (this->_attribute_keys.get_error());
-    }
-    this->_attribute_values.push_back(value);
+    const int32_t status = this->add_attribute_unlocked(key, value);
     (void)this->unlock_internal(lock_acquired);
-    return (this->_attribute_values.get_error());
+    return (status);
 }
 
 int32_t ft_dom_node::add_attribute(const char *key, const char *value) noexcept
 {
-    ft_string key_string;
-    ft_string value_string;
-    int32_t string_error;
-    int32_t add_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::add_attribute(const char *,const char *)");
     if (key == ft_nullptr || value == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    string_error = key_string.initialize(key);
-    if (string_error != FT_ERR_SUCCESS)
-        return (string_error);
-    string_error = value_string.initialize(value);
-    if (string_error != FT_ERR_SUCCESS)
-    {
-        (void)key_string.destroy();
-        return (string_error);
-    }
-    add_error = this->add_attribute(key_string, value_string);
-    (void)value_string.destroy();
-    (void)key_string.destroy();
-    return (add_error);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t status = this->add_attribute_unlocked(key, value);
+    (void)this->unlock_internal(lock_acquired);
+    return (status);
 }
 
 ft_bool ft_dom_node::has_attribute(const ft_string &key) const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t key_index;
-    ft_size_t key_count;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::has_attribute");
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (false);
-    key_index = 0;
-    key_count = this->_attribute_keys.size();
-    while (key_index < key_count)
-    {
-        if (this->_attribute_keys[key_index] == key)
-        {
-            (void)this->unlock_internal(lock_acquired);
-            return (true);
-        }
-        key_index += 1;
-    }
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    const ft_bool found = dom_find_attribute_index(this->_attribute_keys, key) != FT_SYSTEM_SIZE_MAX;
     (void)this->unlock_internal(lock_acquired);
-    return (false);
+    return (found);
 }
 
 ft_string *ft_dom_node::get_attribute(const ft_string &key) const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t value_initialize_error;
-    ft_size_t key_index;
-    ft_size_t key_count;
-    ft_string *value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::get_attribute");
-    value = new (std::nothrow) ft_string();
-    if (value == ft_nullptr)
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-    value_initialize_error = value->initialize();
-    if (value_initialize_error != FT_ERR_SUCCESS)
+
+    ft_string *value = new (std::nothrow) ft_string();
+    int32_t status = FT_ERR_NO_MEMORY;
+    if (value)
     {
-        delete value;
-        return (ft_nullptr);
-    }
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        delete value;
-        return (ft_nullptr);
-    }
-    key_index = 0;
-    key_count = this->_attribute_keys.size();
-    while (key_index < key_count)
-    {
-        if (this->_attribute_keys[key_index] == key)
-        {
-            *value = this->_attribute_values[key_index];
-            (void)this->unlock_internal(lock_acquired);
-            if (value->get_error() != FT_ERR_SUCCESS)
-            {
-                delete value;
-                return (ft_nullptr);
-            }
-            return (value);
-        }
-        key_index += 1;
+        const ft_size_t index = dom_find_attribute_index(this->_attribute_keys, key);
+        status = value->initialize();
+        if (status == FT_ERR_SUCCESS && index != FT_SYSTEM_SIZE_MAX)
+            status = dom_assign_attribute(*value, this->_attribute_values[index]);
     }
     (void)this->unlock_internal(lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+    {
+        delete value;
+        return (ft_nullptr);
+    }
     return (value);
 }
 
@@ -512,31 +485,42 @@ const ft_vector<ft_string> &ft_dom_node::get_attribute_values() const noexcept
     return (this->_attribute_values);
 }
 
-ft_dom_node *ft_dom_node::find_child(const ft_string &name) const noexcept
+template <typename Matches>
+ft_dom_node *ft_dom_node::find_child_if(const Matches &matches) const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t child_index;
-    ft_size_t child_count;
-    ft_dom_node *child;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_node::find_child");
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
         return (ft_nullptr);
-    child_index = 0;
-    child_count = this->_children.size();
-    while (child_index < child_count)
+    const ft_size_t count = this->_children.size();
+    ft_size_t index = 0;
+    ft_dom_node *found = ft_nullptr;
+    while (index < count)
     {
-        child = this->_children[child_index];
-        if (child != ft_nullptr && child->get_name() == name)
+        ft_dom_node *child = this->_children[index];
+        if (child && matches(child->get_name()))
         {
-            (void)this->unlock_internal(lock_acquired);
-            return (child);
+            found = child;
+            break ;
         }
-        child_index += 1;
+        ++index;
     }
     (void)this->unlock_internal(lock_acquired);
-    return (ft_nullptr);
+    return (found);
+}
+
+ft_dom_node *ft_dom_node::find_child(const ft_string &name) const noexcept
+{
+    return (this->find_child_if([&name](const ft_string &candidate)
+    {
+        return (candidate == name);
+    }));
+}
+
+ft_dom_node *ft_dom_node::find_child(const char *name, ft_size_t length) const noexcept
+{
+    return (this->find_child_if([name, length](const ft_string &candidate) -> ft_bool
+    {
+        return (name && candidate.size() == length && ft_memcmp(candidate.c_str(), name, length) == 0);
+    }));
 }

@@ -1,89 +1,54 @@
 #include "yaml.hpp"
 #include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
+#include "../Template/move.hpp"
 #include "../Template/vector.hpp"
 
 ft_size_t yaml_find_char(const ft_string &string, char character) noexcept
 {
     const char *data = string.c_str();
-    ft_size_t index = 0;
-    ft_size_t length = string.size();
-    while (index < length)
-    {
-        if (data[index] == character)
-            return (index);
-        index++;
-    }
-    return (static_cast<ft_size_t>(-1));
+    const char *match = static_cast<const char *>(ft_memchr(data, character, string.size()));
+
+    if (match == ft_nullptr)
+        return (static_cast<ft_size_t>(-1));
+    return (static_cast<ft_size_t>(match - data));
 }
 
-static void yaml_delete_string(ft_string *string) noexcept
+static int32_t yaml_initialize_slice(ft_string &output, const char *data, ft_size_t length) noexcept
 {
-    if (string == ft_nullptr)
-        return ;
-    (void)string->destroy();
-    delete string;
-    return ;
+    const int32_t initialize_error = output.initialize();
+
+    if (initialize_error != FT_ERR_SUCCESS || length == 0)
+        return (initialize_error);
+    return (output.assign(data, length));
 }
 
 ft_string *yaml_substr(const ft_string &string, ft_size_t start, ft_size_t length) noexcept
 {
-    ft_string *output;
-    int32_t initialize_error;
+    const ft_size_t string_length = string.size();
+    if (start > string_length)
+        start = string_length;
+    if (length > string_length - start)
+        length = string_length - start;
 
-    output = new (std::nothrow) ft_string();
+    ft_string *output = new (std::nothrow) ft_string();
     if (output == ft_nullptr)
         return (ft_nullptr);
-    initialize_error = output->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (yaml_initialize_slice(*output, string.c_str() + start, length) != FT_ERR_SUCCESS)
     {
         delete output;
         return (ft_nullptr);
-    }
-    const char *data = string.c_str();
-    ft_size_t index = 0;
-    while (index < length && start + index < string.size())
-    {
-        output->append(data[start + index]);
-        if (output->get_error() != FT_ERR_SUCCESS)
-        {
-            yaml_delete_string(output);
-            return (ft_nullptr);
-        }
-        index++;
     }
     return (output);
 }
 
 ft_string *yaml_substr_from(const ft_string &string, ft_size_t start) noexcept
 {
-    if (start > string.size())
+    const ft_size_t string_length = string.size();
+
+    if (start > string_length)
         return (ft_nullptr);
-    return (yaml_substr(string, start, string.size() - start));
-}
-
-static int32_t yaml_assign_substr(const ft_string &string, ft_size_t start, ft_size_t length,
-    ft_string &output) noexcept
-{
-    ft_string *substring;
-
-    substring = yaml_substr(string, start, length);
-    if (substring == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    output = *substring;
-    if (output.get_error() != FT_ERR_SUCCESS)
-    {
-        int32_t output_error = output.get_error();
-
-        yaml_delete_string(substring);
-        return (output_error);
-    }
-    yaml_delete_string(substring);
-    return (FT_ERR_SUCCESS);
+    return (yaml_substr(string, start, string_length - start));
 }
 
 ft_size_t yaml_count_indent(const ft_string &line) noexcept
@@ -108,46 +73,39 @@ void yaml_trim(ft_string &string) noexcept
         end_index--;
     if (start_index == 0 && end_index == string_length)
         return ;
-    ft_string trimmed;
-    int32_t substr_error;
-
-    substr_error = yaml_assign_substr(string, start_index, end_index - start_index, trimmed);
-    if (substr_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    string = trimmed;
+    (void)string.assign(data + start_index, end_index - start_index);
     return ;
 }
 
 int32_t yaml_split_lines(const ft_string &content, ft_vector<ft_string> &lines) noexcept
 {
-    int32_t lines_initialize_error;
-
     if (lines.is_initialised() != FT_CLASS_STATE_INITIALISED)
     {
-        lines_initialize_error = lines.initialize();
-        if (lines_initialize_error != FT_ERR_SUCCESS)
-            return (lines_initialize_error);
+        const int32_t initialize_error = lines.initialize();
+        if (initialize_error != FT_ERR_SUCCESS)
+            return (initialize_error);
     }
     const char *data = content.c_str();
     ft_size_t start_index = 0;
-    ft_size_t content_length = content.size();
+    const ft_size_t content_length = content.size();
     while (start_index < content_length)
     {
-        ft_size_t end_index = start_index;
-        while (end_index < content_length && data[end_index] != '\n')
-            end_index++;
-        ft_string part;
-        int32_t substr_error;
+        const char *line_start = data + start_index;
+        ft_size_t line_length = content_length - start_index;
+        const char *line_end = static_cast<const char *>(ft_memchr(line_start, '\n', line_length));
+        if (line_end != ft_nullptr)
+            line_length = static_cast<ft_size_t>(line_end - line_start);
 
-        substr_error = yaml_assign_substr(content, start_index, end_index - start_index, part);
-        if (substr_error != FT_ERR_SUCCESS)
-            return (substr_error);
-        lines.push_back(part);
-        if (lines.get_error() != FT_ERR_SUCCESS)
-            return (lines.get_error());
-        start_index = end_index + 1;
+        ft_string part;
+        const int32_t slice_error = yaml_initialize_slice(part, line_start, line_length);
+        if (slice_error != FT_ERR_SUCCESS)
+            return (slice_error);
+        const int32_t append_error = lines.push_back(ft_move(part));
+        if (append_error != FT_ERR_SUCCESS)
+            return (append_error);
+        start_index += line_length;
+        if (start_index < content_length)
+            ++start_index;
     }
     return (FT_ERR_SUCCESS);
 }

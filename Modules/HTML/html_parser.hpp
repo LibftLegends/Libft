@@ -19,6 +19,7 @@ typedef struct html_node
 } html_node;
 
 html_node   *html_create_node(const char *tag_name, const char *text_content);
+// The appended node may head an already linked list of siblings.
 void        html_add_child(html_node *parent_node, html_node *child_node);
 void        html_append_node(html_node **head_node, html_node *new_node);
 html_attr   *html_create_attr(const char *key, const char *value);
