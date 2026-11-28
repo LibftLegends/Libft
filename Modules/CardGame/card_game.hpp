@@ -517,6 +517,8 @@ class card_game_operation_buffer
         uint32_t _count;
 
         int32_t grow() noexcept;
+        int32_t append_internal(const card_game_operation *operation,
+            const card_game_host_intent *intent) noexcept;
 
     public:
         card_game_operation_buffer() noexcept;
@@ -630,8 +632,10 @@ class card_game_engine
         ft_bool is_card_registered(uint32_t card_id) const noexcept;
         int32_t find_card_type_id(uint32_t card_id,
             uint32_t *type_id) const noexcept;
-        int32_t count_player_owned_card_type(uint32_t player_id,
-            uint32_t type_id, uint32_t *count_out) const noexcept;
+        int32_t count_owned_zone_card_types(const card_game_ordered_zone &zone,
+            uint32_t *counts) const noexcept;
+        int32_t count_player_owned_card_types(uint32_t player_id,
+            uint32_t *counts) const noexcept;
         int32_t validate_live_card_copy_limits() const noexcept;
         int32_t validate_owned_card_copy_limit(uint32_t player_id,
             uint32_t card_id) const noexcept;
@@ -641,6 +645,8 @@ class card_game_engine
         int32_t register_card_internal(
             const card_game_card_definition &definition,
             uint32_t type_id) noexcept;
+        uint32_t get_phase_command_mask() const noexcept;
+        void release_storage() noexcept;
         ft_bool is_command_allowed(uint32_t command_mask) const noexcept;
         uint32_t find_event_effect_position(uint32_t event_type) const noexcept;
         int32_t apply_operation(const card_game_operation &operation) noexcept;
@@ -695,6 +701,7 @@ class card_game_engine
         card_game_engine() noexcept;
         ~card_game_engine() noexcept;
         int32_t initialize(const card_game_rules &rules) noexcept;
+        ft_bool is_initialised() const noexcept;
         int32_t destroy() noexcept;
         int32_t move(card_game_engine &other) noexcept;
         int32_t register_card(const card_game_card_definition &definition) noexcept;

@@ -6,7 +6,7 @@
 # error This benchmark requires OpenSSL and LIBFT_TEST_BUILD.
 #endif
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 250000U;
     constexpr ft_size_t AES_GCM_NONCE_LENGTH = 12U;

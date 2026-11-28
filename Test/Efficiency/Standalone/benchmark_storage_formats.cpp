@@ -36,7 +36,7 @@ static int32_t measure_format(const char *initial_path, const char *name,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     std::string contents = "{\"kv_store\":{";
     const std::string expiration = std::to_string(time_now() + 600);

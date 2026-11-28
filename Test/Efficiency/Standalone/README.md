@@ -1,5 +1,7 @@
 # Standalone performance checks
 
+- `check_dumb_render_win32_lifecycle.cpp` measures 1,000 frame presentations at 640 by 480 and checks native window moves, per-window close requests, shutdown, and reopening on a private Windows desktop. Link it with the Windows Libft build and GDI32, and run it from a session that can create a desktop.
+
 - `benchmark_voxel_region_comparison.cpp` interleaves fresh region builds from three versions in one process and checks their block checksums and generation signatures. It also measures cached calls and compares every block in base-only generation between the context and current versions. Build two historical `voxel_generation.cpp` sources against the same headers and prefix their public functions with `baseline_` and `context_` using compiler definitions. Rename `voxel_generate_chunk`, `voxel_generate_chunk_with_stage_mask`, `voxel_generate_chunk_with_context`, `voxel_generate_chunk_at_world_coordinate`, `voxel_generate_chunk_in_region`, and `voxel_generate_chunk_in_region_with_context`. Link those objects with the current Libft build.
 
 - `benchmark_api_connection_pool.cpp` measures returning and reacquiring an idle TCP connection on loopback.

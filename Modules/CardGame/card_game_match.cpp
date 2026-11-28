@@ -572,18 +572,10 @@ int32_t card_game_engine::query_legal_actions(uint32_t player_id,
     }
     if (player_id == this->_active_player)
     {
-        if (this->is_command_allowed(CARD_GAME_COMMAND_PLAY_CARD) == FT_TRUE)
-            result.allowed_command_mask |= CARD_GAME_COMMAND_PLAY_CARD;
-        if (this->is_command_allowed(CARD_GAME_COMMAND_END_TURN) == FT_TRUE)
-            result.allowed_command_mask |= CARD_GAME_COMMAND_END_TURN;
-        if (this->is_command_allowed(CARD_GAME_COMMAND_ADVANCE_PHASE)
-            == FT_TRUE)
-            result.allowed_command_mask |= CARD_GAME_COMMAND_ADVANCE_PHASE;
-        if (this->is_command_allowed(CARD_GAME_COMMAND_DISCARD_HAND)
-            == FT_TRUE)
-            result.allowed_command_mask |= CARD_GAME_COMMAND_DISCARD_HAND;
-        if (this->is_command_allowed(CARD_GAME_COMMAND_DRAW_CARD) == FT_TRUE)
-            result.allowed_command_mask |= CARD_GAME_COMMAND_DRAW_CARD;
+        constexpr uint32_t PHASE_COMMANDS = CARD_GAME_COMMAND_PLAY_CARD
+            | CARD_GAME_COMMAND_END_TURN | CARD_GAME_COMMAND_ADVANCE_PHASE
+            | CARD_GAME_COMMAND_DISCARD_HAND | CARD_GAME_COMMAND_DRAW_CARD;
+        result.allowed_command_mask = this->get_phase_command_mask() & PHASE_COMMANDS;
     }
     *actions_out = result;
     return (FT_ERR_SUCCESS);

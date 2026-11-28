@@ -48,7 +48,7 @@ static int32_t benchmark_fft(const char *label, ft_size_t length,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_fft("FFT 16", 16U, 4096U, FT_FALSE) != 0
         || benchmark_fft("FFT 4096", 4096U, 64U, FT_FALSE) != 0

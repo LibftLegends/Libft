@@ -3,10 +3,11 @@
 #include <cinttypes>
 #include <cstdio>
 
-int main(int32_t argument_count, char **arguments)
+int main(int argc, char **argv)
 {
-    const ft_bool board = argument_count == 2 && ft_strcmp(arguments[1], "--board") == 0;
-    if (argument_count != 1 && !board)
+    const ft_bool board = argc == 2 && ft_strcmp(argv[1], "--board") == 0;
+    const ft_bool owned_types = argc == 2 && ft_strcmp(argv[1], "--owned-types") == 0;
+    if (argc != 1 && !board && !owned_types)
         return (1);
     constexpr uint32_t ITERATIONS = 160U;
     card_game_engine engine;
@@ -17,8 +18,21 @@ int main(int32_t argument_count, char **arguments)
     const card_game_card_definition card{1U, CARD_GAME_CREATURE, 0U,
         2, 3, CARD_GAME_NO_EFFECT};
     if (engine.initialize(rules) != FT_ERR_SUCCESS
-        || engine.register_card(card) != FT_ERR_SUCCESS
-        || engine.start_match(FT_CARD_GAME_MAX_PLAYERS) != FT_ERR_SUCCESS
+        || engine.register_card(card) != FT_ERR_SUCCESS)
+        return (1);
+    uint32_t type_id = 4U;
+    while (owned_types && type_id < FT_CARD_GAME_MAX_CARD_TYPES)
+    {
+        const card_game_card_type_definition type{
+            type_id, 1U << CARD_GAME_BOARD_ZONE_ID, FT_CARD_GAME_MAX_CARDS};
+        card_game_card_definition typed_card = card;
+        typed_card.card_id = type_id;
+        if (engine.register_card_type(type) != FT_ERR_SUCCESS
+            || engine.register_card_with_type(typed_card, type_id) != FT_ERR_SUCCESS)
+            return (1);
+        ++type_id;
+    }
+    if (engine.start_match(FT_CARD_GAME_MAX_PLAYERS) != FT_ERR_SUCCESS
         || engine.get_snapshot(&snapshot) != FT_ERR_SUCCESS)
         return (1);
     uint32_t player_id = 0U;
@@ -43,6 +57,8 @@ int main(int32_t argument_count, char **arguments)
             else
             {
                 player.deck[index] = card.card_id;
+                if (owned_types)
+                    player.deck[index] = 4U + index % (FT_CARD_GAME_MAX_CARD_TYPES - 4U);
                 player.deck_instance_ids[index] = id;
             }
             ++index;

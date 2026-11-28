@@ -196,7 +196,7 @@ static int32_t measure_asset_registration(const char *asset_path)
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     measure_builtin_metadata();
     if (measure_builtin_names() != 0)

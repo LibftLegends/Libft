@@ -23,7 +23,7 @@ static void measure_distribution(const char *name, const Sampler &sample)
     return ;
 }
 
-int32_t main()
+int main()
 {
     if (rng_enable_random_engine_thread_safety() != FT_ERR_SUCCESS)
         return (1);

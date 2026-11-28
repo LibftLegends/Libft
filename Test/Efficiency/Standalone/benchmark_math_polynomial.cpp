@@ -23,7 +23,7 @@ static int32_t benchmark_operation(const char *label, uint32_t iterations,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t COUNT = 1024U;
     ft_vector<double> knots;

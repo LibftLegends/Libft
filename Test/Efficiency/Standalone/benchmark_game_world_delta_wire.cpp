@@ -38,7 +38,7 @@ static int32_t measure_wire(const char *label, Message &message)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     game_block_change_request request = {GAME_WORLD_DELTA_PROTOCOL_VERSION,
         10U, 1U, 2U, -9, 12, 500U, 77U, 78U, 1U, 255U, 15U};

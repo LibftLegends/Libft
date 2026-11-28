@@ -50,7 +50,7 @@ static int32_t measure_counter(const char *name, int32_t amount, ft_bool exporte
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_counter("zero", 0, FT_FALSE) != 0
         || measure_counter("no_exporter", 1, FT_FALSE) != 0)

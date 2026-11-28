@@ -436,12 +436,12 @@ int32_t card_game_zone_store::move(card_game_zone_store &other) noexcept
         return (result);
     this->_definition_count = other._definition_count;
     ft_memcpy(this->_definitions, other._definitions,
-        sizeof(this->_definitions));
+        this->_definition_count * sizeof(*this->_definitions));
     player_id = 0U;
     while (player_id < FT_CARD_GAME_MAX_PLAYERS)
     {
         zone_index = 0U;
-        while (zone_index < FT_CARD_GAME_MAX_ZONES)
+        while (zone_index < this->_definition_count)
         {
             result = this->_zones[player_id][zone_index].move(
                 other._zones[player_id][zone_index]);

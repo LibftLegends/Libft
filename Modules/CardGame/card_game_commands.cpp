@@ -286,8 +286,6 @@ int32_t card_game_engine::submit_command_internal(
     uint32_t command_result_value;
     uint32_t hand_index = 0U;
     uint32_t resolved_choice_count;
-    uint32_t pending_choice_count;
-    uint32_t pending_global_choice_count;
     ft_bool system_expiry_command;
 
     if (expected_record != ft_nullptr
@@ -314,34 +312,36 @@ int32_t card_game_engine::submit_command_internal(
     if (system_expiry_command != FT_TRUE
         && command.player_id >= this->_player_count)
         return (FT_ERR_PERMISSION_DENIED);
-    pending_choice_count = 0U;
-    pending_global_choice_count = 0U;
     if (system_expiry_command != FT_TRUE)
     {
-        command_error = this->_choices.pending_count_for_player(
-            command.player_id, &pending_choice_count);
-        if (command_error != FT_ERR_SUCCESS)
-            return (command_error);
-        command_error = this->_choices.pending_count(
-            &pending_global_choice_count);
-        if (command_error != FT_ERR_SUCCESS)
-            return (command_error);
         if (this->_pending_discard_count != 0U
             && (command.type != CARD_GAME_INTENT_DISCARD_HAND
                 || command.player_id != this->_pending_discard_player_id))
             return (FT_ERR_PERMISSION_DENIED);
         if (command.type == CARD_GAME_INTENT_CHOOSE_OPTION)
         {
+            uint32_t pending_choice_count;
+            command_error = this->_choices.pending_count_for_player(
+                command.player_id, &pending_choice_count);
+            if (command_error != FT_ERR_SUCCESS)
+                return (command_error);
             if (pending_choice_count == 0U)
                 return (FT_ERR_PERMISSION_DENIED);
         }
         else
         {
-            if (this->_pending_discard_count == 0U
-                && pending_global_choice_count != 0U)
-                return (FT_ERR_PERMISSION_DENIED);
             if (command.player_id != this->_active_player)
                 return (FT_ERR_PERMISSION_DENIED);
+            if (this->_pending_discard_count == 0U)
+            {
+                uint32_t pending_global_choice_count;
+                command_error = this->_choices.pending_count(
+                    &pending_global_choice_count);
+                if (command_error != FT_ERR_SUCCESS)
+                    return (command_error);
+                if (pending_global_choice_count != 0U)
+                    return (FT_ERR_PERMISSION_DENIED);
+            }
         }
     }
     if (command.type == CARD_GAME_INTENT_DRAW_CARD

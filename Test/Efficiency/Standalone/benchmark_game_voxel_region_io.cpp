@@ -79,7 +79,7 @@ static int32_t measure_region(uint32_t chunks)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_region(0U) != 0)
         return (1);

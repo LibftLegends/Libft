@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label,
     return ;
 }
 
-int32_t main()
+int main()
 {
     constexpr int32_t LARGE_SIZE = 4096;
     constexpr int32_t SMALL_SIZE = 32;

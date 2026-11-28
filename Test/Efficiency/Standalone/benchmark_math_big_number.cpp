@@ -47,7 +47,7 @@ static int32_t measure_big_math(const char *label, const char *first_digits,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_big_math("coprime GCD", "-3928413764606871165730",
             "6356306993006846248183", math_big_gcd))

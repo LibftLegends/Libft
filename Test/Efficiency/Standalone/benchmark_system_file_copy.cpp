@@ -39,7 +39,7 @@ static int32_t measure_copy(ft_size_t bytes, uint32_t iterations)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_copy(4096U, 96U) != 0)
         return (1);

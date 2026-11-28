@@ -11,8 +11,9 @@ struct ft_render_win32_state
     HWND            window_handle;
     HDC             window_device_context;
 
+    HDC             memory_device_context;
     HBITMAP         dib_section;
-    void            *dib_pixels;
+    HGDIOBJ         previous_bitmap;
 
     int32_t             width;
     int32_t             height;
@@ -25,22 +26,32 @@ struct ft_render_win32_state
 
 static LRESULT CALLBACK ft_render_win32_wndproc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    ft_render_win32_state *state;
-
-    state = reinterpret_cast<ft_render_win32_state *>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
-
     if (message == WM_CLOSE)
     {
-        DestroyWindow(hwnd);
+        // Keep the request on the HWND so it follows a moved renderer.
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, FT_TRUE);
+        ShowWindow(hwnd, SW_HIDE);
         return (0);
     }
-    if (message == WM_DESTROY)
-    {
-        PostQuitMessage(0);
-        return (0);
-    }
-    (void)state;
     return (DefWindowProc(hwnd, message, wparam, lparam));
+}
+
+static void ft_render_win32_destroy_state(ft_render_win32_state *state)
+{
+    if (state->memory_device_context != NULL)
+    {
+        if (state->previous_bitmap != NULL)
+            SelectObject(state->memory_device_context, state->previous_bitmap);
+        DeleteDC(state->memory_device_context);
+    }
+    if (state->dib_section != NULL)
+        DeleteObject(state->dib_section);
+    if (state->window_device_context != NULL)
+        ReleaseDC(state->window_handle, state->window_device_context);
+    if (state->window_handle != NULL)
+        DestroyWindow(state->window_handle);
+    HeapFree(GetProcessHeap(), 0, state);
+    return ;
 }
 
 static ft_render_platform_result ft_render_win32_create_dib(
@@ -50,7 +61,6 @@ static ft_render_platform_result ft_render_win32_create_dib(
 {
     BITMAPINFO      bitmap_info;
     void            *pixels;
-    HBITMAP         dib_section;
 
     ZeroMemory(&bitmap_info, sizeof(bitmap_info));
     bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -61,7 +71,7 @@ static ft_render_platform_result ft_render_win32_create_dib(
     bitmap_info.bmiHeader.biCompression = BI_RGB;
 
     pixels = NULL;
-    dib_section = CreateDIBSection(
+    state->dib_section = CreateDIBSection(
         state->window_device_context,
         &bitmap_info,
         DIB_RGB_COLORS,
@@ -70,7 +80,7 @@ static ft_render_platform_result ft_render_win32_create_dib(
         0
     );
 
-    if (dib_section == NULL || pixels == NULL)
+    if (state->dib_section == NULL || pixels == NULL)
     {
         ft_render_platform_result result;
 
@@ -79,8 +89,12 @@ static ft_render_platform_result ft_render_win32_create_dib(
         return (result);
     }
 
-    state->dib_section = dib_section;
-    state->dib_pixels = pixels;
+    state->memory_device_context = CreateCompatibleDC(state->window_device_context);
+    if (state->memory_device_context == NULL)
+        return ((ft_render_platform_result){ FT_ERR_INITIALIZATION_FAILED, static_cast<int32_t>(GetLastError()) });
+    state->previous_bitmap = SelectObject(state->memory_device_context, state->dib_section);
+    if (state->previous_bitmap == NULL)
+        return ((ft_render_platform_result){ FT_ERR_INITIALIZATION_FAILED, static_cast<int32_t>(GetLastError()) });
 
     out_framebuffer->width = state->width;
     out_framebuffer->height = state->height;
@@ -148,8 +162,6 @@ ft_render_platform_result ft_render_platform_create_window(
         state->height = desc.height;
     }
     state->is_fullscreen = fullscreen;
-    state->dib_section = NULL;
-    state->dib_pixels = NULL;
 
     ZeroMemory(&window_class, sizeof(window_class));
     window_class.style = CS_OWNDC;
@@ -218,11 +230,6 @@ ft_render_platform_result ft_render_platform_create_window(
     state->window_style = style;
     SetRect(&state->windowed_rect, 0, 0, rect.right - rect.left, rect.bottom - rect.top);
 
-    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
-
-    ShowWindow(hwnd, SW_SHOW);
-    UpdateWindow(hwnd);
-
     state->window_device_context = GetDC(hwnd);
     if (state->window_device_context == NULL)
     {
@@ -230,8 +237,7 @@ ft_render_platform_result ft_render_platform_create_window(
 
         result.error_code = FT_ERR_INITIALIZATION_FAILED;
         result.system_error_code = static_cast<int32_t>(GetLastError());
-        DestroyWindow(hwnd);
-        HeapFree(GetProcessHeap(), 0, state);
+        ft_render_win32_destroy_state(state);
         return (result);
     }
 
@@ -241,13 +247,14 @@ ft_render_platform_result ft_render_platform_create_window(
         dib_result = ft_render_win32_create_dib(state, out_framebuffer);
         if (dib_result.error_code != FT_ERR_SUCCESS)
         {
-            ReleaseDC(hwnd, state->window_device_context);
-            DestroyWindow(hwnd);
-            HeapFree(GetProcessHeap(), 0, state);
+            ft_render_win32_destroy_state(state);
             return (dib_result);
         }
     }
 
+    SetStretchBltMode(state->window_device_context, COLORONCOLOR);
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
     *out_platform_state = state;
     return ((ft_render_platform_result){ FT_ERR_SUCCESS, 0 });
 }
@@ -257,35 +264,10 @@ ft_render_platform_result ft_render_platform_destroy_window(
     ft_render_framebuffer *framebuffer
 )
 {
-    ft_render_win32_state  *state;
-
     if (platform_state == NULL || *platform_state == NULL)
-    {
         return ((ft_render_platform_result){ FT_ERR_SUCCESS, 0 });
-    }
 
-    state = static_cast<ft_render_win32_state *>(*platform_state);
-
-    if (state->dib_section != NULL)
-    {
-        DeleteObject(state->dib_section);
-        state->dib_section = NULL;
-        state->dib_pixels = NULL;
-    }
-
-    if (state->window_device_context != NULL && state->window_handle != NULL)
-    {
-        ReleaseDC(state->window_handle, state->window_device_context);
-        state->window_device_context = NULL;
-    }
-
-    if (state->window_handle != NULL)
-    {
-        DestroyWindow(state->window_handle);
-        state->window_handle = NULL;
-    }
-
-    HeapFree(GetProcessHeap(), 0, state);
+    ft_render_win32_destroy_state(static_cast<ft_render_win32_state *>(*platform_state));
     *platform_state = NULL;
 
     if (framebuffer != NULL)
@@ -303,8 +285,8 @@ ft_render_platform_result ft_render_platform_poll_events(
     ft_bool *out_should_close
 )
 {
-    MSG   message;
-    BOOL  got_message;
+    MSG message;
+    ft_render_win32_state *state;
 
     if (platform_state == NULL || out_should_close == NULL)
     {
@@ -313,8 +295,7 @@ ft_render_platform_result ft_render_platform_poll_events(
 
     *out_should_close = FT_FALSE;
 
-    got_message = PeekMessage(&message, NULL, 0, 0, PM_REMOVE);
-    while (got_message != 0)
+    while (PeekMessage(&message, NULL, 0, 0, PM_REMOVE) != 0)
     {
         if (message.message == WM_QUIT)
         {
@@ -322,9 +303,10 @@ ft_render_platform_result ft_render_platform_poll_events(
         }
         TranslateMessage(&message);
         DispatchMessage(&message);
-
-        got_message = PeekMessage(&message, NULL, 0, 0, PM_REMOVE);
     }
+    state = static_cast<ft_render_win32_state *>(platform_state);
+    if (GetWindowLongPtr(state->window_handle, GWLP_USERDATA) == FT_TRUE)
+        *out_should_close = FT_TRUE;
 
     return ((ft_render_platform_result){ FT_ERR_SUCCESS, 0 });
 }
@@ -336,8 +318,6 @@ ft_render_platform_result ft_render_platform_present(
 )
 {
     ft_render_win32_state  *state;
-    HDC                    memory_dc;
-    HBITMAP                old_bitmap;
     RECT                   client_rect;
 
     (void)depth_buffer;
@@ -349,30 +329,24 @@ ft_render_platform_result ft_render_platform_present(
 
     state = static_cast<ft_render_win32_state *>(platform_state);
 
-    memory_dc = CreateCompatibleDC(state->window_device_context);
-    if (memory_dc == NULL)
-    {
-        return ((ft_render_platform_result){ FT_ERR_INITIALIZATION_FAILED, static_cast<int32_t>(GetLastError()) });
-    }
-
-    old_bitmap = static_cast<HBITMAP>(SelectObject(memory_dc, state->dib_section));
-    GetClientRect(state->window_handle, &client_rect);
-    SetStretchBltMode(state->window_device_context, COLORONCOLOR);
-    StretchBlt(
+    if (GetClientRect(state->window_handle, &client_rect) == 0)
+        return ((ft_render_platform_result){ FT_ERR_IO, static_cast<int32_t>(GetLastError()) });
+    if (client_rect.right == client_rect.left || client_rect.bottom == client_rect.top)
+        return ((ft_render_platform_result){ FT_ERR_SUCCESS, 0 });
+    if (StretchBlt(
         state->window_device_context,
         0,
         0,
         client_rect.right - client_rect.left,
         client_rect.bottom - client_rect.top,
-        memory_dc,
+        state->memory_device_context,
         0,
         0,
         framebuffer->width,
         framebuffer->height,
         SRCCOPY
-    );
-    SelectObject(memory_dc, old_bitmap);
-    DeleteDC(memory_dc);
+    ) == 0)
+        return ((ft_render_platform_result){ FT_ERR_IO, 0 });
 
     return ((ft_render_platform_result){ FT_ERR_SUCCESS, 0 });
 }

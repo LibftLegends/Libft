@@ -51,7 +51,7 @@ static int32_t measure_power(const char *label, const char *exponent_digits)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_power("exponent 17", "17") != 0)
         return (1);

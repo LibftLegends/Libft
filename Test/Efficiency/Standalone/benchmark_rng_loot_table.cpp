@@ -4,7 +4,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t ENTRY_COUNT = 4096U;
     constexpr uint32_t ITERATIONS = 22000U;

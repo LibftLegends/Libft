@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t SAMPLE_COUNT = 128U;
     vector3 samples[SAMPLE_COUNT];

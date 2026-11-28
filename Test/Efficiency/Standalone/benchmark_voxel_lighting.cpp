@@ -68,7 +68,7 @@ static int32_t measure_build(const char *label, light_builder build, uint32_t it
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_build("local", voxel_light_build_chunk_local, 28U)
         || measure_build("halo", voxel_light_build_chunk, 12U)

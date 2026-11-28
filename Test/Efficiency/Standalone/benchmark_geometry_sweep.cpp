@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     sphere shape;
     geometry_aabb3 box;

@@ -22,7 +22,7 @@ int32_t rng_secure_bytes(unsigned char *buffer, ft_size_t length)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 700000U;
     char known_uuid[37];

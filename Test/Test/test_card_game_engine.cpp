@@ -426,6 +426,171 @@ FT_TEST(test_card_game_engine_dispatches_configured_effect)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_retries_after_each_initialization_allocation_failure)
+{
+    card_game_engine engine;
+    test_cma_failure_controller controller{};
+    card_game_rules rules{3U, 4U, 20U, 5U, 10U, 10U};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_initialize(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_begin(controller));
+    const int32_t initialized = engine.initialize(rules);
+    const ft_size_t allocation_count = test_cma_failure_controller_attempt_count(
+        controller, TEST_CMA_FAILURE_ALLOCATE);
+    const int32_t destroyed = engine.destroy();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, initialized);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destroyed);
+    FT_ASSERT(allocation_count >= 4U);
+
+    ft_size_t call_index = 1U;
+    while (call_index <= allocation_count)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_begin(controller));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_fail_after(
+            controller, TEST_CMA_FAILURE_ALLOCATE, call_index - 1U));
+        const int32_t failed = engine.initialize(rules);
+        const ft_size_t outstanding = controller.allocation_slots;
+        const int32_t retried = engine.initialize(rules);
+        const int32_t started = engine.start_match(1U);
+        const int32_t released = engine.destroy();
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_end(controller));
+        if (call_index == 1U)
+            FT_ASSERT_EQ(FT_ERR_INTERNAL, failed);
+        else
+            FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed);
+        FT_ASSERT_EQ(0U, outstanding);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, retried);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, started);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, released);
+        ++call_index;
+    }
+    rules.max_hand_size = FT_CARD_GAME_MAX_CARDS + 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_begin(controller));
+    const ft_size_t attempts_before_invalid = test_cma_failure_controller_attempt_count(
+        controller, TEST_CMA_FAILURE_ALLOCATE);
+    const int32_t rejected = engine.initialize(rules);
+    const ft_size_t invalid_allocations = test_cma_failure_controller_attempt_count(
+        controller, TEST_CMA_FAILURE_ALLOCATE) - attempts_before_invalid;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_end(controller));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_cma_failure_controller_destroy(controller));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, rejected);
+    FT_ASSERT_EQ(0U, invalid_allocations);
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_snapshot_copy_limits_cover_only_owned_cards)
+{
+    card_game_engine engine;
+    card_game_snapshot snapshot;
+    const card_game_rules rules{3U, 4U, 20U, 5U, 10U, 10U};
+    const card_game_card_type_definition limited{
+        4U, (1U << 21U) | (1U << 22U), 3U};
+    const card_game_card_type_definition other{5U, 1U << 21U, 1U};
+    const card_game_card_definition card{
+        1U, CARD_GAME_CREATURE, 0U, 2, 3, CARD_GAME_NO_EFFECT};
+    const card_game_card_definition other_card{
+        2U, CARD_GAME_CREATURE, 0U, 2, 3, CARD_GAME_NO_EFFECT};
+    const card_game_zone_definition owned{21U, 8U, 1U << 4U, FT_TRUE};
+    const card_game_zone_definition shared{22U, 8U, 1U << 4U, FT_FALSE};
+    card_game_deck_card drawn;
+    uint32_t instance_id;
+    uint64_t before;
+    uint64_t after;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_type(limited));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_type(other));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_with_type(card, limited.type_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card_with_type(other_card, other.type_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_zone(owned));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_zone(shared));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.draw_to_hand(0U, &drawn));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.zone_push_top(0U, owned.zone_id,
+        card.card_id, &instance_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.zone_push_top(0U, shared.zone_id,
+        card.card_id, &instance_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_top(0U, other_card.card_id));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.deck_push_top(0U, card.card_id));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.deck_push_top(0U, other_card.card_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_snapshot(&snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.apply_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_state_hash(&before));
+    card_game_player_snapshot &player = snapshot.players[0];
+    player.deck[player.deck_count] = card.card_id;
+    player.deck_instance_ids[player.deck_count] = snapshot.next_deck_instance_id;
+    ++snapshot.next_deck_instance_id;
+    ++player.deck_count;
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, engine.apply_snapshot(snapshot));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_state_hash(&after));
+    FT_ASSERT_EQ(before, after);
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_move_preserves_live_state_and_zone_growth)
+{
+    card_game_engine source;
+    card_game_engine destination;
+    const card_game_rules rules{3U, 4U, 20U, 5U, 10U, 10U};
+    const card_game_card_definition definition{
+        1U, CARD_GAME_CREATURE, 0U, 2, 3, CARD_GAME_NO_EFFECT};
+    const card_game_zone_definition initial_zone{
+        21U, 8U, 1U << CARD_GAME_CREATURE, FT_TRUE};
+    const card_game_zone_definition next_zone{
+        22U, 2U, 1U << CARD_GAME_CREATURE, FT_FALSE};
+    card_game_deck_card card;
+    uint32_t instance_id;
+    uint32_t count;
+    uint64_t before;
+    uint64_t after;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.register_zone(initial_zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.play_card(0U, 1U, 0U, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.deck_push_top(1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.draw_to_hand(1U, &card));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.zone_push_top(1U, initial_zone.zone_id,
+        1U, &instance_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_state_hash(&before));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.register_zone(next_zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_state_hash(&after));
+    FT_ASSERT_EQ(before, after);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.register_zone(next_zone));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.zone_push_top(0U, next_zone.zone_id,
+        1U, &instance_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_zone_count(1U,
+        initial_zone.zone_id, &count));
+    FT_ASSERT_EQ(1U, count);
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_reinitialized_match_allows_new_configuration)
+{
+    card_game_engine engine;
+    const card_game_rules rules{3U, 4U, 20U, 5U, 10U, 10U};
+    const card_game_start_override override_rule{
+        1U, 0U, CARD_GAME_START_HEALTH, CARD_GAME_START_OVERRIDE_SET, 7U, 0U};
+    const card_game_match_start_config config{
+        0U, 20U, 5U, 0U, FT_FALSE, FT_FALSE};
+    uint32_t health;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_start_override(override_rule));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U, config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_player_health(0U, &health));
+    FT_ASSERT_EQ(7U, health);
+    return (1);
+}
+
 FT_TEST(test_card_game_operation_buffer_grows_past_original_capacity)
 {
     card_game_operation_buffer operations;
@@ -447,6 +612,44 @@ FT_TEST(test_card_game_operation_buffer_grows_past_original_capacity)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.get(299U, &operation));
     FT_ASSERT_EQ(299U, operation.player_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.clear());
+    return (1);
+}
+
+FT_TEST(test_card_game_operation_buffer_rejects_invalid_intent_before_growth)
+{
+    card_game_operation_buffer operations;
+    card_game_operation operation{};
+    operation.type = CARD_GAME_OPERATION_HOST_INTENT;
+    operation.host_intent.field_count = FT_CARD_GAME_MAX_HOST_INTENT_FIELDS + 1U;
+    FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED, operations.append(operation));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.initialize());
+    card_game_host_intent intent{};
+    intent.type_id = 19U;
+    intent.version = 1U;
+    intent.field_count = 1U;
+    intent.fields[0] = {CARD_GAME_HOST_INTENT_U32, 123U};
+    intent.fields[1] = {CARD_GAME_HOST_INTENT_U32, 999U};
+    uint32_t index = 0U;
+    while (index < FT_CARD_GAME_OPERATION_INITIAL_CAPACITY)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.append_host_intent(intent));
+        ++index;
+    }
+    cma_set_alloc_limit(1U);
+    const int32_t invalid = operations.append(operation);
+    const int32_t exhausted = operations.append_host_intent(intent);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, invalid);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, exhausted);
+    FT_ASSERT_EQ(FT_CARD_GAME_OPERATION_INITIAL_CAPACITY, operations.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.append_host_intent(intent));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, operations.get(index, &operation));
+    FT_ASSERT_EQ(CARD_GAME_OPERATION_HOST_INTENT, operation.type);
+    FT_ASSERT_EQ(19U, operation.host_intent.type_id);
+    FT_ASSERT_EQ(1U, operation.host_intent.field_count);
+    FT_ASSERT_EQ(123U, operation.host_intent.fields[0].value);
+    FT_ASSERT_EQ(0U, operation.host_intent.fields[1].value);
+    FT_ASSERT_EQ(0U, operation.player_id);
     return (1);
 }
 
@@ -572,6 +775,49 @@ FT_TEST(test_card_game_engine_enforces_phase_command_mask)
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.end_turn());
     FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, engine.advance_phase());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_engine_legal_actions_combines_phase_and_pending_choice)
+{
+    card_game_engine engine;
+    const card_game_rules rules{2U, 2U, 20U, 1U, 3U, 10U};
+    constexpr uint32_t RESTRICTED_COMMANDS = CARD_GAME_COMMAND_ADVANCE_PHASE
+        | CARD_GAME_COMMAND_DRAW_CARD;
+    constexpr uint32_t ALL_PHASE_COMMANDS = RESTRICTED_COMMANDS
+        | CARD_GAME_COMMAND_PLAY_CARD | CARD_GAME_COMMAND_END_TURN
+        | CARD_GAME_COMMAND_DISCARD_HAND;
+    const card_game_phase_definition first{1U, 2U, 0U, 0U,
+        RESTRICTED_COMMANDS | CARD_GAME_COMMAND_CHOOSE_OPTION};
+    const card_game_phase_definition second{2U, 1U, 0U, 0U, 0U};
+    card_game_legal_actions actions;
+    uint32_t choice_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(0U, &actions));
+    FT_ASSERT_EQ(ALL_PHASE_COMMANDS, actions.allowed_command_mask);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_phase(first));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_phase(second));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(0U, &actions));
+    FT_ASSERT_EQ(RESTRICTED_COMMANDS, actions.allowed_command_mask);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(1U, &actions));
+    FT_ASSERT_EQ(0U, actions.allowed_command_mask);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.open_choice(1U, CARD_GAME_CHOICE_MODE,
+        0U, 1U, &choice_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.add_choice_option(choice_id, {1U, 0U, 0U}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(0U, &actions));
+    FT_ASSERT_EQ(0U, actions.allowed_command_mask);
+    FT_ASSERT_EQ(1U, actions.pending_global_choice_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(1U, &actions));
+    FT_ASSERT_EQ(CARD_GAME_COMMAND_CHOOSE_OPTION, actions.allowed_command_mask);
+    FT_ASSERT_EQ(1U, actions.pending_choice_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.choose_option(choice_id, 1U, 1U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.advance_phase());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.query_legal_actions(0U, &actions));
+    FT_ASSERT_EQ(2U, actions.phase_id);
+    FT_ASSERT_EQ(ALL_PHASE_COMMANDS, actions.allowed_command_mask);
     return (1);
 }
 

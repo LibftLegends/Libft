@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 8192U;
     const char *text = "Mixed Case Text With Enough Bytes To Exceed Small String Storage";

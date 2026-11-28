@@ -87,7 +87,7 @@ static int32_t measure_nomination(uint32_t candidate_count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_nomination(1U) != 0
         || measure_nomination(NETWORKING_NAT_MAX_CANDIDATES) != 0)

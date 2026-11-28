@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t REQUEST_COUNT = 131072U;
     game_voxel_chunk chunk;

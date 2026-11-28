@@ -56,7 +56,7 @@ static int32_t measure_document_copy(const json_document &document)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     std::string text = "{\"config\":{\"plain\":\"value\",\"escaped/name\":\"value\"";
     uint32_t index = 0U;

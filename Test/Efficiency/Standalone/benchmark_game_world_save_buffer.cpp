@@ -45,7 +45,7 @@ static int32_t benchmark_load(game_world &world, const ft_string &encoded,
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     constexpr int32_t ITEM_COUNT = 128;
     constexpr uint32_t ITERATIONS = 16U;

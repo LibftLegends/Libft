@@ -50,7 +50,7 @@ static int32_t measure_achievement(ft_bool locked_goals, ft_bool locked_map)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_achievement(FT_FALSE, FT_FALSE) != 0
         || measure_achievement(FT_TRUE, FT_FALSE) != 0)

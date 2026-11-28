@@ -4,7 +4,7 @@
 #include <new>
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
-int32_t main()
+int main()
 {
     voxel_generation_config *config = new (std::nothrow) voxel_generation_config();
     if (config == ft_nullptr)

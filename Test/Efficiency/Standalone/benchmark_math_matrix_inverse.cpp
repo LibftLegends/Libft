@@ -20,7 +20,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     const matrix2 small(4.0, 7.0, 2.0, 6.0);
     const vector2 point_small(1.0, 3.0);

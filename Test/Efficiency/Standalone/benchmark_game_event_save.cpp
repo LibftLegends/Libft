@@ -223,7 +223,7 @@ static int32_t measure_mixed_ticks(ft_sharedptr<game_event_scheduler> &scheduler
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     constexpr int32_t EVENT_COUNT = 512;
     constexpr uint32_t ITERATIONS = 24U;

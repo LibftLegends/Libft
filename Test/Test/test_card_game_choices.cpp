@@ -51,6 +51,52 @@ FT_TEST(test_card_game_choices_restores_unordered_ids_and_preserves_wire_padding
     return (1);
 }
 
+FT_TEST(test_card_game_choices_pending_counts_follow_resolution_and_restore)
+{
+    card_game_choice_ledger ledger;
+    card_game_choice_ledger restored;
+    card_game_choice_ledger moved;
+    const card_game_choice_option option{1U, 0U, 0U};
+    const uint32_t players[] = {0U, 1U, UINT32_MAX};
+    uint32_t ids[3];
+    uint32_t count;
+    uint32_t size;
+    uint8_t wire[12U + 3U * FT_CARD_GAME_CHOICE_RECORD_BYTES];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.initialize());
+    uint32_t index = 0U;
+    while (index < 3U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.open(players[index],
+            CARD_GAME_CHOICE_MODE, index + 1U, 1U, &ids[index]));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.add_option(ids[index], option));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.choose(ids[0], 0U, 1U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.pending_count(&count));
+    FT_ASSERT_EQ(2U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.pending_count_for_player(0U, &count));
+    FT_ASSERT_EQ(0U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.serialize(wire, sizeof(wire), &size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.deserialize(wire, size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pending_count(&count));
+    FT_ASSERT_EQ(2U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pending_count_for_player(1U, &count));
+    FT_ASSERT_EQ(1U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pending_count_for_player(UINT32_MAX, &count));
+    FT_ASSERT_EQ(1U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.resolve_expired(2U, &count));
+    FT_ASSERT_EQ(1U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pending_count_for_player(1U, &count));
+    FT_ASSERT_EQ(0U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.resolve_all_pending_to_default(&count));
+    FT_ASSERT_EQ(1U, count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.pending_count(&count));
+    FT_ASSERT_EQ(0U, count);
+    return (1);
+}
+
 FT_TEST(test_card_game_choices_snapshot_restores_pending_choice)
 {
     card_game_choice_ledger ledger;
@@ -59,6 +105,7 @@ FT_TEST(test_card_game_choices_snapshot_restores_pending_choice)
     card_game_choice choice;
     card_game_choice_option option;
     uint32_t choice_id;
+    uint32_t pending_count;
 
     ft_bzero(&saved, sizeof(saved));
     ft_bzero(&copy, sizeof(copy));
@@ -79,6 +126,10 @@ FT_TEST(test_card_game_choices_snapshot_restores_pending_choice)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.apply_snapshot(saved));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.get(choice_id, &choice));
     FT_ASSERT_EQ(FT_FALSE, choice.resolved);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.pending_count(&pending_count));
+    FT_ASSERT_EQ(1U, pending_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ledger.pending_count_for_player(1U, &pending_count));
+    FT_ASSERT_EQ(1U, pending_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         card_game_choice_ledger::release_snapshot(&saved));
     FT_ASSERT_EQ(FT_ERR_SUCCESS,

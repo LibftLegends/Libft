@@ -39,7 +39,7 @@ static int32_t checksum_config(config_data *config, uint32_t &checksum)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count != 4)
     {

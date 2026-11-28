@@ -38,7 +38,7 @@ static int32_t measure_updates(json_document &document, json_group *group,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     json_document document;
     const std::string original(128U, 'a');

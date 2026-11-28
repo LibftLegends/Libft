@@ -59,7 +59,7 @@ static int32_t measure_tree(game_behavior_composite *branch, const char *name,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_tree(new (std::nothrow) game_behavior_selector(), "selector",
         FT_BEHAVIOR_STATUS_FAILURE, FT_BEHAVIOR_STATUS_FAILURE) != 0)

@@ -1,4 +1,5 @@
 #include "card_game_script_bridge.hpp"
+#include "../Buffer/buffer_endian.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/basic.hpp"
 #include <new>
@@ -36,18 +37,14 @@ static void card_game_script_hash_u64(uint64_t *hash, uint64_t value) noexcept
     }
 }
 
-static void card_game_script_append_u32(std::vector<uint8_t> &bytes,
-    uint32_t value)
+static uint32_t card_game_script_program_size(const scripting_program &program) noexcept
 {
-    for (uint32_t shift = 0U; shift < 32U; shift += 8U)
-        bytes.push_back(static_cast<uint8_t>(value >> shift));
-}
-
-static void card_game_script_append_u64(std::vector<uint8_t> &bytes,
-    uint64_t value)
-{
-    for (uint32_t shift = 0U; shift < 64U; shift += 8U)
-        bytes.push_back(static_cast<uint8_t>(value >> shift));
+    if (program.instruction_count == 0U
+        || program.instruction_count > FT_SCRIPTING_MAX_INSTRUCTIONS
+        || program.string_data_size > FT_SCRIPTING_MAX_STRING_BYTES)
+        return (0U);
+    return (FT_SCRIPTING_SERIALIZED_HEADER_BYTES + program.string_data_size
+        + program.instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES);
 }
 
 static uint32_t card_game_script_read_u32(const uint8_t *bytes,
@@ -100,15 +97,13 @@ card_game_script_bridge::~card_game_script_bridge() noexcept
 
 int32_t card_game_script_bridge::initialize(card_game_engine &engine) noexcept
 {
-    uint64_t rules_hash;
     uint32_t native_id;
     int32_t result;
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
-    result = engine.get_rules_hash(&rules_hash);
-    if (result != FT_ERR_SUCCESS)
-        return (result);
+    if (engine.is_initialised() == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     result = this->_scripting.initialize();
     if (result != FT_ERR_SUCCESS)
     {
@@ -160,15 +155,11 @@ int32_t card_game_script_bridge::initialize(card_game_engine &engine) noexcept
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_script_bridge::initialize_runtime() noexcept
+int32_t card_game_script_bridge::validate_runtime() const noexcept
 {
-    uint64_t rules_hash;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    if (this->_engine == ft_nullptr)
-        return (FT_ERR_INVALID_STATE);
-    if (this->_engine->get_rules_hash(&rules_hash) != FT_ERR_SUCCESS)
+    if (this->_engine == ft_nullptr || this->_engine->is_initialised() == FT_FALSE)
         return (FT_ERR_INVALID_STATE);
     return (FT_ERR_SUCCESS);
 }
@@ -235,7 +226,7 @@ int32_t card_game_script_bridge::register_script_effect(const char *source,
     uint32_t binding_index;
     int32_t result;
 
-    result = this->initialize_runtime();
+    result = this->validate_runtime();
     if (result != FT_ERR_SUCCESS)
         return (result);
     if (source == ft_nullptr || event_type == 0U || effect_id == ft_nullptr)
@@ -246,7 +237,7 @@ int32_t card_game_script_bridge::register_script_effect(const char *source,
         sizeof(scripting_program)));
     if (program == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    ft_bzero(program, sizeof(scripting_program));
+    new (program) scripting_program;
     result = this->_scripting.compile(source, program);
     if (result == FT_ERR_SUCCESS)
         result = this->_scripting.verify_program(*program);
@@ -281,70 +272,63 @@ int32_t card_game_script_bridge::serialize_script_catalog(
     std::vector<uint8_t> &bytes_out) const noexcept
 {
     std::vector<uint8_t> staged;
-    uint8_t *serialized_program;
-    uint32_t serialized_size;
-    uint32_t index;
-    int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_active_context != ft_nullptr
         || this->_active_operations != ft_nullptr)
         return (FT_ERR_INVALID_OPERATION);
-    serialized_program = ft_nullptr;
-    if (this->_binding_count > 0U)
-        serialized_program = static_cast<uint8_t *>(cma_malloc(
-            FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES));
-    if (this->_binding_count > 0U && serialized_program == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    result = FT_ERR_SUCCESS;
+    uint32_t program_sizes[FT_CARD_GAME_SCRIPT_MAX_EFFECTS];
+    uint32_t total_size = 20U;
+    uint32_t index = 0U;
+    while (index < this->_binding_count)
+    {
+        const script_effect_binding &binding = this->_bindings[index];
+        if (binding.registered != FT_TRUE || binding.program == ft_nullptr
+            || binding.event_type == 0U)
+            return (FT_ERR_INVALID_STATE);
+        program_sizes[index] = card_game_script_program_size(*binding.program);
+        if (program_sizes[index] == 0U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        total_size += 8U + program_sizes[index];
+        ++index;
+    }
     try
     {
-        staged.reserve(12U + static_cast<std::size_t>(this->_binding_count)
-            * (8U + FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES) + 8U);
-        staged.push_back('C');
-        staged.push_back('G');
-        staged.push_back('S');
-        staged.push_back('C');
-        card_game_script_append_u32(staged, 1U);
-        card_game_script_append_u32(staged, this->_binding_count);
-        index = 0U;
-        while (index < this->_binding_count && result == FT_ERR_SUCCESS)
-        {
-            if (this->_bindings[index].registered != FT_TRUE
-                || this->_bindings[index].program == ft_nullptr
-                || this->_bindings[index].event_type == 0U)
-            {
-                result = FT_ERR_INVALID_STATE;
-                break ;
-            }
-            result = this->_scripting.serialize_program(
-                *this->_bindings[index].program, serialized_program,
-                FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES,
-                &serialized_size);
-            if (result == FT_ERR_SUCCESS)
-            {
-                card_game_script_append_u32(staged,
-                    this->_bindings[index].event_type);
-                card_game_script_append_u32(staged, serialized_size);
-                staged.insert(staged.end(), serialized_program,
-                    serialized_program + serialized_size);
-            }
-            index += 1U;
-        }
-        if (result == FT_ERR_SUCCESS)
-            card_game_script_append_u64(staged,
-                card_game_script_context_checksum(staged.data(),
-                    static_cast<uint32_t>(staged.size())));
+        staged.resize(total_size);
     }
     catch (const std::bad_alloc &)
     {
-        result = FT_ERR_NO_MEMORY;
+        return (FT_ERR_NO_MEMORY);
     }
-    cma_free(serialized_program);
-    if (result == FT_ERR_SUCCESS)
-        bytes_out.swap(staged);
-    return (result);
+    uint8_t *output = staged.data();
+    output[0] = 'C';
+    output[1] = 'G';
+    output[2] = 'S';
+    output[3] = 'C';
+    buffer_store_le<uint32_t>(output + 4U, 1U);
+    buffer_store_le<uint32_t>(output + 8U, this->_binding_count);
+    uint32_t offset = 12U;
+    index = 0U;
+    while (index < this->_binding_count)
+    {
+        const script_effect_binding &binding = this->_bindings[index];
+        uint32_t serialized_size;
+        const int32_t result = this->_scripting.serialize_program(*binding.program,
+            output + offset + 8U, program_sizes[index], &serialized_size);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        if (serialized_size != program_sizes[index])
+            return (FT_ERR_INVALID_STATE);
+        buffer_store_le<uint32_t>(output + offset, binding.event_type);
+        buffer_store_le<uint32_t>(output + offset + 4U, serialized_size);
+        offset += 8U + serialized_size;
+        ++index;
+    }
+    buffer_store_le<uint64_t>(output + offset,
+        card_game_script_context_checksum(output, offset));
+    bytes_out.swap(staged);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_script_bridge::load_script_catalog(const uint8_t *bytes,
@@ -420,12 +404,9 @@ int32_t card_game_script_bridge::load_script_catalog(const uint8_t *bytes,
             result = FT_ERR_NO_MEMORY;
             break ;
         }
-        ft_bzero(staged_programs[index], sizeof(scripting_program));
+        new (staged_programs[index]) scripting_program;
         result = this->_scripting.deserialize_program(bytes + offset,
             program_size, staged_programs[index]);
-        if (result == FT_ERR_SUCCESS)
-            result = this->_scripting.verify_program(
-                *staged_programs[index]);
         if (result != FT_ERR_SUCCESS)
             break ;
         staged_event_types[index] = event_type;
@@ -574,16 +555,12 @@ int32_t card_game_script_bridge::set_context_value(uint32_t key_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_active_context != ft_nullptr)
         return (FT_ERR_INVALID_OPERATION);
-    for (uint32_t index = 0U; index < this->_context_key_count; ++index)
-    {
-        if (this->_context_values[index].key_id == key_id)
-        {
-            this->_context_values[index].value = value;
-            this->_context_values[index].is_set = FT_TRUE;
-            return (FT_ERR_SUCCESS);
-        }
-    }
-    return (FT_ERR_NOT_FOUND);
+    const uint32_t index = this->find_context_key(key_id);
+    if (index == this->_context_key_count)
+        return (FT_ERR_NOT_FOUND);
+    this->_context_values[index].value = value;
+    this->_context_values[index].is_set = FT_TRUE;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_script_bridge::clear_context_value(uint32_t key_id) noexcept
@@ -594,23 +571,35 @@ int32_t card_game_script_bridge::clear_context_value(uint32_t key_id) noexcept
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_active_context != ft_nullptr)
         return (FT_ERR_INVALID_OPERATION);
-    for (uint32_t index = 0U; index < this->_context_key_count; ++index)
+    const uint32_t index = this->find_context_key(key_id);
+    if (index == this->_context_key_count)
+        return (FT_ERR_NOT_FOUND);
+    this->_context_values[index].value = 0;
+    this->_context_values[index].is_set = FT_FALSE;
+    return (FT_ERR_SUCCESS);
+}
+
+uint32_t card_game_script_bridge::find_context_key(uint32_t key_id) const noexcept
+{
+    uint32_t first = 0U;
+    uint32_t end = this->_context_key_count;
+    while (first < end)
     {
-        if (this->_context_values[index].key_id == key_id)
-        {
-            this->_context_values[index].value = 0;
-            this->_context_values[index].is_set = FT_FALSE;
-            return (FT_ERR_SUCCESS);
-        }
+        const uint32_t middle = first + (end - first) / 2U;
+        if (this->_context_values[middle].key_id < key_id)
+            first = middle + 1U;
+        else
+            end = middle;
     }
-    return (FT_ERR_NOT_FOUND);
+    if (first == this->_context_key_count
+        || this->_context_values[first].key_id != key_id)
+        return (this->_context_key_count);
+    return (first);
 }
 
 int32_t card_game_script_bridge::serialize_context_values(
     std::vector<uint8_t> &bytes_out) const noexcept
 {
-    std::vector<uint8_t> staged;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_active_context != ft_nullptr
@@ -618,32 +607,33 @@ int32_t card_game_script_bridge::serialize_context_values(
         return (FT_ERR_INVALID_OPERATION);
     try
     {
-        staged.reserve(20U + this->_context_key_count * 16U);
-        staged.push_back('C');
-        staged.push_back('C');
-        staged.push_back('V');
-        staged.push_back('1');
-        card_game_script_append_u32(staged, 1U);
-        card_game_script_append_u32(staged, this->_context_key_count);
-        for (uint32_t index = 0U; index < this->_context_key_count; ++index)
-        {
-            const context_value_entry &entry = this->_context_values[index];
-
-            card_game_script_append_u32(staged, entry.key_id);
-            card_game_script_append_u32(staged,
-                entry.is_set == FT_TRUE ? 1U : 0U);
-            card_game_script_append_u64(staged,
-                static_cast<uint64_t>(entry.value));
-        }
-        card_game_script_append_u64(staged,
-            card_game_script_context_checksum(staged.data(),
-                static_cast<uint32_t>(staged.size())));
+        bytes_out.resize(20U + this->_context_key_count * 16U);
     }
     catch (...)
     {
         return (FT_ERR_NO_MEMORY);
     }
-    bytes_out.swap(staged);
+    uint8_t *bytes = bytes_out.data();
+    bytes[0] = 'C';
+    bytes[1] = 'C';
+    bytes[2] = 'V';
+    bytes[3] = '1';
+    buffer_store_le<uint32_t>(bytes + 4U, 1U);
+    buffer_store_le<uint32_t>(bytes + 8U, this->_context_key_count);
+    uint32_t index = 0U;
+    uint32_t offset = 12U;
+    while (index < this->_context_key_count)
+    {
+        const context_value_entry &entry = this->_context_values[index];
+        buffer_store_le<uint32_t>(bytes + offset, entry.key_id);
+        buffer_store_le<uint32_t>(bytes + offset + 4U,
+            static_cast<uint32_t>(entry.is_set == FT_TRUE));
+        buffer_store_le<uint64_t>(bytes + offset + 8U, static_cast<uint64_t>(entry.value));
+        offset += 16U;
+        ++index;
+    }
+    buffer_store_le<uint64_t>(bytes + offset,
+        card_game_script_context_checksum(bytes, offset));
     return (FT_ERR_SUCCESS);
 }
 
@@ -737,8 +727,6 @@ int32_t card_game_script_bridge::get_registered_effect_count(
 
 int32_t card_game_script_bridge::get_manifest_hash(uint64_t *hash) const noexcept
 {
-    uint8_t *serialized_program;
-    uint32_t serialized_size;
     uint32_t index;
     uint32_t byte_index;
     uint64_t native_hash;
@@ -780,31 +768,38 @@ int32_t card_game_script_bridge::get_manifest_hash(uint64_t *hash) const noexcep
         card_game_script_hash_u32(&result_hash,
             this->_context_values[index].key_id);
     card_game_script_hash_u32(&result_hash, this->_binding_count);
-    serialized_program = ft_nullptr;
-    if (this->_binding_count > 0U)
+    constexpr uint32_t LOCAL_PROGRAM_BYTES = 1024U;
+    uint8_t local_program[LOCAL_PROGRAM_BYTES];
+    uint32_t program_capacity = LOCAL_PROGRAM_BYTES;
+    index = 0U;
+    while (index < this->_binding_count)
     {
-        serialized_program = static_cast<uint8_t *>(cma_malloc(
-            FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES));
+        const script_effect_binding &binding = this->_bindings[index];
+        if (binding.registered != FT_TRUE || binding.program == ft_nullptr)
+            return (FT_ERR_INVALID_STATE);
+        const uint32_t program_size = card_game_script_program_size(*binding.program);
+        if (program_size == 0U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (program_size > program_capacity)
+            program_capacity = program_size;
+        ++index;
+    }
+    uint8_t *serialized_program = local_program;
+    if (program_capacity > LOCAL_PROGRAM_BYTES)
+    {
+        serialized_program = static_cast<uint8_t *>(cma_malloc(program_capacity));
         if (serialized_program == ft_nullptr)
             return (FT_ERR_NO_MEMORY);
     }
     index = 0U;
     while (index < this->_binding_count)
     {
-        if (this->_bindings[index].registered != FT_TRUE
-            || this->_bindings[index].program == ft_nullptr)
-        {
-            cma_free(serialized_program);
-            return (FT_ERR_INVALID_STATE);
-        }
+        uint32_t serialized_size;
         result = this->_scripting.serialize_program(
             *this->_bindings[index].program, serialized_program,
-            FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES, &serialized_size);
+            program_capacity, &serialized_size);
         if (result != FT_ERR_SUCCESS)
-        {
-            cma_free(serialized_program);
-            return (result);
-        }
+            break ;
         card_game_script_hash_u32(&result_hash,
             this->_bindings[index].event_type);
         card_game_script_hash_u32(&result_hash, serialized_size);
@@ -817,7 +812,10 @@ int32_t card_game_script_bridge::get_manifest_hash(uint64_t *hash) const noexcep
         }
         index += 1U;
     }
-    cma_free(serialized_program);
+    if (serialized_program != local_program)
+        cma_free(serialized_program);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     *hash = result_hash;
     return (FT_ERR_SUCCESS);
 }
@@ -837,7 +835,7 @@ int32_t card_game_script_bridge::execute_effect(
         || binding->bridge == ft_nullptr || binding->program == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     bridge = binding->bridge;
-    result = bridge->initialize_runtime();
+    result = bridge->validate_runtime();
     if (result != FT_ERR_SUCCESS)
         return (result);
     if (bridge->_active_operations != ft_nullptr)
@@ -863,7 +861,7 @@ int32_t card_game_script_bridge::card_actor_id(
     if (context == ft_nullptr || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -883,7 +881,7 @@ int32_t card_game_script_bridge::card_instance_id(
     if (context == ft_nullptr || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -905,7 +903,7 @@ int32_t card_game_script_bridge::session_phase(
     if (context == ft_nullptr || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 0U)
         return (FT_ERR_INVALID_ARGUMENT);
@@ -930,7 +928,7 @@ int32_t card_game_script_bridge::random_bounded(
         || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 1U
         || arguments[0].type != SCRIPTING_VALUE_INTEGER
@@ -959,7 +957,7 @@ int32_t card_game_script_bridge::choice_selected_id(
         || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 1U
         || arguments[0].type != SCRIPTING_VALUE_INTEGER
@@ -990,7 +988,7 @@ int32_t card_game_script_bridge::context_value(
         || result == ft_nullptr || bridge == ft_nullptr
         || context->engine != &bridge->_scripting
         || bridge->_active_context == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 1U
         || arguments[0].type != SCRIPTING_VALUE_INTEGER
@@ -999,18 +997,13 @@ int32_t card_game_script_bridge::context_value(
         return (FT_ERR_INVALID_ARGUMENT);
     const uint32_t key_id =
         static_cast<uint32_t>(arguments[0].integer_value);
-    for (uint32_t index = 0U; index < bridge->_context_key_count; ++index)
-    {
-        const context_value_entry &entry = bridge->_context_values[index];
-
-        if (entry.key_id == key_id)
-        {
-            if (entry.is_set != FT_TRUE)
-                return (FT_ERR_INVALID_STATE);
-            return (scripting_value_set_integer(result, entry.value));
-        }
-    }
-    return (FT_ERR_NOT_FOUND);
+    const uint32_t index = bridge->find_context_key(key_id);
+    if (index == bridge->_context_key_count)
+        return (FT_ERR_NOT_FOUND);
+    const context_value_entry &entry = bridge->_context_values[index];
+    if (entry.is_set != FT_TRUE)
+        return (FT_ERR_INVALID_STATE);
+    return (scripting_value_set_integer(result, entry.value));
 }
 
 int32_t card_game_script_bridge::append_count_operation(
@@ -1026,7 +1019,7 @@ int32_t card_game_script_bridge::append_count_operation(
         || result == ft_nullptr || this->_active_operations == ft_nullptr
         || this->_active_context == ft_nullptr
         || context->engine != &this->_scripting
-        || this->initialize_runtime() != FT_ERR_SUCCESS)
+        || this->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count != 1U
         || arguments[0].type != SCRIPTING_VALUE_INTEGER
@@ -1091,7 +1084,7 @@ int32_t card_game_script_bridge::emit_host_intent(
     if (context == ft_nullptr || arguments == ft_nullptr
         || result == ft_nullptr || bridge == ft_nullptr
         || bridge->_active_operations == ft_nullptr
-        || bridge->initialize_runtime() != FT_ERR_SUCCESS)
+        || bridge->validate_runtime() != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
     if (argument_count < 2U || ((argument_count - 2U) % 2U) != 0U)
         return (FT_ERR_INVALID_ARGUMENT);

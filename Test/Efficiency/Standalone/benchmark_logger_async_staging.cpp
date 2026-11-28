@@ -9,7 +9,7 @@ static int32_t count_message(const char *, void *user_data)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 8192U;
     uint32_t delivered = 0U;

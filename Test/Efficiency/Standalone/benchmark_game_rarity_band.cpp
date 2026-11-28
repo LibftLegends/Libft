@@ -40,7 +40,7 @@ static int32_t measure_fetch(ft_bool locked)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_fetch(FT_FALSE) != 0)
         return (1);

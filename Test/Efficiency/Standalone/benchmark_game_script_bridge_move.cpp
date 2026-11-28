@@ -116,7 +116,7 @@ static int32_t measure_context_move()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_bridge_move() != 0 || measure_context_move() != 0)
         return (1);

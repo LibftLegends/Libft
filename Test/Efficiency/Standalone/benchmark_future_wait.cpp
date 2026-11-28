@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <thread>
 
-int32_t main()
+int main()
 {
     using benchmark_clock = std::chrono::steady_clock;
     constexpr uint32_t ITERATIONS = 64U;

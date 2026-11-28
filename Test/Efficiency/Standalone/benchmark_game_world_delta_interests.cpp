@@ -74,7 +74,7 @@ static int32_t measure_interests(uint32_t group_count, uint32_t clients_per_grou
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--single") == 0)
         return (measure_interests(1U, 1U));

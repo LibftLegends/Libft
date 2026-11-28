@@ -216,10 +216,17 @@ FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
     FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
     FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
     const uint32_t instruction_count = program.instruction_count;
+    program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U] = 'x';
+    program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand = 99;
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.compile("return 99; 2", &program));
     FT_ASSERT_EQ(instruction_count, program.instruction_count);
+    FT_ASSERT_EQ('x', program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(99, program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
     FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile("return 24;", &program));
+    FT_ASSERT_EQ(0, program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(0, program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
     malformed_program = {};
     malformed_program.format_version = FT_SCRIPTING_BYTECODE_VERSION;
     malformed_program.instruction_count = 5U;
@@ -374,8 +381,12 @@ FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
         + program.instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES,
         serialized_size);
     loaded_program = {};
+    loaded_program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U] = 'x';
+    loaded_program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand = 99;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deserialize_program(serialized,
         serialized_size, &loaded_program));
+    FT_ASSERT_EQ(0, loaded_program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(0, loaded_program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(loaded_program,
         &result));
     FT_ASSERT_EQ(static_cast<int64_t>(31), result.integer_value);
@@ -396,6 +407,38 @@ FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
     FT_ASSERT_EQ(FT_ERR_FULL, engine.serialize_program(program, serialized,
         serialized_size - 1U, &serialized_size));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_serializes_full_width_instruction_fields)
+{
+    scripting_engine engine;
+    scripting_program source{};
+    scripting_program loaded;
+    constexpr int64_t OPERAND = INT64_MIN + INT64_C(0x0102030405060708);
+    constexpr uint32_t AUXILIARY = 0x89ABCDEFU;
+    constexpr uint32_t SIZE = FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        + 2U * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+    const uint8_t expected[] = {SCRIPTING_OP_PUSH_INTEGER,
+        0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x81U,
+        0xEFU, 0xCDU, 0xABU, 0x89U};
+    uint8_t bytes[SIZE + 1U];
+    uint32_t written;
+
+    source.format_version = FT_SCRIPTING_BYTECODE_VERSION;
+    source.instruction_count = 2U;
+    source.instructions[0] = {SCRIPTING_OP_PUSH_INTEGER, OPERAND, AUXILIARY};
+    source.instructions[1] = {SCRIPTING_OP_RETURN, 0, 0U};
+    bytes[SIZE] = 0xA5U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(source, bytes, SIZE, &written));
+    FT_ASSERT_EQ(SIZE, written);
+    FT_ASSERT_EQ(0, ft_memcmp(bytes + FT_SCRIPTING_SERIALIZED_HEADER_BYTES,
+        expected, sizeof(expected)));
+    FT_ASSERT_EQ(0xA5U, bytes[SIZE]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deserialize_program(bytes, written, &loaded));
+    FT_ASSERT_EQ(OPERAND, loaded.instructions[0].operand);
+    FT_ASSERT_EQ(AUXILIARY, loaded.instructions[0].auxiliary);
     return (1);
 }
 

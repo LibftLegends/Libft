@@ -39,7 +39,7 @@ static int32_t benchmark_eval(const char *label, uint32_t terms, uint32_t iterat
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_eval("eval 8 terms", 8U, 8192U) != 0
         || benchmark_eval("eval 32 terms", 32U, 1024U) != 0

@@ -43,7 +43,7 @@ static int32_t measure(int32_t mode)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure(0) != 0 || measure(1) != 0)
         return (1);

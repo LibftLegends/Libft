@@ -219,7 +219,7 @@ static int32_t measure_trace_file()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     analytics_session session;
     uint32_t region_id = 0;

@@ -51,7 +51,7 @@ static int32_t measure_signed_arithmetic(const char *label, const char *left_dig
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_signed_arithmetic("20-digit signed arithmetic", "99991234567890123456",
             "92345678901234567890") != 0)

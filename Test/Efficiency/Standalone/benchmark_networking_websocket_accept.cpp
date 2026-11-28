@@ -3,7 +3,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 20000U;
     constexpr char EXPECTED[] = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";

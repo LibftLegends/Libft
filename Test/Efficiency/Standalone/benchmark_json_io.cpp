@@ -108,7 +108,7 @@ static int32_t measure_write_string()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_read_groups() != 0)
         return (1);

@@ -96,7 +96,7 @@ static int32_t benchmark_spline_move()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_lagrange() != 0 || benchmark_spline_move() != 0)
         return (1);

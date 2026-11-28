@@ -23,7 +23,7 @@ static int32_t benchmark_operation(const char *label, uint32_t iterations,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     const std::string record = "17," + std::string(160U, 'x')
         + ",\"" + std::string(256U, 'y') + ",\"\"quoted\"\"\",42,";

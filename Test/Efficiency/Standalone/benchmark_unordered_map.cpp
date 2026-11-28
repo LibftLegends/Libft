@@ -25,7 +25,7 @@ std::size_t std::hash<s_benchmark_collision_key>::operator()(const s_benchmark_c
     return (4094U);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t LENGTH = 1024U;
     constexpr uint32_t ITERATIONS = 128U;

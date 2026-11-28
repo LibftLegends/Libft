@@ -5,7 +5,7 @@
 # include <fcntl.h>
 # include <io.h>
 
-int32_t main()
+int main()
 {
     const int32_t first_free = _open("NUL", _O_RDONLY);
     if (first_free < 3 || _close(first_free) != 0)

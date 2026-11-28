@@ -54,7 +54,7 @@ static int32_t measure_atomic_writes(const char *directory)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_parent_paths() != 0)
         return (1);

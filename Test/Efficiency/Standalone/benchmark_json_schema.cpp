@@ -60,7 +60,7 @@ static int32_t measure_validation(uint32_t size, uint32_t iterations)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_validation(8U, 5000U) != 0)
         return (1);

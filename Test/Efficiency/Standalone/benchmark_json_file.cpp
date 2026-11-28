@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <string>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITEM_COUNT = 8192U;
     constexpr uint32_t ITERATIONS = 10U;

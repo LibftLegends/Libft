@@ -33,7 +33,7 @@ static int32_t measure_character_collection(ft_bool thread_safe)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_character_collection(FT_FALSE) != 0)
         return (1);

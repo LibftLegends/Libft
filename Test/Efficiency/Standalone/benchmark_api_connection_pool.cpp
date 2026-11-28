@@ -3,7 +3,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr char HOST[] = "127.0.0.1";
     constexpr uint32_t ITERATIONS = 8U;

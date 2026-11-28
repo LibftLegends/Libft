@@ -41,7 +41,7 @@ static int32_t measure_split_path()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_glob("single_star", "world/region/*.ftvr", "world/region/r.10.20.ftvr",
             FT_TRUE, 100000) != 0)

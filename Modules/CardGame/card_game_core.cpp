@@ -131,12 +131,26 @@ int32_t card_game_operation_buffer::clear() noexcept
 int32_t card_game_operation_buffer::append(
     const card_game_operation &operation) noexcept
 {
-    card_game_operation normalized_operation;
+    return (this->append_internal(&operation, ft_nullptr));
+}
 
+int32_t card_game_operation_buffer::append_internal(
+    const card_game_operation *operation,
+    const card_game_host_intent *intent) noexcept
+{
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (this->_count >= FT_CARD_GAME_MAX_OPERATIONS)
         return (FT_ERR_FULL);
+    card_game_operation_type type = CARD_GAME_OPERATION_HOST_INTENT;
+    if (operation != ft_nullptr)
+    {
+        type = operation->type;
+        if (type == CARD_GAME_OPERATION_HOST_INTENT)
+            intent = &operation->host_intent;
+    }
+    if (intent != ft_nullptr && intent->field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (this->_count == this->_capacity)
     {
         int32_t grow_error = this->grow();
@@ -144,64 +158,51 @@ int32_t card_game_operation_buffer::append(
         if (grow_error != FT_ERR_SUCCESS)
             return (grow_error);
     }
-    ft_bzero(&normalized_operation, sizeof(normalized_operation));
-    normalized_operation.type = operation.type;
-    if (operation.type == CARD_GAME_OPERATION_HEALTH
-        || operation.type == CARD_GAME_OPERATION_MANA)
+    card_game_operation &normalized_operation =
+        *new (&this->_operations[this->_count]) card_game_operation{};
+    normalized_operation.type = type;
+    if (type == CARD_GAME_OPERATION_HEALTH || type == CARD_GAME_OPERATION_MANA
+        || type == CARD_GAME_OPERATION_DRAW_CARDS
+        || type == CARD_GAME_OPERATION_REQUIRE_DISCARD)
     {
-        normalized_operation.player_id = operation.player_id;
-        normalized_operation.amount = operation.amount;
+        normalized_operation.player_id = operation->player_id;
+        normalized_operation.amount = operation->amount;
     }
-    else if (operation.type == CARD_GAME_OPERATION_EMIT_EVENT)
+    else if (type == CARD_GAME_OPERATION_EMIT_EVENT)
     {
-        normalized_operation.event_type = operation.event_type;
-        normalized_operation.source_instance = operation.source_instance;
-        normalized_operation.target_instance = operation.target_instance;
+        normalized_operation.event_type = operation->event_type;
+        normalized_operation.source_instance = operation->source_instance;
+        normalized_operation.target_instance = operation->target_instance;
     }
-    else if (operation.type == CARD_GAME_OPERATION_DAMAGE_INSTANCE
-        || operation.type == CARD_GAME_OPERATION_HEAL_INSTANCE)
+    else if (type == CARD_GAME_OPERATION_DAMAGE_INSTANCE
+        || type == CARD_GAME_OPERATION_HEAL_INSTANCE)
     {
-        normalized_operation.player_id = operation.player_id;
-        normalized_operation.amount = operation.amount;
-        normalized_operation.target_instance = operation.target_instance;
+        normalized_operation.player_id = operation->player_id;
+        normalized_operation.amount = operation->amount;
+        normalized_operation.target_instance = operation->target_instance;
     }
-    else if (operation.type == CARD_GAME_OPERATION_DRAW_CARDS
-        || operation.type == CARD_GAME_OPERATION_REQUIRE_DISCARD)
+    else if (type == CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS)
     {
-        normalized_operation.player_id = operation.player_id;
-        normalized_operation.amount = operation.amount;
+        normalized_operation.player_id = operation->player_id;
+        normalized_operation.target_instance = operation->target_instance;
+        normalized_operation.attack_delta = operation->attack_delta;
+        normalized_operation.health_delta = operation->health_delta;
+        normalized_operation.duration = operation->duration;
+        normalized_operation.source_effect_id = operation->source_effect_id;
     }
-    else if (operation.type == CARD_GAME_OPERATION_MODIFY_INSTANCE_STATS)
+    else if (intent != ft_nullptr)
     {
-        normalized_operation.player_id = operation.player_id;
-        normalized_operation.target_instance = operation.target_instance;
-        normalized_operation.attack_delta = operation.attack_delta;
-        normalized_operation.health_delta = operation.health_delta;
-        normalized_operation.duration = operation.duration;
-        normalized_operation.source_effect_id = operation.source_effect_id;
-    }
-    else if (operation.type == CARD_GAME_OPERATION_HOST_INTENT)
-    {
-        uint32_t field_index;
-
-        if (operation.host_intent.field_count
-            > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
-            return (FT_ERR_INVALID_ARGUMENT);
-        normalized_operation.host_intent.type_id
-            = operation.host_intent.type_id;
-        normalized_operation.host_intent.version
-            = operation.host_intent.version;
-        normalized_operation.host_intent.field_count
-            = operation.host_intent.field_count;
-        field_index = 0U;
-        while (field_index < operation.host_intent.field_count)
+        normalized_operation.host_intent.type_id = intent->type_id;
+        normalized_operation.host_intent.version = intent->version;
+        normalized_operation.host_intent.field_count = intent->field_count;
+        uint32_t field_index = 0U;
+        while (field_index < intent->field_count)
         {
             normalized_operation.host_intent.fields[field_index]
-                = operation.host_intent.fields[field_index];
+                = intent->fields[field_index];
             field_index += 1U;
         }
     }
-    this->_operations[this->_count] = normalized_operation;
     this->_count += 1U;
     return (FT_ERR_SUCCESS);
 }
@@ -209,23 +210,9 @@ int32_t card_game_operation_buffer::append(
 int32_t card_game_operation_buffer::append_host_intent(
     const card_game_host_intent &intent) noexcept
 {
-    card_game_operation operation;
-    uint32_t index;
-
     if (intent.field_count > FT_CARD_GAME_MAX_HOST_INTENT_FIELDS)
         return (FT_ERR_INVALID_ARGUMENT);
-    ft_bzero(&operation, sizeof(operation));
-    operation.type = CARD_GAME_OPERATION_HOST_INTENT;
-    operation.host_intent.type_id = intent.type_id;
-    operation.host_intent.version = intent.version;
-    operation.host_intent.field_count = intent.field_count;
-    index = 0U;
-    while (index < intent.field_count)
-    {
-        operation.host_intent.fields[index] = intent.fields[index];
-        index += 1U;
-    }
-    return (this->append(operation));
+    return (this->append_internal(ft_nullptr, &intent));
 }
 
 int32_t card_game_operation_buffer::grow() noexcept
@@ -320,6 +307,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         return (FT_ERR_ALREADY_INITIALISED);
     if (rules.max_board_spaces == 0U || rules.max_board_spaces
         > FT_CARD_GAME_MAX_CARDS || rules.max_hand_size == 0U
+        || rules.max_hand_size > FT_CARD_GAME_MAX_CARDS
         || rules.max_turns == 0U || rules.max_mana == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (this->_resources.initialize() != FT_ERR_SUCCESS
@@ -328,12 +316,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         || this->_zone_store.initialize() != FT_ERR_SUCCESS
         || this->_usage_limits.initialize() != FT_ERR_SUCCESS)
     {
-        (void)this->_resources.destroy();
-        (void)this->_allowances.destroy();
-        (void)this->_choices.destroy();
-        (void)this->_zone_store.destroy();
-        (void)this->_usage_limits.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->release_storage();
         return (FT_ERR_INTERNAL);
     }
     this->_rules = rules;
@@ -344,17 +327,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
             FT_CARD_GAME_MAX_CARDS, FT_TRUE);
         if (deck_error != FT_ERR_SUCCESS)
         {
-            while (deck_index > 0U)
-            {
-                deck_index -= 1U;
-                (void)this->_decks[deck_index].destroy();
-            }
-            (void)this->_resources.destroy();
-            (void)this->_allowances.destroy();
-            (void)this->_choices.destroy();
-            (void)this->_zone_store.destroy();
-            (void)this->_usage_limits.destroy();
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            this->release_storage();
             return (deck_error);
         }
         deck_index += 1U;
@@ -381,6 +354,14 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
     this->_random_state = 0x9E3779B97F4A7C15ULL;
     this->_turn_number = 0U;
     this->_active_player = 0U;
+    this->_player_count = 0U;
+    this->_current_phase_id = 0U;
+    ft_bzero(this->_board_count, sizeof(this->_board_count));
+    ft_bzero(this->_hand_count, sizeof(this->_hand_count));
+    ft_bzero(this->_health, sizeof(this->_health));
+    ft_bzero(this->_mana, sizeof(this->_mana));
+    this->_active_action_request_id = 0U;
+    ft_bzero(this->_active_play_payload, sizeof(this->_active_play_payload));
     this->_next_deck_instance_id = 1U;
     this->_modifier_count = 0U;
     this->_next_modifier_id = 1U;
@@ -390,18 +371,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
         FT_CARD_GAME_CARD_DEFINITION_INITIAL_CAPACITY);
     if (catalog_error != FT_ERR_SUCCESS)
     {
-        deck_index = 0U;
-        while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
-        {
-            (void)this->_decks[deck_index].destroy();
-            deck_index += 1U;
-        }
-        (void)this->_resources.destroy();
-        (void)this->_allowances.destroy();
-        (void)this->_choices.destroy();
-        (void)this->_zone_store.destroy();
-        (void)this->_usage_limits.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->release_storage();
         return (catalog_error);
     }
     this->_command_record_capacity =
@@ -411,22 +381,7 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
             * sizeof(card_game_command_record)));
     if (this->_command_records == ft_nullptr)
     {
-        deck_index = 0U;
-        while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
-        {
-            (void)this->_decks[deck_index].destroy();
-            deck_index += 1U;
-        }
-        (void)this->_resources.destroy();
-        (void)this->_allowances.destroy();
-        (void)this->_choices.destroy();
-        cma_free(this->_cards);
-        cma_free(this->_card_type_ids);
-        this->_cards = ft_nullptr;
-        this->_card_type_ids = ft_nullptr;
-        this->_card_capacity = 0U;
-        this->_command_record_capacity = 0U;
-        this->_initialised_state = 1U;
+        this->release_storage();
         return (FT_ERR_NO_MEMORY);
     }
     this->_command_record_count = 0U;
@@ -436,40 +391,30 @@ int32_t card_game_engine::initialize(const card_game_rules &rules) noexcept
             * sizeof(card_game_event)));
     if (this->_events == ft_nullptr)
     {
-        deck_index = 0U;
-        while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
-        {
-            (void)this->_decks[deck_index].destroy();
-            deck_index += 1U;
-        }
-        (void)this->_resources.destroy();
-        (void)this->_allowances.destroy();
-        (void)this->_choices.destroy();
-        cma_free(this->_cards);
-        cma_free(this->_card_type_ids);
-        this->_cards = ft_nullptr;
-        this->_card_type_ids = ft_nullptr;
-        this->_card_capacity = 0U;
-        cma_free(this->_command_records);
-        this->_command_records = ft_nullptr;
-        this->_command_record_capacity = 0U;
-        this->_event_capacity = 0U;
-        this->_initialised_state = 1U;
+        this->release_storage();
         return (FT_ERR_NO_MEMORY);
     }
     this->_initialised_state = 2U;
     return (FT_ERR_SUCCESS);
 }
 
+ft_bool card_game_engine::is_initialised() const noexcept
+{
+    return (this->_initialised_state == FT_CLASS_STATE_INITIALISED);
+}
+
 int32_t card_game_engine::destroy() noexcept
 {
-    uint32_t deck_index;
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+        this->release_storage();
+    return (FT_ERR_SUCCESS);
+}
 
-    if (this->_initialised_state != 2U)
-        return (FT_ERR_SUCCESS);
+void card_game_engine::release_storage() noexcept
+{
     this->_event_effect_count = 0U;
     this->_event_effect_revision += 1U;
-    deck_index = 0U;
+    uint32_t deck_index = 0U;
     while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
     {
         (void)this->_decks[deck_index].destroy();
@@ -508,8 +453,8 @@ int32_t card_game_engine::destroy() noexcept
     this->_card_type_ids = ft_nullptr;
     this->_card_capacity = 0U;
     this->_start_override_count = 0U;
-    this->_initialised_state = 1U;
-    return (FT_ERR_SUCCESS);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    return ;
 }
 
 int32_t card_game_engine::move(card_game_engine &other) noexcept
@@ -522,38 +467,45 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
         return (FT_ERR_INVALID_STATE);
     (void)this->destroy();
     this->_rules = other._rules;
-    this->_cards = other._cards;
-    this->_card_type_ids = other._card_type_ids;
-    this->_card_capacity = other._card_capacity;
     ft_memcpy(this->_card_types, other._card_types,
-        sizeof(this->_card_types));
-    ft_memcpy(this->_effects, other._effects, sizeof(this->_effects));
+        other._card_type_count * sizeof(*this->_card_types));
+    ft_memcpy(this->_effects, other._effects,
+        other._effect_count * sizeof(*this->_effects));
     ft_memcpy(this->_effect_callbacks, other._effect_callbacks,
-        sizeof(this->_effect_callbacks));
+        other._effect_count * sizeof(*this->_effect_callbacks));
     ft_memcpy(this->_effect_user_data, other._effect_user_data,
-        sizeof(this->_effect_user_data));
+        other._effect_count * sizeof(*this->_effect_user_data));
     ft_memcpy(this->_effect_event_types, other._effect_event_types,
-        sizeof(this->_effect_event_types));
+        other._effect_count * sizeof(*this->_effect_event_types));
     ft_memcpy(this->_effect_priorities, other._effect_priorities,
-        sizeof(this->_effect_priorities));
+        other._effect_count * sizeof(*this->_effect_priorities));
     ft_memcpy(this->_effect_usage_limit_ids, other._effect_usage_limit_ids,
-        sizeof(this->_effect_usage_limit_ids));
+        other._effect_count * sizeof(*this->_effect_usage_limit_ids));
     this->_event_effect_count = other._event_effect_count;
     ft_memcpy(this->_event_effect_order, other._event_effect_order,
         this->_event_effect_count * sizeof(*this->_event_effect_order));
-    ft_memcpy(this->_phases, other._phases, sizeof(this->_phases));
-    ft_memcpy(this->_zones, other._zones, sizeof(this->_zones));
-    this->_events = other._events;
-    this->_event_capacity = other._event_capacity;
-    ft_memcpy(this->_board, other._board, sizeof(this->_board));
-    ft_memcpy(this->_instances, other._instances, sizeof(this->_instances));
+    ft_memcpy(this->_phases, other._phases,
+        other._phase_count * sizeof(*this->_phases));
+    ft_memcpy(this->_zones, other._zones,
+        other._zone_count * sizeof(*this->_zones));
     ft_memcpy(this->_board_count, other._board_count, sizeof(this->_board_count));
-    ft_memcpy(this->_hand, other._hand, sizeof(this->_hand));
     ft_memcpy(this->_hand_count, other._hand_count, sizeof(this->_hand_count));
     ft_memcpy(this->_health, other._health, sizeof(this->_health));
     deck_index = 0U;
     while (deck_index < FT_CARD_GAME_MAX_PLAYERS)
     {
+        const uint32_t board_count = other._board_count[deck_index];
+        const uint32_t hand_count = other._hand_count[deck_index];
+        if (board_count != 0U)
+        {
+            ft_memcpy(this->_board[deck_index], other._board[deck_index],
+                board_count * sizeof(*this->_board[deck_index]));
+            ft_memcpy(this->_instances[deck_index], other._instances[deck_index],
+                board_count * sizeof(*this->_instances[deck_index]));
+        }
+        if (hand_count != 0U)
+            ft_memcpy(this->_hand[deck_index], other._hand[deck_index],
+                hand_count * sizeof(*this->_hand[deck_index]));
         if (this->_decks[deck_index].move(other._decks[deck_index])
             != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_STATE);
@@ -565,6 +517,11 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
         || this->_zone_store.move(other._zone_store) != FT_ERR_SUCCESS
         || this->_usage_limits.move(other._usage_limits) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
+    this->_cards = other._cards;
+    this->_card_type_ids = other._card_type_ids;
+    this->_card_capacity = other._card_capacity;
+    this->_events = other._events;
+    this->_event_capacity = other._event_capacity;
     ft_memcpy(this->_mana, other._mana, sizeof(this->_mana));
     this->_card_count = other._card_count;
     this->_card_type_count = other._card_type_count;
@@ -573,7 +530,8 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_active_player = other._active_player;
     this->_player_count = other._player_count;
     this->_next_deck_instance_id = other._next_deck_instance_id;
-    ft_memcpy(this->_modifiers, other._modifiers, sizeof(this->_modifiers));
+    ft_memcpy(this->_modifiers, other._modifiers,
+        other._modifier_count * sizeof(*this->_modifiers));
     this->_modifier_count = other._modifier_count;
     this->_next_modifier_id = other._next_modifier_id;
     this->_state_sequence = other._state_sequence;
@@ -582,7 +540,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_command_record_capacity = other._command_record_capacity;
     this->_command_record_count = other._command_record_count;
     ft_memcpy(this->_host_intent_types, other._host_intent_types,
-        sizeof(this->_host_intent_types));
+        other._host_intent_type_count * sizeof(*this->_host_intent_types));
     this->_host_intent_type_count = other._host_intent_type_count;
     this->_host_intent_records = other._host_intent_records;
     this->_host_intent_record_count = other._host_intent_record_count;
@@ -595,7 +553,7 @@ int32_t card_game_engine::move(card_game_engine &other) noexcept
     this->_pending_discard_count = other._pending_discard_count;
     this->_pending_discard_zone_id = other._pending_discard_zone_id;
     ft_memcpy(this->_start_overrides, other._start_overrides,
-        sizeof(this->_start_overrides));
+        other._start_override_count * sizeof(*this->_start_overrides));
     this->_start_override_count = other._start_override_count;
     this->_phase_count = other._phase_count;
     this->_zone_count = other._zone_count;

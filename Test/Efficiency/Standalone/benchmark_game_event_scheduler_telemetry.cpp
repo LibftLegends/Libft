@@ -3,7 +3,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t SAMPLES = 8000000U;
     game_event_scheduler_telemetry_state state;

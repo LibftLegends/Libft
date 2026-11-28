@@ -60,7 +60,7 @@ static int32_t measure_metadata(const char *left, const char *right)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t PAYLOAD_SIZE = 8U * 1024U * 1024U;
     ft_string large_path;

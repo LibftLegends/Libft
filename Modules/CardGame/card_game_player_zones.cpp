@@ -71,74 +71,58 @@ int32_t card_game_engine::get_deck_count(uint32_t player_id,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t card_game_engine::count_player_owned_card_type(uint32_t player_id,
-    uint32_t type_id, uint32_t *count_out) const noexcept
+int32_t card_game_engine::count_owned_zone_card_types(
+    const card_game_ordered_zone &zone, uint32_t *counts) const noexcept
 {
-    uint32_t count = 0U;
+    const uint32_t zone_count = zone.size();
     uint32_t index = 0U;
-    int32_t result;
-
-    if (this->_initialised_state != 2U
-        || player_id >= FT_CARD_GAME_MAX_PLAYERS
-        || count_out == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    while (index < this->_decks[player_id].size())
+    while (index < zone_count)
     {
-        card_game_zone_entry entry = {};
-        uint32_t entry_type_id = 0U;
-
-        result = this->_decks[player_id].get_entry(index, &entry);
+        card_game_zone_entry entry;
+        uint32_t entry_type_id;
+        int32_t result = zone.get_entry(index, &entry);
         if (result == FT_ERR_SUCCESS)
             result = this->find_card_type_id(entry.card_id, &entry_type_id);
         if (result != FT_ERR_SUCCESS)
             return (result);
-        if (entry_type_id == type_id)
-            ++count;
+        ++counts[entry_type_id];
         ++index;
     }
-    index = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t card_game_engine::count_player_owned_card_types(uint32_t player_id,
+    uint32_t *counts) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || player_id >= FT_CARD_GAME_MAX_PLAYERS)
+        return (FT_ERR_INVALID_ARGUMENT);
+    int32_t result = this->count_owned_zone_card_types(this->_decks[player_id], counts);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    uint32_t index = 0U;
     while (index < this->_hand_count[player_id])
     {
-        uint32_t entry_type_id = 0U;
-
+        uint32_t entry_type_id;
         result = this->find_card_type_id(
             this->_hand[player_id][index].card_id, &entry_type_id);
         if (result != FT_ERR_SUCCESS)
             return (result);
-        if (entry_type_id == type_id)
-            ++count;
+        ++counts[entry_type_id];
         ++index;
     }
     index = 0U;
-    while (index < this->_zone_count)
+    while (index < this->_zone_store._definition_count)
     {
-        if (this->_zones[index].owner_scoped == FT_TRUE)
+        if (this->_zone_store._definitions[index].owner_scoped == FT_TRUE)
         {
-            const uint32_t zone_id = this->_zones[index].zone_id;
-            const uint32_t zone_count = this->_zone_store.size(player_id,
-                zone_id);
-            uint32_t zone_index = 0U;
-
-            while (zone_index < zone_count)
-            {
-                card_game_zone_entry entry = {};
-                uint32_t entry_type_id = 0U;
-
-                result = this->_zone_store.inspect(player_id, zone_id,
-                    zone_index, &entry);
-                if (result == FT_ERR_SUCCESS)
-                    result = this->find_card_type_id(entry.card_id,
-                        &entry_type_id);
-                if (result != FT_ERR_SUCCESS)
-                    return (result);
-                if (entry_type_id == type_id)
-                    ++count;
-                ++zone_index;
-            }
+            result = this->count_owned_zone_card_types(
+                this->_zone_store._zones[player_id][index], counts);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
         }
         ++index;
     }
-    *count_out = count;
     return (FT_ERR_SUCCESS);
 }
 
@@ -147,7 +131,6 @@ int32_t card_game_engine::validate_owned_card_copy_limit(
 {
     card_game_card_type_definition type = {};
     uint32_t type_id = 0U;
-    uint32_t copy_count = 0U;
     int32_t result = this->find_card_type_id(card_id, &type_id);
 
     if (result != FT_ERR_SUCCESS)
@@ -158,33 +141,33 @@ int32_t card_game_engine::validate_owned_card_copy_limit(
         return (FT_ERR_SUCCESS);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    result = this->count_player_owned_card_type(player_id, type_id,
-        &copy_count);
+    uint32_t counts[FT_CARD_GAME_MAX_CARD_TYPES]{};
+    result = this->count_player_owned_card_types(player_id, counts);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    return (copy_count >= type.max_copies_per_player
-        ? FT_ERR_FULL : FT_ERR_SUCCESS);
+    if (counts[type_id] >= type.max_copies_per_player)
+        return (FT_ERR_FULL);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t card_game_engine::validate_live_card_copy_limits() const noexcept
 {
+    if (this->_card_type_count == 0U)
+        return (FT_ERR_SUCCESS);
     uint32_t player_id = 0U;
 
     while (player_id < this->_player_count)
     {
+        uint32_t counts[FT_CARD_GAME_MAX_CARD_TYPES]{};
+        const int32_t result = this->count_player_owned_card_types(player_id, counts);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
         uint32_t type_index = 0U;
-
         while (type_index < this->_card_type_count)
         {
-            uint32_t copy_count = 0U;
             const card_game_card_type_definition &type =
                 this->_card_types[type_index];
-            int32_t result = this->count_player_owned_card_type(player_id,
-                type.type_id, &copy_count);
-
-            if (result != FT_ERR_SUCCESS)
-                return (result);
-            if (copy_count > type.max_copies_per_player)
+            if (counts[type.type_id] > type.max_copies_per_player)
                 return (FT_ERR_INVALID_STATE);
             ++type_index;
         }
@@ -324,20 +307,6 @@ int32_t card_game_engine::mulligan_hand(uint32_t player_id,
     const uint32_t *instance_ids, uint32_t count,
     uint64_t *random_state) noexcept
 {
-    card_game_deck_card original_hand[FT_CARD_GAME_MAX_CARDS];
-    card_game_zone_entry original_deck[FT_CARD_GAME_MAX_CARDS];
-    card_game_deck_card selected[FT_CARD_GAME_MAX_CARDS];
-    card_game_deck_card replacement;
-    uint32_t original_hand_count;
-    uint32_t original_deck_count;
-    uint32_t selected_count;
-    uint32_t request_index;
-    uint32_t hand_index;
-    uint32_t deck_index;
-    uint64_t original_random_state;
-    uint64_t original_state_sequence;
-    int32_t result;
-
     if (this->_initialised_state != 2U || player_id >= this->_player_count
         || random_state == ft_nullptr || *random_state == 0U
         || count > this->_hand_count[player_id]
@@ -345,77 +314,68 @@ int32_t card_game_engine::mulligan_hand(uint32_t player_id,
         return (FT_ERR_INVALID_ARGUMENT);
     if (count == 0U)
         return (FT_ERR_SUCCESS);
-    if (this->_decks[player_id].size() + count > FT_CARD_GAME_MAX_CARDS)
+    card_game_ordered_zone &deck = this->_decks[player_id];
+    const uint32_t original_deck_count = deck.size();
+    if (original_deck_count + count > FT_CARD_GAME_MAX_CARDS)
         return (FT_ERR_FULL);
-    original_hand_count = this->_hand_count[player_id];
-    original_deck_count = this->_decks[player_id].size();
-    original_random_state = *random_state;
-    original_state_sequence = this->_state_sequence;
-    ft_memcpy(original_hand, this->_hand[player_id],
-        sizeof(original_hand));
-    deck_index = 0U;
-    while (deck_index < original_deck_count)
+    const uint32_t original_hand_count = this->_hand_count[player_id];
+    card_game_deck_card *hand = this->_hand[player_id];
+    ft_bool selected[FT_CARD_GAME_MAX_CARDS]{};
+    uint32_t selected_indices[FT_CARD_GAME_MAX_CARDS];
+    uint32_t request_index = 0U;
+    while (request_index < count)
     {
-        result = this->_decks[player_id].get_entry(deck_index,
-            &original_deck[deck_index]);
-        if (result != FT_ERR_SUCCESS)
-            return (result);
-        deck_index += 1U;
+        const uint32_t instance_id = instance_ids[request_index];
+        if (instance_id == 0U)
+            return (FT_ERR_NOT_FOUND);
+        uint32_t hand_index = 0U;
+        while (hand_index < original_hand_count
+            && hand[hand_index].instance_id != instance_id)
+            ++hand_index;
+        if (hand_index == original_hand_count)
+            return (FT_ERR_NOT_FOUND);
+        if (selected[hand_index] == FT_TRUE)
+            return (FT_ERR_ALREADY_EXISTS);
+        selected[hand_index] = FT_TRUE;
+        selected_indices[request_index] = hand_index;
+        ++request_index;
     }
-    selected_count = 0U;
+    card_game_deck_card original_hand[FT_CARD_GAME_MAX_CARDS];
+    card_game_zone_entry original_deck[FT_CARD_GAME_MAX_CARDS];
+    const ft_size_t hand_bytes = original_hand_count * sizeof(*hand);
+    ft_memcpy(original_hand, hand, hand_bytes);
+    deck.copy_entries_to(original_deck);
+    const uint64_t original_random_state = *random_state;
+    const uint64_t original_state_sequence = this->_state_sequence;
+    uint32_t hand_index = 0U;
+    uint32_t remaining_count = 0U;
+    while (hand_index < original_hand_count)
+    {
+        if (selected[hand_index] == FT_FALSE)
+            hand[remaining_count++] = original_hand[hand_index];
+        ++hand_index;
+    }
+    this->_hand_count[player_id] = remaining_count;
+    this->_state_sequence += count;
+    int32_t result = FT_ERR_SUCCESS;
     request_index = 0U;
     while (request_index < count)
     {
-        hand_index = 0U;
-        while (hand_index < original_hand_count
-            && original_hand[hand_index].instance_id
-                != instance_ids[request_index])
-            hand_index += 1U;
-        if (hand_index >= original_hand_count
-            || instance_ids[request_index] == 0U)
-            return (FT_ERR_NOT_FOUND);
-        deck_index = 0U;
-        while (deck_index < selected_count
-            && selected[deck_index].instance_id != instance_ids[request_index]
-            )
-            deck_index += 1U;
-        if (deck_index < selected_count)
-            return (FT_ERR_ALREADY_EXISTS);
-        selected[selected_count] = original_hand[hand_index];
-        selected_count += 1U;
-        request_index += 1U;
-    }
-    request_index = 0U;
-    while (request_index < selected_count)
-    {
-        result = this->hand_remove_instance(player_id,
-            selected[request_index].instance_id, ft_nullptr);
+        const card_game_deck_card &card = original_hand[
+            selected_indices[request_index]];
+        result = deck.push_bottom_entry({card.instance_id, card.card_id});
         if (result != FT_ERR_SUCCESS)
             break ;
-        request_index += 1U;
-    }
-    if (result == FT_ERR_SUCCESS)
-    {
-        request_index = 0U;
-        while (request_index < selected_count)
-        {
-            card_game_zone_entry entry;
-
-            entry.instance_id = selected[request_index].instance_id;
-            entry.card_id = selected[request_index].card_id;
-            result = this->_decks[player_id].push_bottom_entry(entry);
-            if (result != FT_ERR_SUCCESS)
-                break ;
-            request_index += 1U;
-        }
+        ++request_index;
     }
     if (result == FT_ERR_SUCCESS)
         result = this->shuffle_deck(player_id, random_state);
     if (result == FT_ERR_SUCCESS)
     {
         request_index = 0U;
-        while (request_index < selected_count)
+        while (request_index < count)
         {
+            card_game_deck_card replacement;
             result = this->draw_to_hand(player_id, &replacement);
             if (result != FT_ERR_SUCCESS)
                 break ;
@@ -425,14 +385,8 @@ int32_t card_game_engine::mulligan_hand(uint32_t player_id,
     if (result == FT_ERR_SUCCESS)
         return (FT_ERR_SUCCESS);
     this->_hand_count[player_id] = original_hand_count;
-    ft_memcpy(this->_hand[player_id], original_hand, sizeof(original_hand));
-    (void)this->_decks[player_id].clear();
-    deck_index = 0U;
-    while (deck_index < original_deck_count)
-    {
-        (void)this->_decks[player_id].push_bottom_entry(original_deck[deck_index]);
-        deck_index += 1U;
-    }
+    ft_memcpy(hand, original_hand, hand_bytes);
+    (void)deck.replace_entries(original_deck, original_deck_count);
     *random_state = original_random_state;
     this->_state_sequence = original_state_sequence;
     return (result);

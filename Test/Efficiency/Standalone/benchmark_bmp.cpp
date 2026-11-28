@@ -22,7 +22,7 @@ static int32_t benchmark_operation(const char *label, Operation operation)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t WIDTH = 641U;
     constexpr ft_size_t HEIGHT = 480U;

@@ -3,7 +3,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t DESTINATIONS = 1024;
     constexpr uint32_t ITERATIONS = 30000;

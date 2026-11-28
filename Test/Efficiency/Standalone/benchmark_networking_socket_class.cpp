@@ -60,7 +60,7 @@ static int32_t measure_client_lookups()
     return (0);
 }
 
-int32_t main()
+int main()
 {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);

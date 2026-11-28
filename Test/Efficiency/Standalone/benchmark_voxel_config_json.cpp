@@ -68,7 +68,7 @@ static int32_t measure_file_replace(const voxel_generation_config &config)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     voxel_generation_config config;
     if (voxel_default_generation_config(config) != FT_ERR_SUCCESS)

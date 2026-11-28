@@ -43,7 +43,7 @@ static int32_t measure_compressed_send(ft_websocket_server &server, int32_t serv
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 2000U;
     constexpr ft_size_t PAYLOAD_LENGTH = 4097U;

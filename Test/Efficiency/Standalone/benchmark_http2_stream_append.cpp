@@ -3,7 +3,7 @@
 #include <cstdio>
 
 #if NETWORKING_HAS_OPENSSL
-int32_t main()
+int main()
 {
     constexpr char PAYLOAD[16384]{};
     constexpr uint32_t ITERATIONS = 500;
@@ -26,7 +26,7 @@ int32_t main()
     return (0);
 }
 #else
-int32_t main()
+int main()
 {
     std::fputs("The HTTP/2 stream benchmark requires OpenSSL headers.\n", stderr);
     return (1);

@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <thread>
 
-int32_t main()
+int main()
 {
     event_loop loop;
     if (event_loop_initialize(&loop) != FT_ERR_SUCCESS)

@@ -55,7 +55,7 @@ static int32_t measure_restore_one_change()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_unchanged_capture() != 0)
         return (1);

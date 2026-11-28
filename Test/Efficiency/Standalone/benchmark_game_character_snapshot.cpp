@@ -74,7 +74,7 @@ static int32_t measure_snapshot(ft_bool equipped, ft_bool thread_safe, int32_t s
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--skills") == 0)
     {

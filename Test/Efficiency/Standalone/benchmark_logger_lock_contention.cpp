@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <thread>
 
-int32_t main()
+int main()
 {
     pt_mutex mutex;
     if (mutex.initialize() != FT_ERR_SUCCESS || mutex.lock() != FT_ERR_SUCCESS)

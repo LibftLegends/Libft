@@ -45,7 +45,7 @@ static int32_t benchmark_json_vector(ft_size_t length, uint32_t rounds)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_json_vector(256U, 40U) != 0)
         return (1);

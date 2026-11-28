@@ -60,7 +60,7 @@ static int32_t measure_move(uint32_t count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_move(0U) != 0)
         return (1);

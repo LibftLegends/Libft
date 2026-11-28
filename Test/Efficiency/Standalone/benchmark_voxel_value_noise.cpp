@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint64_t SEED = UINT64_C(0x2a92198858);
     constexpr int32_t SCALES[] = {8, 17, 32, 96};

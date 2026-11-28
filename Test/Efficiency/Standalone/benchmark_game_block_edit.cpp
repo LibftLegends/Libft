@@ -3,7 +3,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 8192U;
     ft_byte_buffer buffer;

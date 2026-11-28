@@ -237,7 +237,7 @@ static int32_t measure_context_cache_hits(const voxel_generation_config &config)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t CAVE_STAGES = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES;
     constexpr uint32_t FLUID_STAGES = CAVE_STAGES | VOXEL_STAGE_FLUIDS;

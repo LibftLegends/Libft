@@ -13,7 +13,7 @@ static void report(const char *operation, region_clock::duration duration,
     return ;
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 4096U;
     constexpr ft_size_t NAME_LENGTH = 256U;

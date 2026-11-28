@@ -3,10 +3,11 @@
 #include <cinttypes>
 #include <cstdio>
 
-int main(int32_t argument_count, char **arguments)
+int main(int argc, char **argv)
 {
-    const ft_bool serialize = argument_count == 2 && ft_strcmp(arguments[1], "--serialize") == 0;
-    const ft_bool restore = argument_count == 2 && ft_strcmp(arguments[1], "--restore") == 0;
+    const ft_bool serialize = argc == 2 && ft_strcmp(argv[1], "--serialize") == 0;
+    const ft_bool restore = argc == 2 && ft_strcmp(argv[1], "--restore") == 0;
+    const ft_bool pending = argc == 2 && ft_strcmp(argv[1], "--pending") == 0;
     constexpr uint32_t LOOKUP_ITERATIONS = 1000000U;
     constexpr uint32_t WIRE_ITERATIONS = 1000U;
     card_game_choice_ledger ledger;
@@ -19,7 +20,10 @@ int main(int32_t argument_count, char **arguments)
     while (index < FT_CARD_GAME_MAX_CHOICES)
     {
         uint32_t choice_id = 0U;
-        if (ledger.open(index, CARD_GAME_CHOICE_MODE, 123U, 0U, &choice_id) != FT_ERR_SUCCESS)
+        uint32_t player_id = index;
+        if (pending)
+            player_id = index % FT_CARD_GAME_MAX_PLAYERS;
+        if (ledger.open(player_id, CARD_GAME_CHOICE_MODE, 123U, 0U, &choice_id) != FT_ERR_SUCCESS)
             return (1);
         uint32_t option_id = 1U;
         while (option_id <= 8U)
@@ -28,6 +32,9 @@ int main(int32_t argument_count, char **arguments)
                 return (1);
             ++option_id;
         }
+        if (pending && index % 3U == 0U
+            && ledger.choose(choice_id, player_id, 1U, 1U) != FT_ERR_SUCCESS)
+            return (1);
         ++index;
     }
     if (ledger.serialize(output, sizeof(output), &size) != FT_ERR_SUCCESS)
@@ -49,6 +56,16 @@ int main(int32_t argument_count, char **arguments)
         {
             if (restored.deserialize(output, size) != FT_ERR_SUCCESS)
                 return (1);
+        }
+        else if (pending)
+        {
+            uint32_t player_pending;
+            uint32_t total_pending;
+            if (ledger.pending_count_for_player(index % FT_CARD_GAME_MAX_PLAYERS,
+                    &player_pending) != FT_ERR_SUCCESS
+                || ledger.pending_count(&total_pending) != FT_ERR_SUCCESS)
+                return (1);
+            checksum += player_pending + total_pending;
         }
         else
         {

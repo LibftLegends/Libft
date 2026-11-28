@@ -78,6 +78,8 @@ class card_game_choice_ledger
         ft_bool _sequential_ids;
         uint32_t _count;
         uint32_t _next_id;
+        uint32_t _pending_count;
+        uint32_t _pending_by_player[FT_CARD_GAME_MAX_PLAYERS];
         card_game_choice _choices[FT_CARD_GAME_MAX_CHOICES];
 
         card_game_choice_ledger(const card_game_choice_ledger &other) = delete;
@@ -90,6 +92,8 @@ class card_game_choice_ledger
         int32_t find(uint32_t choice_id, uint32_t *index) const noexcept;
         int32_t find_option(const card_game_choice &choice,
             uint32_t option_id) const noexcept;
+        void record_pending_choice(uint32_t player_id) noexcept;
+        void resolve_choice(card_game_choice &choice, uint32_t option_id) noexcept;
 
     public:
         card_game_choice_ledger() noexcept;

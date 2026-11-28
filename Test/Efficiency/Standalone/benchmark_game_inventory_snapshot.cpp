@@ -133,7 +133,7 @@ static int32_t measure_restore(int32_t item_count, uint32_t iterations, ft_bool 
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
 #ifdef LIBFT_TEST_BUILD
     if (argument_count == 2 && ft_strcmp(arguments[1], "--capture-modifier") == 0)

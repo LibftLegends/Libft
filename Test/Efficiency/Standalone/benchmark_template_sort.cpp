@@ -5,7 +5,7 @@
 #include <random>
 #include <vector>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t LENGTHS[] = {64U, 1024U, 8192U};
     constexpr uint32_t ROUNDS[] = {10000U, 1000U, 30U};

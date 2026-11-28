@@ -222,26 +222,28 @@ int32_t card_game_engine::get_card_type(uint32_t type_id,
     return (FT_ERR_NOT_FOUND);
 }
 
-ft_bool card_game_engine::is_command_allowed(uint32_t command_mask) const noexcept
+uint32_t card_game_engine::get_phase_command_mask() const noexcept
 {
-    uint32_t index;
-
     if (this->_phase_count == 0U)
-        return (FT_TRUE);
-    index = 0U;
+        return (UINT32_MAX);
+    uint32_t index = 0U;
     while (index < this->_phase_count)
     {
-        if (this->_phases[index].phase_id == this->_current_phase_id)
+        const card_game_phase_definition &phase = this->_phases[index];
+        if (phase.phase_id == this->_current_phase_id)
         {
-            if (this->_phases[index].allowed_command_mask == 0U
-                || (this->_phases[index].allowed_command_mask & command_mask)
-                    != 0U)
-                return (FT_TRUE);
-            return (FT_FALSE);
+            if (phase.allowed_command_mask == 0U)
+                return (UINT32_MAX);
+            return (phase.allowed_command_mask);
         }
-        index += 1U;
+        ++index;
     }
-    return (FT_FALSE);
+    return (0U);
+}
+
+ft_bool card_game_engine::is_command_allowed(uint32_t command_mask) const noexcept
+{
+    return ((this->get_phase_command_mask() & command_mask) != 0U);
 }
 
 int32_t card_game_engine::register_effect(card_game_effect_function effect,

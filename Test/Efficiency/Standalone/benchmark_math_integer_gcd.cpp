@@ -42,7 +42,7 @@ static void benchmark_operation(const char *label,
     return ;
 }
 
-int32_t main()
+int main()
 {
     benchmark_operation<int32_t>("gcd32 small", math_gcd, 63U);
     benchmark_operation<int32_t>("gcd32 wide", math_gcd, INT32_MAX);

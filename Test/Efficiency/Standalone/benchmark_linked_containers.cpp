@@ -51,7 +51,7 @@ static int32_t benchmark_stack()
     return (report_timing("stack_push_pop", benchmark_clock::now() - start, sum));
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_queue() != 0 || benchmark_stack() != 0)
         return (1);

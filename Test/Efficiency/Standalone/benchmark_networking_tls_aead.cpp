@@ -76,7 +76,7 @@ static int32_t measure(SSL *session, ft_bool initialize_contexts)
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count != 3)
     {

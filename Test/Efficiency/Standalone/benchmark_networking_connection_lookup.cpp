@@ -41,7 +41,7 @@ static int32_t measure_lookup(uint32_t connection_count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_lookup(8U) != 0 || measure_lookup(512U) != 0)
         return (1);

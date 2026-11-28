@@ -5,7 +5,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t SCALAR_ITERATIONS = 150000U;
     constexpr uint32_t BATCH_ITERATIONS = 24000U;

@@ -10,7 +10,7 @@ static int32_t count_context_message(const char *message, void *user_data)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t FIELD_COUNT = 24U;
     constexpr uint32_t ITERATIONS = 512U;

@@ -68,7 +68,7 @@ static int32_t check_path_grammar()
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--check-paths") == 0)
         return (check_path_grammar());

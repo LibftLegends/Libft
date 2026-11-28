@@ -17,7 +17,7 @@ static int32_t sum_arguments(game_script_context &context,
     return (FT_ERR_SUCCESS);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 512U;
     constexpr uint32_t COMMAND_GROUPS = 16U;

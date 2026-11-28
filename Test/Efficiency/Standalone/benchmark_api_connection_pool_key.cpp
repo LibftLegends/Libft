@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 300000;
     api_connection_pool_handle handle;

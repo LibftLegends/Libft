@@ -6,7 +6,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr int32_t SKILLS = 128;
     constexpr int32_t ITERATIONS = 150;

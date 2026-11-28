@@ -61,7 +61,7 @@ static int32_t measure_division(const char *label, const char *divisor_digits)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_division("single-digit divisor", "7") != 0)
         return (1);

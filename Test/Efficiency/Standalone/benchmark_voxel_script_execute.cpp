@@ -100,7 +100,7 @@ static int32_t measure_multiline_expression(game_script_bridge &bridge,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     ft_sharedptr<game_world> world;
     game_script_bridge bridge;

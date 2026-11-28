@@ -59,7 +59,7 @@ static int32_t benchmark_quadratic()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_simpson() != 0 || benchmark_quadratic() != 0)
         return (1);

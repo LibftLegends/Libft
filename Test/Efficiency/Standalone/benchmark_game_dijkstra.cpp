@@ -49,7 +49,7 @@ static int32_t measure_graph(ft_size_t width, uint32_t samples)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_graph(32U, 100U) != 0 || measure_graph(256U, 20U) != 0)
         return (1);

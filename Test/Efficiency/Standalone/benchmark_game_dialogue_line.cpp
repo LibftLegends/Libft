@@ -38,7 +38,7 @@ static int32_t measure_move(const ft_string &speaker, const ft_string &text,
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     constexpr uint32_t ITERATIONS = 2048U;
     game_dialogue_line line;

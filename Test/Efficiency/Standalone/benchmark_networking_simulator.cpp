@@ -97,7 +97,7 @@ static int32_t measure_script_actions(ft_bool descending)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_idle_poll() != 0 || measure_script_actions(FT_FALSE) != 0
         || measure_script_actions(FT_TRUE) != 0)

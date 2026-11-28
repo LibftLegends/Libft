@@ -1,7 +1,34 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CardGame/card_game.hpp"
 #include "../../Modules/CardGame/card_game_script_bridge.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include <string>
+
+FT_TEST(test_card_game_script_bridge_checks_engine_lifecycle)
+{
+    card_game_engine engine;
+    card_game_script_bridge bridge;
+    const card_game_rules rules{2U, 2U, 20U, 1U, 3U, 10U};
+    uint32_t effect_id = UINT32_MAX;
+
+    FT_ASSERT_EQ(FT_FALSE, engine.is_initialised());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, bridge.initialize(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_TRUE, engine.is_initialised());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    FT_ASSERT_EQ(FT_FALSE, engine.is_initialised());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, bridge.register_script_effect(
+        "session_phase();", 1U, &effect_id));
+    FT_ASSERT_EQ(UINT32_MAX, effect_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_script_effect(
+        "session_phase();", 1U, &effect_id));
+    return (1);
+}
 
 FT_TEST(test_card_game_script_bridge_draws_through_event_operation)
 {
@@ -216,6 +243,36 @@ FT_TEST(test_card_game_script_bridge_exposes_invocation_context)
     FT_ASSERT_EQ(phase_id, record.intent.fields[2].value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_script_bridge_reuses_context_wire_storage)
+{
+    card_game_engine engine;
+    card_game_script_bridge bridge;
+    const card_game_rules rules{2U, 2U, 20U, 1U, 3U, 10U};
+    std::vector<uint8_t> bytes(128U, 0xA5U);
+    const uint8_t *storage = bytes.data();
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_context_key(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_context_key(42U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_context_key(UINT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.set_context_value(1U, -7));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, bridge.set_context_value(41U, 19));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, bridge.clear_context_value(43U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.set_context_value(UINT32_MAX, INT64_MIN));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.serialize_context_values(bytes));
+    FT_ASSERT(storage == bytes.data());
+    FT_ASSERT_EQ(68U, bytes.size());
+    const std::vector<uint8_t> expected = bytes;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.clear_context_value(UINT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.restore_context_values(bytes.data(),
+        static_cast<uint32_t>(bytes.size())));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.serialize_context_values(bytes));
+    FT_ASSERT(storage == bytes.data());
+    FT_ASSERT(bytes == expected);
     return (1);
 }
 
@@ -606,10 +663,20 @@ FT_TEST(test_card_game_script_bridge_loads_trusted_script_catalog)
         source_bridge.set_policy_manifest_hash(0x504F4C4943590001ULL));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_bridge.register_script_effect(
         "emit_host_intent(910, 1, 1, 77);", 911U, &effect_id));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        source_bridge.get_manifest_hash(&trusted_manifest_hash));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS,
-        source_bridge.serialize_script_catalog(catalog_bytes));
+    cma_set_alloc_limit(1U);
+    const int32_t manifest_result = source_bridge.get_manifest_hash(
+        &trusted_manifest_hash);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, manifest_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_bridge.serialize_script_catalog(catalog_bytes));
+    std::vector<uint8_t> preserved = catalog_bytes;
+    scripting_program &program = *source_bridge._bindings[0].program;
+    const uint32_t format_version = program.format_version;
+    program.format_version = 0U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        source_bridge.serialize_script_catalog(preserved));
+    FT_ASSERT(preserved == catalog_bytes);
+    program.format_version = format_version;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_bridge.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, loaded_bridge.initialize(engine));
     corrupt_catalog_bytes = catalog_bytes;
@@ -661,6 +728,35 @@ FT_TEST(test_card_game_script_bridge_loads_trusted_script_catalog)
     FT_ASSERT_EQ(77U, record.intent.fields[0].value);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, loaded_bridge.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_card_game_script_bridge_manifest_handles_large_programs)
+{
+    card_game_engine engine;
+    card_game_script_bridge bridge;
+    const card_game_rules rules{2U, 2U, 20U, 1U, 3U, 10U};
+    std::string source;
+    uint32_t effect_id;
+    uint64_t hash = 17U;
+
+    uint32_t index = 0U;
+    while (index < 32U)
+    {
+        source += "emit_host_intent(910, 1, 1, 77);";
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(engine));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_script_effect(
+        source.c_str(), 911U, &effect_id));
+    cma_set_alloc_limit(1U);
+    const int32_t failed = bridge.get_manifest_hash(&hash);
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed);
+    FT_ASSERT_EQ(17U, hash);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.get_manifest_hash(&hash));
+    FT_ASSERT_NEQ(17U, hash);
     return (1);
 }
 

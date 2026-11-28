@@ -4,7 +4,7 @@
 #include <string>
 
 #if NETWORKING_HAS_OPENSSL
-int32_t main()
+int main()
 {
     constexpr uint32_t COUNT = 24;
     constexpr uint32_t ITERATIONS = 300;
@@ -42,7 +42,7 @@ int32_t main()
     return (0);
 }
 #else
-int32_t main()
+int main()
 {
     std::fputs("The HTTP/2 header benchmark requires OpenSSL headers.\n", stderr);
     return (1);

@@ -132,7 +132,7 @@ static int32_t measure_export(const game_recipe_book &book, ft_byte_buffer &payl
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t EVENT_COUNT = 512U;
     ft_vector<uint32_t> ids;

@@ -3,7 +3,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t VARIABLE_COUNT = 64U;
     constexpr uint32_t UPDATE_ITERATIONS = 20000U;

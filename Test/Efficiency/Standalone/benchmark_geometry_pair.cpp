@@ -24,7 +24,7 @@ static void benchmark_pair(const char *label, const Shape &first,
     return ;
 }
 
-int32_t main()
+int main()
 {
     aabb first_box;
     aabb second_box;

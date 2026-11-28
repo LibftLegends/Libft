@@ -50,7 +50,7 @@ static int32_t benchmark_operation(const char *label, Operation operation,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     const auto fmod_four = [](double value) { return (math_fmod(value, 4.0)); };
     const auto reference_fmod = [](double value) { return (std::fmod(value, 4.0)); };

@@ -9,7 +9,7 @@ static int32_t empty_native(const scripting_call_context *, const scripting_valu
     return (scripting_value_set_null(result));
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t REGISTRATIONS = 128U;
     constexpr uint32_t REGISTRATION_RUNS = 200U;

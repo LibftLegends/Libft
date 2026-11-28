@@ -115,7 +115,7 @@ static int32_t measure_json_stream()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_line_search() != 0 || measure_chunk_decode() != 0 || measure_json_stream() != 0)
         return (1);

@@ -40,7 +40,7 @@ static int32_t measure_retry(SSL *session, ft_bool with_status)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(
         SSL_CTX_new(TLS_client_method()), SSL_CTX_free);

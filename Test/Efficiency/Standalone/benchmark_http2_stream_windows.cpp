@@ -3,7 +3,7 @@
 #include <cstdio>
 
 #if NETWORKING_HAS_OPENSSL
-int32_t main()
+int main()
 {
     constexpr uint32_t STREAMS = 4096;
     constexpr uint32_t ITERATIONS = 30;
@@ -33,7 +33,7 @@ int32_t main()
     return (0);
 }
 #else
-int32_t main()
+int main()
 {
     std::fputs("The HTTP/2 stream window benchmark requires OpenSSL headers.\n", stderr);
     return (1);

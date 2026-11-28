@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     vector3 source(13.0, 5.0, 7.0);
     vector3 destination;

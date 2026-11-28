@@ -27,7 +27,7 @@ static int32_t measure_rolls(int32_t dice_count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (rng_enable_random_engine_thread_safety() != FT_ERR_SUCCESS)
         return (1);

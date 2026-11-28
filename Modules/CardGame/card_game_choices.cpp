@@ -177,6 +177,8 @@ int32_t card_game_choice_ledger::apply_snapshot(
     uint32_t index;
     uint32_t option_index;
     uint32_t option_compare_index;
+    uint32_t pending_count = 0U;
+    uint32_t pending_by_player[FT_CARD_GAME_MAX_PLAYERS]{};
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || snapshot.count > FT_CARD_GAME_MAX_CHOICES
@@ -217,6 +219,13 @@ int32_t card_game_choice_ledger::apply_snapshot(
             && this->find_option(snapshot.choices[index],
                 snapshot.choices[index].selected_option_id) != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_ARGUMENT);
+        if (snapshot.choices[index].resolved == FT_FALSE)
+        {
+            ++pending_count;
+            const uint32_t player_id = snapshot.choices[index].player_id;
+            if (player_id < FT_CARD_GAME_MAX_PLAYERS)
+                ++pending_by_player[player_id];
+        }
         index += 1U;
     }
     if (card_game_validate_choice_ids(snapshot.choices, snapshot.count,
@@ -227,6 +236,8 @@ int32_t card_game_choice_ledger::apply_snapshot(
             static_cast<ft_size_t>(snapshot.count) * sizeof(card_game_choice));
     this->_count = snapshot.count;
     this->_next_id = snapshot.next_id;
+    this->_pending_count = pending_count;
+    ft_memcpy(this->_pending_by_player, pending_by_player, sizeof(pending_by_player));
     return (FT_ERR_SUCCESS);
 }
 
@@ -258,7 +269,7 @@ ft_bool card_game_choice_ledger::snapshots_equal(
 
 card_game_choice_ledger::card_game_choice_ledger() noexcept
     : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _sequential_ids(FT_TRUE), _count(0U),
-      _next_id(1U), _choices()
+      _next_id(1U), _pending_count(0U), _pending_by_player(), _choices()
 {
     return ;
 }
@@ -275,6 +286,8 @@ int32_t card_game_choice_ledger::initialize() noexcept
         return (FT_ERR_ALREADY_INITIALISED);
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_pending_count = 0U;
+    ft_bzero(this->_pending_by_player, sizeof(this->_pending_by_player));
     this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
@@ -284,6 +297,8 @@ int32_t card_game_choice_ledger::destroy() noexcept
 {
     this->_count = 0U;
     this->_next_id = 1U;
+    this->_pending_count = 0U;
+    ft_bzero(this->_pending_by_player, sizeof(this->_pending_by_player));
     this->_sequential_ids = FT_TRUE;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (FT_ERR_SUCCESS);
@@ -299,6 +314,9 @@ int32_t card_game_choice_ledger::move(card_game_choice_ledger &other) noexcept
     this->_count = other._count;
     this->_next_id = other._next_id;
     this->_sequential_ids = other._sequential_ids;
+    this->_pending_count = other._pending_count;
+    ft_memcpy(this->_pending_by_player, other._pending_by_player,
+        sizeof(this->_pending_by_player));
     ft_memcpy(this->_choices, other._choices, sizeof(this->_choices));
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     (void)other.destroy();
@@ -374,7 +392,27 @@ int32_t card_game_choice_ledger::open(uint32_t player_id,
     *choice_id = this->_next_id;
     this->_next_id += 1U;
     this->_count += 1U;
+    this->record_pending_choice(player_id);
     return (FT_ERR_SUCCESS);
+}
+
+void card_game_choice_ledger::record_pending_choice(uint32_t player_id) noexcept
+{
+    ++this->_pending_count;
+    if (player_id < FT_CARD_GAME_MAX_PLAYERS)
+        ++this->_pending_by_player[player_id];
+    return ;
+}
+
+void card_game_choice_ledger::resolve_choice(card_game_choice &choice,
+    uint32_t option_id) noexcept
+{
+    choice.selected_option_id = option_id;
+    choice.resolved = FT_TRUE;
+    --this->_pending_count;
+    if (choice.player_id < FT_CARD_GAME_MAX_PLAYERS)
+        --this->_pending_by_player[choice.player_id];
+    return ;
 }
 
 int32_t card_game_choice_ledger::add_option(uint32_t choice_id,
@@ -419,8 +457,7 @@ int32_t card_game_choice_ledger::choose(uint32_t choice_id, uint32_t player_id,
         return (FT_ERR_TIMEOUT);
     if (this->find_option(this->_choices[index], option_id) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    this->_choices[index].selected_option_id = option_id;
-    this->_choices[index].resolved = FT_TRUE;
+    this->resolve_choice(this->_choices[index], option_id);
     return (FT_ERR_SUCCESS);
 }
 
@@ -434,6 +471,8 @@ int32_t card_game_choice_ledger::resolve_expired(uint64_t epoch,
         *resolved_count = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (this->_pending_count == 0U)
+        return (FT_ERR_SUCCESS);
     resolved = 0U;
     index = 0U;
     while (index < this->_count)
@@ -456,9 +495,8 @@ int32_t card_game_choice_ledger::resolve_expired(uint64_t epoch,
             && this->_choices[index].deadline_epoch != 0U
             && epoch >= this->_choices[index].deadline_epoch)
         {
-            this->_choices[index].selected_option_id =
-                this->_choices[index].default_option_id;
-            this->_choices[index].resolved = FT_TRUE;
+            this->resolve_choice(this->_choices[index],
+                this->_choices[index].default_option_id);
             resolved += 1U;
         }
         index += 1U;
@@ -479,6 +517,8 @@ int32_t card_game_choice_ledger::resolve_all_pending_to_default(
     *resolved_count = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (this->_pending_count == 0U)
+        return (FT_ERR_SUCCESS);
     index = 0U;
     while (index < this->_count)
     {
@@ -497,8 +537,7 @@ int32_t card_game_choice_ledger::resolve_all_pending_to_default(
         card_game_choice &choice = this->_choices[index];
         if (choice.resolved == FT_FALSE)
         {
-            choice.selected_option_id = choice.default_option_id;
-            choice.resolved = FT_TRUE;
+            this->resolve_choice(choice, choice.default_option_id);
             ++resolved;
         }
         ++index;
@@ -532,9 +571,19 @@ int32_t card_game_choice_ledger::query_pending_for_player(
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    uint32_t pending_for_player;
+    const int32_t result = this->pending_count_for_player(player_id,
+        &pending_for_player);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (pending_for_player == 0U)
+    {
+        choices_out.swap(staged);
+        return (FT_ERR_SUCCESS);
+    }
     try
     {
-        staged.reserve(this->_count);
+        staged.reserve(pending_for_player);
         while (choice_index < this->_count)
         {
             const card_game_choice &choice = this->_choices[choice_index];
@@ -577,6 +626,13 @@ int32_t card_game_choice_ledger::pending_count_for_player(
     *count_out = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (player_id < FT_CARD_GAME_MAX_PLAYERS)
+    {
+        *count_out = this->_pending_by_player[player_id];
+        return (FT_ERR_SUCCESS);
+    }
+    if (this->_pending_count == 0U)
+        return (FT_ERR_SUCCESS);
     while (choice_index < this->_count)
     {
         const card_game_choice &choice = this->_choices[choice_index];
@@ -591,21 +647,12 @@ int32_t card_game_choice_ledger::pending_count_for_player(
 int32_t card_game_choice_ledger::pending_count(
     uint32_t *count_out) const noexcept
 {
-    uint32_t choice_index = 0U;
-    uint32_t unresolved_count = 0U;
-
     if (count_out == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     *count_out = 0U;
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    while (choice_index < this->_count)
-    {
-        if (this->_choices[choice_index].resolved == FT_FALSE)
-            ++unresolved_count;
-        ++choice_index;
-    }
-    *count_out = unresolved_count;
+    *count_out = this->_pending_count;
     return (FT_ERR_SUCCESS);
 }
 
@@ -792,6 +839,8 @@ int32_t card_game_choice_ledger::deserialize(const uint8_t *input,
             option_index += 1U;
         }
         candidate._choices[choice_index] = choice;
+        if (choice.resolved == FT_FALSE)
+            candidate.record_pending_choice(choice.player_id);
         if (choice.choice_id >= candidate._next_id)
         {
             if (choice.choice_id == UINT32_MAX)
@@ -805,13 +854,7 @@ int32_t card_game_choice_ledger::deserialize(const uint8_t *input,
     if (card_game_validate_choice_ids(candidate._choices, count,
             &candidate._sequential_ids) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_ARGUMENT);
-    this->_count = candidate._count;
-    this->_next_id = candidate._next_id;
-    this->_sequential_ids = candidate._sequential_ids;
-    ft_memcpy(this->_choices, candidate._choices, sizeof(this->_choices));
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    (void)candidate.destroy();
-    return (FT_ERR_SUCCESS);
+    return (this->move(candidate));
 }
 
 uint32_t card_game_choice_ledger::size() const noexcept

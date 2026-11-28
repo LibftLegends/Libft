@@ -87,7 +87,7 @@ static int32_t measure_revision_callback(ft_bool parsed)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_requests("join",
         "{\"event\":{\"id\":3,\"duration\":1},\"leave\":{\"id\":4},\"join\":{\"id\":7}}",

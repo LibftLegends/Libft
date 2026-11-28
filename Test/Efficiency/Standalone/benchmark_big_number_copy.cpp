@@ -83,7 +83,7 @@ static int32_t measure_big_number_move()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_big_number_copy("copy assignment", FT_FALSE) != 0)
         return (1);

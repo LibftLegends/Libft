@@ -108,7 +108,7 @@ static int32_t measure_catalog(ft_bool map_locked)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_catalog(FT_FALSE) != 0)
         return (1);

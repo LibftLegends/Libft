@@ -60,7 +60,7 @@ static int32_t benchmark_counters(uint32_t worker_count, ft_size_t bytes_read,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_counters(1, 0, 0) != 0 || benchmark_counters(1, 0, 64) != 0
         || benchmark_counters(1, 64, 64) != 0 || benchmark_counters(4, 0, 0) != 0

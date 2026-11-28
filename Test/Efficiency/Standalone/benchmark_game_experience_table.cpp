@@ -95,7 +95,7 @@ static int32_t measure_generation(int32_t mode)
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--build") == 0)
     {

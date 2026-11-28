@@ -50,7 +50,7 @@ static int32_t benchmark_gradient(const char *label, ft_size_t dimension, uint32
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_gradient("gradient 4 variables", 4U, 4096U) != 0
         || benchmark_gradient("gradient 64 variables", 64U, 128U) != 0)

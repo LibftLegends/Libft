@@ -79,7 +79,7 @@ static int32_t measure_traversal(const char *root, ft_bool use_listing)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     ft_string root;
     if (root.initialize() != FT_ERR_SUCCESS

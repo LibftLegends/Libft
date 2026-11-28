@@ -82,7 +82,7 @@ static int32_t measure_labels(ft_bool batched)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_session() != 0 || measure_labels(FT_FALSE) != 0
         || measure_labels(FT_TRUE) != 0)

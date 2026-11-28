@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr int32_t CLIENT_COUNT = 64;
     constexpr uint32_t ITERATIONS = 1000U;

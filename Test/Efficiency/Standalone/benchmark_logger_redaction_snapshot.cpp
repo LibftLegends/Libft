@@ -36,7 +36,7 @@ static int32_t benchmark_messages(const char *label)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_messages("no redaction rules") != 0)
         return (1);

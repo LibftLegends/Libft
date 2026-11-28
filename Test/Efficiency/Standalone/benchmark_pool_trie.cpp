@@ -76,7 +76,7 @@ static int32_t measure_trie()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_pool_growth() != 0)
         return (1);

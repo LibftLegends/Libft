@@ -23,7 +23,7 @@ static int32_t benchmark_compare(const char *name, const ft_string_view<char> &f
     return (0);
 }
 
-int32_t main()
+int main()
 {
     const std::string text(16384U, 'a');
     std::string comparison = text;

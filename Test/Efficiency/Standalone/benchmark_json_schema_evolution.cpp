@@ -53,7 +53,7 @@ static int32_t measure_migrations(const char *name, int32_t version_count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_migrations("bench.schema.small", 32) != 0)
         return (1);

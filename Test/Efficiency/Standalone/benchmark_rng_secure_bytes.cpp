@@ -22,7 +22,7 @@ static int32_t measure_random_bytes(uint32_t length, uint32_t iterations)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_random_bytes(32U, 200000U) != 0
         || measure_random_bytes(4096U, 15000U) != 0)

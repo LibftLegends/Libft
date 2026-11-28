@@ -29,7 +29,7 @@ static int32_t measure_accessors(ft_bool thread_safe)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_accessors(FT_FALSE) != 0)
         return (1);

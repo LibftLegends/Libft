@@ -57,7 +57,7 @@ static int32_t measure_reads(const char *name, const Container &value,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     template_access_value seed;
     ft_optional<template_access_value> optional;

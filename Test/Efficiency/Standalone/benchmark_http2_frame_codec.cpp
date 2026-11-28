@@ -3,7 +3,7 @@
 #include <cstdio>
 
 #if NETWORKING_HAS_OPENSSL
-int32_t main()
+int main()
 {
     constexpr ft_size_t PAYLOAD_SIZE = 16384;
     constexpr uint32_t ITERATIONS = 750;
@@ -35,7 +35,7 @@ int32_t main()
     return (0);
 }
 #else
-int32_t main()
+int main()
 {
     std::fputs("The HTTP/2 codec benchmark requires OpenSSL headers.\n", stderr);
     return (1);

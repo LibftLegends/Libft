@@ -45,7 +45,7 @@ static int32_t measure_dispatch(ft_bool with_listener)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_dispatch(FT_FALSE) != 0)
         return (1);

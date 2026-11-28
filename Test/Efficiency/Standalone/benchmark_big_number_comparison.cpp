@@ -41,7 +41,7 @@ static int32_t measure_relations(const char *label, uint32_t digits, ft_bool equ
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_relations("equal short operands", 20U, FT_TRUE)
         || measure_relations("equal wide operands", 1024U, FT_TRUE))

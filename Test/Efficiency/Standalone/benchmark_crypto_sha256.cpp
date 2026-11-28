@@ -48,7 +48,7 @@ static int32_t measure_hkdf(uint32_t length, uint32_t iterations)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_hash(32U, 100000U) != 0 || measure_hash(65536U, 1000U) != 0
         || measure_hkdf(32U, 50000U) != 0 || measure_hkdf(44U, 50000U) != 0

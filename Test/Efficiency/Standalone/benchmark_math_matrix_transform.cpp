@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     matrix4 first(2.0, 3.0, 5.0, 7.0,
                   11.0, 13.0, 17.0, 19.0,

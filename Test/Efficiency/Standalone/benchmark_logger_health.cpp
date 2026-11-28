@@ -12,7 +12,7 @@ static ssize_t count_probe(int32_t, const void *, ft_size_t size, int32_t)
     return (static_cast<ssize_t>(size));
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 5U;
     s_network_sink sink;

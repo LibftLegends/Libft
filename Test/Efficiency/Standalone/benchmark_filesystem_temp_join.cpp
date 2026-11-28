@@ -39,7 +39,7 @@ static int32_t measure_safe_joins()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_safe_joins() != 0)
         return (1);

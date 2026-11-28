@@ -70,7 +70,7 @@ static int32_t measure_append(const char *label, const char *digits, ft_size_t e
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t DIGIT_COUNT = 2048U;
     char digits[DIGIT_COUNT + 1U];

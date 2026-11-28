@@ -50,7 +50,7 @@ static void benchmark_absdiff(const char *label, uint64_t mask)
     return ;
 }
 
-int32_t main()
+int main()
 {
     benchmark_operation("factorial32", [](uint32_t sample)
     {

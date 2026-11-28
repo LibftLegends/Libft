@@ -80,6 +80,7 @@ class ft_render_window
         ft_render_depth_buffer       _depth_buffer;
         ft_bool                      _is_initialised = FT_FALSE;
         ft_bool                      _should_close = FT_FALSE;
+        ft_bool                      _shade_active = FT_FALSE;
 
         void                         *_platform_state = ft_nullptr;
         void                         reset_render_window_runtime(void) noexcept;

@@ -5,7 +5,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 500000U;
     constexpr char TEXT[] = "voxel-world-2026";

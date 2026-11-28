@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t SIZE = 8192U;
     constexpr uint32_t ITERATIONS = 12000U;

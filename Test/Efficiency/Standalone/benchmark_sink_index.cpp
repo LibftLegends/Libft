@@ -3,7 +3,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t RECORD_COUNT = 16384U;
     sink_clear();

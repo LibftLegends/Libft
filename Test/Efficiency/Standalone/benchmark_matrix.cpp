@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <memory>
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t ROWS = 200U;
     constexpr ft_size_t INNER = 240U;

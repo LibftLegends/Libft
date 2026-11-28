@@ -62,7 +62,7 @@ static int32_t measure_stream_read(const char *name, ft_size_t text_length,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_stream_read("short_stream_read", 12U, 8U, 4U, 24000U) != 0)
         return (1);

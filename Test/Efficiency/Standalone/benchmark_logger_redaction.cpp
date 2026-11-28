@@ -29,7 +29,7 @@ static int32_t benchmark_redaction(const char *label, const std::string &input,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     ft_vector<s_redaction_rule> rules;
     s_redaction_rule rule;

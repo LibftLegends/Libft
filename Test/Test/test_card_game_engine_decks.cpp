@@ -408,6 +408,71 @@ FT_TEST(test_card_game_engine_mulligan_is_deterministic_and_transactional)
     return (1);
 }
 
+FT_TEST(test_card_game_engine_mulligan_preserves_kept_and_return_order)
+{
+    card_game_engine engine;
+    card_game_ordered_zone reference;
+    card_game_rules rules;
+    card_game_deck_test_rules(rules);
+    const card_game_card_definition definition{
+        1U, CARD_GAME_CREATURE, 0U, 1, 1, CARD_GAME_NO_EFFECT};
+    card_game_deck_card hand[4];
+    card_game_deck_card actual;
+    card_game_zone_entry expected;
+    uint64_t random_state = 0x123456789abcdefULL;
+    uint64_t reference_state = random_state;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize(rules));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_card(definition));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.start_match(1U));
+    uint32_t index = 0U;
+    while (index < 6U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_push_bottom(0U, 1U));
+        ++index;
+    }
+    index = 0U;
+    while (index < 4U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.draw_to_hand(0U, &hand[index]));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.initialize(4U, FT_TRUE));
+    index = 0U;
+    while (index < 2U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_inspect(0U, index, &actual));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.push_bottom_entry(
+            {actual.instance_id, actual.card_id}));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.push_bottom_entry(
+        {hand[2].instance_id, hand[2].card_id}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.push_bottom_entry(
+        {hand[0].instance_id, hand[0].card_id}));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.shuffle(&reference_state));
+    const uint32_t selected[] = {hand[2].instance_id, hand[0].instance_id};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.mulligan_hand(0U, selected, 2U,
+        &random_state));
+    FT_ASSERT_EQ(reference_state, random_state);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.hand_inspect(0U, 0U, &actual));
+    FT_ASSERT_EQ(hand[1].instance_id, actual.instance_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.hand_inspect(0U, 1U, &actual));
+    FT_ASSERT_EQ(hand[3].instance_id, actual.instance_id);
+    index = 0U;
+    while (index < 2U)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.get_entry(index, &expected));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.hand_inspect(0U, index + 2U, &actual));
+        FT_ASSERT_EQ(expected.instance_id, actual.instance_id);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, reference.get_entry(index + 2U, &expected));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deck_inspect(0U, index, &actual));
+        FT_ASSERT_EQ(expected.instance_id, actual.instance_id);
+        ++index;
+    }
+    return (1);
+}
+
 FT_TEST(test_card_game_engine_snapshot_and_delta_preserve_hand)
 {
     card_game_engine source_engine;

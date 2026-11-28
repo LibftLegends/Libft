@@ -43,7 +43,7 @@ static int32_t benchmark_reads(const char *path, const char *label,
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count != 2)
     {

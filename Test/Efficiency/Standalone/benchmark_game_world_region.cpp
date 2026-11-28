@@ -60,7 +60,7 @@ static int32_t measure_world_region(int32_t count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_world_region(8) != 0)
         return (1);

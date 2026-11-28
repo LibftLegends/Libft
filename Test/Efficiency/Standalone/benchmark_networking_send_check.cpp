@@ -3,7 +3,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     ft_socket_handle listener;
     ft_socket_handle client;

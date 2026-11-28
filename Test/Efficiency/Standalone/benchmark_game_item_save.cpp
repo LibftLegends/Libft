@@ -93,7 +93,7 @@ static int32_t measure_load(const char *label, const Subject &source,
     return (matches == FT_FALSE);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     game_character character;
     game_quest quest;

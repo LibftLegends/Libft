@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main(int32_t argc, char **argv)
+int main(int argc, char **argv)
 {
     constexpr int32_t ITERATIONS = 512;
     constexpr int32_t LARGE_LEVEL_COUNT = 1024;

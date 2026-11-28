@@ -15,7 +15,7 @@ static void run_server(ft_http_server *server, int32_t *result)
     return ;
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t REQUEST_COUNT = 100U;
     constexpr char REQUEST[] = "GET /bench HTTP/1.1\r\nHost: localhost\r\n\r\n";

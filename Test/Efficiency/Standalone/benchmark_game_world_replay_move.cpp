@@ -5,7 +5,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t PAYLOAD_SIZE = 1048576U;
     constexpr uint32_t ITERATIONS = 256U;

@@ -24,7 +24,7 @@ static int32_t measure_cache_hit(const char *scenario, const char *service,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t DESTINATIONS = 1024;
     networking_resolved_address address{};

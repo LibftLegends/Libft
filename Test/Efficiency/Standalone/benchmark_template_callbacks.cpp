@@ -73,7 +73,7 @@ static int32_t benchmark_listener_removal()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_dispatch() != 0)
         return (1);

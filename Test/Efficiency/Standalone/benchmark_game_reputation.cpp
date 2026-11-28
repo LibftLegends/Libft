@@ -175,7 +175,7 @@ static int32_t measure_counters(ft_bool locked)
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--move") == 0)
         return (measure_moves());

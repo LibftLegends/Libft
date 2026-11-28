@@ -51,7 +51,7 @@ static int32_t measure_conversion(const char *label, const char *input, int32_t 
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_conversion("short hexadecimal", "DEADBEEF", 16)
         || measure_conversion("wide hexadecimal",

@@ -78,7 +78,7 @@ static int32_t measure_bridge()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_decimal() != 0)
         return (1);

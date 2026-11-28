@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     geometry_ray ray;
     geometry_aabb3 box;

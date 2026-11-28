@@ -62,7 +62,7 @@ static int32_t measure_multiplication(const char *label, uint32_t left_size,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_multiplication("single-digit multiplier", 80U, 1U, 4000U)
         || measure_multiplication("short product", 20U, 20U, 4000U)

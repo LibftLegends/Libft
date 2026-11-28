@@ -106,7 +106,7 @@ static int32_t measure_remove(int32_t skill_count, ft_bool tail)
     return (0);
 }
 
-int32_t main(int32_t argc, char **argv)
+int main(int argc, char **argv)
 {
     if (argc == 2 && ft_strcmp(argv[1], "--remove") == 0)
     {

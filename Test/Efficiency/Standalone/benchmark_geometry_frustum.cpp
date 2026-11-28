@@ -22,7 +22,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     const double normals[6][3] = {
         {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0},

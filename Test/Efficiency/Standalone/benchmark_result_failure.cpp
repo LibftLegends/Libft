@@ -7,7 +7,7 @@ struct large_result_value
     uint8_t bytes[65536U];
 };
 
-int32_t main()
+int main()
 {
     using result_type = ft_result<large_result_value>;
     constexpr uint32_t ITERATIONS = 200000U;

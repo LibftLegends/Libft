@@ -40,7 +40,7 @@ static int32_t measure_coordinate(const char *label, const char *chunk_x, const 
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_coordinate("short coordinates", "123", "-456") != 0)
         return (1);

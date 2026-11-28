@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t WIDTH = 48U;
     constexpr ft_size_t HEIGHT = 32U;

@@ -14,7 +14,7 @@ static char *count_request(const char *, uint16_t, const char *,
     return (ft_nullptr);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 100000;
     const std::string headers = "X-Test: " + std::string(2048, 'x');

@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     if (ft_log_set_remote_sink("127.0.0.1", 65535U, FT_FALSE) != FT_ERR_SUCCESS)
         return (1);

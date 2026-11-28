@@ -28,7 +28,7 @@ static ft_interval make_positive_interval(uint32_t value)
     return (ft_interval{lower, lower + 0.125, FT_ERR_SUCCESS});
 }
 
-int32_t main()
+int main()
 {
     benchmark_operation<int64_t>("average32", [](uint32_t index)
     {

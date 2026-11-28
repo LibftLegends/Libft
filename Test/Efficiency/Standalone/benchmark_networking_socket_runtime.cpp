@@ -30,7 +30,7 @@ static int32_t benchmark_socket_runtime(ft_bool keep_runtime_active)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_socket_runtime(FT_FALSE) != 0 || benchmark_socket_runtime(FT_TRUE) != 0)
         return (1);

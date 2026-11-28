@@ -45,7 +45,7 @@ static int32_t benchmark_operation(const char *label,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_operation("sin", ft_sin, std::sin, -6.28, 6.28) != 0
         || benchmark_operation("cos", math_cos, std::cos, -6.28, 6.28) != 0

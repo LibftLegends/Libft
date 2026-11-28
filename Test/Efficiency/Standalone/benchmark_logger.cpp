@@ -33,7 +33,7 @@ static int32_t benchmark_message(const char *label, Operation operation)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     const std::string message = std::string(256U, 'a') + "\n\"quote\"\\path";
     s_log_field field;

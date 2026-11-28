@@ -34,7 +34,7 @@ static int32_t measure_numeric_address(Socket &socket, SocketConfig &configurati
     return (0);
 }
 
-int32_t main()
+int main()
 {
     ft_socket_handle probe_socket;
     if (probe_socket.initialize() != FT_ERR_SUCCESS

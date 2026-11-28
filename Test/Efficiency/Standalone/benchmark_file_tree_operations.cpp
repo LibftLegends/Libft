@@ -100,7 +100,7 @@ static int32_t measure_tree_transfer(const char *source, const char *destination
     return (0);
 }
 
-int32_t main()
+int main()
 {
     ft_string source;
     ft_string destination;

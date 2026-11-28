@@ -8,7 +8,7 @@ static void discard_sample(const ft_networking_observability_sample &)
     return ;
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t THREADS = 4;
     constexpr uint32_t ITERATIONS = 200000;

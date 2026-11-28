@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr int32_t ITERATIONS = 1000000;
     api_retry_policy policy;

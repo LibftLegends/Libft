@@ -46,7 +46,7 @@ static int32_t measure_count(uint32_t socket_count, uint32_t interest_mask)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_count(1U, EVENT_LOOP_INTEREST_WRITE) != 0
         || measure_count(48U, EVENT_LOOP_INTEREST_WRITE) != 0

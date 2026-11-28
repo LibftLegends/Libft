@@ -5,7 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 8192U;
 #ifdef _WIN32

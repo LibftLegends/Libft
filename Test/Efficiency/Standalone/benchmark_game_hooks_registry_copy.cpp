@@ -176,7 +176,7 @@ static int32_t measure_filtered_catalog(const game_hooks &hooks, const char *key
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_registry_copy(8U) != 0 || measure_registry_copy(32U) != 0
         || measure_registry_move(8U) != 0 || measure_registry_move(32U) != 0

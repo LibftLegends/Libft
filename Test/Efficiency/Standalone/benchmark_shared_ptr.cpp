@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 8000000U;
     ft_sharedptr<uint32_t> source(new uint32_t(42U));

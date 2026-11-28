@@ -41,7 +41,7 @@ static int32_t measure_reads(ft_bool thread_safe, ft_bool paired)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_reads(FT_FALSE, FT_FALSE) != 0 || measure_reads(FT_FALSE, FT_TRUE) != 0
         || measure_reads(FT_TRUE, FT_FALSE) != 0)

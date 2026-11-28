@@ -65,7 +65,7 @@ static int32_t measure_storage(kv_store &store, const char *key, const char *wor
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ENTRIES = 1024;
     std::string contents = "{\"kv_store\":{";

@@ -45,7 +45,7 @@ static int32_t measure_udp_wait(udp_socket &socket, uint32_t unrelated_count)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     SocketConfig configuration;
     if (configuration.initialize() != FT_ERR_SUCCESS)

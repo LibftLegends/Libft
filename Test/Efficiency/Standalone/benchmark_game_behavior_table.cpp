@@ -246,7 +246,7 @@ static int32_t measure_action_records()
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && std::strcmp(arguments[1], "--action-records") == 0)
         return (measure_action_records());

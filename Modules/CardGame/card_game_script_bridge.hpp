@@ -94,7 +94,8 @@ class card_game_script_bridge
             const scripting_value *arguments, uint32_t argument_count,
             scripting_value *result,
             card_game_operation_type operation_type) noexcept;
-        int32_t initialize_runtime() noexcept;
+        int32_t validate_runtime() const noexcept;
+        uint32_t find_context_key(uint32_t key_id) const noexcept;
 
     public:
         card_game_script_bridge() noexcept;

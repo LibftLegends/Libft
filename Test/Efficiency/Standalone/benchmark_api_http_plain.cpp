@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <string>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t CHUNKS = 1024;
     constexpr uint32_t ITERATIONS = 500;

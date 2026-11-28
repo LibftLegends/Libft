@@ -110,7 +110,7 @@ static int32_t benchmark_priority_queue()
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_circular_buffer() != 0 || benchmark_vector_reserve() != 0)
         return (1);

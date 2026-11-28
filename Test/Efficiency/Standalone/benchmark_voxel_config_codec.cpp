@@ -174,7 +174,7 @@ static int32_t benchmark_template_removal(voxel_generation_config &config)
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     constexpr uint32_t ITERATIONS = 1024U;
     voxel_generation_config source;

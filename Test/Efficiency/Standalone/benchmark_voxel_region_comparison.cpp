@@ -92,7 +92,7 @@ static int32_t run(generation_function generate, game_voxel_region &region,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t PAIRS = 17U;
     constexpr int32_t CHUNKS = 24;

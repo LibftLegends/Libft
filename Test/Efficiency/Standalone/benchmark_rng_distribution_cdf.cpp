@@ -43,7 +43,7 @@ static int32_t measure_cdf(const char *label, cdf_function calculate,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr cdf_arguments GAMMA_CASES[] = {
         {2.5, 1.5, 3.0}, {0.5, 2.0, 1.0}, {1.0, 2.0, 0.0000000000001},

@@ -44,7 +44,7 @@ static int32_t measure_snapshots(ft_bool dense)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_snapshots(FT_FALSE) != 0)
         return (1);

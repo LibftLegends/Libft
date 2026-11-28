@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t EDIT_COUNT = GAME_VOXEL_SECTION_BLOCKS;
     constexpr uint32_t PASSES = 24U;

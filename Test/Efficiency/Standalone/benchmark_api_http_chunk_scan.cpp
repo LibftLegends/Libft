@@ -41,7 +41,7 @@ static int32_t measure_chunk_scan(const std::string &body, ft_bool resume)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t CHUNKS = 4096;
     std::string body;

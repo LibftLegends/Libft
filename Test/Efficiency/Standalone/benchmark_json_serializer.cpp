@@ -28,7 +28,7 @@ static int32_t prepare_document(json_document &document, void *user_data) noexce
     return (error);
 }
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 120U;
     const std::string value(1024U * 1024U, 'v');

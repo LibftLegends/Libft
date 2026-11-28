@@ -69,7 +69,7 @@ static int32_t benchmark_rotation(const char *label, const char *path, uint32_t 
     return (0);
 }
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count != 2)
     {

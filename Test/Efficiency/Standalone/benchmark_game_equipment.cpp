@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <new>
 
-int32_t main()
+int main()
 {
     constexpr uint32_t ITERATIONS = 1000000U;
     game_equipment first;

@@ -187,7 +187,7 @@ static int32_t measure_stack_merge(ft_bool thread_safe)
 }
 #endif
 
-int32_t main(int32_t argument_count, char **arguments)
+int main(int argument_count, char **arguments)
 {
     if (argument_count == 2 && ft_strcmp(arguments[1], "--move") == 0)
     {

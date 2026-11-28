@@ -50,7 +50,7 @@ static int32_t measure_clear(int32_t generated_height)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_clear(16) != 0 || measure_clear(80) != 0
         || measure_clear(GAME_VOXEL_CHUNK_HEIGHT) != 0)

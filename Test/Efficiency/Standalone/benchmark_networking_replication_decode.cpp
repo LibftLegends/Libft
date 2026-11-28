@@ -51,7 +51,7 @@ static int32_t measure_decode(ft_size_t payload_size)
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (measure_decode(128U) != 0 || measure_decode(65536U) != 0)
         return (1);

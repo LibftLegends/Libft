@@ -48,7 +48,7 @@ static int32_t benchmark_roll(const char *label, uint32_t terms,
     return (0);
 }
 
-int32_t main()
+int main()
 {
     if (benchmark_roll("roll 8 terms", 8U, 8192U, FT_FALSE) != 0
         || benchmark_roll("roll 512 terms", 512U, 32U, FT_FALSE) != 0

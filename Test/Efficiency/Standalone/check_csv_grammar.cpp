@@ -71,7 +71,7 @@ static int32_t check_input(const char *input, char delimiter, uint64_t &checksum
     return (0);
 }
 
-int32_t main()
+int main()
 {
     constexpr char ALPHABET[] = {'x', ',', '"', ' ', '\r', '\n', '\t'};
     constexpr char DELIMITERS[] = {',', ';', '\t'};

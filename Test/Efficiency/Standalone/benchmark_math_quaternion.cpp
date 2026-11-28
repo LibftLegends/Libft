@@ -21,7 +21,7 @@ static void benchmark_operation(const char *label, Operation operation)
     return ;
 }
 
-int32_t main()
+int main()
 {
     quaternion first(1.0, 2.0, 3.0, 4.0);
     quaternion second(5.0, 6.0, 7.0, 8.0);

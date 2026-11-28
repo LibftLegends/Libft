@@ -3,7 +3,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr int32_t QUEST_COUNT = 256;
     constexpr uint32_t SAMPLES = 64U;

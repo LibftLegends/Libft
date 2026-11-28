@@ -2,7 +2,7 @@
 #include <chrono>
 #include <cstdio>
 
-int32_t main()
+int main()
 {
     constexpr ft_size_t BATCH_SIZE = 128U;
     constexpr uint32_t BATCH_COUNT = 100U;

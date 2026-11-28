@@ -4,7 +4,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-int32_t main(int32_t argument_count, char **)
+int main(int argument_count, char **)
 {
     if (argument_count > 1 && pf_enable_thread_safety() != FT_ERR_SUCCESS)
         return (1);
