@@ -19,10 +19,7 @@ int64_t ft_strtol(const char *input_string, char **end_pointer, int32_t numeric_
     int32_t sign_value = 1;
     uint64_t accumulated_value = 0;
     int32_t digit_value;
-    ft_bool overflow_detected = FT_FALSE;
     ft_bool digit_processed = FT_FALSE;
-    uint64_t positive_limit;
-    uint64_t negative_limit;
     uint64_t base_value;
 
     if (current_character == ft_nullptr)
@@ -65,34 +62,26 @@ int64_t ft_strtol(const char *input_string, char **end_pointer, int32_t numeric_
              && (current_character[1] == 'x' || current_character[1] == 'X'))
         current_character += 2;
     base_value = static_cast<uint64_t>(numeric_base);
-    positive_limit = static_cast<uint64_t>(FT_LLONG_MAX);
-    negative_limit = positive_limit + 1ULL;
+    uint64_t limit_value = static_cast<uint64_t>(FT_LLONG_MAX);
+    if (sign_value < 0)
+        ++limit_value;
+    const uint64_t limit_division = limit_value / base_value;
+    const uint64_t limit_remainder = limit_value % base_value;
     while ((digit_value = ft_digit_value(*current_character)) >= 0
             && digit_value < numeric_base)
     {
-        uint64_t limit_value;
-        uint64_t limit_division;
-        uint64_t limit_remainder;
         uint64_t digit_as_unsigned;
 
         digit_as_unsigned = static_cast<uint64_t>(digit_value);
         digit_processed = FT_TRUE;
-        limit_value = positive_limit;
-        if (sign_value < 0)
-            limit_value = negative_limit;
-        if (base_value == 0)
-            break ;
-        limit_division = limit_value / base_value;
-        limit_remainder = limit_value % base_value;
         if (accumulated_value > limit_division
                 || (accumulated_value == limit_division
                     && digit_as_unsigned > limit_remainder))
         {
-            overflow_detected = FT_TRUE;
             accumulated_value = limit_value;
             ++current_character;
-            while (ft_digit_value(*current_character) >= 0
-                    && ft_digit_value(*current_character) < numeric_base)
+            while ((digit_value = ft_digit_value(*current_character)) >= 0
+                    && digit_value < numeric_base)
                 ++current_character;
             break ;
         }
@@ -108,17 +97,11 @@ int64_t ft_strtol(const char *input_string, char **end_pointer, int32_t numeric_
     }
     if (end_pointer)
         *end_pointer = const_cast<char *>(current_character);
-    if (overflow_detected)
-    {
-        if (sign_value < 0)
-            return (FT_LLONG_MIN);
-        return (FT_LLONG_MAX);
-    }
     if (sign_value < 0)
     {
-        int64_t result = static_cast<int64_t>(accumulated_value);
-        return (-result);
+        if (accumulated_value == limit_value)
+            return (FT_LLONG_MIN);
+        return (-static_cast<int64_t>(accumulated_value));
     }
-    int64_t result = static_cast<int64_t>(accumulated_value);
-    return (result);
+    return (static_cast<int64_t>(accumulated_value));
 }

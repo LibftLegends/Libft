@@ -142,3 +142,14 @@ FT_TEST(test_strjoin_multiple_late_allocation_failure_releases_memory)
     FT_ASSERT_EQ(bytes_before, bytes_after);
     return (1);
 }
+
+FT_TEST(test_strjoin_multiple_uses_heap_for_large_argument_lists)
+{
+    char *joined = adv_strjoin_multiple(17,
+        "a", "b", "c", "d", "e", "f", "g", "h", "i",
+        "j", "k", "l", "m", "n", "o", "p", "q");
+    FT_ASSERT(joined != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp(joined, "abcdefghijklmnopq"));
+    cma_free(joined);
+    return (1);
+}

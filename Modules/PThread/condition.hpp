@@ -2,6 +2,7 @@
 # define CONDITION_HPP
 
 #include <pthread.h>
+#include <atomic>
 #include <ctime>
 #include <mutex>
 
@@ -22,7 +23,7 @@ class pt_condition_variable
 #endif
         pthread_cond_t _condition;
         pthread_mutex_t _mutex;
-        bool _condition_initialised;
+        std::atomic<bool> _condition_initialised;
         bool _mutex_initialised;
         mutable pt_mutex *_state_mutex;
         mutable std::mutex _initialization_mutex;

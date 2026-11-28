@@ -52,6 +52,29 @@ FT_TEST(test_rng_stream_seed_sequence_reproducible)
     return (1);
 }
 
+FT_TEST(test_rng_stream_seed_sequence_preserves_word_order_and_buffer_bounds)
+{
+    constexpr uint32_t GUARD = 0xabcdef01U;
+    constexpr uint32_t EXPECTED[] = {
+        0xc5877b3bU, 0xb9543a3dU, 0x51b188b7U, 0xa69ff9e0U, 0x8175926cU, 0x8be5acc3U
+    };
+    uint32_t buffer[8] = {GUARD, GUARD, GUARD, GUARD, GUARD, GUARD, GUARD, GUARD};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_stream_seed_sequence(777, 21, ft_nullptr, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_stream_seed_sequence(777, 21, buffer + 1U, 5));
+    FT_ASSERT_EQ(GUARD, buffer[0]);
+    FT_ASSERT_EQ(GUARD, buffer[6]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_stream_seed_sequence(777, 21, buffer + 1U, 6));
+    ft_size_t index = 0U;
+    while (index < 6U)
+    {
+        FT_ASSERT_EQ(EXPECTED[index], buffer[index + 1U]);
+        index += 1U;
+    }
+    FT_ASSERT_EQ(GUARD, buffer[0]);
+    FT_ASSERT_EQ(GUARD, buffer[7]);
+    return (1);
+}
+
 FT_TEST(test_rng_stream_seed_from_string_matches_manual_seed)
 {
     uint64_t from_string = 0;

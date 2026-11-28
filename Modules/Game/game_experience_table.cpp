@@ -12,7 +12,7 @@
 thread_local int32_t game_experience_table::_last_error = FT_ERR_SUCCESS;
 
 game_experience_table::game_experience_table() noexcept
-    : _levels(ft_nullptr), _count(0), _mutex(ft_nullptr),
+    : _levels(ft_nullptr), _count(0), _invalid_pairs(0), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     this->set_error(FT_ERR_SUCCESS);
@@ -35,6 +35,7 @@ int32_t game_experience_table::initialize() noexcept
     }
     this->_levels = ft_nullptr;
     this->_count = 0;
+    this->_invalid_pairs = 0;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -63,6 +64,7 @@ int32_t game_experience_table::destroy() noexcept
         cma_free(this->_levels);
     this->_levels = ft_nullptr;
     this->_count = 0;
+    this->_invalid_pairs = 0;
     this->unlock_internal(lock_acquired);
     disable_error = this->disable_thread_safety();
     if (first_error == FT_ERR_SUCCESS && disable_error != FT_ERR_SUCCESS)
@@ -102,9 +104,11 @@ int32_t game_experience_table::move(game_experience_table &other) noexcept
         return (initialize_error);
     this->_levels = other._levels;
     this->_count = other._count;
+    this->_invalid_pairs = other._invalid_pairs;
     source_error = other.get_error();
     other._levels = ft_nullptr;
     other._count = 0;
+    other._invalid_pairs = 0;
     source_disable_error = other.disable_thread_safety();
     if (source_disable_error != FT_ERR_SUCCESS)
     {
@@ -148,24 +152,20 @@ int32_t game_experience_table::set_error(int32_t error_code) noexcept
     return (error_code);
 }
 
-ft_bool game_experience_table::is_valid(int32_t count, const int32_t *array) const noexcept
+int32_t game_experience_table::count_invalid_pairs(int32_t count) const noexcept
 {
-    if (!array || count <= 1)
-        return (FT_TRUE);
-    int32_t index;
-
-    index = 1;
+    int32_t invalid_pairs = 0;
+    int32_t index = 1;
     while (index < count)
     {
-        if (array[index] <= array[index - 1])
-            return (FT_FALSE);
+        invalid_pairs += this->_levels[index] <= this->_levels[index - 1];
         ++index;
     }
-    return (FT_TRUE);
+    return (invalid_pairs);
 }
 
 int32_t game_experience_table::resize_locked(int32_t new_count,
-        ft_bool validate_existing) noexcept
+        ft_bool retain_levels) noexcept
 {
     this->set_error(FT_ERR_SUCCESS);
     if (new_count <= 0)
@@ -174,20 +174,21 @@ int32_t game_experience_table::resize_locked(int32_t new_count,
             cma_free(this->_levels);
         this->_levels = ft_nullptr;
         this->_count = 0;
+        this->_invalid_pairs = 0;
         return (FT_ERR_SUCCESS);
     }
-    int32_t old_count;
-    int32_t *new_levels;
-
-    old_count = this->_count;
-    new_levels = static_cast<int32_t*>(cma_realloc(this->_levels,
-                sizeof(int32_t) * new_count));
-    if (!new_levels)
+    const int32_t old_count = this->_count;
+    if (new_count == old_count)
     {
-        this->set_error(FT_ERR_NO_MEMORY);
-        return (this->get_error());
+        if (retain_levels && this->_invalid_pairs != 0)
+            return (this->set_error(FT_ERR_CONFIGURATION));
+        return (FT_ERR_SUCCESS);
     }
-    if (new_count > old_count)
+    int32_t *new_levels = static_cast<int32_t*>(cma_realloc(this->_levels,
+        sizeof(int32_t) * static_cast<ft_size_t>(new_count)));
+    if (!new_levels)
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    if (retain_levels && new_count > old_count)
     {
         int32_t index;
 
@@ -200,18 +201,20 @@ int32_t game_experience_table::resize_locked(int32_t new_count,
     }
     this->_levels = new_levels;
     this->_count = new_count;
-    if (validate_existing)
+    if (retain_levels)
     {
-        int32_t check_count;
-
-        check_count = old_count;
-        if (old_count > new_count)
-            check_count = new_count;
-        if (!this->is_valid(check_count, this->_levels))
+        if (new_count < old_count && this->_invalid_pairs != 0)
+            this->_invalid_pairs = this->count_invalid_pairs(new_count);
+        // Zero-filled entries count for lookups, but resize validates only the retained prefix.
+        const ft_bool retained_levels_valid = this->_invalid_pairs == 0;
+        if (new_count > old_count)
         {
-            this->set_error(FT_ERR_CONFIGURATION);
-            return (this->get_error());
+            this->_invalid_pairs += new_count - old_count - 1;
+            if (old_count > 0 && this->_levels[old_count - 1] >= 0)
+                ++this->_invalid_pairs;
         }
+        if (!retained_levels_valid)
+            return (this->set_error(FT_ERR_CONFIGURATION));
     }
     this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -277,8 +280,30 @@ int32_t game_experience_table::get_level(int32_t experience) const noexcept
         return (0);
     }
     level = 0;
-    while (level < this->_count && experience >= this->_levels[level])
-        ++level;
+    // Unordered tables still return the number of thresholds passed before the first miss.
+    if (this->_invalid_pairs == 0 && this->_count > 8)
+    {
+        if (experience >= this->_levels[this->_count - 1])
+            level = this->_count;
+        else if (experience >= this->_levels[0])
+        {
+            level = 1;
+            int32_t upper = this->_count - 1;
+            while (level < upper)
+            {
+                const int32_t middle = level + (upper - level) / 2;
+                if (experience < this->_levels[middle])
+                    upper = middle;
+                else
+                    level = middle + 1;
+            }
+        }
+    }
+    else
+    {
+        while (level < this->_count && experience >= this->_levels[level])
+            ++level;
+    }
     const_cast<game_experience_table *>(this)->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (level);
@@ -329,8 +354,19 @@ void game_experience_table::set_value(int32_t index, int32_t value) noexcept
         this->unlock_internal(lock_acquired);
         return ;
     }
+    const int32_t previous_value = this->_levels[index];
+    if (index > 0)
+    {
+        const int32_t lower = this->_levels[index - 1];
+        this->_invalid_pairs += (value <= lower) - (previous_value <= lower);
+    }
+    if (index + 1 < this->_count)
+    {
+        const int32_t upper = this->_levels[index + 1];
+        this->_invalid_pairs += (value >= upper) - (previous_value >= upper);
+    }
     this->_levels[index] = value;
-    if (!this->is_valid(this->_count, this->_levels))
+    if (this->_invalid_pairs != 0)
     {
         this->set_error(FT_ERR_CONFIGURATION);
         this->unlock_internal(lock_acquired);
@@ -369,13 +405,20 @@ int32_t game_experience_table::set_levels(const int32_t *levels, int32_t count) 
         this->unlock_internal(lock_acquired);
         return (this->get_error());
     }
-    level_index = 0;
+    int32_t previous_level = levels[0];
+    this->_levels[0] = previous_level;
+    int32_t invalid_pairs = 0;
+    level_index = 1;
     while (level_index < count)
     {
-        this->_levels[level_index] = levels[level_index];
+        const int32_t level = levels[level_index];
+        this->_levels[level_index] = level;
+        invalid_pairs += level <= previous_level;
+        previous_level = level;
         ++level_index;
     }
-    if (!this->is_valid(this->_count, this->_levels))
+    this->_invalid_pairs = invalid_pairs;
+    if (invalid_pairs != 0)
     {
         this->set_error(FT_ERR_CONFIGURATION);
         this->unlock_internal(lock_acquired);
@@ -384,6 +427,17 @@ int32_t game_experience_table::set_levels(const int32_t *levels, int32_t count) 
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t experience_threshold(double value) noexcept
+{
+    constexpr double LOWER_EXCLUSIVE = static_cast<double>(INT32_MIN) - 1.0;
+    constexpr double UPPER_EXCLUSIVE = static_cast<double>(INT32_MAX) + 1.0;
+    if (value > LOWER_EXCLUSIVE && value < UPPER_EXCLUSIVE)
+        return (static_cast<int32_t>(value));
+    // Every generated value after the base has a predecessor.
+    // This marker guarantees that range errors also fail ordering validation.
+    return (INT32_MIN);
 }
 
 int32_t game_experience_table::generate_levels_total(int32_t count, int32_t base,
@@ -418,15 +472,22 @@ int32_t game_experience_table::generate_levels_total(int32_t count, int32_t base
         this->unlock_internal(lock_acquired);
         return (this->get_error());
     }
+    int32_t previous_level = base;
     value = static_cast<double>(base);
-    level_index = 0;
+    this->_levels[0] = base;
+    int32_t invalid_pairs = 0;
+    level_index = 1;
     while (level_index < count)
     {
-        this->_levels[level_index] = static_cast<int32_t>(value);
         value *= multiplier;
+        const int32_t level = experience_threshold(value);
+        this->_levels[level_index] = level;
+        invalid_pairs += level <= previous_level;
+        previous_level = level;
         ++level_index;
     }
-    if (!this->is_valid(this->_count, this->_levels))
+    this->_invalid_pairs = invalid_pairs;
+    if (invalid_pairs != 0)
     {
         this->set_error(FT_ERR_CONFIGURATION);
         this->unlock_internal(lock_acquired);
@@ -470,16 +531,22 @@ int32_t game_experience_table::generate_levels_scaled(int32_t count, int32_t bas
     }
     increment = static_cast<double>(base);
     total = static_cast<double>(base);
-    this->_levels[0] = static_cast<int32_t>(total);
+    int32_t previous_level = base;
+    this->_levels[0] = base;
+    int32_t invalid_pairs = 0;
     index = 1;
     while (index < count)
     {
         increment *= multiplier;
         total += increment;
-        this->_levels[index] = static_cast<int32_t>(total);
+        const int32_t level = experience_threshold(total);
+        this->_levels[index] = level;
+        invalid_pairs += level <= previous_level;
+        previous_level = level;
         ++index;
     }
-    if (!this->is_valid(this->_count, this->_levels))
+    this->_invalid_pairs = invalid_pairs;
+    if (invalid_pairs != 0)
     {
         this->set_error(FT_ERR_CONFIGURATION);
         this->unlock_internal(lock_acquired);
@@ -504,7 +571,7 @@ int32_t game_experience_table::check_for_error() const noexcept
         const_cast<game_experience_table *>(this)->set_error(lock_error);
         return (lock_error);
     }
-    if (!this->_levels)
+    if (this->_invalid_pairs == 0)
     {
         const_cast<game_experience_table *>(this)->set_error(FT_ERR_SUCCESS);
         this->unlock_internal(lock_acquired);
@@ -516,8 +583,9 @@ int32_t game_experience_table::check_for_error() const noexcept
         if (this->_levels[index] <= this->_levels[index - 1])
         {
             const_cast<game_experience_table *>(this)->set_error(FT_ERR_CONFIGURATION);
+            const int32_t invalid_value = this->_levels[index];
             this->unlock_internal(lock_acquired);
-            return (this->_levels[index]);
+            return (invalid_value);
         }
         ++index;
     }

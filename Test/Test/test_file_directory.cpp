@@ -56,7 +56,7 @@ FT_TEST(test_file_cmp_dir_open_os_error)
     int error_code = FT_ERR_SUCCESS;
 
     FT_ASSERT_EQ(ft_nullptr, cmp_dir_open("cmp_dir_open_os_error_missing", &error_code));
-    FT_ASSERT_EQ(FT_ERR_IO, error_code);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, error_code);
     return (1);
 }
 
@@ -84,6 +84,71 @@ FT_TEST(test_file_cmp_dir_read_success_resets_errno)
     cmp_dir_close(directory_stream, &error_code);
     return (1);
 }
+
+FT_TEST(test_file_readdir_string_stays_at_end_after_consuming_entries)
+{
+    const char *directory = "test_file_readdir_end";
+    const char *child = "test_file_readdir_end/entry";
+    (void)file_delete_recursive(directory);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_create_directories(directory, 0700));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(child, "x", 1));
+    ft_string name;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, name.initialize());
+    file_dir *stream = file_opendir(directory);
+    FT_ASSERT(stream != ft_nullptr);
+    int32_t first_end = FT_ERR_SUCCESS;
+    uint32_t attempts = 0;
+    while (first_end == FT_ERR_SUCCESS && attempts < 8U)
+    {
+        first_end = file_readdir_string(stream, &name);
+        ++attempts;
+    }
+    const int32_t second_end = file_readdir_string(stream, &name);
+    const int32_t close_error = file_closedir(stream);
+    const int32_t cleanup_error = file_delete_recursive(directory);
+    FT_ASSERT_EQ(FT_ERR_END_OF_FILE, first_end);
+    FT_ASSERT_EQ(FT_ERR_END_OF_FILE, second_end);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, close_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cleanup_error);
+    return (1);
+}
+
+#if defined(_WIN32) || defined(_WIN64)
+FT_TEST(test_file_cmp_dir_read_classifies_directory_reparse_points_as_links)
+{
+    int32_t error_code = FT_ERR_SUCCESS;
+    file_dir *stream = cmp_dir_open(".", &error_code);
+    FT_ASSERT(stream != ft_nullptr);
+    stream->w_find_data.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
+    const file_dirent *entry = cmp_dir_read(stream, &error_code);
+    file_type type = FILE_TYPE_UNKNOWN;
+    if (entry != ft_nullptr)
+        type = cmp_dir_entry_type(*entry);
+    const int32_t close_error = cmp_dir_close(stream, ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, close_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, error_code);
+    FT_ASSERT_EQ(FILE_TYPE_SYMLINK, type);
+    return (1);
+}
+
+FT_TEST(test_file_readdir_string_accepts_full_length_directory_entry_name)
+{
+    ft_string name;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, name.initialize());
+    file_dir *stream = file_opendir(".");
+    FT_ASSERT(stream != ft_nullptr);
+    constexpr ft_size_t NAME_LENGTH = sizeof(stream->entry.d_name) - 1;
+    ft_memset(stream->w_find_data.cFileName, 'a', NAME_LENGTH);
+    stream->w_find_data.cFileName[NAME_LENGTH] = '\0';
+    const int32_t read_error = file_readdir_string(stream, &name);
+    const int32_t close_error = file_closedir(stream);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, close_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_error);
+    FT_ASSERT_EQ(NAME_LENGTH, name.size());
+    FT_ASSERT_EQ('a', name.c_str()[NAME_LENGTH - 1]);
+    return (1);
+}
+#endif
 
 FT_TEST(test_file_cmp_directory_exists_null_path)
 {
@@ -114,10 +179,10 @@ FT_TEST(test_file_cmp_directory_exists_missing_directory)
     int error_code = FT_ERR_SUCCESS;
     int exists_value = 1;
 
-    FT_ASSERT_EQ(FT_ERR_IO, cmp_directory_exists(
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, cmp_directory_exists(
         "cmp_directory_exists_missing_directory", &exists_value, &error_code));
     FT_ASSERT_EQ(0, exists_value);
-    FT_ASSERT_EQ(FT_ERR_IO, error_code);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, error_code);
     return (1);
 }
 

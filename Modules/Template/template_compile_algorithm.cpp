@@ -15,7 +15,40 @@
 #include "../RNG/rng.hpp"
 #include "pair.hpp"
 
-static int32_t instantiate_free_functions()
+struct s_invoke_reference_probe
+{
+    int32_t value;
+
+    constexpr int32_t &get_value() & noexcept;
+};
+
+constexpr int32_t &s_invoke_reference_probe::get_value() & noexcept
+{
+    return (this->value);
+}
+
+static constexpr ft_bool invoke_preserves_references()
+{
+    s_invoke_reference_probe probe = {0};
+    ft_invoke(&s_invoke_reference_probe::value, &probe) = 12;
+    ft_invoke(&s_invoke_reference_probe::get_value, probe) = 42;
+    ft_invoke([&probe]() -> int32_t & { return (probe.value); }) += 1;
+    return (probe.value == 43);
+}
+
+static_assert(invoke_preserves_references());
+
+static constexpr ft_bool algorithms_work_in_constant_evaluation()
+{
+    int32_t values[] = {3, 2, 1};
+    ft_reverse(values, values + 3);
+    return (values[0] == 1 && ft_binary_search(values, values + 3, 2)
+        && !ft_binary_search(values, values + 3, 4));
+}
+
+static_assert(algorithms_work_in_constant_evaluation());
+
+[[maybe_unused]] static int32_t instantiate_free_functions()
 {
     int32_t data[] = {1, 2, 3};
     ft_sort(data, data + 3);
@@ -56,4 +89,3 @@ static int32_t instantiate_free_functions()
     return (max_value + min_value);
 }
 
-static int32_t functions_dummy = (instantiate_free_functions(), 0);

@@ -210,6 +210,47 @@ FT_TEST(test_command_stack_undo_empty_returns_empty)
     return (1);
 }
 
+FT_TEST(test_command_stack_overflow_keeps_remaining_actions_in_order)
+{
+    command_action undo_entries[3];
+    command_action redo_entries[2];
+    command_stack stack;
+    command_test_context contexts[4];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, command_stack_initialize(&stack, undo_entries, 3,
+            redo_entries, 2));
+    ft_size_t index = 0;
+    while (index < 4)
+    {
+        command_test_reset_context(&contexts[index], 1);
+        const command_action action = command_test_make_action(&contexts[index], "add");
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, command_stack_execute(&stack, &action));
+        ++index;
+    }
+    while (index > 1)
+    {
+        --index;
+        const command_action *action = command_stack_peek_undo(&stack);
+        FT_ASSERT(action != ft_nullptr);
+        FT_ASSERT_EQ(static_cast<void *>(&contexts[index]),
+            action->context);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, command_stack_undo(&stack));
+    }
+    FT_ASSERT_EQ(FT_ERR_EMPTY, command_stack_undo(&stack));
+    FT_ASSERT_EQ(static_cast<int64_t>(1), contexts[0].value);
+    while (index < 3)
+    {
+        const command_action *action = command_stack_peek_redo(&stack);
+        FT_ASSERT(action != ft_nullptr);
+        FT_ASSERT_EQ(static_cast<void *>(&contexts[index]),
+            action->context);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, command_stack_redo(&stack));
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_EMPTY, command_stack_redo(&stack));
+    FT_ASSERT_EQ(static_cast<int64_t>(0), contexts[3].value);
+    return (1);
+}
+
 FT_TEST(test_command_stack_redo_empty_returns_empty)
 {
     command_action undo_entries[1];

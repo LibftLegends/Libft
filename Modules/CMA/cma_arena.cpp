@@ -309,34 +309,6 @@ static void cma_arena_free(cma_arena *arena, void *memory_pointer)
     return ;
 }
 
-static void *cma_arena_reallocate(void *memory_pointer, ft_size_t size,
-        void *user_data)
-{
-    ft_size_t previous_size;
-    ft_size_t copy_size;
-    void *new_pointer;
-
-    if (memory_pointer == nullptr)
-        return (cma_arena_allocate(size, user_data));
-    if (size == 0)
-    {
-        cma_arena_deallocate(memory_pointer, user_data);
-        return (nullptr);
-    }
-    previous_size = cma_arena_get_allocation_size(memory_pointer, user_data);
-    if (previous_size == 0)
-        return (nullptr);
-    new_pointer = cma_arena_allocate(size, user_data);
-    if (new_pointer == nullptr)
-        return (nullptr);
-    copy_size = previous_size;
-    if (copy_size > size)
-        copy_size = size;
-    ft_memcpy(new_pointer, memory_pointer, copy_size);
-    cma_arena_deallocate(memory_pointer, user_data);
-    return (new_pointer);
-}
-
 static ft_bool cma_small_arena_size_is_supported(ft_size_t size)
 {
     if (size == 0)
@@ -346,6 +318,7 @@ static ft_bool cma_small_arena_size_is_supported(ft_size_t size)
     return (FT_FALSE);
 }
 
+#ifdef LIBFT_TEST_BUILD
 void cma_small_arena_reset_for_tests(void)
 {
     if (g_cma_small_arena.buffer == nullptr)
@@ -366,6 +339,7 @@ void cma_small_arena_reset_for_tests(void)
     cma_small_arena_clear_free_lists();
     return ;
 }
+#endif
 
 static ft_bool cma_small_arena_prepare_locked(void)
 {
@@ -382,7 +356,7 @@ static ft_bool cma_small_arena_prepare_locked(void)
     return (FT_TRUE);
 }
 
-void *cma_small_arena_allocate_locked(ft_size_t size)
+void *cma_small_arena_allocate_locked(ft_size_t size, ft_size_t *allocation_size_out)
 {
     void *memory_pointer;
     ft_size_t allocation_size;
@@ -407,6 +381,7 @@ void *cma_small_arena_allocate_locked(ft_size_t size)
     if (memory_pointer == nullptr)
         return (nullptr);
     g_cma_small_arena_live_count++;
+    *allocation_size_out = allocation_size;
     return (memory_pointer);
 }
 
@@ -454,9 +429,9 @@ int32_t cma_small_arena_deallocate_locked(void *memory_pointer)
 {
     ft_size_t allocation_size;
 
-    if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_FALSE)
-        return (FT_ERR_INVALID_ARGUMENT);
     allocation_size = cma_small_arena_block_size_locked(memory_pointer);
+    if (allocation_size == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
     cma_arena_free(&g_cma_small_arena, memory_pointer);
     if (g_cma_small_arena_live_count > 0)
         g_cma_small_arena_live_count--;
@@ -468,17 +443,25 @@ int32_t cma_small_arena_deallocate_locked(void *memory_pointer)
     return (FT_ERR_SUCCESS);
 }
 
-void *cma_small_arena_reallocate_locked(void *memory_pointer, ft_size_t size)
+void *cma_small_arena_reallocate_locked(void *memory_pointer,
+        ft_size_t previous_size, ft_size_t size)
 {
     void *new_pointer;
+    ft_size_t copy_size;
 
-    if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_FALSE)
-        return (nullptr);
     if (size > CMA_SMALL_ARENA_MAX_ALLOCATION)
         return (nullptr);
-    new_pointer = cma_arena_reallocate(memory_pointer, size,
-            &g_cma_small_arena);
+    /* Keep the requested size observable through cma_alloc_size. A free
+     * slot can be reused here when its size class exactly matches. */
+    new_pointer = cma_small_arena_reuse_locked(size);
+    if (new_pointer == nullptr)
+        new_pointer = cma_arena_alloc(&g_cma_small_arena, size);
     if (new_pointer == nullptr)
         return (nullptr);
+    copy_size = previous_size;
+    if (copy_size > size)
+        copy_size = size;
+    ft_memcpy(new_pointer, memory_pointer, copy_size);
+    cma_arena_free(&g_cma_small_arena, memory_pointer);
     return (new_pointer);
 }

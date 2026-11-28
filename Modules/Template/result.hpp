@@ -12,10 +12,10 @@ struct ft_status
 {
     int32_t error_code;
 
-    static ft_status success() noexcept;
-    static ft_status failure(int32_t error_code) noexcept;
-    ft_bool is_success() const noexcept;
-    ft_bool is_error() const noexcept;
+    static constexpr ft_status success() noexcept;
+    static constexpr ft_status failure(int32_t error_code) noexcept;
+    constexpr ft_bool is_success() const noexcept;
+    constexpr ft_bool is_error() const noexcept;
 };
 
 template <typename ValueType>
@@ -58,33 +58,26 @@ class ft_result
         const ValueType *get_value() const noexcept;
 };
 
-inline ft_status ft_status::success() noexcept
+constexpr ft_status ft_status::success() noexcept
 {
-    ft_status status;
-
-    status.error_code = FT_ERR_SUCCESS;
-    return (status);
+    return (ft_status{FT_ERR_SUCCESS});
 }
 
-inline ft_status ft_status::failure(int32_t error_code) noexcept
+constexpr ft_status ft_status::failure(int32_t error_code) noexcept
 {
-    ft_status status;
-
     if (error_code == FT_ERR_SUCCESS)
-        status.error_code = FT_ERR_INVALID_ARGUMENT;
-    else
-        status.error_code = error_code;
-    return (status);
+        return (ft_status{FT_ERR_INVALID_ARGUMENT});
+    return (ft_status{error_code});
 }
 
-inline ft_bool ft_status::is_success() const noexcept
+constexpr ft_bool ft_status::is_success() const noexcept
 {
     if (this->error_code == FT_ERR_SUCCESS)
         return (FT_TRUE);
     return (FT_FALSE);
 }
 
-inline ft_bool ft_status::is_error() const noexcept
+constexpr ft_bool ft_status::is_error() const noexcept
 {
     if (this->error_code != FT_ERR_SUCCESS)
         return (FT_TRUE);
@@ -115,7 +108,7 @@ void ft_result<ValueType>::destroy_value() noexcept
 
 template <typename ValueType>
 ft_result<ValueType>::ft_result() noexcept
-    : _error_code(FT_ERR_SUCCESS), _has_value(FT_FALSE), _storage()
+    : _error_code(FT_ERR_SUCCESS), _has_value(FT_FALSE)
 {
     return ;
 }

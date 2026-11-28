@@ -33,10 +33,19 @@ The `Geometry` module provides 2D and 3D primitive types and intersection helper
 - `geometry_ray_intersect_triangle(...)` - Intersects a ray with a triangle and writes hit information.
 - `geometry_ray_intersect_aabb3(...)` - Intersects a ray with a 3D box.
 - `geometry_sphere_intersect_aabb3(...)` - Tests a sphere against a 3D box.
-- `geometry_swept_sphere_intersect_aabb3(...)` - Sweeps a sphere along velocity against a 3D box.
+- `geometry_swept_sphere_intersect_aabb3(...)` - Checks the center's motion through
+  a box expanded by the sphere radius over the time interval `[0, 1]`. An
+  initial overlap reports time zero. The hit point is the sphere center at
+  the reported time. The expanded-box approximation can report early hits near
+  edges and corners.
 - `geometry_frustum_contains_point(...)` - Tests whether a point is inside a frustum.
 - `geometry_frustum_intersect_aabb3(...)` - Tests a frustum against a 3D box.
 
 ## Thread Safety
 
 `aabb`, `circle`, and `sphere` expose `enable_thread_safety`, `disable_thread_safety`, and `is_thread_safe` for optional recursive locking around mutable primitive state.
+
+Set up or tear down thread safety while callers have exclusive access to the
+shape. Concurrent moves use ordered locks and keep each shape's mutex attached
+to that shape. If a move leaves the destination destroyed, destruction or
+reinitialization releases its retained mutex once concurrent use has ended.

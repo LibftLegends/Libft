@@ -9,6 +9,7 @@
 
 #include "../Compatebility/compatebility_stack_trace.hpp"
 #include <cstdint>
+#include <atomic>
 #include <stdint.h>
 
 #define PAGE_SIZE 131072
@@ -42,7 +43,7 @@
 #endif
 
 extern ft_size_t    g_cma_alloc_limit;
-extern ft_bool    g_cma_alloc_logging;
+extern std::atomic<ft_bool> g_cma_alloc_logging;
 extern ft_size_t    g_cma_allocation_count;
 extern ft_size_t    g_cma_free_count;
 extern ft_size_t    g_cma_current_bytes;
@@ -113,6 +114,10 @@ void    cma_free_list_remove(Block *block);
 void    cma_free_list_reset(void);
 ft_size_t cma_free_bin_for_size(ft_size_t size);
 int32_t cma_lock_allocator(ft_bool *lock_acquired);
+/* Arena operations hold the same lock. Open the legacy metadata only
+ * before following a page or block pointer. */
+int32_t cma_lock_allocator_arena(ft_bool *lock_acquired);
+int32_t cma_require_metadata_locked(void);
 int32_t cma_unlock_allocator(ft_bool lock_acquired);
 int32_t cma_enable_thread_safety(void);
 int32_t cma_disable_thread_safety(void);
@@ -121,6 +126,9 @@ int32_t cma_disable_thread_safety_timed(uint64_t timeout_ms);
 int32_t cma_set_thread_safety_timed(ft_bool enable, uint64_t timeout_ms);
 int32_t cma_try_set_thread_safety(ft_bool enable);
 ft_bool cma_is_thread_safe_enabled(void);
+#ifdef LIBFT_TEST_BUILD
+ft_bool cma_allocator_transition_pending_for_test(void);
+#endif
 void cma_set_alloc_logging(ft_bool enable);
 ft_bool cma_get_alloc_logging(void);
 void cma_record_allocation_log(const char *format_string, ...)
@@ -142,7 +150,7 @@ ft_size_t    cma_backend_block_size(const void *memory_pointer)
             __attribute__ ((warn_unused_result, hot));
 int32_t cma_backend_checked_block_size(const void *memory_pointer,
             ft_size_t *block_size) __attribute__ ((warn_unused_result, hot));
-void    *cma_small_arena_allocate_locked(ft_size_t size)
+void    *cma_small_arena_allocate_locked(ft_size_t size, ft_size_t *allocation_size_out)
             __attribute__ ((warn_unused_result, hot));
 void    *cma_small_arena_aligned_allocate_locked(ft_size_t alignment,
             ft_size_t size) __attribute__ ((warn_unused_result, hot));
@@ -153,8 +161,11 @@ ft_size_t cma_small_arena_block_size_locked(const void *memory_pointer)
 int32_t cma_small_arena_deallocate_locked(void *memory_pointer)
             __attribute__ ((hot));
 void    *cma_small_arena_reallocate_locked(void *memory_pointer,
-            ft_size_t size) __attribute__ ((warn_unused_result, hot));
+            ft_size_t previous_size, ft_size_t size)
+            __attribute__ ((warn_unused_result, hot));
+#ifdef LIBFT_TEST_BUILD
 void    cma_small_arena_reset_for_tests(void);
+#endif
 #ifndef CMA_ENABLE_METADATA_PROTECTION
 # define CMA_ENABLE_METADATA_PROTECTION 1
 #endif
@@ -246,7 +257,7 @@ inline ft_size_t cma_block_user_size(const Block *block)
     return (cma_debug_user_size(block));
 }
 
-inline __attribute__((always_inline, hot)) ft_size_t align16(ft_size_t size)
+constexpr __attribute__((always_inline, hot)) ft_size_t align16(ft_size_t size)
 {
     return ((size + 15) & ~static_cast<ft_size_t>(15));
 }

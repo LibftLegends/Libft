@@ -79,3 +79,14 @@ FT_TEST(test_math_sqrt_recovers_after_nan)
     FT_ASSERT(math_fabs(result - 9.0) < 0.000001);
     return (1);
 }
+
+FT_TEST(test_math_sqrt_preserves_relative_accuracy_at_exponent_limits)
+{
+    constexpr double TINY_INPUT = 1e-300;
+    constexpr double LARGE_INPUT = 1e300;
+
+    FT_ASSERT(math_fabs(math_sqrt(TINY_INPUT) / 1e-150 - 1.0) < 1e-12);
+    FT_ASSERT(math_fabs(math_sqrt(LARGE_INPUT) / 1e150 - 1.0) < 1e-12);
+    FT_ASSERT_EQ(0.0, math_sqrt(std::numeric_limits<double>::denorm_min()));
+    return (1);
+}

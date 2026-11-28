@@ -49,6 +49,7 @@ class vector3
         double  get_x() const;
         double  get_y() const;
         double  get_z() const;
+        int32_t get_components(double &x, double &y, double &z) const noexcept;
         vector3 add(const vector3 &other) const;
         vector3 subtract(const vector3 &other) const;
         double  dot(const vector3 &other) const;

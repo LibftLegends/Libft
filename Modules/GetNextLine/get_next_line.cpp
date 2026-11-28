@@ -174,27 +174,7 @@ static gnl_stream *gnl_acquire_stream(int32_t file_descriptor, int32_t *stream_e
     return (existing_stream);
 }
 
-static char* allocate_new_string(char* string_one, char* string_two, int32_t *allocation_error)
-{
-    int32_t total_length = 0;
-    char* new_string;
-
-    if (allocation_error)
-        *allocation_error = FT_ERR_SUCCESS;
-    if (string_one)
-        total_length += ft_strlen(string_one);
-    if (string_two)
-        total_length += ft_strlen(string_two);
-    new_string = static_cast<char*>(cma_malloc(total_length + 1));
-    if (!new_string)
-    {
-        if (allocation_error)
-            *allocation_error = FT_ERR_NO_MEMORY;
-        return (ft_nullptr);
-    }
-    return (new_string);
-}
-
+#ifdef LIBFT_TEST_BUILD
 static void    *(*g_gnl_leftover_alloc_hook)(ft_size_t size) = cma_malloc;
 
 void    gnl_set_leftover_alloc_hook(void *(*hook)(ft_size_t size))
@@ -211,6 +191,7 @@ void    gnl_reset_leftover_alloc_hook(void)
     g_gnl_leftover_alloc_hook = cma_malloc;
     return ;
 }
+#endif
 
 void    gnl_reset_all_streams(void)
 {
@@ -262,215 +243,127 @@ void    gnl_destroy_streams_for_tests(void)
 }
 #endif
 
-char* ft_strjoin_gnl(char* string_one, char* string_two)
+char *ft_strjoin_gnl(char *string_one, char *string_two)
 {
-    char* result;
-    char* original_string = string_one;
-    int32_t index;
-    int32_t error_code;
-
-    if (!string_one && !string_two)
+    if (string_one == ft_nullptr && string_two == ft_nullptr)
         return (ft_nullptr);
-    error_code = FT_ERR_SUCCESS;
-    result = allocate_new_string(string_one, string_two, &error_code);
-    if (!result)
-    {
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_NO_MEMORY;
+    const ft_size_t first_length = ft_strlen_size_t(string_one);
+    const ft_size_t second_length = ft_strlen_size_t(string_two);
+    if (second_length >= SIZE_MAX - first_length)
         return (ft_nullptr);
-    }
-    index = 0;
-    if (string_one)
-        while (*string_one)
-            result[index++] = *string_one++;
-    if (string_two)
-        while (*string_two)
-            result[index++] = *string_two++;
-    result[index] = '\0';
-    cma_free(original_string);
+    char *result = static_cast<char *>(cma_malloc(first_length + second_length + 1U));
+    if (result == ft_nullptr)
+        return (ft_nullptr);
+    if (first_length != 0U)
+        ft_memcpy(result, string_one, first_length);
+    if (second_length != 0U)
+        ft_memcpy(result + first_length, string_two, second_length);
+    result[first_length + second_length] = '\0';
+    cma_free(string_one);
     return (result);
 }
 
-static char* leftovers(char* readed_string, ft_bool *buffer_was_freed, int32_t *leftover_error)
+static char *copy_leftover(const char *buffer, ft_size_t length)
 {
-    int32_t read_index = 0;
-    int32_t write_index = 0;
-    char* string;
-
-    if (buffer_was_freed)
-        *buffer_was_freed = FT_FALSE;
-    if (leftover_error)
-        *leftover_error = FT_ERR_SUCCESS;
-    while (readed_string[read_index] && readed_string[read_index] != '\n')
-        read_index++;
-    if (!readed_string[read_index])
-    {
-        cma_free(readed_string);
-        if (buffer_was_freed)
-            *buffer_was_freed = FT_TRUE;
-        return (ft_nullptr);
-    }
-    string = static_cast<char*>(g_gnl_leftover_alloc_hook(ft_strlen(readed_string)
-            - read_index + 1));
-    if (!string)
-    {
-        if (leftover_error)
-            *leftover_error = FT_ERR_NO_MEMORY;
-        if (readed_string)
-        {
-            ft_size_t combined_length;
-
-            combined_length = ft_strlen(readed_string);
-            if (combined_length > 0)
-                ft_bzero(readed_string, combined_length);
-        }
-        cma_free(readed_string);
-        if (buffer_was_freed)
-            *buffer_was_freed = FT_TRUE;
-        return (ft_nullptr);
-    }
-    read_index++;
-    while (readed_string[read_index])
-        string[write_index++] = readed_string[read_index++];
-    string[write_index] = '\0';
-    cma_free(readed_string);
-    if (buffer_was_freed)
-        *buffer_was_freed = FT_TRUE;
-    return (string);
+    char *leftover;
+#ifdef LIBFT_TEST_BUILD
+    leftover = static_cast<char *>(g_gnl_leftover_alloc_hook(length + 2U));
+#else
+    leftover = static_cast<char *>(cma_malloc(length + 2U));
+#endif
+    if (leftover != ft_nullptr)
+        ft_memcpy(leftover, buffer, length + 1U);
+    return (leftover);
 }
 
-static char* malloc_gnl(char* readed_string, ft_size_t length, int32_t *allocation_error)
+static int32_t append_read_chunk(char *&combined, ft_size_t &length,
+    ft_size_t &capacity, const char *chunk, ft_size_t chunk_length)
 {
-    char* string;
-
-    if (allocation_error)
-        *allocation_error = FT_ERR_SUCCESS;
-    if (readed_string && readed_string[length] == '\n')
-        string = static_cast<char*>(cma_malloc(length + 2));
-    else
-        string = static_cast<char*>(cma_malloc(length + 1));
-    if (!string)
+    if (chunk_length >= SIZE_MAX - length)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t required = length + chunk_length + 1U;
+    if (required > capacity)
     {
-        if (allocation_error)
-            *allocation_error = FT_ERR_NO_MEMORY;
-        return (ft_nullptr);
+        ft_size_t new_capacity = required;
+        if (capacity <= SIZE_MAX / 2U && capacity * 2U > required)
+            new_capacity = capacity * 2U;
+        char *resized;
+        if (combined == ft_nullptr)
+            resized = static_cast<char *>(cma_malloc(new_capacity));
+        else
+            resized = static_cast<char *>(cma_realloc(combined, new_capacity));
+        if (resized == ft_nullptr && new_capacity != required)
+        {
+            resized = static_cast<char *>(cma_realloc(combined, required));
+            new_capacity = required;
+        }
+        if (resized == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        combined = resized;
+        capacity = new_capacity;
     }
-    return (string);
+    if (chunk_length != 0U)
+        ft_memcpy(combined + length, chunk, chunk_length);
+    length += chunk_length;
+    combined[length] = '\0';
+    return (FT_ERR_SUCCESS);
 }
 
-static char* fetch_line(char* readed_string, int32_t *line_error)
+static char *read_stream(gnl_stream &stream, char *combined, ft_size_t buffer_size,
+    ft_size_t &length, ft_size_t &line_length, ft_bool &has_newline)
 {
-    ft_size_t index;
-    char* string;
-    int32_t error_code;
-
-    index = 0;
-    if (line_error)
-        *line_error = FT_ERR_SUCCESS;
-    if (!readed_string[index])
+    length = ft_strlen_size_t(combined);
+    line_length = length;
+    has_newline = FT_FALSE;
+    if (length != 0U)
     {
-        if (line_error)
-            *line_error = FT_ERR_END_OF_FILE;
-        return (ft_nullptr);
-    }
-    while (readed_string[index] && readed_string[index] != '\n')
-        index++;
-    error_code = FT_ERR_SUCCESS;
-    string = malloc_gnl(readed_string, index, &error_code);
-    if (!string)
-    {
-        if (line_error)
-            *line_error = error_code;
-        return (ft_nullptr);
-    }
-    index = 0;
-    while (readed_string[index] && readed_string[index] != '\n')
-    {
-        string[index] = readed_string[index];
-        index++;
-    }
-    if (readed_string[index] == '\n')
-    {
-        string[index] = '\n';
-        index++;
-    }
-    string[index] = '\0';
-    return (string);
-}
-
-static char* read_stream(gnl_stream *stream, char* readed_string, ft_size_t buffer_size,
-    int32_t *read_error)
-{
-    char* buffer;
-    int64_t readed_bytes;
-    ft_bool has_read_bytes;
-    int32_t error_code;
-
-    if (read_error)
-        *read_error = FT_ERR_SUCCESS;
-    if (!stream)
-    {
-        if (readed_string)
-            cma_free(readed_string);
-        if (read_error)
-            *read_error = FT_ERR_INVALID_ARGUMENT;
-        return (ft_nullptr);
-    }
-    if (readed_string && ft_strchr(readed_string, '\n'))
-        return (readed_string);
-    buffer = static_cast<char*>(cma_malloc(buffer_size + 1));
-    if (!buffer)
-    {
-        if (read_error)
-            *read_error = FT_ERR_NO_MEMORY;
-        if (readed_string)
-            cma_free(readed_string);
-        return (ft_nullptr);
-    }
-    readed_bytes = 1;
-    has_read_bytes = FT_FALSE;
-    while (((readed_string == ft_nullptr) || !ft_strchr(readed_string, '\n'))
-        && readed_bytes != 0)
-    {
-        readed_bytes = stream->read(buffer, buffer_size);
-        if (readed_bytes < 0)
+        const char *newline = static_cast<const char *>(ft_memchr(combined, '\n', length));
+        if (newline != ft_nullptr)
         {
-            cma_free(buffer);
-            if (readed_string)
-            {
-                cma_free(readed_string);
-            }
-            if (read_error)
-                *read_error = FT_ERR_IO;
-            return (ft_nullptr);
-        }
-        buffer[static_cast<ft_size_t>(readed_bytes)] = '\0';
-        if (readed_bytes > 0)
-        {
-            char* previous_string;
-
-            has_read_bytes = FT_TRUE;
-            previous_string = readed_string;
-            readed_string = ft_strjoin_gnl(readed_string, buffer);
-            if (!readed_string)
-            {
-                error_code = FT_ERR_NO_MEMORY;
-                if (previous_string)
-                    cma_free(previous_string);
-                cma_free(buffer);
-                if (read_error)
-                    *read_error = error_code;
-                return (ft_nullptr);
-            }
+            line_length = static_cast<ft_size_t>(newline - combined) + 1U;
+            has_newline = FT_TRUE;
+            return (combined);
         }
     }
-    cma_free(buffer);
-    if (!has_read_bytes && !readed_string)
+    char *chunk = static_cast<char *>(cma_malloc(buffer_size));
+    if (chunk == ft_nullptr)
     {
-        if (read_error)
-            *read_error = FT_ERR_END_OF_FILE;
+        cma_free(combined);
+        return (ft_nullptr);
     }
-    return (readed_string);
+    ft_size_t capacity = 0U;
+    if (combined != ft_nullptr)
+        capacity = length + 1U;
+    while (FT_TRUE)
+    {
+        const int64_t bytes_read = stream.read(chunk, buffer_size);
+        if (bytes_read < 0 || static_cast<ft_size_t>(bytes_read) > buffer_size)
+        {
+            cma_free(combined);
+            combined = ft_nullptr;
+            break ;
+        }
+        if (bytes_read == 0)
+            break ;
+        const ft_size_t chunk_length = ft_strnlen(chunk, static_cast<ft_size_t>(bytes_read));
+        const char *newline = static_cast<const char *>(ft_memchr(chunk, '\n', chunk_length));
+        const ft_size_t previous_length = length;
+        if (append_read_chunk(combined, length, capacity, chunk, chunk_length) != FT_ERR_SUCCESS)
+        {
+            cma_free(combined);
+            combined = ft_nullptr;
+            break ;
+        }
+        if (newline != ft_nullptr)
+        {
+            line_length = previous_length + static_cast<ft_size_t>(newline - chunk) + 1U;
+            has_newline = FT_TRUE;
+            break ;
+        }
+        line_length = length;
+    }
+    cma_free(chunk);
+    return (combined);
 }
 
 int32_t gnl_clear_stream(int32_t file_descriptor)
@@ -523,109 +416,65 @@ int32_t gnl_clear_stream(int32_t file_descriptor)
     return (FT_ERR_SUCCESS);
 }
 
-char    *get_next_line(int32_t file_descriptor, ft_size_t buffer_size)
+char *get_next_line(int32_t file_descriptor, ft_size_t buffer_size)
 {
-    char                                   *line;
-    char                                   *combined_buffer;
-    char                                   *leftover_string;
-    ft_bool                                    combined_buffer_was_freed;
-    int32_t                                     map_error_before;
-    int32_t                                     map_error_after;
-    int32_t                                     leftovers_error;
-    gnl_stream                              *stream;
-    int32_t                                     stream_error;
-    int32_t                                     error_code;
-    int32_t                                     read_error;
-    int32_t                                     line_error;
-    int32_t                                     init_error;
-
-    line = ft_nullptr;
-    combined_buffer = ft_nullptr;
-    leftover_string = ft_nullptr;
-    if (buffer_size == 0 || file_descriptor < 0)
+    if (buffer_size == 0U || buffer_size >= SIZE_MAX || file_descriptor < 0)
         return (ft_nullptr);
-    init_error = gnl_ensure_maps_initialised();
-    if (init_error != FT_ERR_SUCCESS)
+    gnl_stream *stream = gnl_acquire_stream(file_descriptor, ft_nullptr);
+    if (stream == ft_nullptr)
         return (ft_nullptr);
-    stream = gnl_acquire_stream(file_descriptor, &stream_error);
-    if (!stream)
+    int32_t map_error_before = g_gnl_leftovers.get_error();
+    auto iterator = g_gnl_leftovers.find(file_descriptor);
+    if (map_has_new_error(g_gnl_leftovers, map_error_before, ft_nullptr))
+        return (ft_nullptr);
+    char *combined = ft_nullptr;
+    if (iterator != g_gnl_leftovers.end())
     {
-        error_code = stream_error;
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        return (ft_nullptr);
-    }
-    map_error_before = g_gnl_leftovers.get_error();
-    ft_unordered_map<int32_t, char*>::iterator map_iterator = g_gnl_leftovers.find(file_descriptor);
-    if (map_has_new_error(g_gnl_leftovers, map_error_before, &map_error_after))
-        return (ft_nullptr);
-    if (map_iterator != g_gnl_leftovers.end())
-    {
-        combined_buffer = map_iterator->second;
+        combined = iterator->second;
         map_error_before = g_gnl_leftovers.get_error();
         g_gnl_leftovers.erase(file_descriptor);
-        if (map_has_new_error(g_gnl_leftovers, map_error_before, &map_error_after))
+        if (map_has_new_error(g_gnl_leftovers, map_error_before, ft_nullptr))
         {
-            if (combined_buffer)
-                cma_free(combined_buffer);
+            cma_free(combined);
             return (ft_nullptr);
         }
     }
-    read_error = FT_ERR_SUCCESS;
-    combined_buffer = read_stream(stream, combined_buffer, buffer_size, &read_error);
-    if (!combined_buffer)
-    {
-        error_code = read_error;
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_IO;
+    ft_size_t length;
+    ft_size_t line_length;
+    ft_bool has_newline;
+    combined = read_stream(*stream, combined, buffer_size, length, line_length, has_newline);
+    if (combined == ft_nullptr)
         return (ft_nullptr);
-    }
-    line_error = FT_ERR_SUCCESS;
-    line = fetch_line(combined_buffer, &line_error);
-    combined_buffer_was_freed = FT_FALSE;
-    leftover_string = leftovers(combined_buffer, &combined_buffer_was_freed, &leftovers_error);
-    if (leftovers_error != FT_ERR_SUCCESS)
+    char *line = ft_nullptr;
+    if (line_length != 0U)
     {
-        if (line)
+        line = static_cast<char *>(cma_malloc(line_length + 1U));
+        if (line != ft_nullptr)
+        {
+            ft_memcpy(line, combined, line_length);
+            line[line_length] = '\0';
+        }
+    }
+    char *leftover = ft_nullptr;
+    if (has_newline == FT_TRUE)
+    {
+        leftover = copy_leftover(combined + line_length, length - line_length);
+        if (leftover == ft_nullptr)
+        {
+            ft_bzero(combined, length);
+            cma_free(combined);
             cma_free(line);
-        if (combined_buffer && !combined_buffer_was_freed)
-        {
-            ft_size_t combined_length;
-
-            combined_length = ft_strlen(combined_buffer);
-            if (combined_length > 0)
-                ft_bzero(combined_buffer, combined_length);
-            cma_free(combined_buffer);
+            return (ft_nullptr);
         }
-        return (ft_nullptr);
     }
-    if (!line)
-    {
-        if (leftover_string)
-        {
-            map_error_before = g_gnl_leftovers.get_error();
-            g_gnl_leftovers.insert(file_descriptor, leftover_string);
-            if (map_has_new_error(g_gnl_leftovers, map_error_before, &map_error_after))
-            {
-                cma_free(leftover_string);
-                return (ft_nullptr);
-            }
-#ifdef LIBFT_TEST_BUILD
-            gnl_untrack_runtime_leaks();
-#endif
-        }
-        error_code = line_error;
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_END_OF_FILE;
-        return (ft_nullptr);
-    }
-    if (leftover_string)
+    cma_free(combined);
+    if (leftover != ft_nullptr)
     {
         map_error_before = g_gnl_leftovers.get_error();
-        g_gnl_leftovers.insert(file_descriptor, leftover_string);
-        if (map_has_new_error(g_gnl_leftovers, map_error_before, &map_error_after))
+        g_gnl_leftovers.insert(file_descriptor, leftover);
+        if (map_has_new_error(g_gnl_leftovers, map_error_before, ft_nullptr))
         {
-            cma_free(leftover_string);
+            cma_free(leftover);
             cma_free(line);
             return (ft_nullptr);
         }

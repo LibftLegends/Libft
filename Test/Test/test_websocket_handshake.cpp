@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "websocket_test_utils.hpp"
+#include "../../Modules/Networking/networking_websocket_handshake_internal.hpp"
 #include "networking_test_support.hpp"
 
 #include "../../Modules/Basic/class_nullptr.hpp"
@@ -103,6 +104,43 @@ static void websocket_invalid_handshake_server(websocket_invalid_handshake_conte
     nw_close(client_socket);
     context->result = 0;
     return ;
+}
+
+FT_TEST(test_websocket_accept_key_matches_known_value)
+{
+    constexpr char KEY[] = "dGhlIHNhbXBsZSBub25jZQ==";
+    constexpr char EXPECTED[] = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+    char accept[WEBSOCKET_ACCEPT_KEY_LENGTH + 1U];
+    FT_ASSERT(websocket_compute_accept_key(KEY, sizeof(KEY) - 1U, accept));
+    FT_ASSERT_EQ(0, ft_memcmp(accept, EXPECTED, sizeof(EXPECTED)));
+    return (1);
+}
+
+static ft_bool websocket_check_additional_frames(ft_websocket_client &client,
+    ft_websocket_server &server, int32_t client_descriptor, ft_string &message, ft_string &received)
+{
+    message.clear();
+    if (client.send_text(message) != FT_ERR_SUCCESS
+        || server.receive_frame_locked(client_descriptor, received) != FT_ERR_SUCCESS
+        || !received.empty() || server.send_text(client_descriptor, message) != FT_ERR_SUCCESS
+        || client.receive_text(received) != FT_ERR_SUCCESS || !received.empty())
+        return (FT_FALSE);
+
+    char payload[4097];
+    ft_memset(payload, 'm', sizeof(payload));
+    payload[17] = '\0';
+    payload[sizeof(payload) - 1U] = 'z';
+    if (message.assign(payload, sizeof(payload)) != FT_ERR_SUCCESS
+        || client.send_text(message) != FT_ERR_SUCCESS
+        || server.receive_frame_locked(client_descriptor, received) != FT_ERR_SUCCESS
+        || received.size() != sizeof(payload)
+        || ft_memcmp(received.c_str(), payload, sizeof(payload)) != 0
+        || server.send_text(client_descriptor, message) != FT_ERR_SUCCESS
+        || client.receive_text(received) != FT_ERR_SUCCESS
+        || received.size() != sizeof(payload)
+        || ft_memcmp(received.c_str(), payload, sizeof(payload)) != 0)
+        return (FT_FALSE);
+    return (FT_TRUE);
 }
 
 FT_TEST(test_websocket_handshake_and_echo)
@@ -211,10 +249,12 @@ FT_TEST(test_websocket_handshake_and_echo)
         FT_ASSERT_EQ(FT_ERR_SUCCESS, received.destroy());
         return (0);
     }
+    const ft_bool frames_ok = received == reply
+        && websocket_check_additional_frames(client, server, context.client_fd, message, received);
     client.close();
     if (context.client_fd >= 0)
         nw_close(context.client_fd);
-    if (received == reply)
+    if (frames_ok)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, message.destroy());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, reply.destroy());

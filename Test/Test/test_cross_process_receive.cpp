@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CrossProcess/cross_process.hpp"
+#include "../../Modules/Compatebility/compatebility_cross_process.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #include "../../Modules/Errno/errno.hpp"
@@ -166,6 +167,7 @@ FT_TEST(test_cross_process_receive_memory_basic)
     FT_ASSERT_EQ(0, send_result);
     receive_result = cp_receive_memory(sockets[1], result);
     FT_ASSERT_EQ(0, receive_result);
+    FT_ASSERT_EQ(FT_TRUE, result.consumed);
     close_result = ::close(sockets[0]);
     FT_ASSERT_EQ(0, close_result);
     close_result = ::close(sockets[1]);
@@ -187,6 +189,50 @@ FT_TEST(test_cross_process_receive_memory_basic)
 
     std::memcpy(&post_error_value, mapping + error_offset, sizeof(int));
     FT_ASSERT_EQ(0, post_error_value);
+    FT_ASSERT_EQ(0, pthread_mutex_destroy(reinterpret_cast<pthread_mutex_t *>(mapping)));
+    FT_ASSERT_EQ(0, munmap(mapping_ptr, message.remote_memory_size));
+    FT_ASSERT_EQ(0, cleanup_shared_memory_file(message.shared_memory_name));
+    return (1);
+}
+
+FT_TEST(test_cross_process_receive_memory_cleanup_failure_reports_consumed)
+{
+    cross_process_message message;
+    cross_process_read_result result;
+    void *mapping_ptr;
+    unsigned char *mapping;
+    size_t data_offset;
+    size_t error_offset;
+    int sockets[2];
+    int send_result;
+    int receive_result;
+    int close_result;
+    size_t index;
+
+    mapping_ptr = ft_nullptr;
+    mapping = ft_nullptr;
+    data_offset = 0;
+    error_offset = 0;
+    FT_ASSERT_EQ(0, create_shared_memory("/cross_process_cleanup", "payload",
+        std::strlen("payload"), message, mapping_ptr, mapping, data_offset,
+        error_offset));
+    FT_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+    send_result = cp_send_descriptor(sockets[0], message);
+    FT_ASSERT_EQ(0, send_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_cross_process_test_fail_next_unlock());
+    receive_result = cp_receive_memory(sockets[1], result);
+    FT_ASSERT_EQ(FT_ERR_IO, receive_result);
+    FT_ASSERT_EQ(FT_TRUE, result.consumed);
+    index = 0;
+    while (index < std::strlen("payload"))
+    {
+        FT_ASSERT_EQ(0, mapping[data_offset + index]);
+        index++;
+    }
+    close_result = ::close(sockets[0]);
+    FT_ASSERT_EQ(0, close_result);
+    close_result = ::close(sockets[1]);
+    FT_ASSERT_EQ(0, close_result);
     FT_ASSERT_EQ(0, pthread_mutex_destroy(reinterpret_cast<pthread_mutex_t *>(mapping)));
     FT_ASSERT_EQ(0, munmap(mapping_ptr, message.remote_memory_size));
     FT_ASSERT_EQ(0, cleanup_shared_memory_file(message.shared_memory_name));
@@ -335,6 +381,112 @@ FT_TEST(test_cross_process_receive_memory_invalid_error_offset)
     return (1);
 }
 
+FT_TEST(test_cross_process_receive_invalid_descriptor_preserves_result)
+{
+    cross_process_message message;
+    cross_process_read_result result;
+    void *mapping_ptr;
+    unsigned char *mapping;
+    size_t data_offset;
+    size_t error_offset;
+    int sockets[2];
+    int send_result;
+    int receive_result;
+    int close_result;
+    const char *payload;
+    size_t payload_length;
+
+    payload = "payload";
+    payload_length = std::strlen(payload);
+    mapping_ptr = ft_nullptr;
+    mapping = ft_nullptr;
+    data_offset = 0;
+    error_offset = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        result.shared_memory_name.initialize("old-name"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result.payload.initialize("old-payload"));
+    result.consumed = FT_TRUE;
+    FT_ASSERT_EQ(0, create_shared_memory("/cross_process_result_preserve",
+        payload, payload_length, message, mapping_ptr, mapping, data_offset,
+        error_offset));
+    message.remote_memory_address = message.stack_base_address - 1U;
+    FT_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+    send_result = cp_send_descriptor(sockets[0], message);
+    FT_ASSERT_EQ(0, send_result);
+    errno = 0;
+    receive_result = cp_receive_memory(sockets[1], result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, receive_result);
+    FT_ASSERT_EQ(EINVAL, errno);
+    FT_ASSERT_EQ(FT_FALSE, result.consumed);
+    FT_ASSERT(result.shared_memory_name == "old-name");
+    FT_ASSERT(result.payload == "old-payload");
+    close_result = ::close(sockets[0]);
+    FT_ASSERT_EQ(0, close_result);
+    close_result = ::close(sockets[1]);
+    FT_ASSERT_EQ(0, close_result);
+    FT_ASSERT_EQ(0, pthread_mutex_destroy(
+        reinterpret_cast<pthread_mutex_t *>(mapping)));
+    FT_ASSERT_EQ(0, munmap(mapping_ptr, message.remote_memory_size));
+    FT_ASSERT_EQ(0, cleanup_shared_memory_file(message.shared_memory_name));
+    return (1);
+}
+
+FT_TEST(test_cross_process_receive_memory_rejects_error_before_payload)
+{
+    cross_process_message message;
+    cross_process_read_result result;
+    void *mapping_ptr;
+    unsigned char *mapping;
+    size_t data_offset;
+    size_t error_offset;
+    int sockets[2];
+    int send_result;
+    int receive_result;
+    int close_result;
+    const char *payload;
+    size_t payload_length;
+    size_t index;
+    int stored_error_value;
+
+    payload = "payload before error";
+    payload_length = std::strlen(payload);
+    mapping_ptr = ft_nullptr;
+    mapping = ft_nullptr;
+    data_offset = 0;
+    error_offset = 0;
+    FT_ASSERT_EQ(0, create_shared_memory("/cross_process_error_before_payload",
+        payload, payload_length, message, mapping_ptr, mapping, data_offset,
+        error_offset));
+    message.error_memory_address = message.stack_base_address + data_offset - 1U;
+    FT_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+    send_result = cp_send_descriptor(sockets[0], message);
+    FT_ASSERT_EQ(0, send_result);
+    errno = 0;
+    receive_result = cp_receive_memory(sockets[1], result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, receive_result);
+    FT_ASSERT_EQ(EINVAL, errno);
+    FT_ASSERT_EQ(FT_FALSE, result.consumed);
+    close_result = ::close(sockets[0]);
+    FT_ASSERT_EQ(0, close_result);
+    close_result = ::close(sockets[1]);
+    FT_ASSERT_EQ(0, close_result);
+    index = 0;
+    while (index < payload_length)
+    {
+        FT_ASSERT_EQ(static_cast<unsigned char>(payload[index]),
+            mapping[data_offset + index]);
+        index++;
+    }
+    ft_memcpy(&stored_error_value, mapping + error_offset,
+        sizeof(stored_error_value));
+    FT_ASSERT_EQ(123, stored_error_value);
+    FT_ASSERT_EQ(0, pthread_mutex_destroy(
+        reinterpret_cast<pthread_mutex_t *>(mapping)));
+    FT_ASSERT_EQ(0, munmap(mapping_ptr, message.remote_memory_size));
+    FT_ASSERT_EQ(0, cleanup_shared_memory_file(message.shared_memory_name));
+    return (1);
+}
+
 FT_TEST(test_cross_process_receive_memory_descriptor_disconnect)
 {
     cross_process_read_result result;
@@ -411,7 +563,7 @@ FT_TEST(test_cross_process_receive_memory_invalid_mutex_offset)
     FT_ASSERT_EQ(0, create_shared_memory("/cross_process_invalid_mutex", payload, payload_length, message, mapping_ptr, mapping,
         data_offset, error_offset));
     shared_mutex = reinterpret_cast<pthread_mutex_t *>(mapping);
-    message.shared_mutex_address = message.stack_base_address + message.remote_memory_size;
+    message.shared_mutex_address = message.stack_base_address - 1U;
     FT_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
     send_result = cp_send_descriptor(sockets[0], message);
     FT_ASSERT_EQ(0, send_result);

@@ -4,6 +4,7 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <csignal>
 #include <cstring>
+#include <thread>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -86,11 +87,35 @@ FT_TEST(test_pt_recursive_mutex_recursive_lock_then_destroy_busy)
     current_thread_id = pt_thread_self();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.lock());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.lock());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.try_lock(current_thread_id));
     FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, mutex_object.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.unlock());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex_object.destroy());
+    return (1);
+}
+
+FT_TEST(test_pthread_recursive_mutex_try_lock_requires_the_calling_thread)
+{
+    pt_recursive_mutex mutex;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex.lock());
+    const pt_thread_id_type owner = pt_thread_self();
+    int32_t result = FT_ERR_SUCCESS;
+    std::thread worker([&]()
+    {
+        result = mutex.try_lock(owner);
+        return ;
+    });
+    worker.join();
+    const int32_t unlock = mutex.unlock();
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, unlock);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mutex.destroy());
     return (1);
 }
 

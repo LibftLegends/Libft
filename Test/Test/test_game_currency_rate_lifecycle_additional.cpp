@@ -1,6 +1,64 @@
 #include "../../Modules/Game/game_currency_rate.hpp"
+#include "../../Modules/Game/game_economy_table.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_game_lifecycle_helpers.hpp"
+
+FT_TEST(test_game_currency_rate_move_releases_source_mutex)
+{
+    game_currency_rate source;
+    game_currency_rate destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(7, 1.25, 3));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(2, 0.5, 4));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(FT_FALSE, destination.is_thread_safe());
+    FT_ASSERT_EQ(7, destination.get_currency_id());
+    FT_ASSERT_EQ(1.25, destination.get_rate_to_base());
+    FT_ASSERT_EQ(3, destination.get_display_precision());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    return (1);
+}
+
+FT_TEST(test_game_currency_rate_catalog_preserves_records_on_lock_failure)
+{
+    game_economy_table table;
+    game_currency_rate source;
+    game_currency_rate destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, table.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(7, 1.25, 3));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, table.register_currency_rate(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(2, 0.5, 4));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    source.set_rate_to_base(2.5);
+
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t register_error = table.register_currency_rate(source);
+    const int32_t fetch_error = table.fetch_currency_rate(7, destination);
+    destination.set_display_precision(6);
+    const int32_t setter_error = destination.get_error();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, register_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, fetch_error);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, setter_error);
+    FT_ASSERT_EQ(2, destination.get_currency_id());
+    FT_ASSERT_EQ(0.5, destination.get_rate_to_base());
+    FT_ASSERT_EQ(4, destination.get_display_precision());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, table.fetch_currency_rate(7, destination));
+    FT_ASSERT_EQ(FT_TRUE, destination.is_thread_safe());
+    FT_ASSERT_EQ(7, destination.get_currency_id());
+    FT_ASSERT_EQ(1.25, destination.get_rate_to_base());
+    FT_ASSERT_EQ(3, destination.get_display_precision());
+    return (1);
+}
 
 static void
 game_currency_rate_additional_get_rate_to_base(game_currency_rate &value)

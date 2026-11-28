@@ -1,0 +1,483 @@
+#include "../test_internal.hpp"
+#include "../../Modules/Scripting/scripting.hpp"
+#include "../../Modules/System_utils/test_system_utils_runner.hpp"
+
+static int32_t scripting_test_add_native(const scripting_call_context *context,
+    const scripting_value *arguments, uint32_t argument_count,
+    scripting_value *result, void *user_data) noexcept
+{
+    int64_t total;
+    uint32_t index;
+
+    (void)context;
+    (void)user_data;
+    if (arguments == ft_nullptr || result == ft_nullptr || argument_count != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    total = 0;
+    index = 0U;
+    while (index < argument_count)
+    {
+        if (arguments[index].type != SCRIPTING_VALUE_INTEGER)
+            return (FT_ERR_INVALID_ARGUMENT);
+        total += arguments[index].integer_value;
+        index += 1U;
+    }
+    return (scripting_value_set_integer(result, total));
+}
+
+static int32_t scripting_test_string_length_native(
+    const scripting_call_context *context, const scripting_value *arguments,
+    uint32_t argument_count, scripting_value *result, void *user_data) noexcept
+{
+    (void)context;
+    (void)user_data;
+    if (arguments == ft_nullptr || result == ft_nullptr || argument_count != 1U
+        || arguments[0].type != SCRIPTING_VALUE_STRING)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (scripting_value_set_integer(result,
+        static_cast<int64_t>(arguments[0].string_length)));
+}
+
+static int32_t scripting_test_loop_guard_native(
+    const scripting_call_context *context, const scripting_value *arguments,
+    uint32_t argument_count, scripting_value *result, void *user_data) noexcept
+{
+    uint32_t *remaining_calls;
+
+    (void)context;
+    (void)arguments;
+    if (result == ft_nullptr || user_data == ft_nullptr
+        || argument_count != 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    remaining_calls = static_cast<uint32_t *>(user_data);
+    if (*remaining_calls == 0U)
+        return (scripting_value_set_boolean(result, FT_FALSE));
+    *remaining_calls -= 1U;
+    return (scripting_value_set_boolean(result, FT_TRUE));
+}
+
+FT_TEST(test_scripting_engine_evaluates_deterministic_expression)
+{
+    scripting_engine engine;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("2 + 3 * 4", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(14), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let base = 9; return base * 2;", &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(18), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.execute(
+        "let base = 1; let base = 2; return base;", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_invokes_typed_native_callback)
+{
+    scripting_engine engine;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(0U, native_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("add(7, 5)", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(12), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_owns_literal_results_from_immediate_execution)
+{
+    scripting_engine source;
+    scripting_engine destination;
+    scripting_value result;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.execute("return \"persistent literal\";", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_STRING, result.type);
+    FT_ASSERT_EQ(18U, result.string_length);
+    const char *retained = result.string_value;
+    FT_ASSERT(retained == source._result_string);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.execute("return 41;", &result));
+    FT_ASSERT_EQ(0, ft_strcmp(retained, "persistent literal"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.execute("return \"\";", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_STRING, result.type);
+    FT_ASSERT_EQ(0U, result.string_length);
+    FT_ASSERT(result.string_value == retained);
+    FT_ASSERT_EQ('\0', result.string_value[0]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.execute("return \"moved\";", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(0, ft_strcmp(destination._result_string, "moved"));
+    FT_ASSERT(source._result_string == ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.destroy());
+    FT_ASSERT(destination._result_string == ft_nullptr);
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_keeps_native_owned_string_results_borrowed)
+{
+    scripting_engine engine;
+    char working_text[] = "native result";
+    uint32_t native_id;
+    scripting_value result;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("borrow",
+        [](const scripting_call_context *, const scripting_value *arguments, uint32_t argument_count,
+            scripting_value *output, void *data) noexcept -> int32_t
+        {
+            if (argument_count == 1U)
+                return (scripting_value_set_string(output, arguments[0].string_value,
+                    arguments[0].string_length));
+            return (scripting_value_set_string(output, static_cast<const char *>(data), 13U));
+        }, working_text, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("return borrow();", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_STRING, result.type);
+    FT_ASSERT_EQ(13U, result.string_length);
+    FT_ASSERT(result.string_value == working_text);
+    FT_ASSERT(engine._result_string == ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("return borrow(\"from bytecode\");", &result));
+    FT_ASSERT(result.string_value == engine._result_string);
+    FT_ASSERT_EQ(0, ft_strcmp(result.string_value, "from bytecode"));
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_executes_only_after_source_compiles_successfully)
+{
+    scripting_engine engine;
+    scripting_value result;
+    uint32_t calls_remaining = 1U;
+    uint32_t native_id;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("tick",
+        scripting_test_loop_guard_native, &calls_remaining, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("length",
+        scripting_test_string_length_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scripting_value_set_integer(&result, 71));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        engine.execute("return tick(); extra", &result));
+    FT_ASSERT_EQ(1U, calls_remaining);
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(71, result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        engine.execute("return if (tick()) length(\"abc\") else 0;", &result));
+    FT_ASSERT_EQ(0U, calls_remaining);
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(3, result.integer_value);
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_reports_bounded_and_malformed_execution)
+{
+    scripting_engine engine;
+    scripting_value result;
+    scripting_diagnostic diagnostic;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(1U));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.execute("missing(1)", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.get_last_diagnostic(&diagnostic));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, diagnostic.error_code);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("(1 +", &result));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, engine.execute("returnx", &result));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, engine.execute("9223372036854775807 + 1",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("true & false",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("true &&", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_compiles_verifies_and_executes_bytecode)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_program malformed_program;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("add",
+        scripting_test_add_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "let base = 9; return add(base, 3) * 2;", &program));
+    FT_ASSERT_EQ(FT_SCRIPTING_BYTECODE_VERSION, program.format_version);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
+    const uint32_t instruction_count = program.instruction_count;
+    program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U] = 'x';
+    program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand = 99;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.compile("return 99; 2", &program));
+    FT_ASSERT_EQ(instruction_count, program.instruction_count);
+    FT_ASSERT_EQ('x', program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(99, program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(24), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile("return 24;", &program));
+    FT_ASSERT_EQ(0, program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(0, program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
+    malformed_program = {};
+    malformed_program.format_version = FT_SCRIPTING_BYTECODE_VERSION;
+    malformed_program.instruction_count = 5U;
+    malformed_program.instructions[0].opcode = SCRIPTING_OP_PUSH_BOOLEAN;
+    malformed_program.instructions[0].operand = 1;
+    malformed_program.instructions[1].opcode = SCRIPTING_OP_JUMP_IF_FALSE;
+    malformed_program.instructions[1].operand = 4;
+    malformed_program.instructions[2].opcode = SCRIPTING_OP_PUSH_INTEGER;
+    malformed_program.instructions[2].operand = 1;
+    malformed_program.instructions[3].opcode = SCRIPTING_OP_JUMP;
+    malformed_program.instructions[3].operand = 4;
+    malformed_program.instructions[4].opcode = SCRIPTING_OP_RETURN;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        engine.verify_program(malformed_program));
+    program.instructions[0].opcode = static_cast<scripting_opcode>(255U);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_executes_programs_across_inline_stack_limit)
+{
+    scripting_engine engine;
+    scripting_program program = {};
+    scripting_value result;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    program.format_version = FT_SCRIPTING_BYTECODE_VERSION;
+    uint32_t depth = 32U;
+    while (depth <= 33U)
+    {
+        uint32_t instruction_index = 0U;
+        while (instruction_index < depth)
+        {
+            program.instructions[instruction_index].opcode = SCRIPTING_OP_PUSH_INTEGER;
+            program.instructions[instruction_index].operand = 41;
+            ++instruction_index;
+        }
+        while (instruction_index < depth * 2U - 1U)
+        {
+            program.instructions[instruction_index].opcode = SCRIPTING_OP_POP;
+            ++instruction_index;
+        }
+        program.instructions[instruction_index].opcode = SCRIPTING_OP_RETURN;
+        program.instruction_count = instruction_index + 1U;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+        FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+        FT_ASSERT_EQ(41, result.integer_value);
+        ++depth;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(32U));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.execute_program(program, &result));
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_preserves_string_literals_in_bytecode)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+    uint32_t native_id;
+
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("length",
+        scripting_test_string_length_native, ft_nullptr, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return length(\"terrain\");", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(7), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "length(\"a\"); length(\"bc\");", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile("return true;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (5 > 2) 11 else 22;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(11), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (1 == 0) 11 else if (2 == 2) 22 else 33;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(22), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_comparisons_match_direct_and_bytecode_execution)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("2 + 3 == 5", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("7 >= 8", &result));
+    FT_ASSERT_EQ(FT_FALSE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "return if (3 == 3) 17 else 19;", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_INTEGER, result.type);
+    FT_ASSERT_EQ(static_cast<int64_t>(17), result.integer_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("\"abc\" < \"abd\"",
+        &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("!(2 > 3) && (1 == 1)",
+        &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute("false || true", &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "true || false && false", &result));
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.execute("null < null",
+        &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "let value = 9; return value != 4;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_BOOLEAN, result.type);
+    FT_ASSERT_EQ(FT_TRUE, result.boolean_value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_serializes_and_loads_bytecode_transactionally)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_program loaded_program;
+    uint8_t serialized[FT_SCRIPTING_MAX_SERIALIZED_PROGRAM_BYTES];
+    uint32_t serialized_size;
+    uint32_t original_instruction_count;
+    scripting_value result;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return if (4 <= 4) 31 else 32;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(program,
+        serialized, sizeof(serialized), &serialized_size));
+    FT_ASSERT_EQ(FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        + program.string_data_size
+        + program.instruction_count * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES,
+        serialized_size);
+    loaded_program = {};
+    loaded_program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U] = 'x';
+    loaded_program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand = 99;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deserialize_program(serialized,
+        serialized_size, &loaded_program));
+    FT_ASSERT_EQ(0, loaded_program.string_data[FT_SCRIPTING_MAX_STRING_BYTES - 1U]);
+    FT_ASSERT_EQ(0, loaded_program.instructions[FT_SCRIPTING_MAX_INSTRUCTIONS - 1U].operand);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(loaded_program,
+        &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(31), result.integer_value);
+    original_instruction_count = loaded_program.instruction_count;
+    serialized[FT_SCRIPTING_SERIALIZED_HEADER_BYTES] ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(program, serialized,
+        sizeof(serialized), &serialized_size));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size - 1U, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    serialized[0] ^= 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, engine.deserialize_program(
+        serialized, serialized_size, &loaded_program));
+    FT_ASSERT_EQ(original_instruction_count, loaded_program.instruction_count);
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.serialize_program(program, serialized,
+        serialized_size - 1U, &serialized_size));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_serializes_full_width_instruction_fields)
+{
+    scripting_engine engine;
+    scripting_program source{};
+    scripting_program loaded;
+    constexpr int64_t OPERAND = INT64_MIN + INT64_C(0x0102030405060708);
+    constexpr uint32_t AUXILIARY = 0x89ABCDEFU;
+    constexpr uint32_t SIZE = FT_SCRIPTING_SERIALIZED_HEADER_BYTES
+        + 2U * FT_SCRIPTING_SERIALIZED_INSTRUCTION_BYTES;
+    const uint8_t expected[] = {SCRIPTING_OP_PUSH_INTEGER,
+        0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x81U,
+        0xEFU, 0xCDU, 0xABU, 0x89U};
+    uint8_t bytes[SIZE + 1U];
+    uint32_t written;
+
+    source.format_version = FT_SCRIPTING_BYTECODE_VERSION;
+    source.instruction_count = 2U;
+    source.instructions[0] = {SCRIPTING_OP_PUSH_INTEGER, OPERAND, AUXILIARY};
+    source.instructions[1] = {SCRIPTING_OP_RETURN, 0, 0U};
+    bytes[SIZE] = 0xA5U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.serialize_program(source, bytes, SIZE, &written));
+    FT_ASSERT_EQ(SIZE, written);
+    FT_ASSERT_EQ(0, ft_memcmp(bytes + FT_SCRIPTING_SERIALIZED_HEADER_BYTES,
+        expected, sizeof(expected)));
+    FT_ASSERT_EQ(0xA5U, bytes[SIZE]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.deserialize_program(bytes, written, &loaded));
+    FT_ASSERT_EQ(OPERAND, loaded.instructions[0].operand);
+    FT_ASSERT_EQ(AUXILIARY, loaded.instructions[0].auxiliary);
+    return (1);
+}
+
+FT_TEST(test_scripting_engine_executes_bounded_while_expression)
+{
+    scripting_engine engine;
+    scripting_program program;
+    scripting_value result;
+    uint32_t remaining_calls;
+    uint32_t native_id;
+
+    remaining_calls = 3U;
+    native_id = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.register_native("has_work",
+        scripting_test_loop_guard_native, &remaining_calls, &native_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.compile(
+        "return while (has_work()) 7;", &program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.verify_program(program));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute_program(program, &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(0U, remaining_calls);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let block_counter = 2; while (block_counter > 0) {"
+        "block_counter = block_counter - 1; }", &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "return { 4; 5; };", &result));
+    FT_ASSERT_EQ(static_cast<int64_t>(5), result.integer_value);
+    remaining_calls = 2U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(3U));
+    FT_ASSERT_EQ(FT_ERR_FULL, engine.execute(
+        "while (has_work()) 7;", &result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.set_operation_limit(
+        FT_SCRIPTING_MAX_OPERATIONS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.execute(
+        "let counter = 3; while (counter > 0) counter = counter - 1;",
+        &result));
+    FT_ASSERT_EQ(SCRIPTING_VALUE_NULL, result.type);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, engine.destroy());
+    return (1);
+}

@@ -1,153 +1,118 @@
-#include "roll.hpp"
 #include "math_internal.hpp"
-#include <cstdint>
-#include <climits>
-#include <cstdio>
-#include <cstdlib>
-#include "../CMA/CMA.hpp"
 #include "../Basic/basic.hpp"
-#include "../Printf/printf.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include "../CMA/CMA.hpp"
+#include <charconv>
 
-static int32_t math_check_value_roll(const char *string_pointer)
+static int32_t math_roll_read_value(const char *expression, int32_t *error)
 {
-    int32_t                    sign;
-    uint64_t            result;
-    uint64_t            limit;
-
-    sign = 1;
-    result = 0;
-    limit = static_cast<uint64_t>(INT_MAX) + 1;
-    while (*string_pointer == ' ' || (*string_pointer >= 9 && *string_pointer <= 13))
-        string_pointer++;
-    if (*string_pointer == '-' || *string_pointer == '+')
+    while (*expression == ' ' || (*expression >= '\t' && *expression <= '\r'))
+        expression += 1;
+    const ft_bool negative = (*expression == '-');
+    if (negative || *expression == '+')
+        expression += 1;
+    const uint64_t limit = static_cast<uint64_t>(INT32_MAX) + negative;
+    uint64_t magnitude = 0U;
+    while (*expression >= '0' && *expression <= '9')
     {
-        if (*string_pointer == '-')
-            sign = -1;
-        string_pointer++;
-    }
-    while (*string_pointer && ft_isdigit(*string_pointer))
-    {
-        result = result * 10 + (static_cast<uint64_t>(*string_pointer) - '0');
-        string_pointer++;
-        if ((sign == 1 && result > INT_MAX) || (sign == -1 && result > limit))
-            return (1);
-        if (DEBUG == 1)
-            pf_printf("FT_CHECK_VALUE_ROLL the string is %s\n", string_pointer);
-    }
-    if (sign == -1 && result > limit)
-        return (1);
-    return (0);
-}
-
-int32_t    math_check_string_number(char *string)
-{
-    int32_t    index;
-
-    index = 0;
-    if (string[index] == '+' || string[index] == '-')
-        index++;
-    if (!string[index])
-        return (0);
-    while (string[index])
-    {
-        if (string[index] >= '0' && string[index] <= '9')
-            index++;
-        else
-            return (0);
-    }
-    return (1);
-}
-
-void    math_free_parse(char **to_parse)
-{
-    int32_t    index = 0;
-
-    if (to_parse)
-    {
-        while (to_parse[index])
+        magnitude = magnitude * 10U + static_cast<uint64_t>(*expression - '0');
+        if (magnitude > limit)
         {
-            cma_free(to_parse[index]);
-            index++;
+            *error = 1;
+            return (0);
         }
-        cma_free(to_parse);
+        expression += 1;
+    }
+    int64_t value = static_cast<int64_t>(magnitude);
+    if (negative)
+        value = -value;
+    return (static_cast<int32_t>(value));
+}
+
+int32_t math_check_string_number(char *expression)
+{
+    if (*expression == '+' || *expression == '-')
+        expression += 1;
+    if (*expression < '0' || *expression > '9')
+        return (0);
+    while (*expression >= '0' && *expression <= '9')
+        expression += 1;
+    return (*expression == '\0');
+}
+
+void math_free_parse(char **parsed_strings)
+{
+    if (parsed_strings != ft_nullptr)
+    {
+        ft_size_t index = 0U;
+        while (parsed_strings[index] != ft_nullptr)
+        {
+            cma_free(parsed_strings[index]);
+            index += 1U;
+        }
+        cma_free(parsed_strings);
     }
     return ;
 }
 
-int32_t math_roll_convert_previous(char *string, int32_t *index, int32_t *error)
+int32_t math_roll_convert_previous(char *expression, int32_t *index, int32_t *error)
 {
-    int32_t result;
-    int32_t    check;
-
-    while (*index > 0 && (string[*index] >= '0' && string[*index] <= '9'))
-        (*index)--;
-    if (string[*index] == '-' || string[*index] == '+')
+    while (*index > 0 && expression[*index] >= '0' && expression[*index] <= '9')
+        *index -= 1;
+    if (expression[*index] == '-' || expression[*index] == '+')
     {
-        if (*index > 0)
-        {
-            if ((string[*index - 1] >= '0' && string[*index - 1] <= '9') || string[*index - 1] == ')')
-                (*index)++;
-        }
+        if (*index > 0 && ((expression[*index - 1] >= '0' && expression[*index - 1] <= '9')
+                || expression[*index - 1] == ')'))
+            *index += 1;
     }
-    else if (string[*index] < '0' || string[*index] > '9')
-        (*index)++;
-    check = math_check_value_roll(&string[*index]);
-    if (check != 0)
-    {
-        *error = 1;
-        if (DEBUG == 1)
-        {
-            pf_printf("171-Error: numbers cant be higher then %d or lower than %d\n", INT_MAX, INT_MIN);
-        }
-        return (0);
-    }
-    result = ft_atoi(&string[*index]);
-    if (DEBUG == 1)
-        pf_printf("the first number is %d and i=%d\n", result, *index);
-    return (result);
+    else if (expression[*index] < '0' || expression[*index] > '9')
+        *index += 1;
+    return (math_roll_read_value(expression + *index, error));
 }
 
-int32_t    math_roll_convert_next(char *string, int32_t index, int32_t *error)
+int32_t math_roll_convert_next(char *expression, int32_t index, int32_t *error)
 {
-    int32_t    result;
-    int32_t    check;
-
-    check = math_check_value_roll(&string[index]);
-    if (check != 0)
-    {
-        *error = 1;
-        if (DEBUG == 1)
-        {
-            pf_printf("170-Error: numbers cant be higher then %d or lower than %d\n", INT_MAX, INT_MIN);
-        }
-        return (0);
-    }
-    result = ft_atoi(&string[index]);
-    if (DEBUG == 1)
-        pf_printf("the second number is %d\n", result);
-    return (result);
+    return (math_roll_read_value(expression + index, error));
 }
 
-int32_t    math_roll_itoa(int32_t result, int32_t *index, char *string)
+static int32_t math_roll_format_number(int32_t value, char *digits)
 {
-    char    temp[32];
-    int32_t     temp_index;
-    int32_t     written_count;
+    constexpr ft_size_t DECIMAL_CAPACITY = 11U;
+    const auto result = std::to_chars(digits, digits + DECIMAL_CAPACITY, value);
+    if (result.ec != std::errc{})
+        return (0);
+    return (static_cast<int32_t>(result.ptr - digits));
+}
 
-    if (DEBUG == 1)
-        pf_printf("roll itoa: the value of i=%d\n", *index);
-    written_count = std::snprintf(temp, sizeof(temp), "%d", result);
-    if (written_count < 0)
+int32_t math_roll_itoa(int32_t value, int32_t *index, char *expression)
+{
+    char digits[11];
+    const int32_t count = math_roll_format_number(value, digits);
+    if (count == 0)
         return (1);
-    temp_index = 0;
-    while (temp[temp_index])
-    {
-        string[*index] = temp[temp_index];
-        (*index)++;
-        temp_index++;
-    }
+    ft_memcpy(expression + *index, digits, static_cast<ft_size_t>(count));
+    *index += count;
+    return (0);
+}
+
+int32_t math_roll_replace_number(char *expression, int32_t &length,
+    int32_t &index, int32_t right_index, int32_t value)
+{
+    int32_t operand_end = right_index;
+    if (expression[operand_end] == '+' || expression[operand_end] == '-')
+        operand_end += 1;
+    if (expression[operand_end] < '0' || expression[operand_end] > '9')
+        return (1);
+    while (expression[operand_end] >= '0' && expression[operand_end] <= '9')
+        operand_end += 1;
+
+    char digits[11];
+    const int32_t count = math_roll_format_number(value, digits);
+    if (count == 0 || count > operand_end - index)
+        return (1);
+    ft_memcpy(expression + index, digits, static_cast<ft_size_t>(count));
+    index += count;
+    ft_memmove(expression + index, expression + operand_end,
+        static_cast<ft_size_t>(length - operand_end) + 1U);
+    length -= operand_end - index;
     return (0);
 }

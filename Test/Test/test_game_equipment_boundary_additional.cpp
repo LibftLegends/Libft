@@ -37,7 +37,7 @@ FT_TEST(test_game_equipment_invalid_large_get_slot_returns_null)
     game_equipment value;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
-    FT_ASSERT_EQ(ft_nullptr, value.get_item(3));
+    FT_ASSERT_EQ(ft_nullptr, value.get_item(6));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }
@@ -57,7 +57,7 @@ FT_TEST(test_game_equipment_unequip_large_slot_reports_error)
     game_equipment value;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize());
-    value.unequip(3);
+    value.unequip(6);
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, value.get_error());
     return (1);
 }

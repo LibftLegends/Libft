@@ -1,10 +1,12 @@
 #include "geometry.hpp"
+#include "../Math/math_vector_norm.hpp"
 
 #include <cmath>
+#include <utility>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static const double GEOMETRY_EPSILON = 0.0000001;
+static constexpr double GEOMETRY_EPSILON = 1e-7;
 
 static double geometry_min_double(double first_value, double second_value)
 {
@@ -38,129 +40,116 @@ static double geometry_clamp_double(double value, double minimum_value,
     return (value);
 }
 
-static int32_t geometry_initialize_vector(vector3 *target, double x_component,
-    double y_component, double z_component)
+static ft_bool geometry_snapshot_vector(const vector3 &vector, double (&components)[3])
 {
-    if (target == ft_nullptr)
-    {
-        return (FT_ERR_INVALID_POINTER);
-    }
-    return (target->initialize(x_component, y_component, z_component));
+    return (vector.get_components(components[0], components[1], components[2])
+        == FT_ERR_SUCCESS);
 }
 
-static ft_bool geometry_ray_axis_interval(double origin_value,
-    double direction_value, double minimum_value, double maximum_value,
-    double *near_distance, double *far_distance)
+static double geometry_dot(const double (&first)[3], const double (&second)[3])
 {
-    double inverse_direction;
-    double first_distance;
-    double second_distance;
-    double swap_distance;
+    return (first[0] * second[0] + first[1] * second[1] + first[2] * second[2]);
+}
 
-    if (std::fabs(direction_value) < GEOMETRY_EPSILON)
+static void geometry_subtract(const double (&first)[3], const double (&second)[3],
+    double (&result)[3])
+{
+    result[0] = first[0] - second[0];
+    result[1] = first[1] - second[1];
+    result[2] = first[2] - second[2];
+    return ;
+}
+
+static void geometry_cross(const double (&first)[3], const double (&second)[3],
+    double (&result)[3])
+{
+    result[0] = first[1] * second[2] - first[2] * second[1];
+    result[1] = first[2] * second[0] - first[0] * second[2];
+    result[2] = first[0] * second[1] - first[1] * second[0];
+    return ;
+}
+
+static ft_bool geometry_ray_axis_interval(double origin, double direction,
+    double minimum, double maximum, double &near_distance, double &far_distance)
+{
+    if (std::fabs(direction) < GEOMETRY_EPSILON)
+        return (!(origin < minimum || origin > maximum));
+
+    const double inverse_direction = 1.0 / direction;
+    double first = (minimum - origin) * inverse_direction;
+    double second = (maximum - origin) * inverse_direction;
+    if (first > second)
+        std::swap(first, second);
+    near_distance = geometry_max_double(near_distance, first);
+    far_distance = geometry_min_double(far_distance, second);
+    return (!(near_distance > far_distance));
+}
+
+static void geometry_ray_point(const double (&origin)[3], const double (&direction)[3],
+    double distance, double (&position)[3])
+{
+    ft_size_t axis = 0U;
+    while (axis < 3U)
     {
-        if (origin_value < minimum_value || origin_value > maximum_value)
-        {
-            return (FT_FALSE);
-        }
-        return (FT_TRUE);
+        position[axis] = origin[axis] + direction[axis] * distance;
+        axis += 1U;
     }
-    inverse_direction = 1.0 / direction_value;
-    first_distance = (minimum_value - origin_value) * inverse_direction;
-    second_distance = (maximum_value - origin_value) * inverse_direction;
-    if (first_distance > second_distance)
-    {
-        swap_distance = first_distance;
-        first_distance = second_distance;
-        second_distance = swap_distance;
-    }
-    *near_distance = geometry_max_double(*near_distance, first_distance);
-    *far_distance = geometry_min_double(*far_distance, second_distance);
-    if (*near_distance > *far_distance)
-    {
+    return ;
+}
+
+static ft_bool geometry_store_ray_hit(geometry_raycast_hit &hit, double distance,
+    const double (&position)[3], const double (&normal)[3])
+{
+    if (hit.point.initialize(position[0], position[1], position[2]) != FT_ERR_SUCCESS
+        || hit.normal.initialize(normal[0], normal[1], normal[2]) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    }
+    hit.distance = distance;
     return (FT_TRUE);
 }
 
-static int32_t geometry_set_hit_point(geometry_raycast_hit *hit,
-    const geometry_ray &ray, double distance)
+static void geometry_box_hit_normal(const double (&position)[3], const double (&direction)[3],
+    const double (&minimum)[3], const double (&maximum)[3], double (&normal)[3])
 {
-    double point_x;
-    double point_y;
-    double point_z;
-
-    if (hit == ft_nullptr)
+    ft_size_t axis = 0U;
+    while (axis < 3U)
     {
-        return (FT_ERR_SUCCESS);
+        if (std::fabs(position[axis] - minimum[axis]) < GEOMETRY_EPSILON)
+        {
+            normal[axis] = -1.0;
+            return ;
+        }
+        if (std::fabs(position[axis] - maximum[axis]) < GEOMETRY_EPSILON)
+        {
+            normal[axis] = 1.0;
+            return ;
+        }
+        axis += 1U;
     }
-    point_x = ray.origin.get_x() + (ray.direction.get_x() * distance);
-    point_y = ray.origin.get_y() + (ray.direction.get_y() * distance);
-    point_z = ray.origin.get_z() + (ray.direction.get_z() * distance);
-    hit->distance = distance;
-    return (geometry_initialize_vector(&hit->point, point_x, point_y, point_z));
-}
-
-static int32_t geometry_set_aabb_hit_normal(geometry_raycast_hit *hit,
-    const geometry_ray &ray, const geometry_aabb3 &box)
-{
-    double point_x;
-    double point_y;
-    double point_z;
-    double normal_x;
-    double normal_y;
-    double normal_z;
-
-    if (hit == ft_nullptr)
-    {
-        return (FT_ERR_SUCCESS);
-    }
-    point_x = hit->point.get_x();
-    point_y = hit->point.get_y();
-    point_z = hit->point.get_z();
-    normal_x = 0.0;
-    normal_y = 0.0;
-    normal_z = 0.0;
-    if (std::fabs(point_x - box.minimum.get_x()) < GEOMETRY_EPSILON)
-        normal_x = -1.0;
-    else if (std::fabs(point_x - box.maximum.get_x()) < GEOMETRY_EPSILON)
-        normal_x = 1.0;
-    else if (std::fabs(point_y - box.minimum.get_y()) < GEOMETRY_EPSILON)
-        normal_y = -1.0;
-    else if (std::fabs(point_y - box.maximum.get_y()) < GEOMETRY_EPSILON)
-        normal_y = 1.0;
-    else if (std::fabs(point_z - box.minimum.get_z()) < GEOMETRY_EPSILON)
-        normal_z = -1.0;
-    else if (std::fabs(point_z - box.maximum.get_z()) < GEOMETRY_EPSILON)
-        normal_z = 1.0;
-    else if (std::fabs(ray.direction.get_x()) >= GEOMETRY_EPSILON)
-        normal_x = -ray.direction.get_x() / std::fabs(ray.direction.get_x());
-    return (geometry_initialize_vector(&hit->normal, normal_x, normal_y,
-        normal_z));
+    if (std::fabs(direction[0]) >= GEOMETRY_EPSILON)
+        normal[0] = -direction[0] / std::fabs(direction[0]);
+    return ;
 }
 
 ft_bool geometry_ray_intersect_plane(const geometry_ray &ray,
     const geometry_plane &plane, double *distance)
 {
-    double denominator;
-    double numerator;
-    double result_distance;
-
-    denominator = ray.direction.dot(plane.normal);
+    double direction[3];
+    double normal[3];
+    if (!geometry_snapshot_vector(ray.direction, direction)
+        || !geometry_snapshot_vector(plane.normal, normal))
+        return (FT_FALSE);
+    const double denominator = geometry_dot(direction, normal);
     if (std::fabs(denominator) < GEOMETRY_EPSILON)
-    {
         return (FT_FALSE);
-    }
-    numerator = -(ray.origin.dot(plane.normal) + plane.distance);
-    result_distance = numerator / denominator;
-    if (result_distance < 0.0)
-    {
+
+    double origin[3];
+    if (!geometry_snapshot_vector(ray.origin, origin))
         return (FT_FALSE);
-    }
+    const double intersection = -(geometry_dot(origin, normal) + plane.distance) / denominator;
+    if (intersection < 0.0)
+        return (FT_FALSE);
     if (distance != ft_nullptr)
-    {
-        *distance = result_distance;
-    }
+        *distance = intersection;
     return (FT_TRUE);
 }
 
@@ -168,53 +157,68 @@ ft_bool geometry_ray_intersect_triangle(const geometry_ray &ray,
     const vector3 &vertex_a, const vector3 &vertex_b, const vector3 &vertex_c,
     geometry_raycast_hit *hit)
 {
-    vector3 edge_ab(vertex_b.subtract(vertex_a));
-    vector3 edge_ac(vertex_c.subtract(vertex_a));
-    vector3 p_vector(ray.direction.cross(edge_ac));
-    vector3 t_vector(ray.origin.subtract(vertex_a));
-    vector3 q_vector;
-    double determinant;
-    double inverse_determinant;
-    double barycentric_u;
-    double barycentric_v;
-    double distance;
-    vector3 normal;
+    double direction[3];
+    double first[3];
+    double second[3];
+    double third[3];
+    if (!geometry_snapshot_vector(ray.direction, direction)
+        || !geometry_snapshot_vector(vertex_a, first)
+        || !geometry_snapshot_vector(vertex_b, second)
+        || !geometry_snapshot_vector(vertex_c, third))
+        return (FT_FALSE);
 
-    determinant = edge_ab.dot(p_vector);
+    double edge_ab[3];
+    double edge_ac[3];
+    double direction_cross_ac[3];
+    geometry_subtract(second, first, edge_ab);
+    geometry_subtract(third, first, edge_ac);
+    geometry_cross(direction, edge_ac, direction_cross_ac);
+    const double determinant = geometry_dot(edge_ab, direction_cross_ac);
     if (std::fabs(determinant) < GEOMETRY_EPSILON)
-    {
         return (FT_FALSE);
-    }
-    inverse_determinant = 1.0 / determinant;
-    barycentric_u = t_vector.dot(p_vector) * inverse_determinant;
+
+    double origin[3];
+    if (!geometry_snapshot_vector(ray.origin, origin))
+        return (FT_FALSE);
+    double from_vertex[3];
+    geometry_subtract(origin, first, from_vertex);
+    const double inverse = 1.0 / determinant;
+    const double barycentric_u = geometry_dot(from_vertex, direction_cross_ac) * inverse;
     if (barycentric_u < 0.0 || barycentric_u > 1.0)
-    {
         return (FT_FALSE);
-    }
-    if (q_vector.initialize(t_vector.cross(edge_ab)) != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    barycentric_v = ray.direction.dot(q_vector) * inverse_determinant;
+
+    double origin_cross_ab[3];
+    geometry_cross(from_vertex, edge_ab, origin_cross_ab);
+    const double barycentric_v = geometry_dot(direction, origin_cross_ab) * inverse;
     if (barycentric_v < 0.0 || barycentric_u + barycentric_v > 1.0)
-    {
         return (FT_FALSE);
-    }
-    distance = edge_ac.dot(q_vector) * inverse_determinant;
+    const double distance = geometry_dot(edge_ac, origin_cross_ab) * inverse;
     if (distance < 0.0)
-    {
         return (FT_FALSE);
-    }
-    if (geometry_set_hit_point(hit, ray, distance) != FT_ERR_SUCCESS)
-    {
+    if (hit == ft_nullptr)
+        return (FT_TRUE);
+
+    double normal[3];
+    geometry_cross(edge_ab, edge_ac, normal);
+    if (!math_vector_normalize(normal))
         return (FT_FALSE);
-    }
-    if (hit != ft_nullptr)
+    double position[3];
+    geometry_ray_point(origin, direction, distance, position);
+    return (geometry_store_ray_hit(*hit, distance, position, normal));
+}
+
+static ft_bool geometry_ray_box_interval(const double (&origin)[3], const double (&direction)[3],
+    const double (&minimum)[3], const double (&maximum)[3], double limit, double &near_distance)
+{
+    near_distance = 0.0;
+    double far_distance = limit;
+    ft_size_t axis = 0U;
+    while (axis < 3U)
     {
-        if (normal.initialize(edge_ab.cross(edge_ac).normalize()) != FT_ERR_SUCCESS)
+        if (!geometry_ray_axis_interval(origin[axis], direction[axis],
+                minimum[axis], maximum[axis], near_distance, far_distance))
             return (FT_FALSE);
-        if (hit->normal.initialize(normal) != FT_ERR_SUCCESS)
-        {
-            return (FT_FALSE);
-        }
+        axis += 1U;
     }
     return (FT_TRUE);
 }
@@ -222,125 +226,117 @@ ft_bool geometry_ray_intersect_triangle(const geometry_ray &ray,
 ft_bool geometry_ray_intersect_aabb3(const geometry_ray &ray,
     const geometry_aabb3 &box, geometry_raycast_hit *hit)
 {
-    double near_distance;
-    double far_distance;
+    double origin[3];
+    double direction[3];
+    double minimum[3];
+    double maximum[3];
+    if (!geometry_snapshot_vector(ray.origin, origin)
+        || !geometry_snapshot_vector(ray.direction, direction)
+        || !geometry_snapshot_vector(box.minimum, minimum)
+        || !geometry_snapshot_vector(box.maximum, maximum))
+        return (FT_FALSE);
 
-    near_distance = 0.0;
-    far_distance = 1.0e30;
-    if (geometry_ray_axis_interval(ray.origin.get_x(), ray.direction.get_x(),
-            box.minimum.get_x(), box.maximum.get_x(), &near_distance,
-            &far_distance) == FT_FALSE)
+    double near_distance;
+    if (!geometry_ray_box_interval(origin, direction, minimum, maximum, 1.0e30, near_distance))
         return (FT_FALSE);
-    if (geometry_ray_axis_interval(ray.origin.get_y(), ray.direction.get_y(),
-            box.minimum.get_y(), box.maximum.get_y(), &near_distance,
-            &far_distance) == FT_FALSE)
-        return (FT_FALSE);
-    if (geometry_ray_axis_interval(ray.origin.get_z(), ray.direction.get_z(),
-            box.minimum.get_z(), box.maximum.get_z(), &near_distance,
-            &far_distance) == FT_FALSE)
-        return (FT_FALSE);
-    if (geometry_set_hit_point(hit, ray, near_distance) != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    if (geometry_set_aabb_hit_normal(hit, ray, box) != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    return (FT_TRUE);
+    if (hit == ft_nullptr)
+        return (FT_TRUE);
+
+    double position[3];
+    double normal[3]{};
+    geometry_ray_point(origin, direction, near_distance, position);
+    geometry_box_hit_normal(position, direction, minimum, maximum, normal);
+    return (geometry_store_ray_hit(*hit, near_distance, position, normal));
+}
+
+static ft_bool geometry_sphere_box_overlap(const double (&center)[3], double radius,
+    const double (&minimum)[3], const double (&maximum)[3])
+{
+    double offset[3];
+    ft_size_t axis = 0U;
+    while (axis < 3U)
+    {
+        const double closest = geometry_clamp_double(center[axis], minimum[axis], maximum[axis]);
+        offset[axis] = center[axis] - closest;
+        axis += 1U;
+    }
+    const double squared_radius = radius * radius;
+    if (std::isnormal(squared_radius))
+        return (geometry_dot(offset, offset) <= squared_radius);
+    return (math_vector_length(offset) <= std::fabs(radius));
 }
 
 ft_bool geometry_sphere_intersect_aabb3(const sphere &shape,
     const geometry_aabb3 &box)
 {
-    double closest_x;
-    double closest_y;
-    double closest_z;
-    double delta_x;
-    double delta_y;
-    double delta_z;
+    double center[3];
     double radius;
-
-    closest_x = geometry_clamp_double(shape.get_center_x(), box.minimum.get_x(),
-        box.maximum.get_x());
-    closest_y = geometry_clamp_double(shape.get_center_y(), box.minimum.get_y(),
-        box.maximum.get_y());
-    closest_z = geometry_clamp_double(shape.get_center_z(), box.minimum.get_z(),
-        box.maximum.get_z());
-    delta_x = shape.get_center_x() - closest_x;
-    delta_y = shape.get_center_y() - closest_y;
-    delta_z = shape.get_center_z() - closest_z;
-    radius = shape.get_radius();
-    if ((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z)
-        <= radius * radius)
-    {
-        return (FT_TRUE);
-    }
-    return (FT_FALSE);
+    double minimum[3];
+    double maximum[3];
+    if (!shape.snapshot(center, radius) || !geometry_snapshot_vector(box.minimum, minimum)
+        || !geometry_snapshot_vector(box.maximum, maximum))
+        return (FT_FALSE);
+    return (geometry_sphere_box_overlap(center, radius, minimum, maximum));
 }
 
 ft_bool geometry_swept_sphere_intersect_aabb3(const sphere &shape,
     const vector3 &velocity, const geometry_aabb3 &box, geometry_sweep_hit *hit)
 {
-    geometry_ray         ray;
-    geometry_aabb3       expanded_box;
-    geometry_raycast_hit ray_hit;
-    double               radius;
-
-    radius = shape.get_radius();
-    if (geometry_sphere_intersect_aabb3(shape, box) == FT_TRUE)
+    double center[3];
+    double radius;
+    double minimum[3];
+    double maximum[3];
+    if (!shape.snapshot(center, radius) || !geometry_snapshot_vector(box.minimum, minimum)
+        || !geometry_snapshot_vector(box.maximum, maximum))
+        return (FT_FALSE);
+    double time = 0.0;
+    double position[3] = {center[0], center[1], center[2]};
+    double normal[3]{};
+    if (!geometry_sphere_box_overlap(center, radius, minimum, maximum))
     {
-        if (hit != ft_nullptr)
+        double direction[3];
+        if (!geometry_snapshot_vector(velocity, direction))
+            return (FT_FALSE);
+        ft_size_t axis = 0U;
+        while (axis < 3U)
         {
-            hit->time = 0.0;
-            if (hit->point.initialize(shape.get_center_x(), shape.get_center_y(),
-                    shape.get_center_z()) != FT_ERR_SUCCESS)
-                return (FT_FALSE);
-            if (hit->normal.initialize(0.0, 0.0, 0.0) != FT_ERR_SUCCESS)
-                return (FT_FALSE);
+            minimum[axis] -= radius;
+            maximum[axis] += radius;
+            axis += 1U;
         }
+        if (!geometry_ray_box_interval(center, direction, minimum, maximum, 1.0, time))
+            return (FT_FALSE);
+        if (hit == ft_nullptr)
+            return (FT_TRUE);
+        geometry_ray_point(center, direction, time, position);
+        geometry_box_hit_normal(position, direction, minimum, maximum, normal);
+    }
+    if (hit == ft_nullptr)
         return (FT_TRUE);
-    }
-    if (ray.origin.initialize(shape.get_center_x(), shape.get_center_y(),
-            shape.get_center_z()) != FT_ERR_SUCCESS)
+    if (hit->point.initialize(position[0], position[1], position[2]) != FT_ERR_SUCCESS
+        || hit->normal.initialize(normal[0], normal[1], normal[2]) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    if (ray.direction.initialize(velocity) != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    if (expanded_box.minimum.initialize(box.minimum.get_x() - radius,
-            box.minimum.get_y() - radius, box.minimum.get_z() - radius)
-        != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    if (expanded_box.maximum.initialize(box.maximum.get_x() + radius,
-            box.maximum.get_y() + radius, box.maximum.get_z() + radius)
-        != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    if (geometry_ray_intersect_aabb3(ray, expanded_box, &ray_hit) == FT_FALSE)
-        return (FT_FALSE);
-    if (ray_hit.distance < 0.0 || ray_hit.distance > 1.0)
-        return (FT_FALSE);
-    if (hit != ft_nullptr)
-    {
-        hit->time = ray_hit.distance;
-        if (hit->point.initialize(ray_hit.point) != FT_ERR_SUCCESS)
-            return (FT_FALSE);
-        if (hit->normal.initialize(ray_hit.normal) != FT_ERR_SUCCESS)
-            return (FT_FALSE);
-    }
+    hit->time = time;
     return (FT_TRUE);
 }
 
 ft_bool geometry_frustum_contains_point(const geometry_frustum &frustum,
     const vector3 &point)
 {
-    int32_t plane_index;
-    double  signed_distance;
-
-    plane_index = 0;
-    while (plane_index < 6)
+    double coordinates[3];
+    if (!geometry_snapshot_vector(point, coordinates))
+        return (FT_FALSE);
+    ft_size_t plane_index = 0U;
+    while (plane_index < sizeof(frustum.planes) / sizeof(frustum.planes[0]))
     {
-        signed_distance = point.dot(frustum.planes[plane_index].normal)
-            + frustum.planes[plane_index].distance;
-        if (signed_distance < 0.0)
-        {
+        const geometry_plane &plane = frustum.planes[plane_index];
+        double normal[3];
+        if (!geometry_snapshot_vector(plane.normal, normal))
             return (FT_FALSE);
-        }
-        plane_index = plane_index + 1;
+        const double distance = geometry_dot(coordinates, normal) + plane.distance;
+        if (distance < 0.0)
+            return (FT_FALSE);
+        plane_index += 1U;
     }
     return (FT_TRUE);
 }
@@ -348,38 +344,32 @@ ft_bool geometry_frustum_contains_point(const geometry_frustum &frustum,
 ft_bool geometry_frustum_intersect_aabb3(const geometry_frustum &frustum,
     const geometry_aabb3 &box)
 {
-    int32_t plane_index;
-    double normal_x;
-    double normal_y;
-    double normal_z;
-    double vertex_x;
-    double vertex_y;
-    double vertex_z;
-    double signed_distance;
+    double minimum[3];
+    double maximum[3];
+    if (!geometry_snapshot_vector(box.minimum, minimum)
+        || !geometry_snapshot_vector(box.maximum, maximum))
+        return (FT_FALSE);
 
-    plane_index = 0;
-    while (plane_index < 6)
+    ft_size_t plane_index = 0U;
+    while (plane_index < sizeof(frustum.planes) / sizeof(frustum.planes[0]))
     {
-        normal_x = frustum.planes[plane_index].normal.get_x();
-        normal_y = frustum.planes[plane_index].normal.get_y();
-        normal_z = frustum.planes[plane_index].normal.get_z();
-        vertex_x = box.minimum.get_x();
-        vertex_y = box.minimum.get_y();
-        vertex_z = box.minimum.get_z();
-        if (normal_x >= 0.0)
-            vertex_x = box.maximum.get_x();
-        if (normal_y >= 0.0)
-            vertex_y = box.maximum.get_y();
-        if (normal_z >= 0.0)
-            vertex_z = box.maximum.get_z();
-        signed_distance = (vertex_x * normal_x) + (vertex_y * normal_y)
-            + (vertex_z * normal_z)
-            + frustum.planes[plane_index].distance;
-        if (signed_distance < 0.0)
-        {
+        const geometry_plane &plane = frustum.planes[plane_index];
+        double normal[3];
+        if (!geometry_snapshot_vector(plane.normal, normal))
             return (FT_FALSE);
+        double vertex[3];
+        ft_size_t axis = 0U;
+        while (axis < 3U)
+        {
+            vertex[axis] = minimum[axis];
+            if (normal[axis] >= 0.0)
+                vertex[axis] = maximum[axis];
+            axis += 1U;
         }
-        plane_index = plane_index + 1;
+        const double distance = geometry_dot(vertex, normal) + plane.distance;
+        if (distance < 0.0)
+            return (FT_FALSE);
+        plane_index += 1U;
     }
     return (FT_TRUE);
 }

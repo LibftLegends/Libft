@@ -18,10 +18,12 @@ class game_map3d
     #else
         private:
     #endif
-        int32_t       ***_data;
+        int32_t        *_data;
         ft_size_t      _width;
         ft_size_t      _height;
         ft_size_t      _depth;
+        uint64_t       _route_identity;
+        uint64_t       _route_revision;
         int32_t         _initial_value;
         pt_recursive_mutex   *_mutex;
         uint8_t     _initialised_state;
@@ -32,6 +34,9 @@ class game_map3d
 
         int32_t allocate(ft_size_t width, ft_size_t height, ft_size_t depth, int32_t value);
         void    deallocate();
+        int32_t read_route_version(uint64_t &identity, uint64_t &revision) const noexcept;
+
+        friend class game_pathfinding;
 
     public:
         game_map3d();

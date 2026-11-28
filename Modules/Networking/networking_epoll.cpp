@@ -1,230 +1,148 @@
 #include "networking.hpp"
 #include "../CMA/CMA.hpp"
-#include "../Basic/class_nullptr.hpp"
+#include "../Basic/limits.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <unistd.h>
 #include <sys/epoll.h>
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
-static ft_bool descriptor_is_present(const int32_t *descriptors,
-    int32_t descriptor_count, int32_t file_descriptor)
+static void nw_epoll_collect(epoll_event *events, int32_t &count,
+    const int32_t *descriptors, int32_t descriptor_count, uint32_t interest)
 {
-    int32_t index;
-
-    index = 0;
-    while (descriptors != ft_nullptr && index < descriptor_count)
+    int32_t index = 0;
+    while (descriptors && index < descriptor_count)
     {
-        if (descriptors[index] == file_descriptor)
-            return (FT_TRUE);
-        index += 1;
+        if (descriptors[index] >= 0)
+        {
+            events[count].events = interest;
+            events[count].data = {};
+            events[count].data.fd = descriptors[index];
+            ++count;
+        }
+        ++index;
     }
-    return (FT_FALSE);
+    return ;
+}
+
+static ft_bool nw_epoll_by_descriptor(const epoll_event &left, const epoll_event &right)
+{
+    return (left.data.fd < right.data.fd);
+}
+
+static int32_t nw_epoll_wait(epoll_event *events, int32_t count, int32_t timeout)
+{
+    std::sort(events, events + count, nw_epoll_by_descriptor);
+    const int32_t descriptor = epoll_create1(EPOLL_CLOEXEC);
+    if (descriptor < 0)
+        return (-1);
+
+    int32_t index = 0;
+    int32_t registered = 0;
+    int32_t result = 0;
+    while (index < count)
+    {
+        epoll_event interest = events[index++];
+        while (index < count && events[index].data.fd == interest.data.fd)
+            interest.events |= events[index++].events;
+        if (epoll_ctl(descriptor, EPOLL_CTL_ADD, interest.data.fd, &interest) < 0)
+        {
+            result = -1;
+            break ;
+        }
+        ++registered;
+    }
+    if (result == 0)
+        result = epoll_wait(descriptor, events, registered, timeout);
+    const int32_t saved_error = errno;
+    close(descriptor);
+    if (result < 0)
+        errno = saved_error;
+    return (result);
+}
+
+static void nw_epoll_filter_ready(int32_t *descriptors, int32_t count, uint32_t interest,
+    const epoll_event *events, int32_t ready_count)
+{
+    int32_t index = 0;
+    while (descriptors && index < count)
+    {
+        int32_t &descriptor = descriptors[index];
+        if (ready_count == 0 || descriptor < 0)
+        {
+            descriptor = -1;
+            ++index;
+            continue ;
+        }
+        epoll_event target{};
+        target.data.fd = descriptor;
+        const epoll_event *ready = std::lower_bound(events, events + ready_count,
+            target, nw_epoll_by_descriptor);
+        if (ready == events + ready_count || ready->data.fd != descriptor
+            || (ready->events & (interest | EPOLLERR | EPOLLHUP)) == 0)
+            descriptor = -1;
+        ++index;
+    }
+    return ;
+}
+
+static int32_t nw_epoll_count_active(const int32_t *descriptors, int32_t count)
+{
+    int32_t active = 0;
+    int32_t index = 0;
+    while (descriptors && index < count)
+    {
+        if (descriptors[index] >= 0)
+            ++active;
+        ++index;
+    }
+    return (active);
 }
 
 int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
-            int32_t *write_file_descriptors, int32_t write_count,
-            int32_t timeout_milliseconds)
+    int32_t *write_file_descriptors, int32_t write_count, int32_t timeout_milliseconds)
 {
-    int32_t epoll_descriptor;
-    epoll_event event;
-    epoll_event *events;
-    int32_t index;
-    int32_t maximum_events;
-    int32_t valid_read_count;
-    int32_t valid_write_count;
-    int32_t ready_descriptors;
-    int32_t ready_index;
-    int32_t file_descriptor;
-    int32_t search_index;
-    int32_t *read_ready_flags;
-    int32_t *write_ready_flags;
-
-    epoll_descriptor = epoll_create1(0);
-    if (epoll_descriptor == -1)
+    constexpr int32_t STACK_EVENTS = 32;
+    epoll_event stack_events[STACK_EVENTS];
+    const int64_t active = static_cast<int64_t>(
+        nw_epoll_count_active(read_file_descriptors, read_count))
+        + nw_epoll_count_active(write_file_descriptors, write_count);
+    if (active > FT_INT32_MAX)
     {
+        errno = EINVAL;
         return (-1);
     }
-    index = 0;
-    valid_read_count = 0;
-    while (read_file_descriptors && index < read_count)
+    if (active == 0)
     {
-        if (read_file_descriptors[index] >= 0)
-        {
-            if (descriptor_is_present(read_file_descriptors, index,
-                    read_file_descriptors[index]) == FT_TRUE)
-            {
-                index++;
-                continue ;
-            }
-            event.events = EPOLLIN;
-            event.data.fd = read_file_descriptors[index];
-            if (epoll_ctl(epoll_descriptor, EPOLL_CTL_ADD, read_file_descriptors[index], &event) == -1)
-            {
-                close(epoll_descriptor);
-                return (-1);
-            }
-            valid_read_count++;
-        }
-        index++;
-    }
-    index = 0;
-    valid_write_count = 0;
-    while (write_file_descriptors && index < write_count)
-    {
-        if (write_file_descriptors[index] >= 0)
-        {
-            if (descriptor_is_present(write_file_descriptors, index,
-                    write_file_descriptors[index]) == FT_TRUE)
-            {
-                index++;
-                continue ;
-            }
-            event.events = EPOLLOUT;
-            event.data.fd = write_file_descriptors[index];
-            if (descriptor_is_present(read_file_descriptors, read_count,
-                    write_file_descriptors[index]) == FT_TRUE)
-            {
-                event.events |= EPOLLIN;
-                if (epoll_ctl(epoll_descriptor, EPOLL_CTL_MOD,
-                        write_file_descriptors[index], &event) == -1)
-                {
-                    close(epoll_descriptor);
-                    return (-1);
-                }
-            }
-            else if (epoll_ctl(epoll_descriptor, EPOLL_CTL_ADD,
-                    write_file_descriptors[index], &event) == -1)
-            {
-                close(epoll_descriptor);
-                return (-1);
-            }
-            valid_write_count++;
-        }
-        index++;
-    }
-    maximum_events = valid_read_count + valid_write_count;
-    if (maximum_events == 0)
-    {
-        index = 0;
-        while (read_file_descriptors && index < read_count)
-        {
-            read_file_descriptors[index] = -1;
-            index++;
-        }
-        index = 0;
-        while (write_file_descriptors && index < write_count)
-        {
-            write_file_descriptors[index] = -1;
-            index++;
-        }
-        close(epoll_descriptor);
+        nw_epoll_filter_ready(read_file_descriptors, read_count, EPOLLIN, ft_nullptr, 0);
+        nw_epoll_filter_ready(write_file_descriptors, write_count, EPOLLOUT, ft_nullptr, 0);
         return (0);
     }
-    events = static_cast<epoll_event *>(cma_malloc(sizeof(epoll_event) * maximum_events));
-    if (!events)
+
+    epoll_event *events = stack_events;
+    if (active > STACK_EVENTS)
     {
-        close(epoll_descriptor);
-        return (-1);
-    }
-    read_ready_flags = ft_nullptr;
-    write_ready_flags = ft_nullptr;
-    if (read_file_descriptors && read_count > 0)
-    {
-        read_ready_flags = static_cast<int32_t *>(cma_malloc(sizeof(int32_t) * read_count));
-        if (!read_ready_flags)
+        events = static_cast<epoll_event *>(cma_malloc(
+                sizeof(epoll_event) * static_cast<ft_size_t>(active)));
+        if (!events)
         {
-            cma_free(events);
-            close(epoll_descriptor);
+            errno = ENOMEM;
             return (-1);
         }
-        index = 0;
-        while (index < read_count)
-        {
-            read_ready_flags[index] = 0;
-            index++;
-        }
     }
-    if (write_file_descriptors && write_count > 0)
+    int32_t count = 0;
+    nw_epoll_collect(events, count, read_file_descriptors, read_count, EPOLLIN);
+    nw_epoll_collect(events, count, write_file_descriptors, write_count, EPOLLOUT);
+    const int32_t ready = nw_epoll_wait(events, count, timeout_milliseconds);
+    const int32_t saved_error = errno;
+    if (ready > 0)
     {
-        write_ready_flags = static_cast<int32_t *>(cma_malloc(sizeof(int32_t) * write_count));
-        if (!write_ready_flags)
-        {
-            if (read_ready_flags)
-                cma_free(read_ready_flags);
-            cma_free(events);
-            close(epoll_descriptor);
-            return (-1);
-        }
-        index = 0;
-        while (index < write_count)
-        {
-            write_ready_flags[index] = 0;
-            index++;
-        }
+        std::sort(events, events + ready, nw_epoll_by_descriptor);
+        nw_epoll_filter_ready(read_file_descriptors, read_count, EPOLLIN, events, ready);
+        nw_epoll_filter_ready(write_file_descriptors, write_count, EPOLLOUT, events, ready);
     }
-    ready_descriptors = epoll_wait(epoll_descriptor, events, maximum_events, timeout_milliseconds);
-    if (ready_descriptors <= 0)
-    {
-        if (read_ready_flags)
-            cma_free(read_ready_flags);
-        if (write_ready_flags)
-            cma_free(write_ready_flags);
+    if (events != stack_events)
         cma_free(events);
-        close(epoll_descriptor);
-        return (ready_descriptors);
-    }
-    ready_index = 0;
-    while (ready_index < ready_descriptors)
-    {
-        file_descriptor = events[ready_index].data.fd;
-        search_index = 0;
-        while (read_file_descriptors && search_index < read_count)
-        {
-            if (read_file_descriptors[search_index] == file_descriptor)
-                break ;
-            search_index++;
-        }
-        if (read_file_descriptors && search_index < read_count)
-        {
-            read_file_descriptors[search_index] = file_descriptor;
-            if (read_ready_flags)
-                read_ready_flags[search_index] = 1;
-        }
-        search_index = 0;
-        while (write_file_descriptors && search_index < write_count)
-        {
-            if (write_file_descriptors[search_index] == file_descriptor)
-                break ;
-            search_index++;
-        }
-        if (write_file_descriptors && search_index < write_count)
-        {
-            write_file_descriptors[search_index] = file_descriptor;
-            if (write_ready_flags)
-                write_ready_flags[search_index] = 1;
-        }
-        ready_index++;
-    }
-    index = 0;
-    while (read_file_descriptors && index < read_count)
-    {
-        if (!read_ready_flags || read_ready_flags[index] == 0)
-            read_file_descriptors[index] = -1;
-        index++;
-    }
-    index = 0;
-    while (write_file_descriptors && index < write_count)
-    {
-        if (!write_ready_flags || write_ready_flags[index] == 0)
-            write_file_descriptors[index] = -1;
-        index++;
-    }
-    cma_free(events);
-    if (read_ready_flags)
-        cma_free(read_ready_flags);
-    if (write_ready_flags)
-        cma_free(write_ready_flags);
-    close(epoll_descriptor);
-    return (ready_descriptors);
+    if (ready < 0)
+        errno = saved_error;
+    return (ready);
 }

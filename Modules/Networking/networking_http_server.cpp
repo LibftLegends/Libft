@@ -1,6 +1,6 @@
 #include "http_server.hpp"
 #ifdef LIBFT_TEST_BUILD
-# include "../../Test/Test/networking_test_hooks.hpp"
+# include "networking_test_hooks.hpp"
 #else
 # define NETWORKING_TEST_SHOULD_FAIL(point) FT_FALSE
 #endif
@@ -9,14 +9,11 @@
 #include "../Time/time.hpp"
 #include "../Observability/observability_networking_metrics.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include "../Printf/printf.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno_internal.hpp"
-#include <cstring>
-#include <cstdio>
 #include <cerrno>
+#include <charconv>
 #include <new>
-#include <inttypes.h>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -179,29 +176,6 @@ int32_t ft_http_server::start(const char *ip_address, uint16_t port, int32_t add
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t parse_request(const ft_string &request, ft_string &body, ft_bool &is_post)
-{
-    const char *request_data;
-    const char *body_separator;
-
-    request_data = request.c_str();
-    if (ft_strncmp(request_data, "POST ", 5) == 0)
-        is_post = FT_TRUE;
-    else if (ft_strncmp(request_data, "GET ", 4) == 0)
-        is_post = FT_FALSE;
-    else
-        return (FT_ERR_INVALID_ARGUMENT);
-    body_separator = ft_strstr(request_data, "\r\n\r\n");
-    if (body_separator)
-    {
-        body_separator += 4;
-        body = body_separator;
-    }
-    else
-        body.clear();
-    return (FT_ERR_SUCCESS);
-}
-
 static void http_server_record_metrics(const char *method, ft_size_t request_bytes,
     ft_size_t response_bytes, int32_t status_code, int32_t result, int32_t error_code,
     t_monotonic_time_point start_time)
@@ -266,18 +240,12 @@ static ft_bool http_server_token_equals(const char *token_start, ft_size_t token
     return (FT_TRUE);
 }
 
-static ft_bool http_server_request_wants_keep_alive(const ft_string &request, ft_size_t header_length)
+static ft_bool http_server_request_wants_keep_alive(const char *data, ft_size_t header_limit)
 {
-    const char *data;
     const char *connection_header;
     const char *value_pointer;
     ft_bool keep_alive;
-    ft_size_t header_limit;
 
-    data = request.c_str();
-    header_limit = header_length;
-    if (header_limit > request.size())
-        header_limit = request.size();
     keep_alive = FT_TRUE;
     if (ft_strnstr(data, "HTTP/1.0", header_limit) != ft_nullptr)
         keep_alive = FT_FALSE;
@@ -397,8 +365,10 @@ int32_t ft_http_server::run_once_locked()
     overall_result = 0;
     processed_requests = 0;
     last_error_code = FT_ERR_SUCCESS;
-    ft_string pending_data;
-    if (pending_data.initialize() != FT_ERR_SUCCESS)
+    ft_string request;
+    ft_string response;
+    if (request.initialize() != FT_ERR_SUCCESS
+        || response.initialize() != FT_ERR_SUCCESS)
     {
         nw_close(client_socket);
         return (FT_ERR_NO_MEMORY);
@@ -406,15 +376,12 @@ int32_t ft_http_server::run_once_locked()
     while (connection_active != FT_FALSE)
     {
         t_monotonic_time_point request_start_time;
-        ft_string request;
-        ft_string body;
-        ft_string response;
-        ft_string current_request;
         ft_bool header_complete;
         ft_bool request_complete;
         ft_bool has_content_length;
         ft_size_t expected_body_length;
         ft_size_t header_length;
+        ft_size_t header_search_offset = 0U;
         const ft_size_t max_request_size = 65536;
         ft_bool metrics_enabled;
         const char *method_label;
@@ -422,21 +389,11 @@ int32_t ft_http_server::run_once_locked()
         ft_size_t response_bytes;
         int32_t status_code_value;
         ft_bool is_post;
-        int32_t parse_error;
         ft_bool request_failed;
         int32_t request_result;
         ft_bool should_keep_alive;
         char buffer[1024];
         ssize_t bytes_received;
-        if (request.initialize() != FT_ERR_SUCCESS
-            || body.initialize() != FT_ERR_SUCCESS
-            || response.initialize() != FT_ERR_SUCCESS
-            || current_request.initialize() != FT_ERR_SUCCESS)
-        {
-            nw_close(client_socket);
-            return (FT_ERR_NO_MEMORY);
-        }
-
         request_start_time = time_monotonic_point_now();
         header_complete = FT_FALSE;
         request_complete = FT_FALSE;
@@ -449,12 +406,9 @@ int32_t ft_http_server::run_once_locked()
         response_bytes = 0;
         status_code_value = 0;
         is_post = FT_FALSE;
-        parse_error = FT_ERR_SUCCESS;
         request_failed = FT_FALSE;
         request_result = 1;
         should_keep_alive = FT_FALSE;
-        request = pending_data;
-        pending_data.clear();
         while (request_complete == FT_FALSE)
         {
             if (header_complete == FT_FALSE)
@@ -462,15 +416,21 @@ int32_t ft_http_server::run_once_locked()
                 const char *full_request;
                 const char *header_end_pointer;
 
+                constexpr ft_size_t DELIMITER_LENGTH = 4U;
+                const ft_size_t buffered_length = request.size();
                 full_request = request.c_str();
-                header_end_pointer = ft_strstr(full_request, "\r\n\r\n");
+                header_end_pointer = static_cast<const char *>(ft_memmem(
+                    full_request + header_search_offset,
+                    buffered_length - header_search_offset, "\r\n\r\n", DELIMITER_LENGTH));
+                if (buffered_length >= DELIMITER_LENGTH)
+                    header_search_offset = buffered_length - (DELIMITER_LENGTH - 1U);
                 if (header_end_pointer != ft_nullptr)
                 {
                     const char *content_length_header;
                     const char *content_length_key;
                     ft_size_t content_length_key_length;
 
-                    header_end_pointer += 4;
+                    header_end_pointer += DELIMITER_LENGTH;
                     header_length = static_cast<ft_size_t>(header_end_pointer - full_request);
                     header_complete = FT_TRUE;
                     content_length_key = "Content-Length:";
@@ -488,7 +448,6 @@ int32_t ft_http_server::run_once_locked()
                         if (*length_value_pointer == '\0'
                             || ft_isdigit(static_cast<unsigned char>(*length_value_pointer)) == 0)
                         {
-                            nw_close(client_socket);
                             overall_result = 1;
                             last_error_code = FT_ERR_INVALID_ARGUMENT;
                             request_failed = FT_TRUE;
@@ -505,7 +464,6 @@ int32_t ft_http_server::run_once_locked()
                             digit_value = static_cast<ft_size_t>(*length_value_pointer - '0');
                             if (expected_body_length > (max_request_size - digit_value) / 10)
                             {
-                                nw_close(client_socket);
                                 overall_result = 1;
                                 last_error_code = FT_ERR_INVALID_ARGUMENT;
                                 request_failed = FT_TRUE;
@@ -518,7 +476,6 @@ int32_t ft_http_server::run_once_locked()
                             break ;
                         if (has_length_digits == FT_FALSE)
                         {
-                            nw_close(client_socket);
                             overall_result = 1;
                             last_error_code = FT_ERR_INVALID_ARGUMENT;
                             request_failed = FT_TRUE;
@@ -526,7 +483,6 @@ int32_t ft_http_server::run_once_locked()
                         }
                         if (expected_body_length > max_request_size)
                         {
-                            nw_close(client_socket);
                             overall_result = 1;
                             last_error_code = FT_ERR_INVALID_ARGUMENT;
                             request_failed = FT_TRUE;
@@ -559,12 +515,7 @@ int32_t ft_http_server::run_once_locked()
             bytes_received = nw_recv(client_socket, buffer, sizeof(buffer) - 1, 0);
             if (bytes_received < 0)
             {
-                nw_close(client_socket);
-#ifdef _WIN32
                 last_error_code = FT_ERR_SOCKET_RECEIVE_FAILED;
-#else
-                last_error_code = FT_ERR_SOCKET_RECEIVE_FAILED;
-#endif
                 overall_result = 1;
                 request_failed = FT_TRUE;
                 break ;
@@ -576,17 +527,20 @@ int32_t ft_http_server::run_once_locked()
                     nw_close(client_socket);
                     return (FT_ERR_SUCCESS);
                 }
-                nw_close(client_socket);
                 overall_result = 1;
                 last_error_code = FT_ERR_SOCKET_RECEIVE_FAILED;
                 request_failed = FT_TRUE;
                 break ;
             }
-            buffer[bytes_received] = '\0';
-            request.append(buffer);
+            last_error_code = request.append(buffer, static_cast<ft_size_t>(bytes_received));
+            if (last_error_code != FT_ERR_SUCCESS)
+            {
+                overall_result = 1;
+                request_failed = FT_TRUE;
+                break ;
+            }
             if (request.size() > max_request_size)
             {
-                nw_close(client_socket);
                 overall_result = 1;
                 last_error_code = FT_ERR_INVALID_ARGUMENT;
                 request_failed = FT_TRUE;
@@ -605,18 +559,13 @@ int32_t ft_http_server::run_once_locked()
         consumed_length = header_length;
         if (has_content_length != FT_FALSE)
             consumed_length += expected_body_length;
-        if (request.size() > consumed_length)
-            pending_data.assign(request.c_str() + consumed_length, request.size() - consumed_length);
-        else
-            pending_data.clear();
-        current_request.assign(request.c_str(), consumed_length);
+        const char *request_data = request.c_str();
         request_bytes = consumed_length;
-        parse_error = parse_request(current_request, body, is_post);
-        if (parse_error != FT_ERR_SUCCESS)
+        is_post = (ft_strncmp(request_data, "POST ", 5U) == 0);
+        if (is_post == FT_FALSE && ft_strncmp(request_data, "GET ", 4U) != 0)
         {
-            nw_close(client_socket);
             overall_result = 1;
-            last_error_code = parse_error;
+            last_error_code = FT_ERR_INVALID_ARGUMENT;
             if (metrics_enabled != FT_FALSE)
                 http_server_record_metrics(method_label, request_bytes, response_bytes, status_code_value, 1, last_error_code, request_start_time);
             connection_active = FT_FALSE;
@@ -626,37 +575,39 @@ int32_t ft_http_server::run_once_locked()
             method_label = "POST";
         else
             method_label = "GET";
-        should_keep_alive = http_server_request_wants_keep_alive(current_request, header_length);
+        should_keep_alive = http_server_request_wants_keep_alive(request_data, header_length);
         if (processed_requests >= max_keep_alive_requests - 1)
             should_keep_alive = FT_FALSE;
-        if (is_post && !body.empty())
+        const char *response_body = "GET";
+        ft_size_t response_body_length = 3U;
+        if (is_post != FT_FALSE)
         {
-            pf_snprintf(buffer, sizeof(buffer), FT_UINT64_DECIMAL_FORMAT,
-                body.size());
-            response.append("HTTP/1.1 200 OK\r\nContent-Length: ");
-            response.append(buffer);
-            if (should_keep_alive != FT_FALSE)
-                response.append("\r\nConnection: keep-alive\r\n\r\n");
-            else
-                response.append("\r\nConnection: close\r\n\r\n");
-            response.append(body);
+            response_body = request_data + header_length;
+            response_body_length = expected_body_length;
         }
-        else if (!is_post)
+        char decimal_length[20];
+        const auto formatted_length = std::to_chars(decimal_length,
+            decimal_length + sizeof(decimal_length), response_body_length);
+        (void)response.clear();
+        last_error_code = response.append("HTTP/1.1 200 OK\r\nContent-Length: ");
+        if (last_error_code == FT_ERR_SUCCESS)
+            last_error_code = response.append(decimal_length,
+                static_cast<ft_size_t>(formatted_length.ptr - decimal_length));
+        if (last_error_code == FT_ERR_SUCCESS)
         {
-            response.append("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n");
             if (should_keep_alive != FT_FALSE)
-                response.append("Connection: keep-alive\r\n\r\n");
+                last_error_code = response.append("\r\nConnection: keep-alive\r\n\r\n");
             else
-                response.append("Connection: close\r\n\r\n");
-            response.append("GET");
+                last_error_code = response.append("\r\nConnection: close\r\n\r\n");
         }
-        else
+        if (last_error_code == FT_ERR_SUCCESS && response_body_length != 0U)
+            last_error_code = response.append(response_body, response_body_length);
+        if (last_error_code != FT_ERR_SUCCESS)
         {
-            response.append("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n");
-            if (should_keep_alive != FT_FALSE)
-                response.append("Connection: keep-alive\r\n\r\n");
-            else
-                response.append("Connection: close\r\n\r\n");
+            overall_result = 1;
+            if (metrics_enabled != FT_FALSE)
+                http_server_record_metrics(method_label, request_bytes, response_bytes, status_code_value, 1, last_error_code, request_start_time);
+            break ;
         }
         const char *response_data;
         ft_size_t total_sent;
@@ -665,56 +616,17 @@ int32_t ft_http_server::run_once_locked()
         response_data = response.c_str();
         total_sent = 0;
         response_bytes = response.size();
-        ft_bool remote_closed_during_send;
-
-        remote_closed_during_send = FT_FALSE;
-        while (total_sent < response.size())
+        while (total_sent < response_bytes)
         {
             if (NETWORKING_TEST_SHOULD_FAIL(
                     NETWORKING_TEST_HTTP_SERVER_SEND) != FT_FALSE)
                 send_result = -1;
             else
                 send_result = nw_send(client_socket, response_data + total_sent,
-                    response.size() - total_sent, 0);
+                    response_bytes - total_sent, 0);
             if (send_result <= 0)
             {
-#ifdef _WIN32
-                int32_t last_error;
-
-                last_error = WSAGetLastError();
-                if (send_result == 0
-                    || (send_result < 0
-                        && (last_error == WSAECONNRESET || last_error == WSAECONNABORTED
-                            || last_error == WSAESHUTDOWN)))
-                {
-                    overall_result = 1;
-                    last_error_code = FT_ERR_SOCKET_SEND_FAILED;
-                    request_result = 1;
-                    if (metrics_enabled != FT_FALSE)
-                        http_server_record_metrics(method_label, request_bytes, response_bytes, status_code_value, request_result, last_error_code, request_start_time);
-                    connection_active = FT_FALSE;
-                    remote_closed_during_send = FT_TRUE;
-                    break ;
-                }
-#else
-                if (send_result == 0
-                    || (send_result < 0 && (errno == EPIPE || errno == ECONNRESET)))
-                {
-                    overall_result = 1;
-                    last_error_code = FT_ERR_SOCKET_SEND_FAILED;
-                    request_result = 1;
-                    if (metrics_enabled != FT_FALSE)
-                        http_server_record_metrics(method_label, request_bytes, response_bytes, status_code_value, request_result, last_error_code, request_start_time);
-                    connection_active = FT_FALSE;
-                    remote_closed_during_send = FT_TRUE;
-                    break ;
-                }
-#endif
-                nw_close(client_socket);
-                if (send_result < 0)
-                    last_error_code = FT_ERR_SOCKET_SEND_FAILED;
-                else
-                    last_error_code = FT_ERR_SOCKET_SEND_FAILED;
+                last_error_code = FT_ERR_SOCKET_SEND_FAILED;
                 overall_result = 1;
                 request_result = 1;
                 if (metrics_enabled != FT_FALSE)
@@ -724,9 +636,7 @@ int32_t ft_http_server::run_once_locked()
             }
             total_sent += static_cast<ft_size_t>(send_result);
         }
-        if (remote_closed_during_send != FT_FALSE)
-            break ;
-        else if (connection_active == FT_FALSE)
+        if (connection_active == FT_FALSE)
             break ;
         status_code_value = 200;
         request_result = 0;
@@ -735,6 +645,8 @@ int32_t ft_http_server::run_once_locked()
         processed_requests++;
         if (should_keep_alive == FT_FALSE)
             connection_active = FT_FALSE;
+        else
+            (void)request.erase(0U, consumed_length);
     }
     nw_close(client_socket);
     if (overall_result == 0)

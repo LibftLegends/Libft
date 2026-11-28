@@ -17,7 +17,7 @@ The `CSV` module provides a lightweight CSV document wrapper plus field escaping
 - `destroy()` / `move(ft_csv_document &other)` - Release resources or move state from another document.
 - `row_count()` / `column_count(ft_size_t row_index)` - Inspect parsed row and column counts.
 - `has_header()` / `delimiter()` - Read parsed metadata.
-- `get_row(ft_size_t row_index, ft_size_t *column_count_out)` - Returns a contiguous row span for manual iteration.
+- `get_row(ft_size_t row_index, ft_size_t *column_count_out)` - Returns a borrowed contiguous row span for manual iteration. The span is valid until the document is destroyed, reinitialized, or moved.
 - `get_field(ft_size_t row_index, ft_size_t column_index)` / `get_field_by_name(ft_size_t row_index, const char *column_name)` / `get_header(ft_size_t column_index)` - Access parsed field values by row, column, or header name.
 - `get_int64(ft_size_t row_index, ft_size_t column_index, int64_t *value_out)` / `get_int64(ft_size_t row_index, const char *column_name, int64_t *value_out)` - Parse a field as a signed 64-bit integer.
 - `get_uint64(ft_size_t row_index, ft_size_t column_index, uint64_t *value_out)` / `get_uint64(ft_size_t row_index, const char *column_name, uint64_t *value_out)` - Parse a field as an unsigned 64-bit integer.
@@ -29,4 +29,4 @@ The `CSV` module provides a lightweight CSV document wrapper plus field escaping
 ## Free Helpers
 
 - `csv_split_line(const char *line, ft_vector<ft_string> &fields, char delimiter = ',')` - Splits one CSV record into fields.
-- `csv_escape_field(const char *field, char delimiter = ',')` - Returns an allocated escaped CSV field string.
+- `csv_escape_field(const char *field, char delimiter = ',')` - Returns an allocated escaped CSV field string. Release it with `cma_free`.

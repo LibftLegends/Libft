@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <utility>
 
 template <typename ManagedType>
 class ft_sharedptr
@@ -28,6 +29,10 @@ class ft_sharedptr
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
         void destroy_storage() noexcept;
+        template <typename Visit>
+        int32_t visit_retained_impl(Visit &visit) const noexcept;
+        static void release_storage(ManagedType *pointer,
+            std::atomic<ft_size_t> *reference_count, ft_bool is_array) noexcept;
 
     public:
         class reference_proxy
@@ -87,6 +92,11 @@ class ft_sharedptr
 
         ManagedType *get() noexcept;
         const ManagedType *get() const noexcept;
+        // Keeps the pointee alive even if the visitor resets or replaces this handle.
+        template <typename Visit>
+        int32_t visit_retained(Visit visit) noexcept;
+        template <typename Visit>
+        int32_t visit_retained(Visit visit) const noexcept;
         int32_t use_count() const noexcept;
         ft_bool unique() const noexcept;
 
@@ -141,43 +151,36 @@ void ft_sharedptr<ManagedType>::unlock_internal(ft_bool lock_acquired) const noe
 template <typename ManagedType>
 void ft_sharedptr<ManagedType>::destroy_storage() noexcept
 {
-    ft_size_t reference_count;
-
     if (this->_managed_pointer == ft_nullptr)
     {
         this->_reference_count = ft_nullptr;
         return ;
     }
-    if (this->_reference_count == ft_nullptr)
-    {
-        if (this->_is_array_type)
-            delete[] this->_managed_pointer;
-        else
-            delete this->_managed_pointer;
-        this->_managed_pointer = ft_nullptr;
-        this->_array_size = 0;
-        this->_is_array_type = FT_FALSE;
-        return ;
-    }
-    reference_count = this->_reference_count->fetch_sub(1,
-        std::memory_order_acq_rel);
-    if (reference_count > 1)
-    {
-        this->_managed_pointer = ft_nullptr;
-        this->_reference_count = ft_nullptr;
-        this->_array_size = 0;
-        this->_is_array_type = FT_FALSE;
-        return ;
-    }
-    if (this->_is_array_type)
-        delete[] this->_managed_pointer;
-    else
-        delete this->_managed_pointer;
-    delete this->_reference_count;
+    ft_sharedptr<ManagedType>::release_storage(this->_managed_pointer,
+        this->_reference_count, this->_is_array_type);
     this->_managed_pointer = ft_nullptr;
     this->_reference_count = ft_nullptr;
     this->_array_size = 0;
     this->_is_array_type = FT_FALSE;
+    return ;
+}
+
+template <typename ManagedType>
+void ft_sharedptr<ManagedType>::release_storage(ManagedType *pointer,
+    std::atomic<ft_size_t> *reference_count, ft_bool is_array) noexcept
+{
+    if (reference_count != ft_nullptr)
+    {
+        if (reference_count->fetch_sub(1, std::memory_order_release) > 1U)
+            return ;
+        // The last owner acquires the preceding releases before deletion.
+        std::atomic_thread_fence(std::memory_order_acquire);
+    }
+    if (is_array)
+        delete[] pointer;
+    else
+        delete pointer;
+    delete reference_count;
     return ;
 }
 
@@ -197,10 +200,11 @@ ft_sharedptr<ManagedType>::reference_proxy::~reference_proxy()
 template <typename ManagedType>
 ft_sharedptr<ManagedType>::reference_proxy::operator ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -232,10 +236,11 @@ ft_sharedptr<ManagedType>::const_reference_proxy::~const_reference_proxy()
 template <typename ManagedType>
 ft_sharedptr<ManagedType>::const_reference_proxy::operator const ManagedType&() const noexcept
 {
-    static ManagedType fallback = ManagedType();
-
     if (this->_pointer == ft_nullptr)
+    {
+        static ManagedType fallback = ManagedType();
         return (fallback);
+    }
     return (*this->_pointer);
 }
 
@@ -297,6 +302,13 @@ ft_sharedptr<ManagedType> &ft_sharedptr<ManagedType>::operator=(
         return (*this);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         (void)this->initialize();
+    if (this->_reference_count != ft_nullptr
+        && this->_reference_count == other._reference_count
+        && other._initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        this->set_error(FT_ERR_SUCCESS);
+        return (*this);
+    }
     this->destroy_storage();
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (*this);
@@ -511,7 +523,8 @@ int32_t ft_sharedptr<ManagedType>::move(ft_sharedptr<ManagedType> &other) noexce
             "source object is uninitialised");
         return (set_error(FT_ERR_INVALID_STATE));
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        && (this->_managed_pointer != ft_nullptr || this->_mutex != ft_nullptr))
     {
         destroy_result = this->destroy();
         if (destroy_result != FT_ERR_SUCCESS)
@@ -648,6 +661,55 @@ const ManagedType *ft_sharedptr<ManagedType>::get() const noexcept
     }
     set_error(FT_ERR_SUCCESS);
     return (this->_managed_pointer);
+}
+
+template <typename ManagedType>
+template <typename Visit>
+int32_t ft_sharedptr<ManagedType>::visit_retained(Visit visit) noexcept
+{
+    static_assert(noexcept(visit(std::declval<ManagedType &>())));
+    return (this->visit_retained_impl(visit));
+}
+
+template <typename ManagedType>
+template <typename Visit>
+int32_t ft_sharedptr<ManagedType>::visit_retained(Visit visit) const noexcept
+{
+    static_assert(noexcept(visit(std::declval<const ManagedType &>())));
+    auto visit_const = [&visit](const ManagedType &value) noexcept
+    {
+        visit(value);
+        return ;
+    };
+    return (this->visit_retained_impl(visit_const));
+}
+
+template <typename ManagedType>
+template <typename Visit>
+int32_t ft_sharedptr<ManagedType>::visit_retained_impl(Visit &visit) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+    {
+        this->unlock_internal(lock_acquired);
+        return (set_error(FT_ERR_INVALID_STATE));
+    }
+    ManagedType *pointer = this->_managed_pointer;
+    std::atomic<ft_size_t> *reference_count = this->_reference_count;
+    const ft_bool is_array = this->_is_array_type;
+    if (pointer == ft_nullptr || reference_count == ft_nullptr)
+    {
+        this->unlock_internal(lock_acquired);
+        return (set_error(FT_ERR_INVALID_POINTER));
+    }
+    (void)reference_count->fetch_add(1, std::memory_order_relaxed);
+    this->unlock_internal(lock_acquired);
+    visit(*pointer);
+    ft_sharedptr<ManagedType>::release_storage(pointer, reference_count, is_array);
+    return (set_error(FT_ERR_SUCCESS));
 }
 
 template <typename ManagedType>

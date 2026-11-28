@@ -14,13 +14,16 @@ int32_t ft_utf8_count(const char *string, ft_size_t *code_point_count_pointer)
     ft_size_t count = 0;
     while (index < length)
     {
-        uint32_t code_point = 0;
-        ft_size_t sequence_length = 0;
-        ft_size_t working_index = index;
-        error_code = ft_utf8_next(string, length, &working_index, &code_point, &sequence_length);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        index = working_index;
+        if (static_cast<uint8_t>(string[index]) < 0x80U)
+            ++index;
+        else
+        {
+            uint32_t code_point;
+
+            error_code = ft_utf8_next(string, length, &index, &code_point, ft_nullptr);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+        }
         ++count;
     }
     *code_point_count_pointer = count;

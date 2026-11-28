@@ -14,7 +14,7 @@
 class ft_bitset
 {
     private:
-        static const ft_size_t BITS_PER_BLOCK = sizeof(ft_size_t) * CHAR_BIT;
+        static constexpr ft_size_t BITS_PER_BLOCK = sizeof(ft_size_t) * CHAR_BIT;
 
         ft_size_t                    _size;
         ft_size_t                    _configured_bits;
@@ -27,6 +27,7 @@ class ft_bitset
         static int32_t set_error(int32_t error_code);
         ft_size_t block_index(ft_size_t position) const;
         ft_size_t bit_mask(ft_size_t position) const;
+        int32_t initialize_data(const ft_size_t *source_data);
         void destroy_data();
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;

@@ -14,6 +14,9 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `FT_NATIVE_SIZE_TO_FT_SIZE_CAST` - Converts a platform-native `size_t` to
   `ft_size_t` where their underlying types differ, such as macOS ABI
   callbacks; it is an identity expression on platforms where they match.
+- `FT_UINT64_TO_NATIVE_SIZE_CAST` - Converts a validated `uint64_t` length to
+  native `size_t` on narrower platforms and remains an identity expression
+  when both types have the same width.
 - `FT_FILE_OFFSET_TO_INT64_CAST` - Converts the platform-specific result of
   `ftell` to `int64_t` where required, while remaining an identity expression
   on platforms where the types already match.
@@ -60,6 +63,8 @@ The `Basic` module provides C-style memory, string, character, numeric parsing, 
 - `ft_bzero(void *string, ft_size_t size)` - Sets a memory range to zero.
 - `ft_memset(void *destination, int32_t value, ft_size_t number_of_bytes)` - Fills memory with a byte value.
 - `ft_memcpy(void *destination, const void *source, ft_size_t size)` - Copies non-overlapping memory.
+- `ft_memcpy_fixed<Size>(void *destination, const void *source)` - Uses the same copy semantics when the byte count is known at compile time.
+- `ft_memmove_fixed<Size>(void *destination, const void *source)` - Moves bytes between overlapping or disjoint live buffers. Sizes up to 32 bytes stage the source in a fixed-size buffer. Larger sizes use `ft_memmove`.
 - `ft_memcpy_s(void *destination, ft_size_t destination_size, const void *source, ft_size_t number_of_bytes)` - Bounds-checked memory copy returning an error code.
 - `ft_memmove(void *destination, const void *source, ft_size_t size)` - Copies memory safely when ranges overlap.
 - `ft_memmove_s(void *destination, ft_size_t destination_size, const void *source, ft_size_t number_of_bytes)` - Bounds-checked overlap-safe memory copy.

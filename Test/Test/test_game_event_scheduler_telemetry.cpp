@@ -2,199 +2,74 @@
 #include "../../Modules/Game/game_event_scheduler_telemetry.hpp"
 #include "../../Modules/Observability/observability_game_metrics.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
-#include "../../Modules/Basic/class_nullptr.hpp"
-#include "../../Modules/Errno/errno.hpp"
-#include "../../Modules/Basic/basic.hpp"
-#include "../../Modules/Template/vector.hpp"
+#include <limits>
 
-#include "../../Modules/Basic/limits.hpp"
-#include "../../Modules/Game/game_event.hpp"
-#include "../../Modules/PThread/mutex.hpp"
-#include "../../Modules/PThread/recursive_mutex.hpp"
-#ifndef LIBFT_TEST_BUILD
-#endif
+static ft_game_observability_sample g_scheduler_samples[4];
+static ft_size_t g_scheduler_sample_count = 0U;
 
-static ft_vector<ft_game_observability_sample> g_scheduler_samples;
-
-static int game_event_scheduler_strings_equal(const char *left, const char *right)
+static void capture_scheduler_sample(const ft_game_observability_sample &sample)
 {
-    if (left == ft_nullptr && right == ft_nullptr)
-        return (true);
-    if (left == ft_nullptr || right == ft_nullptr)
-        return (false);
-    return (ft_strcmp(left, right) == 0);
+    g_scheduler_samples[g_scheduler_sample_count % 4U] = sample;
+    ++g_scheduler_sample_count;
+    return ;
 }
 
-static int game_event_scheduler_reset_samples_state(void)
+FT_TEST(test_game_event_scheduler_telemetry_skips_duplicates_and_tracks_resets)
 {
-    if (g_scheduler_samples.is_initialised() != FT_CLASS_STATE_INITIALISED)
-    {
-        if (g_scheduler_samples.initialize() != FT_ERR_SUCCESS)
-            return (-1);
-    }
-    g_scheduler_samples.clear();
-    return (0);
-}
-
-static void game_event_scheduler_reset_samples(void)
-{
-    if (game_event_scheduler_reset_samples_state() != 0)
-    {
-        ft_test_fail("game_event_scheduler_reset_samples_state() == 0", __FILE__, __LINE__);
-        return;
-    }
-}
-
-static int game_event_scheduler_capture_sample_state(const ft_game_observability_sample &sample)
-{
-    if (g_scheduler_samples.is_initialised() != FT_CLASS_STATE_INITIALISED)
-    {
-        if (g_scheduler_samples.initialize() != FT_ERR_SUCCESS)
-            return (-1);
-    }
-    if (g_scheduler_samples.push_back(sample) != FT_ERR_SUCCESS)
-        return (-1);
-    return (0);
-}
-
-static void game_event_scheduler_capture_sample(const ft_game_observability_sample &sample)
-{
-    if (game_event_scheduler_capture_sample_state(sample) != 0)
-    {
-        ft_test_fail("game_event_scheduler_capture_sample_state(sample) == 0", __FILE__, __LINE__);
-        return;
-    }
-}
-
-FT_TEST(test_game_event_scheduler_telemetry_exports_metrics)
-{
+    g_scheduler_sample_count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_game_metrics_initialize(capture_scheduler_sample));
     game_event_scheduler_telemetry_state state;
-    t_event_scheduler_profile profile;
-
-    observability_game_metrics_shutdown();
-    game_event_scheduler_reset_samples();
-    FT_ASSERT_EQ(0, observability_game_metrics_initialize(game_event_scheduler_capture_sample));
-    game_event_scheduler_telemetry_state_initialize(state, "primary");
-
-    profile.update_count = 5;
-    profile.events_processed = 25;
-    profile.events_rescheduled = 3;
-    profile.max_queue_depth = 6;
-    profile.max_ready_batch = 4;
-    profile.total_processing_ns = 200000000;
-    profile.last_update_processing_ns = 50000000;
-    profile.last_error_code = FT_ERR_SUCCESS;
-
+    game_event_scheduler_telemetry_state_initialize(state, "test");
+    t_event_scheduler_profile profile{2, 6, 1, 8U, 3U, 100, 80, FT_ERR_SUCCESS};
     game_event_scheduler_telemetry_record(state, profile);
+    game_event_scheduler_telemetry_record(state, profile);
+    ++profile.events_rescheduled;
+    profile.total_processing_ns = 120;
+    game_event_scheduler_telemetry_record(state, profile);
+    const ft_size_t first_count = g_scheduler_sample_count;
+    const int64_t first_rate = g_scheduler_samples[1].delta_value;
+    const int64_t last_total = state.last_total_processing_ns;
 
-    FT_ASSERT_EQ(4, static_cast<int>(g_scheduler_samples.size()));
-
-    FT_ASSERT(game_event_scheduler_strings_equal("event_scheduler.throughput",
-        g_scheduler_samples[0].labels.event_name));
-    FT_ASSERT(game_event_scheduler_strings_equal("events_per_update",
-        g_scheduler_samples[0].labels.attribute));
-    FT_ASSERT_EQ(5, g_scheduler_samples[0].delta_value);
-    FT_ASSERT_EQ(5, g_scheduler_samples[0].total_value);
-
-    FT_ASSERT(game_event_scheduler_strings_equal("event_scheduler.throughput",
-        g_scheduler_samples[1].labels.event_name));
-    FT_ASSERT(game_event_scheduler_strings_equal("events_per_second",
-        g_scheduler_samples[1].labels.attribute));
-    FT_ASSERT_EQ(125, g_scheduler_samples[1].delta_value);
-    FT_ASSERT_EQ(125, g_scheduler_samples[1].total_value);
-
-    FT_ASSERT(game_event_scheduler_strings_equal("event_scheduler.queue",
-        g_scheduler_samples[2].labels.event_name));
-    FT_ASSERT(game_event_scheduler_strings_equal("max_depth",
-        g_scheduler_samples[2].labels.attribute));
-    FT_ASSERT_EQ(6, g_scheduler_samples[2].delta_value);
-    FT_ASSERT_EQ(6, g_scheduler_samples[2].total_value);
-
-    FT_ASSERT(game_event_scheduler_strings_equal("event_scheduler.latency",
-        g_scheduler_samples[3].labels.event_name));
-    FT_ASSERT(game_event_scheduler_strings_equal("last_update_ns",
-        g_scheduler_samples[3].labels.attribute));
-    FT_ASSERT_EQ(50000000, g_scheduler_samples[3].delta_value);
-    FT_ASSERT_EQ(200000000, g_scheduler_samples[3].total_value);
-    FT_ASSERT(g_scheduler_samples[3].success);
-
-    FT_ASSERT_EQ(0, observability_game_metrics_shutdown());
+    profile = {3, 10, 2, 8U, 3U, 160, 20, FT_ERR_SUCCESS};
+    game_event_scheduler_telemetry_record(state, profile);
+    const int64_t next_rate = g_scheduler_samples[1].delta_value;
+    profile = {1, 2, 0, 2U, 2U, 50, 50, FT_ERR_SUCCESS};
+    game_event_scheduler_telemetry_record(state, profile);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_shutdown());
+    FT_ASSERT_EQ(4U, first_count);
+    FT_ASSERT_EQ(60000000, first_rate);
+    FT_ASSERT_EQ(120, last_total);
+    FT_ASSERT_EQ(100000000, next_rate);
+    FT_ASSERT_EQ(12U, g_scheduler_sample_count);
+    FT_ASSERT_EQ(2, g_scheduler_samples[0].delta_value);
+    FT_ASSERT_EQ(40000000, g_scheduler_samples[1].delta_value);
+    FT_ASSERT_EQ(2, g_scheduler_samples[2].delta_value);
+    FT_ASSERT_EQ(50, g_scheduler_samples[3].total_value);
     return (1);
 }
 
-FT_TEST(test_game_event_scheduler_telemetry_skips_duplicate_snapshots)
+FT_TEST(test_game_event_scheduler_telemetry_large_counters_keep_the_throughput)
 {
+    constexpr int64_t MAXIMUM = std::numeric_limits<int64_t>::max();
+    g_scheduler_sample_count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_game_metrics_initialize(capture_scheduler_sample));
     game_event_scheduler_telemetry_state state;
-    t_event_scheduler_profile profile;
-
-    observability_game_metrics_shutdown();
-    game_event_scheduler_reset_samples();
-    FT_ASSERT_EQ(0, observability_game_metrics_initialize(game_event_scheduler_capture_sample));
-    game_event_scheduler_telemetry_state_initialize(state, "secondary");
-
-    profile.update_count = 4;
-    profile.events_processed = 16;
-    profile.events_rescheduled = 2;
-    profile.max_queue_depth = 5;
-    profile.max_ready_batch = 3;
-    profile.total_processing_ns = 160000000;
-    profile.last_update_processing_ns = 40000000;
-    profile.last_error_code = FT_ERR_SUCCESS;
-
+    game_event_scheduler_telemetry_state_initialize(state, "test");
+    t_event_scheduler_profile profile{1, MAXIMUM, 0, 1U, 1U,
+        MAXIMUM, 1, FT_ERR_SUCCESS};
     game_event_scheduler_telemetry_record(state, profile);
-    FT_ASSERT_EQ(4, static_cast<int>(g_scheduler_samples.size()));
+    const int64_t scaled_rate = g_scheduler_samples[1].delta_value;
 
+    game_event_scheduler_telemetry_state_reset(state);
+    profile.total_processing_ns = 1;
+    profile.max_queue_depth = std::numeric_limits<ft_size_t>::max();
     game_event_scheduler_telemetry_record(state, profile);
-    FT_ASSERT_EQ(4, static_cast<int>(g_scheduler_samples.size()));
-
-    profile.update_count = 8;
-    profile.events_processed = 40;
-    profile.events_rescheduled = 5;
-    profile.max_queue_depth = 7;
-    profile.max_ready_batch = 5;
-    profile.total_processing_ns = 260000000;
-    profile.last_update_processing_ns = 30000000;
-
-    game_event_scheduler_telemetry_record(state, profile);
-    FT_ASSERT_EQ(8, static_cast<int>(g_scheduler_samples.size()));
-
-    FT_ASSERT_EQ(6, g_scheduler_samples[4].delta_value);
-    FT_ASSERT_EQ(6, g_scheduler_samples[4].total_value);
-    FT_ASSERT_EQ(200, g_scheduler_samples[5].delta_value);
-    FT_ASSERT_EQ(200, g_scheduler_samples[5].total_value);
-    FT_ASSERT_EQ(7, g_scheduler_samples[6].delta_value);
-    FT_ASSERT_EQ(7, g_scheduler_samples[6].total_value);
-    FT_ASSERT_EQ(30000000, g_scheduler_samples[7].delta_value);
-    FT_ASSERT_EQ(260000000, g_scheduler_samples[7].total_value);
-
-    FT_ASSERT_EQ(0, observability_game_metrics_shutdown());
-    return (1);
-}
-
-FT_TEST(test_game_event_scheduler_telemetry_rejects_null_scheduler_name)
-{
-    game_event_scheduler_telemetry_state state;
-    t_event_scheduler_profile profile;
-
-    observability_game_metrics_shutdown();
-    game_event_scheduler_reset_samples();
-    FT_ASSERT_EQ(0, observability_game_metrics_initialize(game_event_scheduler_capture_sample));
-
-    game_event_scheduler_telemetry_state_initialize(state, ft_nullptr);
-
-    profile.update_count = 1;
-    profile.events_processed = 2;
-    profile.events_rescheduled = 0;
-    profile.max_queue_depth = 1;
-    profile.max_ready_batch = 1;
-    profile.total_processing_ns = 1000000;
-    profile.last_update_processing_ns = 1000000;
-    profile.last_error_code = FT_ERR_SUCCESS;
-
-    game_event_scheduler_telemetry_record(state, profile);
-
-    FT_ASSERT_EQ(0, static_cast<int>(g_scheduler_samples.size()));
-
-    FT_ASSERT_EQ(0, observability_game_metrics_shutdown());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_shutdown());
+    FT_ASSERT_EQ(8U, g_scheduler_sample_count);
+    FT_ASSERT_EQ(1000000000, scaled_rate);
+    FT_ASSERT_EQ(MAXIMUM, g_scheduler_samples[1].delta_value);
+    FT_ASSERT_EQ(MAXIMUM, g_scheduler_samples[2].delta_value);
     return (1);
 }

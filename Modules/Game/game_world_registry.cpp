@@ -8,6 +8,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/map.hpp"
+#include "../Template/move.hpp"
 #include "../Template/pair.hpp"
 #include "game_region_definition.hpp"
 #include "game_world_region.hpp"
@@ -71,76 +72,45 @@ int32_t game_world_registry::initialize() noexcept
 
 int32_t game_world_registry::initialize(const game_world_registry &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_region_definition> *region_entry;
-    const Pair<int32_t, game_region_definition> *region_end;
-    const Pair<int32_t, game_world_region> *world_entry;
-    const Pair<int32_t, game_world_region> *world_end;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_world_registry::initialize(copy)",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (this->has_active_lock())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    ft_bool source_lock_acquired;
+    result = other.lock_internal(&source_lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
+        result = this->_regions.copy_from(other._regions);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_world_regions.copy_from(other._world_regions);
+        (void)other.unlock_internal(source_lock_acquired);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        (void)this->_regions.destroy();
+        (void)this->_world_regions.destroy();
+        return (this->set_error(result));
     }
-    count = other._regions.size();
-    region_end = other._regions.end();
-    region_entry = region_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_regions.insert(region_entry->key, region_entry->value);
-        region_entry++;
-        index += 1;
-    }
-    count = other._world_regions.size();
-    world_end = other._world_regions.end();
-    world_entry = world_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_world_regions.insert(world_entry->key, world_entry->value);
-        world_entry++;
-        index += 1;
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (this->set_error(FT_ERR_SUCCESS));
 }
+
 
 int32_t game_world_registry::initialize(game_world_registry &&other) noexcept
 {
@@ -149,42 +119,71 @@ int32_t game_world_registry::initialize(game_world_registry &&other) noexcept
 
 int32_t game_world_registry::move(game_world_registry &other) noexcept
 {
-    int32_t initialize_error;
-
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_world_registry::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_world_registry &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
+    if (this->has_active_lock())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+    if (other.has_active_lock())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    result = this->_regions.move(other._regions);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->_world_regions.move(other._world_regions);
+        if (result != FT_ERR_SUCCESS)
+            (void)other._regions.move(this->_regions);
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->_regions.destroy();
+        (void)this->_world_regions.destroy();
+        return (this->set_error(result));
+    }
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
+}
+
+ft_bool game_world_registry::has_active_lock() const noexcept
+{
+    return ((this->_mutex != ft_nullptr && this->_mutex->lockState())
+        || this->_regions.has_active_lock() || this->_world_regions.has_active_lock());
 }
 
 int32_t game_world_registry::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    this->_regions.clear();
-    this->_world_regions.clear();
-    (void)this->_regions.destroy();
-    (void)this->_world_regions.destroy();
-    disable_error = this->disable_thread_safety();
+        return (this->set_error(FT_ERR_SUCCESS));
+    int32_t result = this->disable_thread_safety();
+    const int32_t region_error = this->_regions.destroy();
+    const int32_t world_error = this->_world_regions.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
-    return (disable_error);
+    if (result == FT_ERR_SUCCESS)
+        result = region_error;
+    if (result == FT_ERR_SUCCESS)
+        result = world_error;
+    return (this->set_error(result));
 }
 
 int32_t game_world_registry::enable_thread_safety() noexcept
@@ -283,69 +282,76 @@ void game_world_registry::unlock(ft_bool lock_acquired) const noexcept
 
 int32_t game_world_registry::register_region(const game_region_definition &region) noexcept
 {
-    ft_bool lock_acquired;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::register_region");
-    const int32_t lock_result = this->lock_internal(&lock_acquired);
-    if (lock_result != FT_ERR_SUCCESS)
+    game_region_definition staged;
+    int32_t result = staged.initialize(region);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    const int32_t identifier = staged.get_region_id();
+    ft_bool lock_acquired;
+    result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_result);
-        return (FT_ERR_INVALID_STATE);
+        this->_regions.insert(identifier, ft_move(staged));
+        result = this->_regions.get_error();
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_regions.insert(region.get_region_id(), region);
-    (void)this->unlock_internal(lock_acquired);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(result));
 }
 
 int32_t game_world_registry::register_world(const game_world_region &world_region) noexcept
 {
-    ft_bool lock_acquired;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::register_world");
-    const int32_t lock_result = this->lock_internal(&lock_acquired);
-    if (lock_result != FT_ERR_SUCCESS)
+    game_world_region staged;
+    int32_t result = staged.initialize(world_region);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    const int32_t identifier = staged.get_world_id();
+    ft_bool lock_acquired;
+    result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_result);
-        return (FT_ERR_INVALID_STATE);
+        this->_world_regions.insert(identifier, ft_move(staged));
+        result = this->_world_regions.get_error();
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_world_regions.insert(world_region.get_world_id(), world_region);
-    (void)this->unlock_internal(lock_acquired);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(result));
 }
 
 int32_t game_world_registry::fetch_region(int32_t region_id,
     game_region_definition &out_region) const noexcept
 {
-    const Pair<int32_t, game_region_definition> *entry;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::fetch_region");
-    entry = this->_regions.find(region_id);
-    if (entry == this->_regions.end())
+    ft_bool lock_acquired;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
+        result = this->_regions.visit_value(region_id, [&out_region](const game_region_definition &value) noexcept
+        {
+            return (out_region.initialize(value));
+        });
+        (void)this->unlock_internal(lock_acquired);
     }
-    const int32_t initialize_error = out_region.initialize(entry->value);
-    this->set_error(initialize_error);
-    return (initialize_error);
+    return (this->set_error(result));
 }
 
 int32_t game_world_registry::fetch_world(int32_t world_id,
     game_world_region &out_world) const noexcept
 {
-    const Pair<int32_t, game_world_region> *entry;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::fetch_world");
-    entry = this->_world_regions.find(world_id);
-    if (entry == this->_world_regions.end())
+    ft_bool lock_acquired;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
+        result = this->_world_regions.visit_value(world_id, [&out_world](const game_world_region &value) noexcept
+        {
+            return (out_world.initialize(value));
+        });
+        (void)this->unlock_internal(lock_acquired);
     }
-    const int32_t initialize_error = out_world.initialize(entry->value);
-    this->set_error(initialize_error);
-    return (initialize_error);
+    return (this->set_error(result));
 }
+
 
 ft_map<int32_t, game_region_definition> &game_world_registry::get_regions() noexcept
 {
@@ -364,26 +370,18 @@ const ft_map<int32_t, game_region_definition> &game_world_registry::get_regions(
 void game_world_registry::set_regions(
     const ft_map<int32_t, game_region_definition> &regions) noexcept
 {
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_region_definition> *entry;
-    const Pair<int32_t, game_region_definition> *entry_end;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::set_regions");
-    this->_regions.clear();
-    count = regions.size();
-    entry_end = regions.end();
-    entry = entry_end - count;
-    index = 0;
-    while (index < count)
+    ft_bool lock_acquired;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->_regions.insert(entry->key, entry->value);
-        entry++;
-        index += 1;
+        result = this->_regions.copy_from(regions);
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
+
 
 ft_map<int32_t, game_world_region> &game_world_registry::get_world_regions() noexcept
 {
@@ -402,24 +400,15 @@ const ft_map<int32_t, game_world_region> &game_world_registry::get_world_regions
 void game_world_registry::set_world_regions(
     const ft_map<int32_t, game_world_region> &world_regions) noexcept
 {
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_world_region> *entry;
-    const Pair<int32_t, game_world_region> *entry_end;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_world_registry::set_world_regions");
-    this->_world_regions.clear();
-    count = world_regions.size();
-    entry_end = world_regions.end();
-    entry = entry_end - count;
-    index = 0;
-    while (index < count)
+    ft_bool lock_acquired;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->_world_regions.insert(entry->key, entry->value);
-        entry++;
-        index += 1;
+        result = this->_world_regions.copy_from(world_regions);
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 

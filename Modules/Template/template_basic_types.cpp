@@ -7,7 +7,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static int32_t build_types()
+[[maybe_unused]] static int32_t build_types()
 {
     ft_vector<int32_t> integers;
 
@@ -38,4 +38,3 @@ static int32_t build_types()
             + stack_values.size()));
 }
 
-static volatile int32_t template_basic_types_result = build_types();

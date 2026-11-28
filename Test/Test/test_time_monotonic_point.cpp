@@ -165,3 +165,16 @@ FT_TEST(test_time_wall_ms_to_monotonic_translates_backward)
     FT_ASSERT_EQ(-1500LL, translated_point.milliseconds);
     return (1);
 }
+
+FT_TEST(test_time_clock_translation_leaves_outputs_on_overflow)
+{
+    const t_monotonic_time_point zero = time_monotonic_point_create(0);
+    const t_monotonic_time_point one = time_monotonic_point_create(1);
+    int64_t wall = 23;
+    t_monotonic_time_point monotonic = time_monotonic_point_create(29);
+    FT_ASSERT_EQ(FT_FALSE, time_monotonic_to_wall_ms(one, zero, INT64_MAX, wall));
+    FT_ASSERT_EQ(23, wall);
+    FT_ASSERT_EQ(FT_FALSE, time_wall_ms_to_monotonic(INT64_MAX, one, 0, monotonic));
+    FT_ASSERT_EQ(29, monotonic.milliseconds);
+    return (1);
+}

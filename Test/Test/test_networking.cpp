@@ -58,8 +58,8 @@ static int make_test_socket_pair(int descriptors[2])
         nw_close(client);
         return (-1);
     }
-    descriptors[0] = static_cast<int>(server);
-    descriptors[1] = static_cast<int>(client);
+    descriptors[0] = server;
+    descriptors[1] = client;
     return (0);
 }
 
@@ -327,6 +327,47 @@ FT_TEST(test_network_send_receive_ipv4)
     return (ft_strcmp(buffer, message) == 0);
 }
 
+FT_TEST(test_network_targeted_send_tracks_swapped_client)
+{
+    if (!networking_test_local_ipv4_available())
+        return (1);
+    SocketConfig configuration;
+    ft_socket server;
+    ft_socket first_client;
+    ft_socket second_client;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, configuration.initialize());
+    configuration._port = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.enable_thread_safety());
+    struct sockaddr_in bound_address{};
+    socklen_t address_length = sizeof(bound_address);
+    FT_ASSERT_EQ(0, getsockname(server.get_file_descriptor(),
+            reinterpret_cast<sockaddr *>(&bound_address), &address_length));
+    configuration._type = SocketType::CLIENT;
+    configuration._port = ntohs(bound_address.sin_port);
+    configuration._recv_timeout = 500;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_client.initialize(configuration));
+    const int32_t first_descriptor = server.accept_connection();
+    FT_ASSERT(first_descriptor >= 0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_client.initialize(configuration));
+    const int32_t second_descriptor = server.accept_connection();
+    FT_ASSERT(second_descriptor >= 0);
+
+    FT_ASSERT(server.is_client_connected(first_descriptor));
+    FT_ASSERT(server.is_client_connected(second_descriptor));
+    FT_ASSERT(server.disconnect_client(first_descriptor));
+    FT_ASSERT_EQ(1U, server.get_client_count());
+    FT_ASSERT(!server.is_client_connected(first_descriptor));
+    FT_ASSERT(!server.disconnect_client(first_descriptor));
+    FT_ASSERT_EQ(-1, server.send_data("x", 1, 0, first_descriptor));
+    FT_ASSERT(server.is_client_connected(second_descriptor));
+    FT_ASSERT_EQ(1, server.send_data("y", 1, 0, second_descriptor));
+    char received = '\0';
+    FT_ASSERT_EQ(1, second_client.receive_data(&received, 1, 0));
+    FT_ASSERT_EQ('y', received);
+    return (1);
+}
+
 FT_TEST(test_udp_send_receive_ipv4)
 {
     if (networking_test_local_ipv4_available() == FT_FALSE)
@@ -381,6 +422,79 @@ FT_TEST(test_udp_send_receive_ipv4)
         return (0);
     buffer[receive_result] = '\0';
     return (ft_strcmp(buffer, message) == 0);
+}
+
+FT_TEST(test_udp_setup_ipv4_wildcard_default_peer_and_hostname)
+{
+    if (!networking_test_local_ipv4_available())
+        return (1);
+    SocketConfig configuration;
+    udp_socket server;
+    udp_socket default_peer;
+    udp_socket hostname_peer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, configuration.initialize());
+    configuration._ip[0] = '\0';
+    configuration._port = 0;
+    configuration._protocol = IPPROTO_UDP;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration));
+    const auto &wildcard = reinterpret_cast<const struct sockaddr_in &>(server.get_address());
+    FT_ASSERT_EQ(AF_INET, wildcard.sin_family);
+    FT_ASSERT_EQ(htonl(INADDR_ANY), wildcard.sin_addr.s_addr);
+    struct sockaddr_in bound_address{};
+    socklen_t address_length = sizeof(bound_address);
+    FT_ASSERT_EQ(0, getsockname(server.get_fd(), reinterpret_cast<sockaddr *>(&bound_address),
+            &address_length));
+
+    configuration._type = SocketType::CLIENT;
+    configuration._port = ntohs(bound_address.sin_port);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, default_peer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, default_peer.initialize(configuration));
+    const auto &peer = reinterpret_cast<const struct sockaddr_in &>(default_peer.get_address());
+    FT_ASSERT_EQ(bound_address.sin_port, peer.sin_port);
+    FT_ASSERT_EQ(htonl(INADDR_LOOPBACK), peer.sin_addr.s_addr);
+
+    ft_memcpy_fixed<sizeof("localhost")>(configuration._ip, "localhost");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hostname_peer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hostname_peer.initialize(configuration));
+    const auto &named_peer = reinterpret_cast<const struct sockaddr_in &>(hostname_peer.get_address());
+    FT_ASSERT_EQ(bound_address.sin_port, named_peer.sin_port);
+    FT_ASSERT_EQ(htonl(INADDR_LOOPBACK), named_peer.sin_addr.s_addr);
+    return (1);
+}
+
+FT_TEST(test_udp_setup_ipv6_literal_and_default_peer)
+{
+    if (!networking_test_local_ipv6_available())
+        return (1);
+    SocketConfig configuration;
+    udp_socket server;
+    udp_socket default_peer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, configuration.initialize());
+    ft_memcpy_fixed<sizeof("::1")>(configuration._ip, "::1");
+    configuration._address_family = AF_INET6;
+    configuration._port = 0;
+    configuration._protocol = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, server.initialize(configuration));
+    const auto &literal = reinterpret_cast<const struct sockaddr_in6 &>(server.get_address());
+    FT_ASSERT_EQ(AF_INET6, literal.sin6_family);
+    FT_ASSERT_EQ(0, ft_memcmp(&literal.sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback)));
+
+    struct sockaddr_in6 bound_address{};
+    socklen_t address_length = sizeof(bound_address);
+    FT_ASSERT_EQ(0, getsockname(server.get_fd(), reinterpret_cast<sockaddr *>(&bound_address),
+            &address_length));
+    configuration._ip[0] = '\0';
+    configuration._type = SocketType::CLIENT;
+    configuration._port = ntohs(bound_address.sin6_port);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, default_peer.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, default_peer.initialize(configuration));
+    const auto &peer = reinterpret_cast<const struct sockaddr_in6 &>(default_peer.get_address());
+    FT_ASSERT_EQ(AF_INET6, peer.sin6_family);
+    FT_ASSERT_EQ(bound_address.sin6_port, peer.sin6_port);
+    FT_ASSERT_EQ(0, ft_memcmp(&peer.sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback)));
+    return (1);
 }
 
 FT_TEST(test_udp_send_to_validates_destination_mode_and_length)

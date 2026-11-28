@@ -7,22 +7,68 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include "../PThread/pthread.hpp"
 #include <atomic>
+#include <chrono>
 #include <new>
 #include <cstdlib>
 #include "move.hpp"
 
 template <typename ValueType>
+class ft_future;
+
+namespace ft_promise_detail
+{
+    inline constexpr uint32_t PENDING = 0U;
+    // Only publication clears WAITING, so one timeout cannot hide other waiters.
+    inline constexpr uint32_t WAITING = 1U;
+    inline constexpr uint32_t READY = 2U;
+
+    inline void publish_ready(std::atomic<uint32_t> &state)
+    {
+        if (state.exchange(READY, std::memory_order_release) == WAITING)
+            (void)pt_thread_wake_all_uint32(&state);
+        return ;
+    }
+
+    inline int32_t wait_ready(std::atomic<uint32_t> &state,
+        std::chrono::milliseconds timeout = std::chrono::seconds(30))
+    {
+        if (state.load(std::memory_order_acquire) == READY)
+            return (FT_ERR_SUCCESS);
+        uint32_t expected = PENDING;
+        if (!state.compare_exchange_strong(expected, WAITING,
+                std::memory_order_acq_rel) && expected == READY)
+            return (FT_ERR_SUCCESS);
+
+        using wait_clock = std::chrono::steady_clock;
+        const auto deadline = wait_clock::now() + timeout;
+        while (state.load(std::memory_order_acquire) != READY)
+        {
+            const auto remaining = deadline - wait_clock::now();
+            if (remaining <= wait_clock::duration::zero())
+                return (FT_ERR_TIMEOUT);
+            const auto milliseconds = std::chrono::ceil<std::chrono::milliseconds>(remaining);
+            const int32_t wait_error = pt_thread_wait_uint32_timed(&state, WAITING,
+                static_cast<uint64_t>(milliseconds.count()));
+            if (wait_error != FT_ERR_SUCCESS && wait_error != FT_ERR_TIMEOUT)
+                return (wait_error);
+        }
+        return (FT_ERR_SUCCESS);
+    }
+}
+
+template <typename ValueType>
 class ft_promise
 {
     private:
+        friend class ft_future<ValueType>;
         ValueType _value;
-        std::atomic<ft_bool> _ready;
+        mutable std::atomic<uint32_t> _readiness;
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
+        int32_t wait_ready() const;
 
     protected:
     public:
@@ -52,11 +98,13 @@ template <>
 class ft_promise<void>
 {
     private:
-        std::atomic<ft_bool> _ready;
+        friend class ft_future<void>;
+        mutable std::atomic<uint32_t> _readiness;
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
+        int32_t wait_ready() const;
 
     public:
         ft_promise();
@@ -82,7 +130,7 @@ class ft_promise<void>
 
 template <typename ValueType>
 ft_promise<ValueType>::ft_promise()
-    : _value(), _ready(FT_FALSE), _mutex(ft_nullptr),
+    : _value(), _readiness(ft_promise_detail::PENDING), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     (void)this->initialize();
@@ -97,7 +145,7 @@ ft_promise<ValueType>::~ft_promise()
 }
 
 inline ft_promise<void>::ft_promise()
-    : _ready(FT_FALSE), _mutex(ft_nullptr),
+    : _readiness(ft_promise_detail::PENDING), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
 {
     (void)this->initialize();
@@ -120,7 +168,7 @@ int32_t ft_promise<ValueType>::initialize()
         return (FT_ERR_INVALID_STATE);
     }
     this->_value = ValueType();
-    this->_ready.store(FT_FALSE, std::memory_order_release);
+    this->_readiness.store(ft_promise_detail::PENDING, std::memory_order_release);
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -133,7 +181,7 @@ inline int32_t ft_promise<void>::initialize()
             "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
     }
-    this->_ready.store(FT_FALSE, std::memory_order_release);
+    this->_readiness.store(ft_promise_detail::PENDING, std::memory_order_release);
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -150,7 +198,7 @@ int32_t ft_promise<ValueType>::destroy()
     }
     disable_error = this->disable_thread_safety();
     this->_value = ValueType();
-    this->_ready.store(FT_FALSE, std::memory_order_release);
+    this->_readiness.store(ft_promise_detail::PENDING, std::memory_order_release);
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (disable_error != FT_ERR_SUCCESS)
         return (disable_error);
@@ -167,7 +215,7 @@ inline int32_t ft_promise<void>::destroy()
         return (FT_ERR_SUCCESS);
     }
     disable_error = this->disable_thread_safety();
-    this->_ready.store(FT_FALSE, std::memory_order_release);
+    this->_readiness.store(ft_promise_detail::PENDING, std::memory_order_release);
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (disable_error != FT_ERR_SUCCESS)
         return (disable_error);
@@ -258,7 +306,7 @@ void ft_promise<ValueType>::set_value(const ValueType& value)
     if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
         return ;
     this->_value = value;
-    this->_ready.store(FT_TRUE, std::memory_order_release);
+    ft_promise_detail::publish_ready(this->_readiness);
     (void)this->unlock_internal(lock_acquired);
     return ;
 }
@@ -271,7 +319,7 @@ inline void ft_promise<void>::set_value()
     lock_acquired = FT_FALSE;
     if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
         return ;
-    this->_ready.store(FT_TRUE, std::memory_order_release);
+    ft_promise_detail::publish_ready(this->_readiness);
     (void)this->unlock_internal(lock_acquired);
     return ;
 }
@@ -286,7 +334,7 @@ void ft_promise<ValueType>::set_value(ValueType&& value)
     if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
         return ;
     this->_value = ft_move(value);
-    this->_ready.store(FT_TRUE, std::memory_order_release);
+    ft_promise_detail::publish_ready(this->_readiness);
     (void)this->unlock_internal(lock_acquired);
     return ;
 }
@@ -298,7 +346,7 @@ ValueType ft_promise<ValueType>::get() const
     ValueType value_copy;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise::get");
-    if (!this->_ready.load(std::memory_order_acquire))
+    if (this->_readiness.load(std::memory_order_acquire) != ft_promise_detail::READY)
         return (ValueType());
     lock_acquired = FT_FALSE;
     if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
@@ -313,7 +361,7 @@ inline void ft_promise<void>::get() const
     ft_bool lock_acquired;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise<void>::get");
-    if (!this->_ready.load(std::memory_order_acquire))
+    if (this->_readiness.load(std::memory_order_acquire) != ft_promise_detail::READY)
         return ;
     lock_acquired = FT_FALSE;
     if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
@@ -328,14 +376,27 @@ ft_bool ft_promise<ValueType>::is_ready() const
     ft_bool ready;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise::is_ready");
-    ready = this->_ready.load(std::memory_order_acquire);
+    ready = this->_readiness.load(std::memory_order_acquire) == ft_promise_detail::READY;
     return (ready);
 }
 
 inline ft_bool ft_promise<void>::is_ready() const
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise<void>::is_ready");
-    return (this->_ready.load(std::memory_order_acquire));
+    return (this->_readiness.load(std::memory_order_acquire) == ft_promise_detail::READY);
+}
+
+template <typename ValueType>
+int32_t ft_promise<ValueType>::wait_ready() const
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise::wait_ready");
+    return (ft_promise_detail::wait_ready(this->_readiness));
+}
+
+inline int32_t ft_promise<void>::wait_ready() const
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_promise<void>::wait_ready");
+    return (ft_promise_detail::wait_ready(this->_readiness));
 }
 
 template <typename ValueType>

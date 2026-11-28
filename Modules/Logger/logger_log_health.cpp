@@ -3,15 +3,20 @@
 #include "../PThread/pthread.hpp"
 #include "../Time/time.hpp"
 #include "../Networking/networking.hpp"
+#include "../Networking/socket_handle.hpp"
+#include "../Template/move.hpp"
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
 #include "../Errno/errno.hpp"
+#include <cerrno>
+#include <ctime>
+#include <limits>
 
 struct s_log_remote_health_state
 {
-    s_network_sink *sink;
+    uint64_t identity;
     ft_string       host;
     uint16_t  port;
     ft_bool            use_tcp;
@@ -20,7 +25,7 @@ struct s_log_remote_health_state
     int32_t             last_error;
 
     s_log_remote_health_state()
-        : sink(ft_nullptr), host(), port(0), use_tcp(FT_FALSE), reachable(FT_FALSE),
+        : identity(0U), host(), port(0), use_tcp(FT_FALSE), reachable(FT_FALSE),
           last_check(0), last_error(FT_ERR_INVALID_STATE)
     {
         return ;
@@ -29,26 +34,57 @@ struct s_log_remote_health_state
 
 struct s_network_sink_snapshot
 {
-    s_network_sink         *sink;
-    int32_t                     socket_fd;
+    uint64_t identity;
+    int32_t socket_fd;
+    int32_t capture_error;
     t_network_send_function send_function;
-    ft_string               host;
-    uint16_t          port;
-    ft_bool                    use_tcp;
+    ft_socket_handle probe_socket;
+    ft_bool has_probe_socket;
+    ft_string host;
+    uint16_t port;
+    ft_bool use_tcp;
 
     s_network_sink_snapshot()
-        : sink(ft_nullptr), socket_fd(-1), send_function(ft_nullptr), host(),
-          port(0), use_tcp(FT_FALSE)
+        : identity(0U), socket_fd(-1), capture_error(FT_ERR_SUCCESS),
+          send_function(ft_nullptr), probe_socket(), has_probe_socket(FT_FALSE),
+          host(), port(0U), use_tcp(FT_FALSE)
     {
         return ;
+    }
+
+    int32_t initialize(s_network_sink_snapshot &&other)
+    {
+        int32_t error = this->host.move(other.host);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        if (other.has_probe_socket != FT_FALSE)
+        {
+            error = this->probe_socket.move(other.probe_socket);
+            if (error != FT_ERR_SUCCESS)
+                return (error);
+        }
+        this->identity = other.identity;
+        this->socket_fd = other.socket_fd;
+        this->capture_error = other.capture_error;
+        this->send_function = other.send_function;
+        this->has_probe_socket = other.has_probe_socket;
+        other.has_probe_socket = FT_FALSE;
+        this->port = other.port;
+        this->use_tcp = other.use_tcp;
+        return (FT_ERR_SUCCESS);
     }
 };
 
 static pthread_mutex_t g_health_mutex;
+static pthread_mutex_t g_health_control_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_health_condition = PTHREAD_COND_INITIALIZER;
+static thread_local ft_bool g_is_health_worker = FT_FALSE;
 static pthread_once_t g_health_mutex_once = PTHREAD_ONCE_INIT;
 static int32_t g_health_mutex_init_error = 0;
 static ft_bool g_health_thread_running = FT_FALSE;
 static pthread_t g_health_thread;
+static ft_bool g_health_thread_joinable = FT_FALSE;
+static uint64_t g_health_interval_generation = 0U;
 static uint32_t g_health_interval_seconds = 30;
 static ft_vector<s_log_remote_health_state> g_health_states;
 
@@ -120,54 +156,54 @@ static int32_t logger_health_unlock()
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t logger_health_fetch_config(ft_bool *running, uint32_t *interval_seconds)
+static ft_bool logger_health_deadline(timespec &deadline)
 {
-    int32_t lock_status;
-    int32_t unlock_status;
-
-    lock_status = logger_health_lock();
-    if (lock_status != 0)
-        return (FT_ERR_INTERNAL);
-    if (running)
-        *running = g_health_thread_running;
-    if (interval_seconds)
-        *interval_seconds = g_health_interval_seconds;
-    unlock_status = logger_health_unlock();
-    if (unlock_status != 0)
-        return (FT_ERR_INTERNAL);
-    return (FT_ERR_SUCCESS);
+    if (std::timespec_get(&deadline, TIME_UTC) != TIME_UTC)
+        return (FT_FALSE);
+    uint32_t interval = g_health_interval_seconds;
+    if (interval == 0U)
+        interval = 30U;
+    using t_deadline_seconds = decltype(deadline.tv_sec);
+    constexpr t_deadline_seconds MAX_SECONDS = std::numeric_limits<t_deadline_seconds>::max();
+    const uint64_t seconds = static_cast<uint64_t>(deadline.tv_sec);
+    if (seconds >= static_cast<uint64_t>(MAX_SECONDS)
+        || interval >= static_cast<uint64_t>(MAX_SECONDS) - seconds)
+        deadline.tv_sec = MAX_SECONDS;
+    else
+        deadline.tv_sec = static_cast<t_deadline_seconds>(seconds + interval);
+    return (FT_TRUE);
 }
 
-static int32_t logger_health_wait_loop(uint32_t interval_seconds)
+static ft_bool logger_health_wait()
 {
-    uint32_t wait_seconds;
-    uint32_t elapsed_seconds;
-    ft_bool running;
-
-    wait_seconds = interval_seconds;
-    if (wait_seconds == 0)
-        wait_seconds = 30;
-    elapsed_seconds = 0;
-    while (elapsed_seconds < wait_seconds)
+    timespec deadline;
+    uint64_t interval_generation = g_health_interval_generation;
+    if (logger_health_deadline(deadline) == FT_FALSE)
+        return (FT_FALSE);
+    while (g_health_thread_running != FT_FALSE)
     {
-        if (logger_health_fetch_config(&running, ft_nullptr) != 0)
-            return (FT_ERR_INTERNAL);
-        if (!running)
-            return (FT_ERR_SUCCESS);
-        time_sleep(1);
-        elapsed_seconds += 1;
+        const int32_t wait_error = pthread_cond_timedwait(&g_health_condition,
+            &g_health_mutex, &deadline);
+        if (wait_error != 0 && wait_error != ETIMEDOUT)
+            return (FT_FALSE);
+        if (g_health_thread_running == FT_FALSE)
+            return (FT_FALSE);
+        if (interval_generation != g_health_interval_generation)
+        {
+            interval_generation = g_health_interval_generation;
+            if (logger_health_deadline(deadline) == FT_FALSE)
+                return (FT_FALSE);
+        }
+        else if (wait_error == ETIMEDOUT)
+            return (FT_TRUE);
     }
-    return (FT_ERR_SUCCESS);
+    return (FT_FALSE);
 }
 
 static void logger_health_probe_sink(const s_network_sink_snapshot &snapshot_entry,
         ft_bool *reachable, int32_t *error_code_value)
 {
-    const char *ping_message;
-    ft_size_t message_length;
     ft_size_t total_bytes_sent;
-    int32_t previous_errno;
-    int32_t send_errno;
     t_network_send_function send_function;
     int32_t socket_fd;
 
@@ -181,11 +217,14 @@ static void logger_health_probe_sink(const s_network_sink_snapshot &snapshot_ent
     }
     *reachable = FT_FALSE;
     *error_code_value = FT_ERR_INVALID_ARGUMENT;
-    if (!snapshot_entry.sink)
+    if (snapshot_entry.capture_error != FT_ERR_SUCCESS)
     {
+        *error_code_value = snapshot_entry.capture_error;
         return ;
     }
     socket_fd = snapshot_entry.socket_fd;
+    if (snapshot_entry.has_probe_socket != FT_FALSE)
+        socket_fd = snapshot_entry.probe_socket.get();
     send_function = snapshot_entry.send_function;
     if (socket_fd < 0)
     {
@@ -194,22 +233,17 @@ static void logger_health_probe_sink(const s_network_sink_snapshot &snapshot_ent
     }
     if (!send_function)
         send_function = nw_send;
-    ping_message = "[ft_logger] health probe\n";
-    message_length = ft_strlen(ping_message);
+    static constexpr char PING_MESSAGE[] = "[ft_logger] health probe\n";
+    constexpr ft_size_t MESSAGE_LENGTH = sizeof(PING_MESSAGE) - 1U;
     total_bytes_sent = 0;
-    previous_errno = FT_ERR_SUCCESS;
-    while (total_bytes_sent < message_length)
+    while (total_bytes_sent < MESSAGE_LENGTH)
     {
-        ssize_t send_result;
-
-        send_result = send_function(socket_fd, ping_message + total_bytes_sent,
-                message_length - total_bytes_sent, 0);
-        if (send_result <= 0)
+        const ft_size_t remaining_bytes = MESSAGE_LENGTH - total_bytes_sent;
+        const ssize_t send_result = send_function(socket_fd,
+                PING_MESSAGE + total_bytes_sent, remaining_bytes, 0);
+        if (send_result <= 0 || static_cast<ft_size_t>(send_result) > remaining_bytes)
         {
-            send_errno = FT_ERR_SUCCESS;
-            if (send_errno == FT_ERR_SUCCESS || send_errno == previous_errno)
-                send_errno = FT_ERR_SOCKET_SEND_FAILED;
-            *error_code_value = send_errno;
+            *error_code_value = FT_ERR_SOCKET_SEND_FAILED;
             return ;
         }
         total_bytes_sent += static_cast<ft_size_t>(send_result);
@@ -219,109 +253,74 @@ static void logger_health_probe_sink(const s_network_sink_snapshot &snapshot_ent
     return ;
 }
 
-static int32_t logger_snapshot_network_sinks(ft_vector<s_network_sink_snapshot> &snapshot)
+static int32_t logger_capture_network_sink(const s_log_sink &entry,
+    s_network_sink_snapshot &snapshot, ft_bool capture_socket)
 {
-    ft_size_t sink_count;
-    ft_size_t entry_index;
-
-    if (logger_lock_sinks() != 0)
-        return (FT_ERR_INTERNAL);
-    sink_count = g_sinks.size();
-    if (g_sinks.get_error() != FT_ERR_SUCCESS)
+    const auto *sink = static_cast<s_network_sink *>(entry.user_data);
+    ft_bool acquired = FT_FALSE;
+    int32_t error = network_sink_lock(sink, &acquired);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    snapshot.identity = entry.registration->identity;
+    snapshot.port = sink->port;
+    snapshot.use_tcp = sink->use_tcp;
+    error = snapshot.host.initialize(sink->host);
+    if (error == FT_ERR_SUCCESS && capture_socket != FT_FALSE)
     {
-        if (logger_unlock_sinks() != 0)
-            return (FT_ERR_INTERNAL);
-        return (FT_ERR_INTERNAL);
+        snapshot.send_function = sink->send_function;
+        if (sink->socket_fd >= 0 && (sink->send_function == ft_nullptr
+            || sink->send_function == nw_send))
+        {
+            snapshot.capture_error = snapshot.probe_socket.initialize_duplicate(sink->socket_fd);
+            snapshot.has_probe_socket = snapshot.capture_error == FT_ERR_SUCCESS;
+        }
+        else
+            snapshot.socket_fd = sink->socket_fd;
     }
-    entry_index = 0;
-    while (entry_index < sink_count)
+    network_sink_unlock(sink, acquired);
+    return (error);
+}
+
+static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot> &snapshot);
+
+static int32_t logger_snapshot_network_sinks(ft_vector<s_network_sink_snapshot> &snapshot,
+    ft_bool capture_socket)
+{
+    if (logger_lock_sinks() != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    const ft_size_t count = g_sinks.size();
+    ft_size_t index = 0U;
+    int32_t error = FT_ERR_SUCCESS;
+    while (index < count && error == FT_ERR_SUCCESS)
     {
-        s_log_sink entry;
-        s_log_sink &stored_entry = g_sinks[entry_index];
-        ft_bool        log_sink_lock_acquired;
-
-        entry = g_sinks[entry_index];
-        if (g_sinks.get_error() != FT_ERR_SUCCESS)
+        const s_log_sink &entry = g_sinks[index];
+        if (entry.function == ft_network_sink && entry.user_data != ft_nullptr)
         {
-            if (logger_unlock_sinks() != 0)
-                return (FT_ERR_INTERNAL);
-            return (FT_ERR_INTERNAL);
+            s_network_sink_snapshot captured;
+            error = logger_capture_network_sink(entry, captured, capture_socket);
+            if (error == FT_ERR_SUCCESS)
+                error = snapshot.push_back(ft_move(captured));
         }
-        log_sink_lock_acquired = FT_FALSE;
-        int32_t log_sink_lock_error;
-
-        log_sink_lock_error = log_sink_lock(&stored_entry, &log_sink_lock_acquired);
-        if (log_sink_lock_error != FT_ERR_SUCCESS)
-        {
-            if (logger_unlock_sinks() != 0)
-                return (FT_ERR_INTERNAL);
-            return (FT_ERR_INTERNAL);
-        }
-        entry = stored_entry;
-        if (entry.function == ft_network_sink)
-        {
-            s_network_sink *network_sink;
-            s_network_sink_snapshot snapshot_entry;
-            ft_bool                   network_lock_acquired;
-
-            network_sink = static_cast<s_network_sink *>(entry.user_data);
-            snapshot_entry.sink = network_sink;
-            snapshot_entry.socket_fd = -1;
-            snapshot_entry.send_function = ft_nullptr;
-            network_lock_acquired = FT_FALSE;
-            if (network_sink)
-            {
-                int32_t network_lock_error;
-
-                network_lock_error = network_sink_lock(network_sink, &network_lock_acquired);
-                if (network_lock_error != FT_ERR_SUCCESS)
-                {
-                    if (network_lock_acquired)
-                        network_sink_unlock(network_sink, network_lock_acquired);
-                    if (log_sink_lock_acquired)
-                        log_sink_unlock(&stored_entry, log_sink_lock_acquired);
-                    if (logger_unlock_sinks() != 0)
-                        return (FT_ERR_INTERNAL);
-                    return (FT_ERR_INTERNAL);
-                }
-            }
-            if (network_sink)
-            {
-                snapshot_entry.socket_fd = network_sink->socket_fd;
-                snapshot_entry.send_function = network_sink->send_function;
-                snapshot_entry.host = network_sink->host;
-                if (snapshot_entry.host.get_error() != FT_ERR_SUCCESS)
-                {
-                    if (network_lock_acquired)
-                        network_sink_unlock(network_sink, network_lock_acquired);
-                    if (log_sink_lock_acquired)
-                        log_sink_unlock(&stored_entry, log_sink_lock_acquired);
-                    if (logger_unlock_sinks() != 0)
-                        return (FT_ERR_INTERNAL);
-                    return (FT_ERR_INTERNAL);
-                }
-                snapshot_entry.port = network_sink->port;
-                snapshot_entry.use_tcp = network_sink->use_tcp;
-            }
-            if (network_lock_acquired)
-                network_sink_unlock(network_sink, network_lock_acquired);
-            snapshot.push_back(snapshot_entry);
-            if (snapshot.get_error() != FT_ERR_SUCCESS)
-            {
-                if (log_sink_lock_acquired)
-                    log_sink_unlock(&stored_entry, log_sink_lock_acquired);
-                if (logger_unlock_sinks() != 0)
-                    return (FT_ERR_INTERNAL);
-                return (FT_ERR_INTERNAL);
-            }
-        }
-        if (log_sink_lock_acquired)
-            log_sink_unlock(&stored_entry, log_sink_lock_acquired);
-        entry_index += 1;
+        index += 1U;
     }
-    if (logger_unlock_sinks() != 0)
-        return (FT_ERR_INTERNAL);
-    return (FT_ERR_SUCCESS);
+    if (error == FT_ERR_SUCCESS)
+        error = logger_health_sync_states(snapshot);
+    const int32_t unlock_error = logger_unlock_sinks();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    return (unlock_error);
+}
+
+static ft_bool logger_health_sink_registered(uint64_t identity)
+{
+    if (logger_lock_sinks() != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    const ft_size_t count = g_sinks.size();
+    ft_size_t index = 0U;
+    while (index < count && g_sinks[index].registration->identity != identity)
+        index += 1U;
+    (void)logger_unlock_sinks();
+    return (index < count);
 }
 
 static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot> &snapshot)
@@ -376,7 +375,7 @@ static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot
                     return (FT_ERR_INTERNAL);
                 return (FT_ERR_INTERNAL);
             }
-            if (snapshot_entry.sink == state.sink)
+            if (snapshot_entry.identity == state.identity)
             {
                 state.host = snapshot_entry.host;
                 if (state.host.get_error() != FT_ERR_SUCCESS)
@@ -450,7 +449,7 @@ static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot
                     return (FT_ERR_INTERNAL);
                 return (FT_ERR_INTERNAL);
             }
-            if (state.sink == snapshot_entry.sink)
+            if (state.identity == snapshot_entry.identity)
             {
                 exists = FT_TRUE;
                 break ;
@@ -461,7 +460,7 @@ static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot
         {
             s_log_remote_health_state new_state;
 
-            new_state.sink = snapshot_entry.sink;
+            new_state.identity = snapshot_entry.identity;
             new_state.host = snapshot_entry.host;
             if (new_state.host.get_error() != FT_ERR_SUCCESS)
             {
@@ -500,7 +499,7 @@ static int32_t logger_health_sync_states(const ft_vector<s_network_sink_snapshot
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t logger_health_record_result(s_network_sink *sink, ft_bool reachable, int32_t error_code_value)
+static int32_t logger_health_record_result(uint64_t identity, ft_bool reachable, int32_t error_code_value)
 {
     ft_size_t state_count;
     ft_size_t entry_index;
@@ -508,10 +507,6 @@ static int32_t logger_health_record_result(s_network_sink *sink, ft_bool reachab
     int32_t unlock_status;
     t_time current_time;
 
-    if (!sink)
-    {
-        return (FT_ERR_INTERNAL);
-    }
     lock_status = logger_health_lock();
     if (lock_status != 0)
         return (FT_ERR_INTERNAL);
@@ -536,7 +531,7 @@ static int32_t logger_health_record_result(s_network_sink *sink, ft_bool reachab
                 return (FT_ERR_INTERNAL);
             return (FT_ERR_INTERNAL);
         }
-        if (state.sink == sink)
+        if (state.identity == identity)
         {
             state.reachable = reachable;
             state.last_check = current_time;
@@ -557,71 +552,81 @@ static int32_t logger_health_record_result(s_network_sink *sink, ft_bool reachab
 static void *logger_health_thread(void *argument)
 {
     (void)argument;
-    while (1)
+    g_is_health_worker = FT_TRUE;
+    if (logger_health_lock() != FT_ERR_SUCCESS)
+        return (ft_nullptr);
+    while (g_health_thread_running != FT_FALSE)
     {
-        ft_bool running;
-        uint32_t interval_seconds;
-
-        if (logger_health_fetch_config(&running, &interval_seconds) != 0)
-            break ;
-        if (!running)
-            break ;
-        ft_log_probe_remote_health();
-        if (logger_health_wait_loop(interval_seconds) != 0)
+        (void)logger_health_unlock();
+        (void)ft_log_probe_remote_health();
+        if (logger_health_lock() != FT_ERR_SUCCESS)
+            return (ft_nullptr);
+        if (g_health_thread_running == FT_FALSE || logger_health_wait() == FT_FALSE)
             break ;
     }
+    g_health_thread_running = FT_FALSE;
+    (void)logger_health_unlock();
     return (ft_nullptr);
+}
+
+static void logger_health_request_stop()
+{
+    if (logger_health_lock() != FT_ERR_SUCCESS)
+        return ;
+    g_health_thread_running = FT_FALSE;
+    (void)pthread_cond_broadcast(&g_health_condition);
+    (void)logger_health_unlock();
+    return ;
+}
+
+static void logger_health_update_worker(ft_bool enable)
+{
+    if (logger_health_lock() != FT_ERR_SUCCESS)
+        return ;
+    const ft_bool running = g_health_thread_running;
+    (void)logger_health_unlock();
+    if (enable != FT_FALSE && running != FT_FALSE)
+        return ;
+    if (g_health_thread_joinable != FT_FALSE)
+    {
+        logger_health_request_stop();
+        if (pt_thread_join(g_health_thread, ft_nullptr) != 0)
+            return ;
+        g_health_thread_joinable = FT_FALSE;
+    }
+    if (enable == FT_FALSE || logger_health_lock() != FT_ERR_SUCCESS)
+        return ;
+    if (pt_thread_create(&g_health_thread, ft_nullptr, logger_health_thread, ft_nullptr) == 0)
+    {
+        g_health_thread_joinable = FT_TRUE;
+        g_health_thread_running = FT_TRUE;
+    }
+    (void)logger_health_unlock();
+    return ;
+}
+
+ft_bool logger_in_health_worker()
+{
+    return (g_is_health_worker);
 }
 
 void ft_log_enable_remote_health(ft_bool enable)
 {
-    int32_t lock_status;
-    int32_t unlock_status;
-
-    lock_status = logger_health_lock();
-    if (lock_status != 0)
+    const ft_bool closing = logger_runtime_closing();
+    if (enable != FT_FALSE && closing != FT_FALSE)
         return ;
-    if (enable)
+    if (g_is_health_worker != FT_FALSE
+        || (closing != FT_FALSE && logger_in_delivery_callback() != FT_FALSE))
     {
-        if (g_health_thread_running)
-        {
-            unlock_status = logger_health_unlock();
-            if (unlock_status != 0)
-                return ;
-            return ;
-        }
-        g_health_thread_running = FT_TRUE;
-        unlock_status = logger_health_unlock();
-        if (unlock_status != 0)
-            return ;
-        if (pt_thread_create(&g_health_thread, ft_nullptr, logger_health_thread, ft_nullptr) != 0)
-        {
-            lock_status = logger_health_lock();
-            if (lock_status == 0)
-            {
-                g_health_thread_running = FT_FALSE;
-                logger_health_unlock();
-            }
-            return ;
-        }
+        if (enable == FT_FALSE)
+            logger_health_request_stop();
         return ;
     }
-    if (!g_health_thread_running)
-    {
-        unlock_status = logger_health_unlock();
-        if (unlock_status != 0)
-            return ;
+    if (pthread_mutex_lock(&g_health_control_mutex) != 0)
         return ;
-    }
-    g_health_thread_running = FT_FALSE;
-    unlock_status = logger_health_unlock();
-    if (unlock_status != 0)
-        return ;
-    void *thread_result;
-
-    thread_result = ft_nullptr;
-    if (pt_thread_join(g_health_thread, &thread_result) != 0)
-        return ;
+    if (enable == FT_FALSE || logger_runtime_closing() == FT_FALSE)
+        logger_health_update_worker(enable);
+    (void)pthread_mutex_unlock(&g_health_control_mutex);
     return ;
 }
 
@@ -636,164 +641,107 @@ void ft_log_destroy_remote_health_for_tests(void)
 
 void ft_log_set_remote_health_interval(uint32_t interval_seconds)
 {
-    int32_t lock_status;
-    int32_t unlock_status;
-
-    lock_status = logger_health_lock();
-    if (lock_status != 0)
+    if (logger_health_lock() != FT_ERR_SUCCESS)
         return ;
-    g_health_interval_seconds = interval_seconds;
-    unlock_status = logger_health_unlock();
-    if (unlock_status != 0)
-        return ;
+    if (g_health_interval_seconds != interval_seconds)
+    {
+        g_health_interval_seconds = interval_seconds;
+        g_health_interval_generation += 1U;
+        (void)pthread_cond_broadcast(&g_health_condition);
+    }
+    (void)logger_health_unlock();
     return ;
+}
+
+int32_t logger_probe_remote_health()
+{
+    ft_vector<s_network_sink_snapshot> snapshot;
+    int32_t error = snapshot.initialize();
+    if (error == FT_ERR_SUCCESS)
+        error = logger_snapshot_network_sinks(snapshot, FT_TRUE);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+
+    const ft_size_t count = snapshot.size();
+    ft_size_t index = 0U;
+    int32_t first_error = FT_ERR_SUCCESS;
+    while (index < count)
+    {
+        const s_network_sink_snapshot &entry = snapshot[index];
+        if (logger_health_sink_registered(entry.identity) != FT_FALSE)
+        {
+            ft_bool reachable;
+            int32_t probe_error;
+            logger_health_probe_sink(entry, &reachable, &probe_error);
+            if (logger_health_sink_registered(entry.identity) == FT_FALSE)
+                error = FT_ERR_NOT_FOUND;
+            else
+            {
+                error = logger_health_record_result(entry.identity, reachable, probe_error);
+                if (error == FT_ERR_SUCCESS && reachable == FT_FALSE)
+                    error = probe_error;
+            }
+            if (first_error == FT_ERR_SUCCESS)
+                first_error = error;
+        }
+        index += 1U;
+    }
+    return (first_error);
 }
 
 int32_t ft_log_probe_remote_health()
 {
-    int32_t final_result;
-
-    final_result = 0;
-    {
-        ft_vector<s_network_sink_snapshot> snapshot;
-        ft_size_t snapshot_count;
-        ft_size_t entry_index;
-        ft_bool failure_detected;
-
-        if (snapshot.initialize() != FT_ERR_SUCCESS)
-            return (-1);
-        if (logger_snapshot_network_sinks(snapshot) != 0)
-        {
-            final_result = -1;
-            goto cleanup_snapshot;
-        }
-        if (logger_health_sync_states(snapshot) != 0)
-        {
-            final_result = -1;
-            goto cleanup_snapshot;
-        }
-        snapshot_count = snapshot.size();
-        if (snapshot.get_error() != FT_ERR_SUCCESS)
-        {
-            final_result = -1;
-            goto cleanup_snapshot;
-        }
-        entry_index = 0;
-        failure_detected = FT_FALSE;
-        while (entry_index < snapshot_count)
-        {
-            const s_network_sink_snapshot &snapshot_entry = snapshot[entry_index];
-            ft_bool reachable;
-            int32_t probe_error;
-
-            if (snapshot.get_error() != FT_ERR_SUCCESS)
-            {
-                final_result = -1;
-                goto cleanup_snapshot;
-            }
-            if (!snapshot_entry.sink)
-            {
-                entry_index += 1;
-                continue;
-            }
-            reachable = FT_FALSE;
-            probe_error = FT_ERR_INVALID_STATE;
-            logger_health_probe_sink(snapshot_entry, &reachable, &probe_error);
-            if (logger_health_record_result(snapshot_entry.sink, reachable, probe_error) != 0)
-            {
-                if (FT_TRUE)
-                {
-                    final_result = -1;
-                    goto cleanup_snapshot;
-                }
-            }
-            if (!reachable && !failure_detected)
-            {
-                failure_detected = FT_TRUE;
-            }
-            entry_index += 1;
-        }
-        if (failure_detected)
-        {
-            final_result = -1;
-            goto cleanup_snapshot;
-        }
-        final_result = 0;
-    cleanup_snapshot:
-        ;
-    }
-    return (final_result);
+    return (-static_cast<int32_t>(logger_probe_remote_health() != FT_ERR_SUCCESS));
 }
 
-int32_t ft_log_get_remote_health(s_log_remote_health *statuses, ft_size_t capacity, ft_size_t *entry_count)
+int32_t logger_read_remote_health(s_log_remote_health *statuses, ft_size_t capacity,
+    ft_size_t *entry_count)
 {
+    if (entry_count == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
     ft_vector<s_network_sink_snapshot> snapshot;
-    ft_size_t states_count;
-    ft_size_t entry_index;
-    int32_t lock_status;
-    int32_t unlock_status;
+    int32_t error = snapshot.initialize();
+    if (error == FT_ERR_SUCCESS)
+        error = logger_snapshot_network_sinks(snapshot, FT_FALSE);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    if (logger_health_lock() != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
 
-    if (!entry_count)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (snapshot.initialize() != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (logger_snapshot_network_sinks(snapshot) != 0)
-        return (FT_ERR_INTERNAL);
-    if (logger_health_sync_states(snapshot) != 0)
-        return (FT_ERR_INTERNAL);
-    lock_status = logger_health_lock();
-    if (lock_status != 0)
-        return (FT_ERR_INTERNAL);
-    states_count = g_health_states.size();
-    if (g_health_states.get_error() != FT_ERR_SUCCESS)
-    {
-        unlock_status = logger_health_unlock();
-        if (unlock_status != 0)
-            return (FT_ERR_INTERNAL);
-        return (FT_ERR_INTERNAL);
-    }
-    if (statuses && capacity < states_count)
+    const ft_size_t states_count = g_health_states.size();
+    error = g_health_states.get_error();
+    if (error == FT_ERR_SUCCESS)
     {
         *entry_count = states_count;
-        unlock_status = logger_health_unlock();
-        if (unlock_status != 0)
-            return (FT_ERR_INTERNAL);
-        return (FT_ERR_INTERNAL);
-    }
-    entry_index = 0;
-    while (entry_index < states_count)
-    {
-        s_log_remote_health_state &state = g_health_states[entry_index];
-
-        if (g_health_states.get_error() != FT_ERR_SUCCESS)
+        if (statuses != ft_nullptr && capacity < states_count)
+            error = FT_ERR_OUT_OF_RANGE;
+        else if (statuses != ft_nullptr)
         {
-            unlock_status = logger_health_unlock();
-            if (unlock_status != 0)
-                return (FT_ERR_INTERNAL);
-            return (FT_ERR_INTERNAL);
-        }
-        if (statuses && entry_index < capacity)
-        {
-            statuses[entry_index].host = ft_nullptr;
-            statuses[entry_index].port = 0;
-            statuses[entry_index].use_tcp = FT_FALSE;
-            statuses[entry_index].reachable = state.reachable;
-            statuses[entry_index].last_check = state.last_check;
-            statuses[entry_index].last_error = state.last_error;
-            if (state.host.c_str())
+            ft_size_t index = 0U;
+            while (index < states_count)
             {
-                statuses[entry_index].host = state.host.c_str();
-                statuses[entry_index].port = state.port;
-                statuses[entry_index].use_tcp = state.use_tcp;
+                const s_log_remote_health_state &state = g_health_states[index];
+                error = g_health_states.get_error();
+                if (error != FT_ERR_SUCCESS)
+                    break ;
+                statuses[index].host = state.host.c_str();
+                statuses[index].port = state.port;
+                statuses[index].use_tcp = state.use_tcp;
+                statuses[index].reachable = state.reachable;
+                statuses[index].last_check = state.last_check;
+                statuses[index].last_error = state.last_error;
+                index += 1U;
             }
         }
-        entry_index += 1;
     }
-    *entry_count = states_count;
-    unlock_status = logger_health_unlock();
-    if (unlock_status != 0)
+    (void)logger_health_unlock();
+    return (error);
+}
+
+int32_t ft_log_get_remote_health(s_log_remote_health *statuses, ft_size_t capacity,
+    ft_size_t *entry_count)
+{
+    if (logger_read_remote_health(statuses, capacity, entry_count) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
     return (FT_ERR_SUCCESS);
 }

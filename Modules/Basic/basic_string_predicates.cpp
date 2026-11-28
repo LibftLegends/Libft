@@ -95,27 +95,5 @@ ft_bool ft_str_ends_with(const char *string, const char *suffix)
 
 ft_bool ft_str_contains(const char *haystack, const char *needle)
 {
-    ft_size_t haystack_index;
-    ft_size_t needle_index;
-    ft_size_t needle_length;
-
-    if (haystack == ft_nullptr || needle == ft_nullptr)
-        return (FT_FALSE);
-    needle_length = ft_strlen_size_t(needle);
-    if (needle_length == 0)
-        return (FT_TRUE);
-    haystack_index = 0;
-    while (haystack[haystack_index] != '\0')
-    {
-        needle_index = 0;
-        while (needle[needle_index] != '\0'
-            && haystack[haystack_index + needle_index] == needle[needle_index])
-        {
-            ++needle_index;
-        }
-        if (needle_index == needle_length)
-            return (FT_TRUE);
-        ++haystack_index;
-    }
-    return (FT_FALSE);
+    return (static_cast<ft_bool>(ft_strstr(haystack, needle) != ft_nullptr));
 }

@@ -1,53 +1,22 @@
 #include "math.hpp"
-#include "../Errno/errno.hpp"
+#include "math_float_bits.hpp"
 #include <cmath>
-#include <limits>
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "math_interval.hpp"
-
-static int32_t math_is_infinite_internal(double number)
-{
-    union
-    {
-        double double_value;
-        uint64_t integer_value;
-    } converter;
-
-    uint64_t exponent_bits;
-    uint64_t mantissa_bits;
-
-    converter.double_value = number;
-    exponent_bits = converter.integer_value & 0x7ff0000000000000ULL;
-    mantissa_bits = converter.integer_value & 0x000fffffffffffffULL;
-    if (exponent_bits == 0x7ff0000000000000ULL && mantissa_bits == 0)
-        return (1);
-    return (0);
-}
 
 double math_fmod(double value, double modulus)
 {
-    double remainder_value;
+    constexpr uint64_t MIN_SUBNORMAL_BITS = 1U;
 
-    if (math_isnan(value) || math_isnan(modulus))
-    {
+    const uint64_t value_bits = math_double_magnitude_bits(math_double_bits(value));
+    const uint64_t modulus_bits = math_double_magnitude_bits(math_double_bits(modulus));
+    if (value_bits >= MATH_DOUBLE_INFINITY_BITS
+        || modulus_bits <= MIN_SUBNORMAL_BITS
+        || modulus_bits > MATH_DOUBLE_INFINITY_BITS)
         return (math_nan());
-    }
-    if (math_is_infinite_internal(value) != 0)
-    {
-        return (math_nan());
-    }
-    if (math_fabs(modulus) <= std::numeric_limits<double>::denorm_min())
-    {
-        return (math_nan());
-    }
-    if (math_is_infinite_internal(modulus) != 0)
-    {
+    if (modulus_bits == MATH_DOUBLE_INFINITY_BITS)
         return (value);
-    }
-    remainder_value = std::fmod(value, modulus);
-    if (math_fabs(remainder_value) <= std::numeric_limits<double>::denorm_min())
-        remainder_value = value * 0.0;
-    return (remainder_value);
+
+    const double remainder = std::fmod(value, modulus);
+    if (math_double_magnitude_bits(math_double_bits(remainder)) <= MIN_SUBNORMAL_BITS)
+        return (value * 0.0);
+    return (remainder);
 }

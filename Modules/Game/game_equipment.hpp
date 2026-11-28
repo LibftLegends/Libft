@@ -13,7 +13,10 @@ enum game_equipment_slot
 {
     EQUIP_HEAD,
     EQUIP_CHEST,
-    EQUIP_WEAPON
+    EQUIP_WEAPON,
+    EQUIP_LEGS,
+    EQUIP_FEET,
+    EQUIP_OFF_HAND
 };
 
 class game_equipment
@@ -26,15 +29,21 @@ class game_equipment
         ft_sharedptr<game_item> _head;
         ft_sharedptr<game_item> _chest;
         ft_sharedptr<game_item> _weapon;
+        ft_sharedptr<game_item> _legs;
+        ft_sharedptr<game_item> _feet;
+        ft_sharedptr<game_item> _off_hand;
         mutable pt_recursive_mutex      *_mutex;
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
 
-        ft_bool validate_item(const ft_sharedptr<game_item> &item) const noexcept;
+        using slot_member_pointer = ft_sharedptr<game_item> game_equipment::*;
+        static slot_member_pointer find_slot(int32_t slot) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t read_item(int32_t slot, ft_sharedptr<game_item> &result) const noexcept;
+        friend class game_character;
 
     public:
         game_equipment() noexcept;

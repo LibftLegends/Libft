@@ -44,3 +44,43 @@ FT_TEST(test_encoding_base32_decode_rejects_invalid_character)
     return (1);
 }
 
+FT_TEST(test_encoding_base32_roundtrip_full_groups_and_each_tail)
+{
+    const uint8_t input[] = {'f', 'o', 'o', 'b', 'a', 'r', '1', '2', '3'};
+    const char *const expected[] = {"MZXW6YTB", "MZXW6YTBOI======",
+        "MZXW6YTBOIYQ====", "MZXW6YTBOIYTE===", "MZXW6YTBOIYTEMY="};
+    ft_size_t length = 5U;
+    while (length <= sizeof(input))
+    {
+        char *encoded = encoding_base32_encode(input, length);
+        FT_ASSERT(encoded != ft_nullptr);
+        FT_ASSERT_EQ(0, ft_strcmp(expected[length - 5U], encoded));
+        ft_size_t decoded_size = 0U;
+        uint8_t *decoded = encoding_base32_decode(encoded,
+                ft_strlen_size_t(encoded), &decoded_size);
+        FT_ASSERT(decoded != ft_nullptr);
+        FT_ASSERT_EQ(length, decoded_size);
+        FT_ASSERT_EQ(0, ft_memcmp(input, decoded, decoded_size));
+        FT_ASSERT_EQ(0U, decoded[decoded_size]);
+        cma_free(decoded);
+        cma_free(encoded);
+        ++length;
+    }
+    return (1);
+}
+
+FT_TEST(test_encoding_base32_lowercase_unpadded_and_invalid_tail_bits)
+{
+    ft_size_t decoded_size = 0U;
+    uint8_t *decoded = encoding_base32_decode("mzxw6ytboi", 10U, &decoded_size);
+    FT_ASSERT(decoded != ft_nullptr);
+    FT_ASSERT_EQ(6U, decoded_size);
+    FT_ASSERT_EQ(0, ft_memcmp("foobar", decoded, decoded_size));
+    cma_free(decoded);
+    FT_ASSERT(encoding_base32_decode("MZXW6YTBOJ======", 16U, &decoded_size)
+        == ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, encoding_get_error());
+    FT_ASSERT_EQ(0U, decoded_size);
+    return (1);
+}
+

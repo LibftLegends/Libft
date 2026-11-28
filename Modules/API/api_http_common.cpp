@@ -1,12 +1,60 @@
 #include "api_http_common.hpp"
 #include "../Basic/basic.hpp"
+#include "../CMA/CMA.hpp"
 #include "../Errno/errno.hpp"
 #include "../CPP_class/class_big_number.hpp"
+#include <charconv>
 #include <cstddef>
-#include <climits>
+#include <limits>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+
+int32_t api_http_build_authorization_headers(ft_string &output, const char *headers,
+    api_http_authorization_scheme scheme, const char *credentials)
+{
+    static constexpr char BASIC_PREFIX[] = "Authorization: Basic ";
+    static constexpr char BEARER_PREFIX[] = "Authorization: Bearer ";
+    static constexpr char SEPARATOR[] = "\r\n";
+    if (!credentials)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *prefix = BASIC_PREFIX;
+    ft_size_t prefix_size = sizeof(BASIC_PREFIX) - 1;
+    if (scheme == api_http_authorization_scheme::BEARER)
+    {
+        prefix = BEARER_PREFIX;
+        prefix_size = sizeof(BEARER_PREFIX) - 1;
+    }
+    ft_size_t headers_size = 0;
+    ft_size_t separator_size = 0;
+    if (headers && headers[0] != '\0')
+    {
+        headers_size = ft_strlen_size_t(headers);
+        separator_size = sizeof(SEPARATOR) - 1;
+    }
+    const ft_size_t credentials_size = ft_strlen_size_t(credentials);
+    if (headers_size > FT_SYSTEM_SIZE_MAX - prefix_size - separator_size - 1
+        || credentials_size > FT_SYSTEM_SIZE_MAX - prefix_size - separator_size - headers_size - 1)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t prefix_offset = headers_size + separator_size;
+    const ft_size_t credentials_offset = prefix_offset + prefix_size;
+    const ft_size_t total_size = credentials_offset + credentials_size;
+    char *buffer = static_cast<char *>(cma_malloc(total_size + 1));
+    if (!buffer)
+        return (FT_ERR_NO_MEMORY);
+    if (headers_size != 0)
+    {
+        ft_memcpy(buffer, headers, headers_size);
+        ft_memcpy(buffer + headers_size, SEPARATOR, separator_size);
+    }
+    ft_memcpy(buffer + prefix_offset, prefix, prefix_size);
+    ft_memcpy(buffer + credentials_offset, credentials, credentials_size);
+    buffer[total_size] = '\0';
+    const int32_t error = ft_string_take_owned_buffer(output, buffer, total_size);
+    if (error != FT_ERR_SUCCESS)
+        cma_free(buffer);
+    return (error);
+}
 
 char api_http_to_lower(char character)
 {
@@ -61,21 +109,15 @@ ft_bool api_http_line_starts_with(const char *line_start, ft_size_t line_length,
 
 const char *api_http_find_crlf(const char *start, const char *end)
 {
-    const char *walker;
-
-    if (!start || !end)
+    if (start == ft_nullptr || end == ft_nullptr || start >= end)
         return (ft_nullptr);
-    walker = start;
-    while (walker < end)
+    const char *last = end - 1;
+    const char *cursor = start;
+    while (cursor < last)
     {
-        if (*walker == '\r')
-        {
-            if ((walker + 1) >= end)
-                return (ft_nullptr);
-            if (*(walker + 1) == '\n')
-                return (walker);
-        }
-        walker++;
+        if (cursor[0] == '\r' && cursor[1] == '\n')
+            return (cursor);
+        ++cursor;
     }
     return (ft_nullptr);
 }
@@ -102,65 +144,33 @@ void api_http_trim_header_value(const char **value_start,
 ft_bool api_http_parse_decimal(const char *start, const char *end,
     int64_t &value)
 {
-    const char *walker;
-    int64_t result_value;
-
-    if (!start || !end)
+    if (start == ft_nullptr || end == ft_nullptr || start >= end)
         return (FT_FALSE);
-    walker = start;
-    if (walker == end)
+    uint64_t parsed = 0;
+    const auto result = std::from_chars(start, end, parsed, 10);
+    if (result.ec != std::errc{} || result.ptr != end
+        || parsed > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
         return (FT_FALSE);
-    result_value = 0;
-    while (walker < end)
-    {
-        if (*walker < '0' || *walker > '9')
-            return (FT_FALSE);
-        if (result_value > (LLONG_MAX / 10))
-            return (FT_FALSE);
-        result_value *= 10;
-        if (result_value > (LLONG_MAX - (*walker - '0')))
-            return (FT_FALSE);
-        result_value += static_cast<int64_t>(*walker - '0');
-        walker++;
-    }
-    value = result_value;
+    value = static_cast<int64_t>(parsed);
     return (FT_TRUE);
 }
 
 ft_bool api_http_parse_hex(const char *start, const char *end,
     int64_t &value)
 {
-    const char *walker;
-    int64_t result_value;
-
-    if (!start || !end)
+    if (start == ft_nullptr || end == ft_nullptr || start >= end)
         return (FT_FALSE);
-    walker = start;
-    if (walker == end)
-        return (FT_FALSE);
-    result_value = 0;
-    while (walker < end)
+    if (*start == ';')
     {
-        char lower_character;
-
-        if (*walker == ';')
-            break ;
-        lower_character = api_http_to_lower(*walker);
-        if (lower_character >= '0' && lower_character <= '9')
-            lower_character = static_cast<char>(lower_character - '0');
-        else if (lower_character >= 'a' && lower_character <= 'f')
-            lower_character = static_cast<char>(lower_character - 'a' + 10);
-        else
-            return (FT_FALSE);
-        if (result_value > (LLONG_MAX >> 4))
-            return (FT_FALSE);
-        result_value <<= 4;
-        if (result_value > (LLONG_MAX - lower_character))
-            return (FT_FALSE);
-        result_value += lower_character;
-        walker++;
+        value = 0;
+        return (FT_TRUE);
     }
-    value = result_value;
+    uint64_t parsed = 0;
+    const auto result = std::from_chars(start, end, parsed, 16);
+    if (result.ec != std::errc{} || (result.ptr != end && *result.ptr != ';')
+        || parsed > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return (FT_FALSE);
+    value = static_cast<int64_t>(parsed);
     return (FT_TRUE);
 }
 
@@ -334,385 +344,182 @@ void api_http_parse_headers(const char *headers_start,
     return ;
 }
 
+static ft_bool api_http_walk_chunks(const char *body_start, ft_size_t body_size,
+    api_http_chunk_scan &scan, ft_string *decoded_body)
+{
+    if (body_start == ft_nullptr || scan.invalid || scan.position > body_size
+        || scan.line_search_position > body_size)
+        return (FT_FALSE);
+    while (!scan.complete && scan.position < body_size)
+    {
+        const char *cursor = body_start + scan.position;
+        if (scan.chunk_size < 0 || scan.trailers)
+        {
+            const char *line_end = api_http_find_crlf(
+                body_start + scan.line_search_position, body_start + body_size);
+            if (line_end == ft_nullptr)
+            {
+                scan.line_search_position = body_size - 1U;
+                return (FT_FALSE);
+            }
+            if (scan.trailers)
+                scan.complete = cursor == line_end;
+            else if (!api_http_parse_hex(cursor, line_end, scan.chunk_size))
+            {
+                scan.invalid = FT_TRUE;
+                return (FT_FALSE);
+            }
+            else
+                scan.trailers = scan.chunk_size == 0;
+            scan.position = static_cast<ft_size_t>(line_end + 2 - body_start);
+            scan.line_search_position = scan.position;
+            continue ;
+        }
+        const ft_size_t available = body_size - scan.position;
+        const ft_size_t chunk_size = static_cast<ft_size_t>(scan.chunk_size);
+        if (available < 2U || chunk_size > available - 2U)
+            return (FT_FALSE);
+        if (cursor[chunk_size] != '\r' || cursor[chunk_size + 1U] != '\n')
+        {
+            scan.invalid = FT_TRUE;
+            return (FT_FALSE);
+        }
+        if (decoded_body != ft_nullptr
+            && decoded_body->append(cursor, chunk_size) != FT_ERR_SUCCESS)
+            return (FT_FALSE);
+        scan.position += chunk_size + 2U;
+        scan.line_search_position = scan.position;
+        scan.chunk_size = -1;
+    }
+    return (scan.complete);
+}
+
+ft_bool api_http_chunked_body_complete(const char *body_start,
+    ft_size_t body_size, api_http_chunk_scan &scan)
+{
+    return (api_http_walk_chunks(body_start, body_size, scan, ft_nullptr));
+}
+
 ft_bool api_http_chunked_body_complete(const char *body_start,
     ft_size_t body_size, ft_size_t &consumed_length)
 {
-    ft_size_t offset;
-
     consumed_length = 0;
-    if (!body_start)
+    api_http_chunk_scan scan;
+    if (!api_http_chunked_body_complete(body_start, body_size, scan))
         return (FT_FALSE);
-    offset = 0;
-    while (offset < body_size)
-    {
-        const char *line_end;
-        int64_t chunk_size_value;
-        ft_size_t line_length;
-
-        line_end = api_http_find_crlf(body_start + offset,
-                body_start + body_size);
-        if (!line_end)
-            return (FT_FALSE);
-        line_length = static_cast<ft_size_t>(line_end - (body_start + offset));
-        if (!api_http_parse_hex(body_start + offset,
-                body_start + offset + line_length, chunk_size_value))
-            return (FT_FALSE);
-        offset += line_length;
-        offset += 2;
-        if (chunk_size_value < 0)
-            return (FT_FALSE);
-        if (chunk_size_value == 0)
-        {
-            while (FT_TRUE)
-            {
-                const char *trailer_end;
-                ft_size_t trailer_length;
-
-                if (offset > body_size)
-                    return (FT_FALSE);
-                trailer_end = api_http_find_crlf(body_start + offset,
-                        body_start + body_size);
-                if (!trailer_end)
-                    return (FT_FALSE);
-                trailer_length = static_cast<ft_size_t>(trailer_end - (body_start + offset));
-                offset += trailer_length;
-                offset += 2;
-                if (trailer_length == 0)
-                {
-                    consumed_length = offset;
-                    return (FT_TRUE);
-                }
-            }
-        }
-        if (static_cast<ft_size_t>(chunk_size_value) > (body_size - offset))
-            return (FT_FALSE);
-        offset += static_cast<ft_size_t>(chunk_size_value);
-        if ((body_size - offset) < 2)
-            return (FT_FALSE);
-        if (body_start[offset] != '\r' || body_start[offset + 1] != '\n')
-            return (FT_FALSE);
-        offset += 2;
-    }
-    return (FT_FALSE);
+    consumed_length = scan.position;
+    return (FT_TRUE);
 }
 
 ft_bool api_http_decode_chunked(const char *body_start, ft_size_t body_size,
     ft_string &decoded_body, ft_size_t &consumed_length)
 {
-    ft_size_t offset;
-
-    decoded_body.clear();
     consumed_length = 0;
-    if (!body_start)
+    if (decoded_body.clear() != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    offset = 0;
-    while (offset < body_size)
-    {
-        const char *line_end;
-        int64_t chunk_size_value;
-        ft_size_t line_length;
-        ft_size_t chunk_size_t;
-
-        line_end = api_http_find_crlf(body_start + offset,
-                body_start + body_size);
-        if (!line_end)
-            return (FT_FALSE);
-        line_length = static_cast<ft_size_t>(line_end - (body_start + offset));
-        if (!api_http_parse_hex(body_start + offset,
-                body_start + offset + line_length, chunk_size_value))
-            return (FT_FALSE);
-        offset += line_length;
-        offset += 2;
-        if (chunk_size_value < 0)
-            return (FT_FALSE);
-        chunk_size_t = static_cast<ft_size_t>(chunk_size_value);
-        if (chunk_size_t == 0)
-        {
-            while (FT_TRUE)
-            {
-                const char *trailer_end;
-                ft_size_t trailer_length;
-
-                if (offset > body_size)
-                    return (FT_FALSE);
-                trailer_end = api_http_find_crlf(body_start + offset,
-                        body_start + body_size);
-                if (!trailer_end)
-                    return (FT_FALSE);
-                trailer_length = static_cast<ft_size_t>(trailer_end - (body_start + offset));
-                offset += trailer_length;
-                offset += 2;
-                if (trailer_length == 0)
-                {
-                    consumed_length = offset;
-                    return (FT_TRUE);
-                }
-            }
-        }
-        if (chunk_size_t > (body_size - offset))
-            return (FT_FALSE);
-        ft_size_t index;
-
-        index = 0;
-        while (index < chunk_size_t)
-        {
-            decoded_body.append(body_start[offset + index]);
-            if (decoded_body.get_error() != FT_ERR_SUCCESS)
-            {
-                return (FT_FALSE);
-            }
-            index++;
-        }
-        offset += chunk_size_t;
-        if ((body_size - offset) < 2)
-            return (FT_FALSE);
-        if (body_start[offset] != '\r' || body_start[offset + 1] != '\n')
-            return (FT_FALSE);
-        offset += 2;
-    }
-    return (FT_FALSE);
+    api_http_chunk_scan scan;
+    if (!api_http_walk_chunks(body_start, body_size, scan, &decoded_body))
+        return (FT_FALSE);
+    consumed_length = scan.position;
+    return (FT_TRUE);
 }
 
-static ft_bool api_http_measure_add(ft_size_t &total, ft_size_t increment)
+template <typename Emit>
+static ft_bool api_http_emit_json_payload(const json_group *payload, Emit emit)
 {
-    if (SIZE_MAX - total < increment)
+    const auto literal = [&emit](const auto &text) -> ft_bool
+    {
+        return (emit(text, sizeof(text) - 1U));
+    };
+    const auto text = [&emit](const char *value) -> ft_bool
+    {
+        if (value == ft_nullptr || *value == '\0')
+            return (FT_TRUE);
+        return (emit(value, ft_strlen_size_t(value)));
+    };
+    if (payload == ft_nullptr)
+        return (FT_TRUE);
+    if (!literal("{\n"))
         return (FT_FALSE);
-    total += increment;
-    return (FT_TRUE);
+    const json_group *group = payload;
+    while (group != ft_nullptr)
+    {
+        if (!literal("  \"") || !text(group->name) || !literal("\": {\n"))
+            return (FT_FALSE);
+        const json_item *item = group->items;
+        while (item != ft_nullptr)
+        {
+            if (!literal("    \"") || !text(item->key) || !literal("\": "))
+                return (FT_FALSE);
+            if (item->is_big_number == FT_TRUE && item->big_number != ft_nullptr)
+            {
+                if (!text(item->big_number->c_str()))
+                    return (FT_FALSE);
+            }
+            else if (!literal("\"") || !text(item->value) || !literal("\""))
+                return (FT_FALSE);
+            if (item->next != ft_nullptr && !literal(","))
+                return (FT_FALSE);
+            if (!literal("\n"))
+                return (FT_FALSE);
+            item = item->next;
+        }
+        if (!literal("  }") || (group->next != ft_nullptr && !literal(",")) || !literal("\n"))
+            return (FT_FALSE);
+        group = group->next;
+    }
+    return (literal("}\n"));
 }
 
 ft_bool api_http_measure_json_payload(json_group *payload,
     ft_size_t &payload_length)
 {
-    ft_size_t total_length;
-    json_group *group_iterator;
-
     payload_length = 0;
-    if (!payload)
-        return (FT_TRUE);
-    total_length = 0;
-    if (!api_http_measure_add(total_length, 2))
-        return (FT_FALSE);
-    group_iterator = payload;
-    while (group_iterator)
+    ft_size_t length = 0;
+    if (!api_http_emit_json_payload(payload, [&length](const char *, ft_size_t size) -> ft_bool
     {
-        const char *group_name;
-        ft_size_t name_length;
-        json_item *item_iterator;
-
-        group_name = group_iterator->name;
-        if (!group_name)
-            group_name = "";
-        name_length = ft_strlen(group_name);
-        if (!api_http_measure_add(total_length, 3))
+        if (size > SIZE_MAX - length)
             return (FT_FALSE);
-        if (!api_http_measure_add(total_length, name_length))
-            return (FT_FALSE);
-        if (!api_http_measure_add(total_length, 5))
-            return (FT_FALSE);
-        item_iterator = group_iterator->items;
-        while (item_iterator)
-        {
-            const char *item_key;
-            ft_size_t key_length;
-            ft_bool big_number_value;
-            const char *value_text;
-            ft_size_t value_length;
-
-            item_key = item_iterator->key;
-            if (!item_key)
-                item_key = "";
-            key_length = ft_strlen(item_key);
-            if (!api_http_measure_add(total_length, 5))
-                return (FT_FALSE);
-            if (!api_http_measure_add(total_length, key_length))
-                return (FT_FALSE);
-            if (!api_http_measure_add(total_length, 3))
-                return (FT_FALSE);
-            big_number_value = (item_iterator->is_big_number == FT_TRUE)
-                && (item_iterator->big_number != ft_nullptr);
-            if (big_number_value)
-                value_text = item_iterator->big_number->c_str();
-            else
-                value_text = item_iterator->value;
-            if (!value_text)
-                value_text = "";
-            value_length = ft_strlen(value_text);
-            if (!big_number_value)
-            {
-                if (!api_http_measure_add(total_length, 1))
-                    return (FT_FALSE);
-            }
-            if (!api_http_measure_add(total_length, value_length))
-                return (FT_FALSE);
-            if (!big_number_value)
-            {
-                if (!api_http_measure_add(total_length, 1))
-                    return (FT_FALSE);
-            }
-            if (item_iterator->next)
-            {
-                if (!api_http_measure_add(total_length, 2))
-                    return (FT_FALSE);
-            }
-            else
-            {
-                if (!api_http_measure_add(total_length, 1))
-                    return (FT_FALSE);
-            }
-            item_iterator = item_iterator->next;
-        }
-        if (group_iterator->next)
-        {
-            if (!api_http_measure_add(total_length, 5))
-                return (FT_FALSE);
-        }
-        else
-        {
-            if (!api_http_measure_add(total_length, 4))
-                return (FT_FALSE);
-        }
-        group_iterator = group_iterator->next;
-    }
-    if (!api_http_measure_add(total_length, 2))
-        return (FT_FALSE);
-    payload_length = total_length;
-    return (FT_TRUE);
-}
-
-static ft_bool api_http_stream_literal(api_http_send_callback send_callback,
-    void *context, const char *literal, ft_size_t literal_length, int32_t &error_code)
-{
-    if (literal_length == 0)
+        length += size;
         return (FT_TRUE);
-    if (!send_callback)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
+    }))
         return (FT_FALSE);
-    }
-    if (!send_callback(literal, literal_length, context, error_code))
-        return (FT_FALSE);
+    payload_length = length;
     return (FT_TRUE);
 }
 
 ft_bool api_http_stream_json_payload(json_group *payload,
     api_http_send_callback send_callback, void *context, int32_t &error_code)
 {
-    json_group *group_iterator;
-
     error_code = FT_ERR_SUCCESS;
-    if (!payload)
-    {
+    if (payload == ft_nullptr)
         return (FT_TRUE);
-    }
-    if (!api_http_stream_literal(send_callback, context, "{\n",
-            ft_strlen("{\n"), error_code))
-        return (FT_FALSE);
-    group_iterator = payload;
-    while (group_iterator)
+    if (send_callback == ft_nullptr)
     {
-        const char *group_name;
-        ft_size_t group_name_length;
-        json_item *item_iterator;
-
-        group_name = group_iterator->name;
-        if (!group_name)
-            group_name = "";
-        group_name_length = ft_strlen(group_name);
-        if (!api_http_stream_literal(send_callback, context, "  \"",
-                ft_strlen("  \""), error_code))
-            return (FT_FALSE);
-        if (group_name_length > 0)
-        {
-            if (!api_http_stream_literal(send_callback, context, group_name,
-                    group_name_length, error_code))
-                return (FT_FALSE);
-        }
-        if (!api_http_stream_literal(send_callback, context, "\": {\n",
-                ft_strlen("\": {\n"), error_code))
-            return (FT_FALSE);
-        item_iterator = group_iterator->items;
-        while (item_iterator)
-        {
-            const char *item_key;
-            ft_size_t item_key_length;
-            ft_bool big_number_value;
-            const char *value_text;
-            ft_size_t value_length;
-
-            item_key = item_iterator->key;
-            if (!item_key)
-                item_key = "";
-            item_key_length = ft_strlen(item_key);
-            if (!api_http_stream_literal(send_callback, context, "    \"",
-                    ft_strlen("    \""), error_code))
-                return (FT_FALSE);
-            if (item_key_length > 0)
-            {
-                if (!api_http_stream_literal(send_callback, context, item_key,
-                        item_key_length, error_code))
-                    return (FT_FALSE);
-            }
-            if (!api_http_stream_literal(send_callback, context, "\": ",
-                    ft_strlen("\": "), error_code))
-                return (FT_FALSE);
-            big_number_value = (item_iterator->is_big_number == FT_TRUE)
-                && (item_iterator->big_number != ft_nullptr);
-            if (big_number_value)
-                value_text = item_iterator->big_number->c_str();
-            else
-                value_text = item_iterator->value;
-            if (!value_text)
-                value_text = "";
-            value_length = ft_strlen(value_text);
-            if (!big_number_value)
-            {
-                if (!api_http_stream_literal(send_callback, context, "\"",
-                        ft_strlen("\""), error_code))
-                    return (FT_FALSE);
-            }
-            if (value_length > 0)
-            {
-                if (!api_http_stream_literal(send_callback, context, value_text,
-                        value_length, error_code))
-                    return (FT_FALSE);
-            }
-            if (!big_number_value)
-            {
-                if (!api_http_stream_literal(send_callback, context, "\"",
-                        ft_strlen("\""), error_code))
-                    return (FT_FALSE);
-            }
-            if (item_iterator->next)
-            {
-                if (!api_http_stream_literal(send_callback, context, ",\n",
-                        ft_strlen(",\n"), error_code))
-                    return (FT_FALSE);
-            }
-            else
-            {
-                if (!api_http_stream_literal(send_callback, context, "\n",
-                        ft_strlen("\n"), error_code))
-                    return (FT_FALSE);
-            }
-            item_iterator = item_iterator->next;
-        }
-        if (group_iterator->next)
-        {
-            if (!api_http_stream_literal(send_callback, context, "  },\n",
-                    ft_strlen("  },\n"), error_code))
-                return (FT_FALSE);
-        }
-        else
-        {
-            if (!api_http_stream_literal(send_callback, context, "  }\n",
-                    ft_strlen("  }\n"), error_code))
-                return (FT_FALSE);
-        }
-        group_iterator = group_iterator->next;
-    }
-    if (!api_http_stream_literal(send_callback, context, "}\n",
-            ft_strlen("}\n"), error_code))
+        error_code = FT_ERR_INVALID_ARGUMENT;
         return (FT_FALSE);
-    return (FT_TRUE);
+    }
+    char buffer[4096];
+    ft_size_t used = 0;
+    const auto flush = [&]() -> ft_bool
+    {
+        if (used == 0)
+            return (FT_TRUE);
+        if (!send_callback(buffer, used, context, error_code))
+            return (FT_FALSE);
+        used = 0;
+        return (FT_TRUE);
+    };
+    if (!api_http_emit_json_payload(payload, [&](const char *bytes, ft_size_t size) -> ft_bool
+    {
+        if (size >= sizeof(buffer))
+            return (flush() && send_callback(bytes, size, context, error_code));
+        if (size > sizeof(buffer) - used && !flush())
+            return (FT_FALSE);
+        ft_memcpy(buffer + used, bytes, size);
+        used += size;
+        return (FT_TRUE);
+    }))
+        return (FT_FALSE);
+    return (flush());
 }

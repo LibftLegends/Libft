@@ -1,4 +1,4 @@
-#include "file_utils.hpp"
+#include "file_internal.hpp"
 
 #include "../CPP_class/class_file.hpp"
 #include "../CPP_class/class_file_stream.hpp"
@@ -21,7 +21,8 @@ ft_size_t file_default_copy_buffer_size(void) noexcept
     return (ft_file_default_buffer_size());
 }
 
-int32_t file_copy_with_buffer(const char *source_path, const char *destination_path, ft_size_t buffer_size)
+int32_t file_copy_using_buffer(const char *source_path, const char *destination_path,
+    char *buffer, ft_size_t buffer_size)
 {
     int32_t source_flags;
     int32_t destination_flags;
@@ -36,9 +37,19 @@ int32_t file_copy_with_buffer(const char *source_path, const char *destination_p
     destination_flags = O_WRONLY | O_CREAT | O_TRUNC | FILE_BINARY_FLAG;
     if (destination_file.open(destination_path, destination_flags, 0644) != FT_ERR_SUCCESS)
         return (FT_ERR_IO);
-    if (ft_file_stream_copy(source_file, destination_file, buffer_size) != FT_ERR_SUCCESS)
+    int32_t copy_result;
+    if (buffer == ft_nullptr)
+        copy_result = ft_file_stream_copy(source_file, destination_file, buffer_size);
+    else
+        copy_result = ft_file_stream_copy_into_buffer(source_file, destination_file, buffer, buffer_size);
+    if (copy_result != FT_ERR_SUCCESS)
         return (FT_ERR_IO);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t file_copy_with_buffer(const char *source_path, const char *destination_path, ft_size_t buffer_size)
+{
+    return (file_copy_using_buffer(source_path, destination_path, ft_nullptr, buffer_size));
 }
 
 int32_t file_copy(const char *source_path, const char *destination_path)

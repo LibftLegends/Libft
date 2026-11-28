@@ -1,4 +1,5 @@
 #include "byte_buffer.hpp"
+#include "buffer_endian.hpp"
 #include "../Basic/basic.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Errno/errno_internal.hpp"
@@ -10,32 +11,12 @@
 
 thread_local int32_t ft_byte_buffer::_last_error = FT_ERR_SUCCESS;
 
-static ft_bool buffer_add_overflows(ft_size_t left, ft_size_t right) noexcept
+static constexpr ft_bool buffer_add_overflows(ft_size_t left,
+    ft_size_t right) noexcept
 {
     if (left > FT_SYSTEM_SIZE_MAX - right)
         return (FT_TRUE);
     return (FT_FALSE);
-}
-
-static ft_size_t buffer_find_bytes(const uint8_t *haystack, ft_size_t haystack_size,
-    const uint8_t *needle, ft_size_t needle_size) noexcept
-{
-    ft_size_t index;
-
-    if (needle_size == 0)
-        return (0);
-    if (haystack == ft_nullptr || needle == ft_nullptr)
-        return (static_cast<ft_size_t>(-1));
-    if (needle_size > haystack_size)
-        return (static_cast<ft_size_t>(-1));
-    index = 0;
-    while (index <= haystack_size - needle_size)
-    {
-        if (ft_memcmp(haystack + index, needle, needle_size) == 0)
-            return (index);
-        index += 1;
-    }
-    return (static_cast<ft_size_t>(-1));
 }
 
 static int32_t buffer_encode_varuint64(uint64_t value, uint8_t *buffer,
@@ -213,17 +194,30 @@ int32_t ft_byte_buffer::reserve_internal(ft_size_t required_capacity) noexcept
 
 int32_t ft_byte_buffer::append_internal(const void *data, ft_size_t length) noexcept
 {
-    int32_t reserve_error;
-
     if (length == 0)
         return (FT_ERR_SUCCESS);
     if (data == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
     if (buffer_add_overflows(this->_size, length) == FT_TRUE)
         return (FT_ERR_OUT_OF_RANGE);
-    reserve_error = this->reserve_internal(this->_size + length);
-    if (reserve_error != FT_ERR_SUCCESS)
-        return (reserve_error);
+    const ft_size_t required_capacity = this->_size + length;
+    if (required_capacity > this->_capacity)
+    {
+        const uintptr_t source_address = reinterpret_cast<uintptr_t>(data);
+        const uintptr_t buffer_address = reinterpret_cast<uintptr_t>(this->_data);
+        const ft_bool source_is_internal = static_cast<ft_bool>(
+                source_address >= buffer_address
+                && source_address - buffer_address < this->_capacity);
+        const ft_size_t source_offset = source_address - buffer_address;
+        if (source_is_internal == FT_TRUE
+            && length > this->_capacity - source_offset)
+            return (FT_ERR_OUT_OF_RANGE);
+        const int32_t reserve_error = this->reserve_internal(required_capacity);
+        if (reserve_error != FT_ERR_SUCCESS)
+            return (reserve_error);
+        if (source_is_internal == FT_TRUE)
+            data = this->_data + source_offset;
+    }
     ft_memcpy(this->_data + this->_size, data, length);
     this->_size += length;
     return (FT_ERR_SUCCESS);
@@ -290,6 +284,27 @@ int32_t ft_byte_buffer::initialize(ft_size_t capacity,
         this->_capacity = capacity;
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
+}
+
+int32_t ft_byte_buffer::initialize_from_reader(ft_size_t length,
+    int32_t (*reader)(uint8_t *destination, ft_size_t length, void *user_data) noexcept,
+    void *user_data) noexcept
+{
+    if (length != 0U && reader == ft_nullptr)
+        return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
+    if (length > SIZE_MAX)
+        return (ft_byte_buffer::set_error(FT_ERR_OUT_OF_RANGE));
+    int32_t error_code = this->initialize(length, FT_TRUE);
+    if (error_code != FT_ERR_SUCCESS || length == 0U)
+        return (error_code);
+    error_code = reader(this->_data, length, user_data);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (ft_byte_buffer::set_error(error_code));
+    }
+    this->_size = length;
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 
@@ -491,7 +506,6 @@ int32_t ft_byte_buffer::append(const void *data, ft_size_t length) noexcept
 
 int32_t ft_byte_buffer::append_buffer(const ft_byte_buffer &other) noexcept
 {
-    ft_byte_buffer snapshot;
     const ft_byte_buffer *first_buffer;
     const ft_byte_buffer *second_buffer;
     uintptr_t this_address;
@@ -509,11 +523,11 @@ int32_t ft_byte_buffer::append_buffer(const ft_byte_buffer &other) noexcept
             "called with uninitialised source object");
     if (&other == this)
     {
-        append_error = snapshot.initialize(*this);
-        if (append_error != FT_ERR_SUCCESS)
-            return (ft_byte_buffer::set_error(append_error));
-        append_error = this->append_buffer(snapshot);
-        (void)snapshot.destroy();
+        lock_error = this->lock_internal();
+        if (lock_error != FT_ERR_SUCCESS)
+            return (ft_byte_buffer::set_error(lock_error));
+        append_error = this->append_internal(this->_data, this->_size);
+        this->unlock_internal();
         return (ft_byte_buffer::set_error(append_error));
     }
     this_address = reinterpret_cast<uintptr_t>(this);
@@ -570,7 +584,6 @@ int32_t ft_byte_buffer::append_buffer(const ft_byte_buffer &other) noexcept
 
 int32_t ft_byte_buffer::prepend_buffer(const ft_byte_buffer &other) noexcept
 {
-    ft_byte_buffer snapshot;
     const ft_byte_buffer *first_buffer;
     const ft_byte_buffer *second_buffer;
     uintptr_t this_address;
@@ -588,11 +601,14 @@ int32_t ft_byte_buffer::prepend_buffer(const ft_byte_buffer &other) noexcept
             "called with uninitialised source object");
     if (&other == this)
     {
-        prepend_error = snapshot.initialize(*this);
-        if (prepend_error != FT_ERR_SUCCESS)
-            return (ft_byte_buffer::set_error(prepend_error));
-        prepend_error = this->prepend_buffer(snapshot);
-        (void)snapshot.destroy();
+        lock_error = this->lock_internal();
+        if (lock_error != FT_ERR_SUCCESS)
+            return (ft_byte_buffer::set_error(lock_error));
+        const ft_size_t original_size = this->_size;
+        prepend_error = this->append_internal(this->_data, original_size);
+        if (prepend_error == FT_ERR_SUCCESS)
+            this->_read_position += original_size;
+        this->unlock_internal();
         return (ft_byte_buffer::set_error(prepend_error));
     }
     this_address = reinterpret_cast<uintptr_t>(this);
@@ -763,13 +779,25 @@ int32_t ft_byte_buffer::append_u32_be(uint32_t value) noexcept
 
 int32_t ft_byte_buffer::append_u32_le(uint32_t value) noexcept
 {
-    uint8_t bytes[4];
+    uint8_t bytes[sizeof(value)];
+    buffer_store_le(bytes, value);
+    return (this->append(bytes, sizeof(bytes)));
+}
 
-    bytes[0] = static_cast<uint8_t>(value & 0xFFU);
-    bytes[1] = static_cast<uint8_t>((value >> 8) & 0xFFU);
-    bytes[2] = static_cast<uint8_t>((value >> 16) & 0xFFU);
-    bytes[3] = static_cast<uint8_t>((value >> 24) & 0xFFU);
-    return (this->append(bytes, 4));
+int32_t ft_byte_buffer::overwrite_u32_le(ft_size_t offset, uint32_t value) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_byte_buffer::overwrite_u32_le");
+    const int32_t lock_error = this->lock_internal();
+    if (lock_error != FT_ERR_SUCCESS)
+        return (ft_byte_buffer::set_error(lock_error));
+    int32_t result = FT_ERR_SUCCESS;
+    if (offset > this->_size || sizeof(value) > this->_size - offset)
+        result = FT_ERR_OUT_OF_RANGE;
+    else
+        buffer_store_le(this->_data + offset, value);
+    this->unlock_internal();
+    return (ft_byte_buffer::set_error(result));
 }
 
 int32_t ft_byte_buffer::append_u64_be(uint64_t value) noexcept
@@ -789,17 +817,9 @@ int32_t ft_byte_buffer::append_u64_be(uint64_t value) noexcept
 
 int32_t ft_byte_buffer::append_u64_le(uint64_t value) noexcept
 {
-    uint8_t bytes[8];
-
-    bytes[0] = static_cast<uint8_t>(value & 0xFFU);
-    bytes[1] = static_cast<uint8_t>((value >> 8) & 0xFFU);
-    bytes[2] = static_cast<uint8_t>((value >> 16) & 0xFFU);
-    bytes[3] = static_cast<uint8_t>((value >> 24) & 0xFFU);
-    bytes[4] = static_cast<uint8_t>((value >> 32) & 0xFFU);
-    bytes[5] = static_cast<uint8_t>((value >> 40) & 0xFFU);
-    bytes[6] = static_cast<uint8_t>((value >> 48) & 0xFFU);
-    bytes[7] = static_cast<uint8_t>((value >> 56) & 0xFFU);
-    return (this->append(bytes, 8));
+    uint8_t bytes[sizeof(value)];
+    buffer_store_le(bytes, value);
+    return (this->append(bytes, sizeof(bytes)));
 }
 
 int32_t ft_byte_buffer::append_varuint64(uint64_t value) noexcept
@@ -884,18 +904,13 @@ int32_t ft_byte_buffer::read_u32_be(uint32_t *value_out) noexcept
 
 int32_t ft_byte_buffer::read_u32_le(uint32_t *value_out) noexcept
 {
-    uint8_t bytes[4];
-    int32_t read_error;
-
+    uint8_t bytes[sizeof(*value_out)];
     if (value_out == ft_nullptr)
         return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
-    read_error = this->read(bytes, 4);
+    const int32_t read_error = this->read(bytes, sizeof(bytes));
     if (read_error != FT_ERR_SUCCESS)
         return (read_error);
-    *value_out = static_cast<uint32_t>(bytes[0])
-        | (static_cast<uint32_t>(bytes[1]) << 8)
-        | (static_cast<uint32_t>(bytes[2]) << 16)
-        | (static_cast<uint32_t>(bytes[3]) << 24);
+    *value_out = buffer_load_le<uint32_t>(bytes);
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 
@@ -922,22 +937,13 @@ int32_t ft_byte_buffer::read_u64_be(uint64_t *value_out) noexcept
 
 int32_t ft_byte_buffer::read_u64_le(uint64_t *value_out) noexcept
 {
-    uint8_t bytes[8];
-    int32_t read_error;
-
+    uint8_t bytes[sizeof(*value_out)];
     if (value_out == ft_nullptr)
         return (ft_byte_buffer::set_error(FT_ERR_INVALID_ARGUMENT));
-    read_error = this->read(bytes, 8);
+    const int32_t read_error = this->read(bytes, sizeof(bytes));
     if (read_error != FT_ERR_SUCCESS)
         return (read_error);
-    *value_out = static_cast<uint64_t>(bytes[0])
-        | (static_cast<uint64_t>(bytes[1]) << 8)
-        | (static_cast<uint64_t>(bytes[2]) << 16)
-        | (static_cast<uint64_t>(bytes[3]) << 24)
-        | (static_cast<uint64_t>(bytes[4]) << 32)
-        | (static_cast<uint64_t>(bytes[5]) << 40)
-        | (static_cast<uint64_t>(bytes[6]) << 48)
-        | (static_cast<uint64_t>(bytes[7]) << 56);
+    *value_out = buffer_load_le<uint64_t>(bytes);
     return (ft_byte_buffer::set_error(FT_ERR_SUCCESS));
 }
 
@@ -994,7 +1000,6 @@ int32_t ft_byte_buffer::read_varint64(int64_t *value_out) noexcept
 ft_size_t ft_byte_buffer::find(const void *data, ft_size_t length) const noexcept
 {
     ft_size_t index;
-    ft_size_t found_index;
     int32_t lock_error;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
@@ -1018,20 +1023,24 @@ ft_size_t ft_byte_buffer::find(const void *data, ft_size_t length) const noexcep
     }
     if (length == 0)
     {
+        index = this->_read_position;
         this->unlock_internal();
         (void)ft_byte_buffer::set_error(FT_ERR_SUCCESS);
-        return (this->_read_position);
+        return (index);
     }
-    found_index = buffer_find_bytes(this->_data + this->_read_position,
-            this->_size - this->_read_position,
-            static_cast<const uint8_t *>(data), length);
-    this->unlock_internal();
-    if (found_index == static_cast<ft_size_t>(-1))
+    const uint8_t *match = ft_nullptr;
+    const ft_size_t remaining = this->_size - this->_read_position;
+    if (length <= remaining)
+        match = static_cast<const uint8_t *>(ft_memmem(
+            this->_data + this->_read_position, remaining, data, length));
+    if (match == ft_nullptr)
     {
+        this->unlock_internal();
         (void)ft_byte_buffer::set_error(FT_ERR_NOT_FOUND);
         return (static_cast<ft_size_t>(-1));
     }
-    index = this->_read_position + found_index;
+    index = static_cast<ft_size_t>(match - this->_data);
+    this->unlock_internal();
     (void)ft_byte_buffer::set_error(FT_ERR_SUCCESS);
     return (index);
 }
@@ -1106,11 +1115,11 @@ int32_t ft_byte_buffer::slice(ft_size_t offset, ft_size_t length,
         result = temporary_buffer.initialize(length, FT_TRUE);
         if (result == FT_ERR_SUCCESS && length > 0)
             result = temporary_buffer.append(this->_data + offset, length);
-        if (result == FT_ERR_SUCCESS)
-            result = output.initialize(temporary_buffer);
-        (void)temporary_buffer.destroy();
     }
     this->unlock_internal();
+    if (result == FT_ERR_SUCCESS)
+        result = output.move(temporary_buffer);
+    (void)temporary_buffer.destroy();
     return (ft_byte_buffer::set_error(result));
 }
 

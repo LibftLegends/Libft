@@ -2,8 +2,12 @@
 #include "../../Modules/HTML/html_parser.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
+#include "../../Modules/File/file_utils.hpp"
+#include "../../Modules/System_utils/system_utils.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <cstring>
+#include <new>
+#include <string>
 
 #include "../../Modules/Basic/limits.hpp"
 #ifndef LIBFT_TEST_BUILD
@@ -82,7 +86,59 @@ FT_TEST(test_html_write_to_string_escapes_attribute_values)
     return (1);
 }
 
-FT_TEST(test_html_find_by_selector_allocation_failure_sets_errno)
+static std::string html_written_bytes;
+
+static int64_t capture_short_html_write(int32_t, const void *bytes, ft_size_t length)
+{
+    if (length > 97)
+        length = 97;
+    html_written_bytes.append(static_cast<const char *>(bytes), length);
+    return (static_cast<int64_t>(length));
+}
+
+static int64_t stall_html_write(int32_t, const void *, ft_size_t)
+{
+    return (0);
+}
+
+FT_TEST(test_html_file_writer_matches_string_and_retries_short_writes)
+{
+    const char *path = "test_html_buffered_writer.html";
+    std::string long_text(20000, 'x');
+    char tag[] = "div";
+    char key[] = "data";
+    char value[] = "A & B";
+    html_attr attribute{key, value, ft_nullptr};
+    html_node child{tag, long_text.data(), ft_nullptr, ft_nullptr, ft_nullptr};
+    html_node root{tag, ft_nullptr, &attribute, &child, ft_nullptr};
+    char *serialized = html_write_to_string(&root);
+    FT_ASSERT(serialized != ft_nullptr);
+    const std::string expected = "<div data=\"A & B\">\n  <div>" + long_text + "</div>\n</div>\n";
+    const ft_bool string_matches = expected == serialized;
+    cma_free(serialized);
+    FT_ASSERT_EQ(FT_TRUE, string_matches);
+
+    html_written_bytes.clear();
+    su_set_write_syscall_hook(capture_short_html_write);
+    const int32_t short_write = html_write_to_file(path, &root);
+    su_reset_write_syscall_hook();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, short_write);
+    FT_ASSERT_EQ(expected, html_written_bytes);
+    html_written_bytes.clear();
+
+    su_set_write_syscall_hook(stall_html_write);
+    const int32_t stalled = html_write_to_file(path, &root);
+    su_reset_write_syscall_hook();
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, stalled);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, html_write_to_file(path, &root));
+    ft_string disk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(path, disk));
+    FT_ASSERT_EQ(expected, std::string(disk.c_str(), disk.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    return (1);
+}
+
+FT_TEST(test_html_find_by_selector_matches_attributes_without_allocating)
 {
     html_node *root = html_create_node("div", ft_nullptr);
     FT_ASSERT(root != ft_nullptr);
@@ -90,9 +146,19 @@ FT_TEST(test_html_find_by_selector_allocation_failure_sets_errno)
     FT_ASSERT(id_attr != ft_nullptr);
     html_add_attr(root, id_attr);
     cma_set_alloc_limit(1);
-    html_node *found = html_find_by_selector(root, "[id=value]");
+    html_node *found = html_find_by_selector(root, "[id=\"value\"]");
+    html_node *presence = html_find_by_selector(root, "[id]");
+    html_node *partial_value = html_find_by_selector(root, "[id=val]");
+    html_node *partial_key = html_find_by_selector(root, "[i=value]");
+    html_node *longer_value = html_find_by_selector(root, "[id=value-longer]");
+    html_node *malformed = html_find_by_selector(root, "[id=value");
     cma_set_alloc_limit(0);
-    FT_ASSERT_EQ(ft_nullptr, found);
+    FT_ASSERT_EQ(root, found);
+    FT_ASSERT_EQ(root, presence);
+    FT_ASSERT_EQ(ft_nullptr, partial_value);
+    FT_ASSERT_EQ(ft_nullptr, partial_key);
+    FT_ASSERT_EQ(ft_nullptr, longer_value);
+    FT_ASSERT_EQ(ft_nullptr, malformed);
     html_free_nodes(root);
     return (1);
 }
@@ -128,6 +194,111 @@ FT_TEST(test_html_remove_helpers_validate_inputs)
     html_remove_nodes_by_text(ft_nullptr, "text");
     html_remove_nodes_by_text(&root, ft_nullptr);
     html_free_nodes(root);
+    return (1);
+}
+
+FT_TEST(test_html_remove_nodes_preserves_surviving_siblings)
+{
+    html_node *root = html_create_node("root", ft_nullptr);
+    FT_ASSERT(root != ft_nullptr);
+    const char *tags[] = {"drop", "keep", "keep", "drop", "last"};
+    const char *texts[] = {ft_nullptr, "remove text", "remove attr", ft_nullptr, ft_nullptr};
+    html_node **next_child = &root->children;
+    ft_size_t index = 0;
+    while (index < sizeof(tags) / sizeof(tags[0]))
+    {
+        html_node *child = html_create_node(tags[index], texts[index]);
+        if (child == ft_nullptr)
+        {
+            html_free_nodes(root);
+            FT_ASSERT(child != ft_nullptr);
+        }
+        *next_child = child;
+        next_child = &child->next;
+        ++index;
+    }
+    html_node *marked = root->children->next->next;
+    marked->attributes = html_create_attr("id", "remove");
+    marked->children = html_create_node("nested", ft_nullptr);
+    if (marked->attributes == ft_nullptr || marked->children == ft_nullptr)
+    {
+        html_free_nodes(root);
+        FT_ASSERT(FT_FALSE);
+    }
+    html_node *survivor = marked->next->next;
+    html_remove_nodes_by_tag(&root, "drop");
+    html_remove_nodes_by_text(&root, "remove text");
+    html_remove_nodes_by_attr(&root, "id", "remove");
+    const ft_bool preserved = root->children == survivor && survivor->next == ft_nullptr;
+    html_free_nodes(root);
+    FT_ASSERT_EQ(FT_TRUE, preserved);
+    return (1);
+}
+
+FT_TEST(test_html_free_nodes_deep_tree)
+{
+    constexpr ft_size_t NODE_COUNT = 100000;
+    html_node *root = html_create_node("root", ft_nullptr);
+    FT_ASSERT(root != ft_nullptr);
+    html_node *parent = root;
+    ft_size_t index = 0;
+    while (index < NODE_COUNT)
+    {
+        html_node *child = new(std::nothrow) html_node{};
+        if (child == ft_nullptr)
+        {
+            html_free_nodes(root);
+            FT_ASSERT(child != ft_nullptr);
+        }
+        parent->children = child;
+        if (index % 1024 == 0)
+        {
+            child->next = new(std::nothrow) html_node{};
+            if (child->next == ft_nullptr)
+            {
+                html_free_nodes(root);
+                FT_ASSERT(FT_FALSE);
+            }
+        }
+        parent = child;
+        ++index;
+    }
+    html_free_nodes(root);
+    return (1);
+}
+
+FT_TEST(test_html_add_child_appends_chain_and_remove_attr_unlinks_first_match)
+{
+    html_node *root = html_create_node("root", ft_nullptr);
+    FT_ASSERT(root != ft_nullptr);
+    html_node *first = html_create_node("first", ft_nullptr);
+    html_add_child(root, first);
+    html_node *second = html_create_node("second", ft_nullptr);
+    html_node *third = html_create_node("third", ft_nullptr);
+    if (second)
+    {
+        second->next = third;
+        html_add_child(root, second);
+    }
+    else
+        html_add_child(root, third);
+    html_attr *leading = html_create_attr("keep", "first");
+    html_attr *removed = html_create_attr("id", "removed");
+    html_attr *retained = html_create_attr("id", "retained");
+    html_add_attr(root, leading);
+    html_add_attr(root, removed);
+    html_add_attr(root, retained);
+    const ft_bool complete = first && second && third && leading && removed && retained;
+    if (!complete)
+    {
+        html_free_nodes(root);
+        FT_ASSERT(complete);
+    }
+    html_remove_attr(root, "id");
+    const ft_bool structure_preserved = root->children == first && first->next == second
+        && second->next == third && root->attributes == leading && leading->next == retained;
+    html_free_nodes(root);
+    FT_ASSERT_EQ(FT_TRUE, structure_preserved);
     return (1);
 }
 

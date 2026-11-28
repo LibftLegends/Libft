@@ -17,9 +17,7 @@ class circle
         mutable pt_recursive_mutex *_mutex;
         uint8_t                   _initialised_state;
 
-        uint32_t lock_pair(const circle &other, const circle *&lower,
-                    const circle *&upper) const;
-        static void unlock_pair(const circle *lower, const circle *upper);
+        uint32_t release_mutex() noexcept;
 
     public:
         circle() noexcept;

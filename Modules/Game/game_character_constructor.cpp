@@ -2,6 +2,7 @@
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread.hpp"
+#include "../PThread/pthread_internal.hpp"
 #include <new>
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -57,7 +58,7 @@ game_character::game_character() noexcept
       _fire_res(), _frost_res(), _lightning_res(),
       _air_res(), _earth_res(), _chaos_res(),
       _physical_res(), _skills(), _buffs(), _debuffs(), _upgrades(), _quests(), _achievements(), _reputation(), _inventory(), _equipment(),
-      _mutex(ft_nullptr), _initialised_state(FT_CLASS_STATE_UNINITIALISED)
+      _mutex(ft_nullptr), _initialised_state(FT_CLASS_STATE_UNINITIALISED), _equipped_modifiers{}
 {
     this->set_error(FT_ERR_SUCCESS);
     return ;
@@ -65,309 +66,109 @@ game_character::game_character() noexcept
 
 int32_t game_character::initialize() noexcept
 {
-    int32_t initialize_error;
-    ft_bool fire_initialised;
-    ft_bool frost_initialised;
-    ft_bool lightning_initialised;
-    ft_bool air_initialised;
-    ft_bool earth_initialised;
-    ft_bool chaos_initialised;
-    ft_bool physical_initialised;
-    ft_bool reputation_initialised;
-    ft_bool inventory_initialised;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         errno_abort_lifecycle(this->_initialised_state, "game_character::initialize",
             "called while object is already initialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    fire_initialised = FT_FALSE;
-    frost_initialised = FT_FALSE;
-    lightning_initialised = FT_FALSE;
-    air_initialised = FT_FALSE;
-    earth_initialised = FT_FALSE;
-    chaos_initialised = FT_FALSE;
-    physical_initialised = FT_FALSE;
-    reputation_initialised = FT_FALSE;
-    inventory_initialised = FT_FALSE;
-    initialize_error = this->_fire_res.initialize();
+
+    int32_t slot = EQUIP_HEAD;
+    int32_t initialize_error = this->_fire_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    fire_initialised = FT_TRUE;
+        goto initialize_failed;
     initialize_error = this->_frost_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    frost_initialised = FT_TRUE;
+        goto destroy_fire_res;
     initialize_error = this->_lightning_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    lightning_initialised = FT_TRUE;
+        goto destroy_frost_res;
     initialize_error = this->_air_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    air_initialised = FT_TRUE;
+        goto destroy_lightning_res;
     initialize_error = this->_earth_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    earth_initialised = FT_TRUE;
+        goto destroy_air_res;
     initialize_error = this->_chaos_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    chaos_initialised = FT_TRUE;
+        goto destroy_earth_res;
     initialize_error = this->_physical_res.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    physical_initialised = FT_TRUE;
+        goto destroy_chaos_res;
     initialize_error = this->_reputation.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    reputation_initialised = FT_TRUE;
+        goto destroy_physical_res;
     initialize_error = this->_inventory.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    inventory_initialised = FT_TRUE;
+        goto destroy_reputation;
     initialize_error = this->_experience_table.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_inventory;
     initialize_error = this->_skills.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_experience_table.destroy();
-        if (inventory_initialised == FT_TRUE)
-            (void)this->_inventory.destroy();
-        if (reputation_initialised == FT_TRUE)
-            (void)this->_reputation.destroy();
-        if (physical_initialised == FT_TRUE)
-            (void)this->_physical_res.destroy();
-        if (chaos_initialised == FT_TRUE)
-            (void)this->_chaos_res.destroy();
-        if (earth_initialised == FT_TRUE)
-            (void)this->_earth_res.destroy();
-        if (air_initialised == FT_TRUE)
-            (void)this->_air_res.destroy();
-        if (lightning_initialised == FT_TRUE)
-            (void)this->_lightning_res.destroy();
-        if (frost_initialised == FT_TRUE)
-            (void)this->_frost_res.destroy();
-        if (fire_initialised == FT_TRUE)
-            (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_experience_table;
     initialize_error = this->_buffs.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_skills.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_skills;
     initialize_error = this->_debuffs.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_skills.destroy();
-        (void)this->_buffs.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_buffs;
     initialize_error = this->_upgrades.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_skills.destroy();
-        (void)this->_buffs.destroy();
-        (void)this->_debuffs.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_debuffs;
     initialize_error = this->_quests.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_skills.destroy();
-        (void)this->_buffs.destroy();
-        (void)this->_debuffs.destroy();
-        (void)this->_upgrades.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_upgrades;
     initialize_error = this->_achievements.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)this->_skills.destroy();
-        (void)this->_buffs.destroy();
-        (void)this->_debuffs.destroy();
-        (void)this->_upgrades.destroy();
-        (void)this->_quests.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
+        goto destroy_quests;
     initialize_error = this->_equipment.initialize();
     if (initialize_error != FT_ERR_SUCCESS)
+        goto destroy_achievements;
+
+    while (slot <= EQUIP_OFF_HAND)
     {
-        (void)this->_achievements.destroy();
-        (void)this->_quests.destroy();
-        (void)this->_upgrades.destroy();
-        (void)this->_debuffs.destroy();
-        (void)this->_buffs.destroy();
-        (void)this->_skills.destroy();
-        (void)this->_experience_table.destroy();
-        (void)this->_inventory.destroy();
-        (void)this->_reputation.destroy();
-        (void)this->_physical_res.destroy();
-        (void)this->_chaos_res.destroy();
-        (void)this->_earth_res.destroy();
-        (void)this->_air_res.destroy();
-        (void)this->_lightning_res.destroy();
-        (void)this->_frost_res.destroy();
-        (void)this->_fire_res.destroy();
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(initialize_error);
-        return (initialize_error);
+        this->_equipped_modifiers[slot] = {};
+        ++slot;
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
+
+destroy_achievements:
+    (void)this->_achievements.destroy();
+destroy_quests:
+    (void)this->_quests.destroy();
+destroy_upgrades:
+    (void)this->_upgrades.destroy();
+destroy_debuffs:
+    (void)this->_debuffs.destroy();
+destroy_buffs:
+    (void)this->_buffs.destroy();
+destroy_skills:
+    (void)this->_skills.destroy();
+destroy_experience_table:
+    (void)this->_experience_table.destroy();
+destroy_inventory:
+    (void)this->_inventory.destroy();
+destroy_reputation:
+    (void)this->_reputation.destroy();
+destroy_physical_res:
+    (void)this->_physical_res.destroy();
+destroy_chaos_res:
+    (void)this->_chaos_res.destroy();
+destroy_earth_res:
+    (void)this->_earth_res.destroy();
+destroy_air_res:
+    (void)this->_air_res.destroy();
+destroy_lightning_res:
+    (void)this->_lightning_res.destroy();
+destroy_frost_res:
+    (void)this->_frost_res.destroy();
+destroy_fire_res:
+    (void)this->_fire_res.destroy();
+initialize_failed:
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    return (this->set_error(initialize_error));
 }
 
 game_character::~game_character() noexcept
@@ -446,18 +247,81 @@ int32_t game_character::destroy() noexcept
     return (first_error);
 }
 
+template <typename Key, typename Value>
+static int32_t check_character_move_map(const ft_map<Key, Value> &map) noexcept
+{
+    if (map.is_initialised() != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    if (!map.is_thread_safe())
+        return (FT_ERR_SUCCESS);
+    if (map.has_active_lock())
+        return (FT_ERR_THREAD_BUSY);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = map.lock(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        (void)map.unlock(lock_acquired);
+    return (result);
+}
+
+int32_t game_character::validate_move_source() const noexcept
+{
+    if (this->_inventory._initialised_state == FT_CLASS_STATE_INITIALISED
+        && this->_inventory._revision == UINT64_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
+    const pt_recursive_mutex *const mutexes[] = {
+        this->_mutex, this->_fire_res._mutex, this->_frost_res._mutex,
+        this->_lightning_res._mutex, this->_air_res._mutex, this->_earth_res._mutex,
+        this->_chaos_res._mutex, this->_physical_res._mutex, this->_reputation._mutex,
+        this->_inventory._mutex, this->_equipment._mutex, this->_experience_table._mutex};
+    ft_size_t mutex_index = 0;
+    while (mutex_index < sizeof(mutexes) / sizeof(mutexes[0]))
+    {
+        const pt_recursive_mutex *mutex = mutexes[mutex_index];
+        if (mutex != ft_nullptr)
+        {
+            if (mutex->lockState())
+                return (FT_ERR_THREAD_BUSY);
+            const int32_t result = pt_recursive_mutex_lock_if_not_null(mutex);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+            (void)pt_recursive_mutex_unlock_if_not_null(mutex);
+        }
+        ++mutex_index;
+    }
+
+    int32_t result = check_character_move_map(this->_skills);
+    if (result == FT_ERR_SUCCESS)
+        result = check_character_move_map(this->_buffs);
+    if (result == FT_ERR_SUCCESS)
+        result = check_character_move_map(this->_debuffs);
+    if (result == FT_ERR_SUCCESS)
+        result = check_character_move_map(this->_upgrades);
+    if (result == FT_ERR_SUCCESS)
+        result = check_character_move_map(this->_quests);
+    if (result == FT_ERR_SUCCESS)
+        result = check_character_move_map(this->_achievements);
+    if (result == FT_ERR_SUCCESS
+        && this->_reputation._initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        result = check_character_move_map(this->_reputation._milestones);
+        if (result == FT_ERR_SUCCESS)
+            result = check_character_move_map(this->_reputation._reps);
+    }
+    if (result == FT_ERR_SUCCESS
+        && this->_inventory._initialised_state == FT_CLASS_STATE_INITIALISED)
+        result = check_character_move_map(this->_inventory._items);
+    return (result);
+}
+
 int32_t game_character::move(game_character &other) noexcept
 {
     int32_t destroy_error;
-    int32_t initialize_error;
     int32_t transfer_error;
     int32_t source_destroy_error;
-    int32_t source_error;
-    int32_t level_count;
-    int32_t level_index;
+    int32_t slot;
 
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_character::move",
@@ -465,18 +329,26 @@ int32_t game_character::move(game_character &other) noexcept
         this->set_error(FT_ERR_INVALID_STATE);
         return (FT_ERR_INVALID_STATE);
     }
+    const int32_t source_error = other.get_error();
+    if (this->_mutex != ft_nullptr && this->_mutex->lockState())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
     destroy_error = this->destroy();
     if (destroy_error != FT_ERR_SUCCESS)
         return (destroy_error);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
+    // Preserve the destination inventory revision sequence across the move.
+    if (this->_inventory._revision > UINT64_MAX - 3U)
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    transfer_error = other.validate_move_source();
+    if (transfer_error != FT_ERR_SUCCESS)
+        return (this->set_error(transfer_error));
+    // Component moves initialize their destination directly without empty allocations.
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     this->_hit_points = other._hit_points;
     this->_physical_armor = other._physical_armor;
     this->_magic_armor = other._magic_armor;
@@ -499,146 +371,74 @@ int32_t game_character::move(game_character &other) noexcept
     this->_magic_damage_multiplier = other._magic_damage_multiplier;
     transfer_error = this->_fire_res.move(other._fire_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_frost_res.move(other._frost_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_lightning_res.move(other._lightning_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_air_res.move(other._air_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_earth_res.move(other._earth_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_chaos_res.move(other._chaos_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_physical_res.move(other._physical_res);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_skills.move(other._skills);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_buffs.move(other._buffs);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_debuffs.move(other._debuffs);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_upgrades.move(other._upgrades);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_quests.move(other._quests);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_achievements.move(other._achievements);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
+        goto transfer_failed;
     transfer_error = this->_reputation.move(other._reputation);
     if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
-    transfer_error = this->_inventory.move(other._inventory);
-    if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
-    level_count = other._experience_table.get_count();
-    transfer_error = this->_experience_table.resize(level_count);
-    if (transfer_error != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
-    }
-    level_index = 0;
-    while (level_index < level_count)
-    {
-        this->_experience_table.set_value(level_index, other._experience_table.get_value(level_index));
-        transfer_error = this->_experience_table.get_error();
-        if (transfer_error != FT_ERR_SUCCESS)
-        {
-            (void)this->destroy();
-            this->set_error(transfer_error);
-            return (transfer_error);
-        }
-        level_index += 1;
-    }
+        goto transfer_failed;
     transfer_error = this->_equipment.move(other._equipment);
     if (transfer_error != FT_ERR_SUCCESS)
+        goto transfer_failed;
+    transfer_error = this->_experience_table.move(other._experience_table);
+    if (transfer_error != FT_ERR_SUCCESS)
+        goto transfer_failed;
+    transfer_error = this->_inventory.move(other._inventory);
+    if (transfer_error != FT_ERR_SUCCESS)
+        goto transfer_failed;
+    this->_inventory._revision += 2U;
+    slot = EQUIP_HEAD;
+    while (slot <= EQUIP_OFF_HAND)
     {
-        (void)this->destroy();
-        this->set_error(transfer_error);
-        return (transfer_error);
+        this->_equipped_modifiers[slot] = other._equipped_modifiers[slot];
+        ++slot;
     }
-    source_error = other.get_error();
     source_destroy_error = other.destroy();
     if (source_destroy_error != FT_ERR_SUCCESS)
     {
-        this->set_error(source_destroy_error);
-        return (source_destroy_error);
+        (void)this->destroy();
+        return (this->set_error(source_destroy_error));
     }
     this->set_error(source_error);
     return (FT_ERR_SUCCESS);
+
+transfer_failed:
+    (void)this->destroy();
+    return (this->set_error(transfer_error));
 }
 
 int32_t game_character::enable_thread_safety() noexcept

@@ -4,9 +4,11 @@
 #include "../Basic/limits.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Encoding/encoding.hpp"
+#include "../Encoding/encoding_internal.hpp"
 #include "../Encryption/encryption.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Errno/errno.hpp"
+#include "../File/file_utils.hpp"
 #include "../Filesystem/filesystem.hpp"
 #include "../Printf/printf.hpp"
 #include "../Storage/kv_store.hpp"
@@ -18,6 +20,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/pair.hpp"
+#include <charconv>
 
 static const char *application_auth_user_key_prefix = "application/auth/users/";
 static const char *application_auth_login_approval_key_prefix = "application/auth/approvals/";
@@ -33,6 +36,7 @@ static const char *application_auth_last_successful_login_ip_key_prefix = "appli
 static const char *application_auth_last_successful_login_timestamp_key_prefix = "application/auth/audit/last_successful_timestamp/";
 static const ft_size_t application_auth_salt_length = 16U;
 static const ft_size_t application_auth_digest_length = 32U;
+static constexpr ft_size_t APPLICATION_AUTH_HASH_HEX_CAPACITY = application_auth_digest_length * 2 + 1;
 static const ft_size_t application_auth_login_signal_one_time_password_length = 16U;
 
 static int32_t application_auth_encode_hex(const uint8_t *buffer, ft_size_t buffer_size, ft_string &output)
@@ -43,9 +47,9 @@ static int32_t application_auth_encode_hex(const uint8_t *buffer, ft_size_t buff
     encoded_buffer = encoding_hex_encode(buffer, buffer_size, FT_FALSE);
     if (encoded_buffer == ft_nullptr)
         return (encoding_get_error());
-    (void)output.destroy();
-    error_code = output.initialize(encoded_buffer);
-    cma_free(encoded_buffer);
+    error_code = ft_string_take_owned_buffer(output, encoded_buffer, buffer_size * 2);
+    if (error_code != FT_ERR_SUCCESS)
+        cma_free(encoded_buffer);
     return (error_code);
 }
 
@@ -57,23 +61,26 @@ static int32_t application_auth_build_database_path(const char *database_root_pa
     joined_path = filesystem_safe_join_path(database_root_path, database_relative_path);
     if (joined_path == ft_nullptr)
         return (FT_ERR_INVALID_PATH);
-    (void)database_path.destroy();
-    error_code = database_path.initialize(joined_path->c_str());
-    (void)joined_path->destroy();
+    error_code = file_validate_path_resolution_inside_root(
+            database_root_path, joined_path->c_str());
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)joined_path->destroy();
+        delete joined_path;
+        return (error_code);
+    }
+    error_code = database_path.move(*joined_path);
     delete joined_path;
     return (error_code);
 }
 
-static int32_t application_auth_write_integer_value(int64_t value, ft_string &output)
+static int32_t application_auth_format_integer(int64_t value, char *output, ft_size_t capacity)
 {
-    char value_buffer[64];
-    int32_t written_length;
-
-    written_length = pf_snprintf(value_buffer, sizeof(value_buffer), FT_INT64_DECIMAL_FORMAT, value);
-    if (written_length < 0 || written_length >= static_cast<int32_t>(sizeof(value_buffer)))
+    const auto formatted = std::to_chars(output, output + capacity - 1, value);
+    if (formatted.ec != std::errc())
         return (FT_ERR_INVALID_OPERATION);
-    (void)output.destroy();
-    return (output.initialize(value_buffer));
+    *formatted.ptr = '\0';
+    return (FT_ERR_SUCCESS);
 }
 
 static int32_t application_auth_parse_integer_value(const char *value_string, int64_t &value)
@@ -87,26 +94,6 @@ static int32_t application_auth_parse_integer_value(const char *value_string, in
     if (end_pointer == value_string || *end_pointer != '\0')
         return (FT_ERR_CONFIGURATION);
     value = parsed_value;
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t application_auth_write_descriptor(int32_t file_descriptor, const char *buffer, ft_size_t length)
-{
-    int64_t write_result;
-    ft_size_t written_length;
-
-    written_length = 0;
-    while (written_length < length)
-    {
-        write_result = su_write(file_descriptor, buffer + written_length, length - written_length);
-        if (write_result < 0)
-            return (FT_ERR_IO);
-        if (write_result == 0)
-            return (FT_ERR_IO);
-        if (write_result > static_cast<int64_t>(length - written_length))
-            return (FT_ERR_IO);
-        written_length += static_cast<ft_size_t>(write_result);
-    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -258,13 +245,13 @@ int32_t application_auth_service::initialize_from_copy(const application_auth_se
     error_code = this->_settings.initialize(other._settings);
     if (error_code != FT_ERR_SUCCESS)
     {
-        (void)this->destroy();
+        this->destroy_partial_copy_state();
         return (error_code);
     }
     error_code = this->_database_path.initialize(other._database_path);
     if (error_code != FT_ERR_SUCCESS)
     {
-        (void)this->destroy();
+        this->destroy_partial_copy_state();
         return (error_code);
     }
     error_code = this->_credential_store.initialize(other._credential_store);
@@ -279,17 +266,63 @@ int32_t application_auth_service::initialize_from_copy(const application_auth_se
 
 int32_t application_auth_service::initialize_from_move(application_auth_service &other) noexcept
 {
-    int32_t error_code;
-
-    error_code = this->initialize_from_copy(other);
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state,
+            "application_auth_service::initialize(move)", "source is uninitialised");
+        return (FT_ERR_INVALID_STATE);
+    }
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        const int32_t destroy_error = this->destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (destroy_error);
+    }
+    // A threaded store can fail during shutdown. Keep its copy-first lifecycle.
+    if (other._credential_store.is_thread_safe() == FT_TRUE)
+    {
+        int32_t result = this->initialize_from_copy(other);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        result = other.destroy();
+        if (result != FT_ERR_SUCCESS)
+            this->destroy_partial_copy_state();
+        return (result);
+    }
+    int32_t error_code = this->destroy();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    error_code = this->_database_path.move(other._database_path);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        this->destroy_partial_copy_state();
+        return (error_code);
+    }
+    error_code = this->_settings.move(other._settings);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)other._database_path.move(this->_database_path);
+        this->destroy_partial_copy_state();
+        return (error_code);
+    }
+    error_code = this->_credential_store.move(other._credential_store);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        (void)other._settings.move(this->_settings);
+        (void)other._database_path.move(this->_database_path);
+        this->destroy_partial_copy_state();
+        return (error_code);
+    }
     error_code = other.destroy();
     if (error_code != FT_ERR_SUCCESS)
     {
         this->destroy_partial_copy_state();
         return (error_code);
     }
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
@@ -310,59 +343,17 @@ int32_t application_auth_service::move(application_auth_service &other) noexcept
 
 int32_t application_auth_service::build_user_key(const char *username, ft_string &key_output) const noexcept
 {
-    int32_t error_code;
-
-    if (username == ft_nullptr || username[0] == '\0')
-        return (FT_ERR_INVALID_ARGUMENT);
-    (void)key_output.destroy();
-    error_code = key_output.initialize(application_auth_user_key_prefix);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = key_output.append(username);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->build_user_stat_key(application_auth_user_key_prefix, username, key_output));
 }
 
 int32_t application_auth_service::build_login_approval_key(const char *username, ft_string &key_output) const noexcept
 {
-    int32_t error_code;
-
-    if (username == ft_nullptr || username[0] == '\0')
-        return (FT_ERR_INVALID_ARGUMENT);
-    (void)key_output.destroy();
-    error_code = key_output.initialize(application_auth_login_approval_key_prefix);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = key_output.append(username);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->build_user_stat_key(application_auth_login_approval_key_prefix, username, key_output));
 }
 
 int32_t application_auth_service::build_user_approval_requirement_key(const char *username, ft_string &key_output) const noexcept
 {
-    int32_t error_code;
-
-    if (username == ft_nullptr || username[0] == '\0')
-        return (FT_ERR_INVALID_ARGUMENT);
-    (void)key_output.destroy();
-    error_code = key_output.initialize(application_auth_login_approval_requirement_key_prefix);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = key_output.append(username);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->build_user_stat_key(application_auth_login_approval_requirement_key_prefix, username, key_output));
 }
 
 int32_t application_auth_service::build_manual_login_approval_setting_key(ft_string &key_output) const noexcept
@@ -378,21 +369,7 @@ int32_t application_auth_service::build_manual_login_approval_setting_key(ft_str
 
 int32_t application_auth_service::build_login_signal_one_time_password_key(const char *username, ft_string &key_output) const noexcept
 {
-    int32_t error_code;
-
-    if (username == ft_nullptr || username[0] == '\0')
-        return (FT_ERR_INVALID_ARGUMENT);
-    (void)key_output.destroy();
-    error_code = key_output.initialize(application_auth_login_signal_one_time_password_key_prefix);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = key_output.append(username);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    return (this->build_user_stat_key(application_auth_login_signal_one_time_password_key_prefix, username, key_output));
 }
 
 int32_t application_auth_service::build_login_session_key(const char *username, ft_string &key_output) const noexcept
@@ -402,34 +379,23 @@ int32_t application_auth_service::build_login_session_key(const char *username, 
 
 int32_t application_auth_service::build_user_stat_key(const char *key_prefix, const char *username, ft_string &key_output) const noexcept
 {
-    int32_t error_code;
-
-    if (key_prefix == ft_nullptr || key_prefix[0] == '\0')
+    if (key_prefix == ft_nullptr || key_prefix[0] == '\0'
+        || username == ft_nullptr || username[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    if (username == ft_nullptr || username[0] == '\0')
-        return (FT_ERR_INVALID_ARGUMENT);
-    (void)key_output.destroy();
-    error_code = key_output.initialize(key_prefix);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = key_output.append(username);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)key_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t application_auth_service::store_integer_value(const char *key, int64_t value) noexcept
-{
-    ft_string value_string;
-    int32_t error_code;
-
-    error_code = application_auth_write_integer_value(value, value_string);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (this->_credential_store.kv_set(key, value_string.c_str()));
+    const ft_size_t prefix_length = ft_strlen_size_t(key_prefix);
+    const ft_size_t username_length = ft_strlen_size_t(username);
+    if (username_length >= FT_SYSTEM_SIZE_MAX - prefix_length)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t key_length = prefix_length + username_length;
+    char *key = static_cast<char *>(cma_malloc(key_length + 1));
+    if (key == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    (void)ft_memcpy(key, key_prefix, prefix_length);
+    (void)ft_memcpy(key + prefix_length, username, username_length + 1);
+    const int32_t result = ft_string_take_owned_buffer(key_output, key, key_length);
+    if (result != FT_ERR_SUCCESS)
+        cma_free(key);
+    return (result);
 }
 
 int32_t application_auth_service::load_integer_value(const char *key, int64_t &value, ft_bool *found) const noexcept
@@ -453,13 +419,6 @@ int32_t application_auth_service::load_integer_value(const char *key, int64_t &v
     return (FT_ERR_SUCCESS);
 }
 
-int32_t application_auth_service::store_string_value(const char *key, const char *value) noexcept
-{
-    if (value == ft_nullptr)
-        value = "";
-    return (this->_credential_store.kv_set(key, value));
-}
-
 int32_t application_auth_service::load_string_value(const char *key, ft_string &value, ft_bool *found) const noexcept
 {
     const char *value_string;
@@ -478,17 +437,6 @@ int32_t application_auth_service::load_string_value(const char *key, ft_string &
     (void)value.destroy();
     error_code = value.initialize(value_string);
     return (error_code);
-}
-
-int32_t application_auth_service::generate_salt_hex(ft_string &salt_hex) const noexcept
-{
-    uint8_t salt_buffer[application_auth_salt_length];
-    int32_t error_code;
-
-    error_code = encryption_fill_secure_buffer(salt_buffer, application_auth_salt_length);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (application_auth_encode_hex(salt_buffer, application_auth_salt_length, salt_hex));
 }
 
 int32_t application_auth_service::generate_login_signal_one_time_password(ft_string &one_time_password_output) const noexcept
@@ -513,149 +461,89 @@ int32_t application_auth_service::generate_login_session_token(ft_string &sessio
     return (application_auth_encode_hex(token_buffer, application_auth_login_signal_one_time_password_length, session_token_output));
 }
 
-int32_t application_auth_service::build_login_signal_one_time_password_hash(const char *one_time_password, ft_string &hash_hex) const noexcept
+int32_t application_auth_service::build_login_signal_one_time_password_hash(const char *one_time_password,
+    char *hash_hex, ft_size_t hash_capacity) const noexcept
 {
     uint8_t digest_buffer[application_auth_digest_length];
 
     if (one_time_password == ft_nullptr || one_time_password[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    sha256_hash(one_time_password, ft_strlen(one_time_password), digest_buffer);
-    return (application_auth_encode_hex(digest_buffer, application_auth_digest_length, hash_hex));
+    sha256_hash(one_time_password, ft_strlen_size_t(one_time_password), digest_buffer);
+    const int32_t result = encoding_hex_encode_into(digest_buffer, sizeof(digest_buffer),
+        FT_FALSE, hash_hex, hash_capacity);
+    encryption_secure_wipe(digest_buffer, sizeof(digest_buffer));
+    return (result);
 }
 
 int32_t application_auth_service::build_login_session_value(const char *session_token, const char *client_ip_address,
     int64_t login_timestamp, ft_string &value_output) const noexcept
 {
-    ft_string timestamp_string;
-    int32_t error_code;
-
     if (session_token == ft_nullptr || session_token[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = application_auth_write_integer_value(login_timestamp, timestamp_string);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    (void)value_output.destroy();
-    error_code = value_output.initialize(session_token);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = value_output.append('|');
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)value_output.destroy();
-        return (error_code);
-    }
-    if (client_ip_address != ft_nullptr && client_ip_address[0] != '\0')
-        error_code = value_output.append(client_ip_address);
-    else
-        error_code = FT_ERR_SUCCESS;
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)value_output.destroy();
-        return (error_code);
-    }
-    error_code = value_output.append('|');
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)value_output.destroy();
-        return (error_code);
-    }
-    error_code = value_output.append(timestamp_string);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)value_output.destroy();
-        return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    char timestamp_buffer[64];
+    const int32_t format_error = application_auth_format_integer(login_timestamp,
+        timestamp_buffer, sizeof(timestamp_buffer));
+    if (format_error != FT_ERR_SUCCESS)
+        return (format_error);
+    const ft_size_t token_length = ft_strlen_size_t(session_token);
+    const ft_size_t address_length = ft_strlen_size_t(client_ip_address);
+    const ft_size_t timestamp_length = ft_strlen_size_t(timestamp_buffer);
+    const ft_size_t suffix_length = timestamp_length + 2;
+    if (token_length > FT_SYSTEM_SIZE_MAX - suffix_length - 1
+        || address_length > FT_SYSTEM_SIZE_MAX - suffix_length - 1 - token_length)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t value_length = token_length + address_length + suffix_length;
+    char *value = static_cast<char *>(cma_malloc(value_length + 1));
+    if (value == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    (void)ft_memcpy(value, session_token, token_length);
+    value[token_length] = '|';
+    if (address_length != 0)
+        (void)ft_memcpy(value + token_length + 1, client_ip_address, address_length);
+    value[token_length + address_length + 1] = '|';
+    (void)ft_memcpy(value + token_length + address_length + 2,
+        timestamp_buffer, timestamp_length + 1);
+    const int32_t result = ft_string_take_owned_buffer(value_output, value, value_length);
+    if (result != FT_ERR_SUCCESS)
+        cma_free(value);
+    return (result);
 }
 
-int32_t application_auth_service::parse_login_session_value(const char *value, ft_string &session_token_output,
-    ft_string &client_ip_address_output, int64_t &login_timestamp_output) const noexcept
+int32_t application_auth_service::parse_login_session_value(const char *value,
+    ft_string *client_ip_address_output, int64_t &login_timestamp_output) const noexcept
 {
-    ft_string session_value;
-    ft_string *session_token;
-    ft_string *client_ip_address;
-    ft_string *timestamp_string;
-    const char *first_separator;
-    const char *second_separator;
-    int32_t error_code;
-
     if (value == ft_nullptr || value[0] == '\0')
         return (FT_ERR_CONFIGURATION);
-    error_code = session_value.initialize(value);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    first_separator = ft_strchr(session_value.c_str(), '|');
+    const char *first_separator = ft_strchr(value, '|');
     if (first_separator == ft_nullptr)
-    {
-        (void)session_value.destroy();
         return (FT_ERR_CONFIGURATION);
-    }
-    second_separator = ft_strchr(first_separator + 1, '|');
-    if (second_separator == ft_nullptr || second_separator <= first_separator)
-    {
-        (void)session_value.destroy();
+    const char *address = first_separator + 1;
+    const char *second_separator = ft_strchr(address, '|');
+    if (second_separator == ft_nullptr)
         return (FT_ERR_CONFIGURATION);
-    }
-    session_token = session_value.substr(0, static_cast<ft_size_t>(first_separator - session_value.c_str()));
-    if (session_token == ft_nullptr)
+    int64_t timestamp;
+    int32_t result = application_auth_parse_integer_value(second_separator + 1, timestamp);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (client_ip_address_output != ft_nullptr)
     {
-        (void)session_value.destroy();
-        return (FT_ERR_NO_MEMORY);
+        ft_string staged_address;
+        result = staged_address.initialize();
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        const ft_size_t address_length = static_cast<ft_size_t>(second_separator - address);
+        if (address_length != 0)
+        {
+            result = staged_address.assign(address, address_length);
+            if (result != FT_ERR_SUCCESS)
+                return (result);
+        }
+        result = client_ip_address_output->move(staged_address);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
     }
-    client_ip_address = session_value.substr(static_cast<ft_size_t>(first_separator - session_value.c_str()) + 1,
-        static_cast<ft_size_t>(second_separator - first_separator - 1));
-    if (client_ip_address == ft_nullptr)
-    {
-        (void)session_token->destroy();
-        delete session_token;
-        (void)session_value.destroy();
-        return (FT_ERR_NO_MEMORY);
-    }
-    timestamp_string = session_value.substr(static_cast<ft_size_t>(second_separator - session_value.c_str()) + 1);
-    if (timestamp_string == ft_nullptr)
-    {
-        (void)session_token->destroy();
-        delete session_token;
-        (void)client_ip_address->destroy();
-        delete client_ip_address;
-        (void)session_value.destroy();
-        return (FT_ERR_NO_MEMORY);
-    }
-    (void)session_token_output.destroy();
-    error_code = session_token_output.initialize(*session_token);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)session_token->destroy();
-        delete session_token;
-        (void)client_ip_address->destroy();
-        delete client_ip_address;
-        (void)timestamp_string->destroy();
-        delete timestamp_string;
-        (void)session_value.destroy();
-        return (error_code);
-    }
-    (void)client_ip_address_output.destroy();
-    error_code = client_ip_address_output.initialize(*client_ip_address);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)session_token->destroy();
-        delete session_token;
-        (void)client_ip_address->destroy();
-        delete client_ip_address;
-        (void)timestamp_string->destroy();
-        delete timestamp_string;
-        (void)session_value.destroy();
-        return (error_code);
-    }
-    error_code = application_auth_parse_integer_value(timestamp_string->c_str(), login_timestamp_output);
-    (void)session_token->destroy();
-    delete session_token;
-    (void)client_ip_address->destroy();
-    delete client_ip_address;
-    (void)timestamp_string->destroy();
-    delete timestamp_string;
-    (void)session_value.destroy();
-    return (error_code);
+    login_timestamp_output = timestamp;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t application_auth_service::is_login_access_allowed(const char *username) const noexcept
@@ -695,128 +583,102 @@ int32_t application_auth_service::is_login_access_allowed(const char *username) 
     return (FT_ERR_SUCCESS);
 }
 
-int32_t application_auth_service::write_login_signal_one_time_password(const char *username, const char *one_time_password) const noexcept
+int32_t application_auth_service::write_login_signal_one_time_password(const char *username,
+    const char *one_time_password) const noexcept
 {
-    ft_string message;
-    int32_t error_code;
-
     if (username == ft_nullptr || one_time_password == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = message.initialize(username);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = message.append(": ");
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)message.destroy();
-        return (error_code);
-    }
-    error_code = message.append(one_time_password);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)message.destroy();
-        return (error_code);
-    }
-    error_code = message.append('\n');
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)message.destroy();
-        return (error_code);
-    }
-    {
-        int32_t login_signal_output_file_descriptor;
+    const ft_size_t username_length = ft_strlen_size_t(username);
+    const ft_size_t password_length = ft_strlen_size_t(one_time_password);
+    constexpr ft_size_t MAXIMUM_TEXT_LENGTH = static_cast<ft_size_t>(INT64_MAX) - 3;
+    if (username_length > MAXIMUM_TEXT_LENGTH
+        || password_length > MAXIMUM_TEXT_LENGTH - username_length)
+        return (FT_ERR_OUT_OF_RANGE);
+    int32_t descriptor;
+    const int32_t settings_error = this->_settings.get_login_signal_output_file_descriptor(descriptor);
+    if (settings_error != FT_ERR_SUCCESS)
+        return (settings_error);
 
-        error_code = this->_settings.get_login_signal_output_file_descriptor(login_signal_output_file_descriptor);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)message.destroy();
-            return (error_code);
-        }
-        error_code = application_auth_write_descriptor(login_signal_output_file_descriptor,
-            message.c_str(), message.size());
+    const ft_size_t message_length = username_length + password_length + 3;
+    char stack_message[128];
+    char *message = stack_message;
+    if (message_length > sizeof(stack_message))
+    {
+        message = static_cast<char *>(cma_malloc(message_length));
+        if (message == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
     }
-    (void)message.destroy();
-    return (error_code);
+    (void)ft_memcpy(message, username, username_length);
+    message[username_length] = ':';
+    message[username_length + 1] = ' ';
+    (void)ft_memcpy(message + username_length + 2, one_time_password, password_length);
+    message[message_length - 1] = '\n';
+    const int64_t written = su_write(descriptor, message, message_length);
+    (void)encryption_secure_wipe(message, message_length);
+    if (message != stack_message)
+        cma_free(message);
+    if (written != static_cast<int64_t>(message_length))
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
 }
 
-int32_t application_auth_service::build_password_hash(const char *password, const ft_string &salt_hex, ft_string &hash_hex) const noexcept
+static int32_t application_auth_build_password_digest(const char *password,
+    const char *salt_hex, ft_size_t salt_length, uint8_t *digest) noexcept
 {
-    ft_string hash_input;
-    uint8_t digest_buffer[application_auth_digest_length];
-    int32_t error_code;
-
     if (password == ft_nullptr || password[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    error_code = hash_input.initialize(salt_hex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = hash_input.append(':');
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = hash_input.append(password);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    sha256_hash(hash_input.c_str(), hash_input.size(), digest_buffer);
-    return (application_auth_encode_hex(digest_buffer, application_auth_digest_length, hash_hex));
-}
-
-int32_t application_auth_service::build_credential_record(const char *password, ft_string &record_output) const noexcept
-{
-    ft_string salt_hex;
-    ft_string hash_hex;
-    int32_t error_code;
-
-    error_code = this->generate_salt_hex(salt_hex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_password_hash(password, salt_hex, hash_hex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    (void)record_output.destroy();
-    error_code = record_output.initialize(salt_hex);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = record_output.append('|');
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = record_output.append(hash_hex);
-    if (error_code != FT_ERR_SUCCESS)
+    const ft_size_t password_length = ft_strlen_size_t(password);
+    if (password_length >= FT_SYSTEM_SIZE_MAX - salt_length)
+        return (FT_ERR_OUT_OF_RANGE);
+    const ft_size_t input_length = salt_length + 1 + password_length;
+    char stack_input[128];
+    char *input = stack_input;
+    if (input_length > sizeof(stack_input))
     {
-        (void)record_output.destroy();
-        return (error_code);
+        input = static_cast<char *>(cma_malloc(input_length));
+        if (input == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
     }
+    (void)ft_memcpy(input, salt_hex, salt_length);
+    input[salt_length] = ':';
+    (void)ft_memcpy(input + salt_length + 1, password, password_length);
+    sha256_hash(input, input_length, digest);
+    (void)encryption_secure_wipe(input, input_length);
+    if (input != stack_input)
+        cma_free(input);
     return (FT_ERR_SUCCESS);
 }
 
-int32_t application_auth_service::parse_credential_record(const char *record_string, ft_string &salt_hex, ft_string &hash_hex) const noexcept
+int32_t application_auth_service::build_credential_record(const char *password,
+    ft_string &record_output) const noexcept
 {
-    ft_size_t delimiter_index;
-    int32_t error_code;
-
-    if (record_string == ft_nullptr || record_string[0] == '\0')
-        return (FT_ERR_CONFIGURATION);
-    delimiter_index = 0;
-    while (record_string[delimiter_index] != '\0' && record_string[delimiter_index] != '|')
-        delimiter_index++;
-    if (delimiter_index == 0 || record_string[delimiter_index] != '|')
-        return (FT_ERR_CONFIGURATION);
-    (void)salt_hex.destroy();
-    error_code = salt_hex.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = salt_hex.append(record_string, delimiter_index);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    (void)hash_hex.destroy();
-    error_code = hash_hex.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = hash_hex.append(record_string + delimiter_index + 1);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    if (hash_hex.empty() == FT_TRUE)
-        return (FT_ERR_CONFIGURATION);
-    return (FT_ERR_SUCCESS);
+    if (password == ft_nullptr || password[0] == '\0')
+        return (FT_ERR_INVALID_ARGUMENT);
+    constexpr ft_size_t SALT_HEX_LENGTH = application_auth_salt_length * 2;
+    constexpr ft_size_t HASH_HEX_LENGTH = application_auth_digest_length * 2;
+    constexpr ft_size_t RECORD_LENGTH = SALT_HEX_LENGTH + 1 + HASH_HEX_LENGTH;
+    uint8_t salt[application_auth_salt_length];
+    int32_t result = encryption_fill_secure_buffer(salt, sizeof(salt));
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    char *record = static_cast<char *>(cma_malloc(RECORD_LENGTH + 1));
+    if (record == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    result = encoding_hex_encode_into(salt, sizeof(salt), FT_FALSE, record, SALT_HEX_LENGTH + 1);
+    uint8_t digest[application_auth_digest_length];
+    if (result == FT_ERR_SUCCESS)
+        result = application_auth_build_password_digest(password, record, SALT_HEX_LENGTH, digest);
+    if (result == FT_ERR_SUCCESS)
+    {
+        record[SALT_HEX_LENGTH] = '|';
+        result = encoding_hex_encode_into(digest, sizeof(digest), FT_FALSE,
+            record + SALT_HEX_LENGTH + 1, HASH_HEX_LENGTH + 1);
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = ft_string_take_owned_buffer(record_output, record, RECORD_LENGTH);
+    if (result != FT_ERR_SUCCESS)
+        cma_free(record);
+    return (result);
 }
 
 int32_t application_auth_service::load_manual_login_approval_enabled(ft_bool &enabled) const noexcept
@@ -918,38 +780,31 @@ int32_t application_auth_service::load_user_session_value(const char *username, 
 
 int32_t application_auth_service::collect_logged_in_usernames(ft_vector<ft_string> &usernames) const noexcept
 {
-    ft_vector<kv_store_snapshot_entry> snapshot_entries;
-    ft_size_t prefix_length;
-    ft_size_t entry_index;
-    int32_t error_code;
+    return (this->_credential_store.export_key_suffixes(application_auth_login_session_key_prefix, usernames));
+}
 
-    error_code = snapshot_entries.initialize();
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->_credential_store.export_snapshot(snapshot_entries);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    prefix_length = ft_strlen_size_t(application_auth_login_session_key_prefix);
-    usernames.clear();
-    entry_index = 0;
-    while (entry_index < snapshot_entries.size())
+static int32_t application_auth_apply_audit_updates(kv_store &store,
+    ft_string *const *keys, const char *const *values, ft_size_t count)
+{
+    ft_vector<kv_store_operation> operations;
+    int32_t result = operations.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_size_t index = 0;
+    while (index < count)
     {
-        const kv_store_snapshot_entry &snapshot_entry = snapshot_entries[entry_index];
-
-        if (snapshot_entry.key.size() > prefix_length
-            && ft_strncmp(snapshot_entry.key.c_str(), application_auth_login_session_key_prefix, prefix_length) == FT_ERR_SUCCESS)
-        {
-            ft_string username_output;
-            error_code = username_output.initialize(snapshot_entry.key.c_str() + prefix_length);
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
-            error_code = usernames.push_back(ft_move(username_output));
-            if (error_code != FT_ERR_SUCCESS)
-                return (error_code);
-        }
-        entry_index++;
+        kv_store_operation operation{KV_STORE_OPERATION_TYPE_SET, {}, {}, FT_TRUE, FT_FALSE, -1};
+        result = operation._key.move(*keys[index]);
+        if (result == FT_ERR_SUCCESS)
+            result = operation._value.initialize(values[index]);
+        if (result != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_OPERATION);
+        result = operations.push_back(ft_move(operation));
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        ++index;
     }
-    return (FT_ERR_SUCCESS);
+    return (store.kv_apply(operations));
 }
 
 int32_t application_auth_service::record_login_failure(const char *username, const char *client_ip_address) noexcept
@@ -981,21 +836,30 @@ int32_t application_auth_service::record_login_failure(const char *username, con
     error_code = this->load_integer_value(consecutive_failed_count_key.c_str(), consecutive_failed_count, ft_nullptr);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    failed_count++;
-    consecutive_failed_count++;
-    error_code = this->store_integer_value(failed_count_key.c_str(), failed_count);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->store_integer_value(consecutive_failed_count_key.c_str(), consecutive_failed_count);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->store_string_value(last_failed_ip_key.c_str(), client_ip_address);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
+    if (failed_count == INT64_MAX || consecutive_failed_count == INT64_MAX)
+        return (FT_ERR_OUT_OF_RANGE);
     current_time = time_now();
     if (current_time < 0)
         return (FT_ERR_IO);
-    return (this->store_integer_value(last_failed_timestamp_key.c_str(), current_time));
+    char failed_count_text[64];
+    char consecutive_count_text[64];
+    char timestamp_text[64];
+    error_code = application_auth_format_integer(failed_count + 1, failed_count_text,
+        sizeof(failed_count_text));
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = application_auth_format_integer(consecutive_failed_count + 1,
+            consecutive_count_text, sizeof(consecutive_count_text));
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = application_auth_format_integer(current_time, timestamp_text, sizeof(timestamp_text));
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (client_ip_address == ft_nullptr)
+        client_ip_address = "";
+    ft_string *keys[] = { &failed_count_key, &consecutive_failed_count_key,
+        &last_failed_ip_key, &last_failed_timestamp_key };
+    const char *values[] = { failed_count_text, consecutive_count_text, client_ip_address, timestamp_text };
+    return (application_auth_apply_audit_updates(this->_credential_store, keys, values,
+        sizeof(keys) / sizeof(*keys)));
 }
 
 int32_t application_auth_service::record_login_success(const char *username, const char *client_ip_address) noexcept
@@ -1015,16 +879,20 @@ int32_t application_auth_service::record_login_success(const char *username, con
     error_code = this->build_user_stat_key(application_auth_last_successful_login_timestamp_key_prefix, username, last_successful_login_timestamp_key);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = this->store_integer_value(consecutive_failed_count_key.c_str(), 0);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->store_string_value(last_successful_login_ip_key.c_str(), client_ip_address);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
     current_time = time_now();
     if (current_time < 0)
         return (FT_ERR_IO);
-    return (this->store_integer_value(last_successful_login_timestamp_key.c_str(), current_time));
+    char timestamp_text[64];
+    error_code = application_auth_format_integer(current_time, timestamp_text, sizeof(timestamp_text));
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (client_ip_address == ft_nullptr)
+        client_ip_address = "";
+    ft_string *keys[] = { &consecutive_failed_count_key, &last_successful_login_ip_key,
+        &last_successful_login_timestamp_key };
+    const char *values[] = { "0", client_ip_address, timestamp_text };
+    return (application_auth_apply_audit_updates(this->_credential_store, keys, values,
+        sizeof(keys) / sizeof(*keys)));
 }
 
 int32_t application_auth_service::register_user(const char *username, const char *password) noexcept
@@ -1050,9 +918,6 @@ int32_t application_auth_service::register_user(const char *username, const char
 int32_t application_auth_service::authenticate_user(const char *username, const char *password, ft_bool &authenticated) const noexcept
 {
     ft_string user_key;
-    ft_string salt_hex;
-    ft_string stored_hash_hex;
-    ft_string computed_hash_hex;
     const char *record_string;
     int32_t error_code;
 
@@ -1064,13 +929,26 @@ int32_t application_auth_service::authenticate_user(const char *username, const 
     record_string = this->_credential_store.kv_get(user_key.c_str());
     if (record_string == ft_nullptr)
         return (FT_ERR_NOT_FOUND);
-    error_code = this->parse_credential_record(record_string, salt_hex, stored_hash_hex);
+    const char *delimiter = ft_strchr(record_string, '|');
+    if (delimiter == ft_nullptr || delimiter == record_string || delimiter[1] == '\0')
+        return (FT_ERR_CONFIGURATION);
+    constexpr ft_size_t HASH_HEX_LENGTH = application_auth_digest_length * 2;
+    char stored_hash[HASH_HEX_LENGTH];
+    const ft_bool hash_has_expected_length = ft_strlen_size_t(delimiter + 1) == HASH_HEX_LENGTH;
+    if (hash_has_expected_length == FT_TRUE)
+        (void)ft_memcpy_fixed<sizeof(stored_hash)>(stored_hash, delimiter + 1);
+    uint8_t digest[application_auth_digest_length];
+    error_code = application_auth_build_password_digest(password, record_string,
+        static_cast<ft_size_t>(delimiter - record_string), digest);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = this->build_password_hash(password, salt_hex, computed_hash_hex);
+    char computed_hash[HASH_HEX_LENGTH + 1];
+    error_code = encoding_hex_encode_into(digest, sizeof(digest), FT_FALSE,
+        computed_hash, sizeof(computed_hash));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (ft_strcmp(stored_hash_hex.c_str(), computed_hash_hex.c_str()) != 0)
+    if (hash_has_expected_length == FT_FALSE
+        || ft_constant_time_equal(stored_hash, computed_hash, HASH_HEX_LENGTH) == FT_FALSE)
         return (FT_ERR_PERMISSION_DENIED);
     error_code = this->is_login_access_allowed(username);
     if (error_code != FT_ERR_SUCCESS)
@@ -1099,64 +977,60 @@ int32_t application_auth_service::user_exists(const char *username, ft_bool &exi
 
 int32_t application_auth_service::remove_user(const char *username) noexcept
 {
-    ft_string user_key;
-    ft_string approval_key;
-    ft_string approval_requirement_key;
-    ft_string login_signal_key;
-    ft_string login_session_key;
-    ft_string failed_count_key;
-    ft_string consecutive_failed_count_key;
-    ft_string last_failed_ip_key;
-    ft_string last_failed_timestamp_key;
-    ft_string last_successful_login_ip_key;
-    ft_string last_successful_login_timestamp_key;
-    int32_t error_code;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "application_auth_service::remove_user");
-    error_code = this->build_user_key(username, user_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_login_approval_key(username, approval_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_approval_requirement_key(username, approval_requirement_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_login_signal_one_time_password_key(username, login_signal_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_login_session_key(username, login_session_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_failed_login_count_key_prefix, username, failed_count_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_consecutive_failed_login_count_key_prefix, username, consecutive_failed_count_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_last_failed_login_ip_key_prefix, username, last_failed_ip_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_last_failed_login_timestamp_key_prefix, username, last_failed_timestamp_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_last_successful_login_ip_key_prefix, username, last_successful_login_ip_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = this->build_user_stat_key(application_auth_last_successful_login_timestamp_key_prefix, username, last_successful_login_timestamp_key);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    (void)this->_credential_store.kv_delete(approval_key.c_str());
-    (void)this->_credential_store.kv_delete(approval_requirement_key.c_str());
-    (void)this->_credential_store.kv_delete(login_signal_key.c_str());
-    (void)this->_credential_store.kv_delete(login_session_key.c_str());
-    (void)this->_credential_store.kv_delete(failed_count_key.c_str());
-    (void)this->_credential_store.kv_delete(consecutive_failed_count_key.c_str());
-    (void)this->_credential_store.kv_delete(last_failed_ip_key.c_str());
-    (void)this->_credential_store.kv_delete(last_failed_timestamp_key.c_str());
-    (void)this->_credential_store.kv_delete(last_successful_login_ip_key.c_str());
-    (void)this->_credential_store.kv_delete(last_successful_login_timestamp_key.c_str());
-    return (this->_credential_store.kv_delete(user_key.c_str()));
+    if (username == ft_nullptr || username[0] == '\0')
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *const prefixes[] = {
+        application_auth_login_approval_key_prefix,
+        application_auth_login_approval_requirement_key_prefix,
+        application_auth_login_signal_one_time_password_key_prefix,
+        application_auth_login_session_key_prefix,
+        application_auth_failed_login_count_key_prefix,
+        application_auth_consecutive_failed_login_count_key_prefix,
+        application_auth_last_failed_login_ip_key_prefix,
+        application_auth_last_failed_login_timestamp_key_prefix,
+        application_auth_last_successful_login_ip_key_prefix,
+        application_auth_last_successful_login_timestamp_key_prefix,
+        application_auth_user_key_prefix
+    };
+    constexpr ft_size_t PREFIX_COUNT = sizeof(prefixes) / sizeof(prefixes[0]);
+    ft_size_t prefix_lengths[PREFIX_COUNT];
+    ft_size_t longest_prefix = 0;
+    ft_size_t index = 0;
+    while (index < PREFIX_COUNT)
+    {
+        prefix_lengths[index] = ft_strlen_size_t(prefixes[index]);
+        if (prefix_lengths[index] > longest_prefix)
+            longest_prefix = prefix_lengths[index];
+        ++index;
+    }
+    const ft_size_t username_length = ft_strlen_size_t(username);
+    if (username_length >= FT_SYSTEM_SIZE_MAX - longest_prefix)
+        return (FT_ERR_OUT_OF_RANGE);
+    char local_key[128];
+    char *key_buffer = local_key;
+    const ft_size_t key_capacity = longest_prefix + username_length + 1;
+    if (key_capacity > sizeof(local_key))
+    {
+        key_buffer = static_cast<char *>(cma_malloc(key_capacity));
+        if (key_buffer == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    // The username may borrow a value that the first deletion will remove.
+    char *const key_suffix = key_buffer + longest_prefix;
+    (void)ft_memcpy(key_suffix, username, username_length + 1);
+    index = 0;
+    int32_t result = FT_ERR_SUCCESS;
+    while (index < PREFIX_COUNT)
+    {
+        char *const key = key_suffix - prefix_lengths[index];
+        (void)ft_memcpy(key, prefixes[index], prefix_lengths[index]);
+        result = this->_credential_store.kv_delete(key);
+        ++index;
+    }
+    if (key_buffer != local_key)
+        cma_free(key_buffer);
+    return (result);
 }
 
 int32_t application_auth_service::set_manual_login_approval_enabled(ft_bool enabled) noexcept
@@ -1549,7 +1423,6 @@ int32_t application_auth_service::get_last_successful_login_timestamp(const char
 int32_t application_auth_service::get_login_session_client_ip_address(const char *username, ft_string &client_ip_address) const noexcept
 {
     ft_string session_value;
-    ft_string session_token;
     int64_t login_timestamp;
     ft_bool found;
     int32_t error_code;
@@ -1561,17 +1434,12 @@ int32_t application_auth_service::get_login_session_client_ip_address(const char
         return (error_code);
     if (found == FT_FALSE)
         return (FT_ERR_NOT_FOUND);
-    error_code = this->parse_login_session_value(session_value.c_str(), session_token, client_ip_address, login_timestamp);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (FT_ERR_SUCCESS);
+    return (this->parse_login_session_value(session_value.c_str(), &client_ip_address, login_timestamp));
 }
 
 int32_t application_auth_service::get_login_session_timestamp(const char *username, int64_t &timestamp) const noexcept
 {
     ft_string session_value;
-    ft_string session_token;
-    ft_string client_ip_address;
     ft_bool found;
     int32_t error_code;
 
@@ -1582,10 +1450,7 @@ int32_t application_auth_service::get_login_session_timestamp(const char *userna
         return (error_code);
     if (found == FT_FALSE)
         return (FT_ERR_NOT_FOUND);
-    error_code = this->parse_login_session_value(session_value.c_str(), session_token, client_ip_address, timestamp);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (FT_ERR_SUCCESS);
+    return (this->parse_login_session_value(session_value.c_str(), ft_nullptr, timestamp));
 }
 
 int32_t application_auth_service::login_user(const char *username, const char *password, const char *client_ip_address,
@@ -1666,7 +1531,7 @@ int32_t application_auth_service::request_login_signal_one_time_password(const c
     ft_string user_key;
     ft_string login_signal_key;
     ft_string one_time_password;
-    ft_string one_time_password_hash;
+    char one_time_password_hash[APPLICATION_AUTH_HASH_HEX_CAPACITY];
     const char *existing_record;
     int32_t error_code;
 
@@ -1683,7 +1548,8 @@ int32_t application_auth_service::request_login_signal_one_time_password(const c
     error_code = this->generate_login_signal_one_time_password(one_time_password);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = this->build_login_signal_one_time_password_hash(one_time_password.c_str(), one_time_password_hash);
+    error_code = this->build_login_signal_one_time_password_hash(one_time_password.c_str(),
+        one_time_password_hash, sizeof(one_time_password_hash));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     {
@@ -1692,7 +1558,7 @@ int32_t application_auth_service::request_login_signal_one_time_password(const c
         error_code = this->_settings.get_login_signal_token_timeout_seconds(login_signal_token_timeout_seconds);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        error_code = this->_credential_store.kv_set(login_signal_key.c_str(), one_time_password_hash.c_str(),
+        error_code = this->_credential_store.kv_set(login_signal_key.c_str(), one_time_password_hash,
             login_signal_token_timeout_seconds);
     }
     if (error_code != FT_ERR_SUCCESS)
@@ -1709,7 +1575,7 @@ int32_t application_auth_service::request_login_signal_one_time_password(const c
 int32_t application_auth_service::authenticate_login_signal_one_time_password(const char *username, const char *one_time_password, ft_bool &authenticated) noexcept
 {
     ft_string login_signal_key;
-    ft_string provided_hash;
+    char provided_hash[APPLICATION_AUTH_HASH_HEX_CAPACITY];
     const char *stored_hash;
     int32_t error_code;
 
@@ -1721,10 +1587,10 @@ int32_t application_auth_service::authenticate_login_signal_one_time_password(co
     stored_hash = this->_credential_store.kv_get(login_signal_key.c_str());
     if (stored_hash == ft_nullptr)
         return (FT_ERR_NOT_FOUND);
-    error_code = this->build_login_signal_one_time_password_hash(one_time_password, provided_hash);
+    error_code = this->build_login_signal_one_time_password_hash(one_time_password, provided_hash, sizeof(provided_hash));
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    if (ft_strcmp(stored_hash, provided_hash.c_str()) != FT_ERR_SUCCESS)
+    if (ft_strcmp(stored_hash, provided_hash) != FT_ERR_SUCCESS)
         return (FT_ERR_PERMISSION_DENIED);
     error_code = this->_credential_store.kv_delete(login_signal_key.c_str());
     if (error_code != FT_ERR_SUCCESS && error_code != FT_ERR_NOT_FOUND)

@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Template/queue.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <vector>
 
@@ -10,6 +11,30 @@
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_ft_queue_transfers_and_releases_one_reusable_node)
+{
+    ft_queue<uint32_t> source;
+    ft_queue<uint32_t> destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    ft_size_t allocations_before = 0U;
+    ft_size_t frees_before = 0U;
+    cma_get_stats(&allocations_before, &frees_before);
+    source.enqueue(11U);
+    FT_ASSERT_EQ(11U, source.dequeue());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    const uint32_t value = 23U;
+    destination.enqueue(value);
+    FT_ASSERT_EQ(value, destination.dequeue());
+    destination.clear();
+    ft_size_t allocations_after = 0U;
+    ft_size_t frees_after = 0U;
+    cma_get_stats(&allocations_after, &frees_after);
+    FT_ASSERT_EQ(1U, allocations_after - allocations_before);
+    FT_ASSERT_EQ(1U, frees_after - frees_before);
+    FT_ASSERT(destination.empty());
+    return (1);
+}
 
 using queue_type = ft_queue<int>;
 

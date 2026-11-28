@@ -1,70 +1,46 @@
 #include "rng.hpp"
 #include <cmath>
-#include <cstddef>
 #include <limits>
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
 
-struct rng_gamma_context
+static constexpr double RNG_DENSITY_EPSILON = 0.000000000001;
+
+static int32_t rng_simpson_segment_total(double additional_segments)
 {
-    double shape;
-    double scale;
-};
+    constexpr int32_t MIN_SEGMENTS = 256;
+    constexpr int32_t MAX_SEGMENTS = 8192;
 
-struct rng_beta_context
-{
-    double alpha;
-    double beta;
-};
-
-typedef double (*rng_integrand)(double value, void *context);
-
-static int32_t rng_adjust_segment_total(int32_t segment_total)
-{
-    if ((segment_total & 1) == 1)
-        segment_total = segment_total + 1;
-    if (segment_total < 256)
-        segment_total = 256;
-    if (segment_total > 8192)
-        segment_total = 8192;
-    return (segment_total);
+    if (additional_segments >= MAX_SEGMENTS - MIN_SEGMENTS)
+        return (MAX_SEGMENTS);
+    if (!(additional_segments > 0.0))
+        return (MIN_SEGMENTS);
+    const int32_t segment_total = MIN_SEGMENTS + static_cast<int32_t>(additional_segments);
+    return (segment_total + (segment_total & 1));
 }
 
-static double rng_simpson_integral(double start, double end, int32_t segment_total, rng_integrand function, void *context)
+template<typename Integrand>
+static double rng_simpson_integral(double end, int32_t segment_total,
+    const Integrand &integrand)
 {
-    double step;
-    int32_t index;
-    double sum;
-
-    if (segment_total <= 0)
-        return (0.0);
-    step = (end - start) / static_cast<double>(segment_total);
-    sum = 0.0;
-    index = 0;
+    const double step = end / static_cast<double>(segment_total);
+    double sum = 0.0;
+    int32_t index = 0;
     while (index <= segment_total)
     {
-        double point;
+        const double point = step * static_cast<double>(index);
         double weight;
-        double value;
-
-        point = start + step * static_cast<double>(index);
         if (index == 0 || index == segment_total)
             weight = 1.0;
         else if ((index & 1) == 0)
             weight = 2.0;
         else
             weight = 4.0;
-        value = function(point, context);
+        double value = integrand(point);
         if (std::isfinite(value) == FT_FALSE)
         {
-            double adjustment;
-            double adjusted_point;
-
-            adjustment = step * 0.5;
+            double adjustment = step * 0.5;
             if (adjustment <= 0.0)
                 adjustment = 0.0000000001;
-            adjusted_point = point;
+            double adjusted_point = point;
             if (index == 0)
             {
                 adjusted_point = point + adjustment;
@@ -74,205 +50,143 @@ static double rng_simpson_integral(double start, double end, int32_t segment_tot
             else if (index == segment_total)
             {
                 adjusted_point = point - adjustment;
-                if (adjusted_point < start)
-                    adjusted_point = start;
+                if (adjusted_point < 0.0)
+                    adjusted_point = 0.0;
             }
-            value = function(adjusted_point, context);
+            value = integrand(adjusted_point);
             if (std::isfinite(value) == FT_FALSE)
                 value = 0.0;
         }
         sum = sum + weight * value;
-        index = index + 1;
+        index += 1;
     }
-    return ((step / 3.0) * sum);
+    const double integral = (step / 3.0) * sum;
+    if (integral < 0.0)
+        return (0.0);
+    if (integral > 1.0)
+        return (1.0);
+    return (integral);
 }
 
-static double rng_gamma_pdf_integrand(double value, void *context)
+static double rng_gamma_lower_density(double shape, double scale)
 {
-    rng_gamma_context *parameters;
-
-    parameters = static_cast<rng_gamma_context *>(context);
-    return (rng_gamma_pdf(parameters->shape, parameters->scale, value));
+    if (shape < 1.0)
+        return (std::numeric_limits<double>::infinity());
+    if (std::fabs(shape - 1.0) <= RNG_DENSITY_EPSILON)
+        return (1.0 / scale);
+    return (0.0);
 }
 
-static double rng_beta_pdf_integrand(double value, void *context)
+static double rng_gamma_density(double value, double shape_minus_one, double scale,
+    double scaled_log_scale, double log_gamma)
 {
-    rng_beta_context *parameters;
-
-    parameters = static_cast<rng_beta_context *>(context);
-    return (rng_beta_pdf(parameters->alpha, parameters->beta, value));
+    double log_component = shape_minus_one * std::log(value) - (value / scale);
+    log_component = log_component - scaled_log_scale;
+    log_component = log_component - log_gamma;
+    const double result = std::exp(log_component);
+    if (std::isfinite(result) == FT_FALSE)
+        return (0.0);
+    return (result);
 }
 
 double rng_gamma_pdf(double shape, double scale, double value)
 {
-    double log_component;
-    double result;
-    double epsilon;
-
-    if (shape <= 0.0 || scale <= 0.0)
-    {
+    if (shape <= 0.0 || scale <= 0.0 || value < 0.0)
         return (0.0);
-    }
-    if (value < 0.0)
-    {
-        return (0.0);
-    }
-    epsilon = 0.000000000001;
-    if (std::fabs(value) <= epsilon)
-    {
-        if (shape < 1.0)
-        {
-            return (std::numeric_limits<double>::infinity());
-        }
-        if (std::fabs(shape - 1.0) <= epsilon)
-        {
-            return (1.0 / scale);
-        }
-        return (0.0);
-    }
-    log_component = (shape - 1.0) * std::log(value) - (value / scale);
-    log_component = log_component - shape * std::log(scale);
-    log_component = log_component - std::lgamma(shape);
-    result = std::exp(log_component);
-    if (std::isfinite(result) == FT_FALSE)
-    {
-        return (0.0);
-    }
-    return (result);
+    if (std::fabs(value) <= RNG_DENSITY_EPSILON)
+        return (rng_gamma_lower_density(shape, scale));
+    return (rng_gamma_density(value, shape - 1.0, scale,
+        shape * std::log(scale), std::lgamma(shape)));
 }
 
 double rng_gamma_cdf(double shape, double scale, double value)
 {
-    rng_gamma_context context;
-    double integral;
-    int32_t segment_total;
-    double normalized_value;
-    double result;
+    if (shape <= 0.0 || scale <= 0.0 || value <= 0.0)
+        return (0.0);
+    const int32_t segment_total = rng_simpson_segment_total((value / scale) * 128.0);
+    const double lower_density = rng_gamma_lower_density(shape, scale);
+    const double shape_minus_one = shape - 1.0;
+    const double scaled_log_scale = shape * std::log(scale);
+    const double log_gamma = std::lgamma(shape);
+    const auto integrand = [=](double point)
+    {
+        if (std::fabs(point) <= RNG_DENSITY_EPSILON)
+            return (lower_density);
+        return (rng_gamma_density(point, shape_minus_one, scale, scaled_log_scale, log_gamma));
+    };
+    return (rng_simpson_integral(value, segment_total, integrand));
+}
 
-    if (shape <= 0.0 || scale <= 0.0)
-    {
+static double rng_beta_boundary_density(double boundary_shape, double other_shape)
+{
+    if (boundary_shape < 1.0)
+        return (std::numeric_limits<double>::infinity());
+    if (std::fabs(boundary_shape - 1.0) <= RNG_DENSITY_EPSILON)
+        return (other_shape);
+    return (0.0);
+}
+
+static double rng_beta_log_denominator(double alpha, double beta)
+{
+    return (std::lgamma(alpha) + std::lgamma(beta) - std::lgamma(alpha + beta));
+}
+
+static double rng_beta_density(double value, double alpha_minus_one, double beta_minus_one,
+    double log_denominator)
+{
+    const double log_component = alpha_minus_one * std::log(value)
+        + beta_minus_one * std::log(1.0 - value);
+    const double result = std::exp(log_component - log_denominator);
+    if (std::isfinite(result) == FT_FALSE)
         return (0.0);
-    }
-    if (value <= 0.0)
-    {
-        return (0.0);
-    }
-    context.shape = shape;
-    context.scale = scale;
-    normalized_value = value / scale;
-    if (normalized_value < 0.0)
-        normalized_value = 0.0;
-    segment_total = static_cast<int32_t>(normalized_value * 128.0) + 256;
-    segment_total = rng_adjust_segment_total(segment_total);
-    integral = rng_simpson_integral(0.0, value, segment_total, rng_gamma_pdf_integrand, &context);
-    result = integral;
-    if (result < 0.0)
-        result = 0.0;
-    if (result > 1.0)
-        result = 1.0;
     return (result);
 }
 
 double rng_beta_pdf(double alpha, double beta, double value)
 {
-    double log_denominator;
-    double log_component;
-    double result;
-    double epsilon;
-
     if (alpha <= 0.0 || beta <= 0.0)
-    {
         return (0.0);
-    }
-    epsilon = 0.000000000001;
     if (value <= 0.0)
-    {
-        if (alpha < 1.0)
-        {
-            return (std::numeric_limits<double>::infinity());
-        }
-        if (std::fabs(alpha - 1.0) <= epsilon)
-        {
-            return (beta);
-        }
-        return (0.0);
-    }
+        return (rng_beta_boundary_density(alpha, beta));
     if (value >= 1.0)
-    {
-        if (beta < 1.0)
-        {
-            return (std::numeric_limits<double>::infinity());
-        }
-        if (std::fabs(beta - 1.0) <= epsilon)
-        {
-            return (alpha);
-        }
-        return (0.0);
-    }
-    log_denominator = std::lgamma(alpha) + std::lgamma(beta) - std::lgamma(alpha + beta);
-    log_component = (alpha - 1.0) * std::log(value) + (beta - 1.0) * std::log(1.0 - value);
-    result = std::exp(log_component - log_denominator);
-    if (std::isfinite(result) == FT_FALSE)
-    {
-        return (0.0);
-    }
-    return (result);
+        return (rng_beta_boundary_density(beta, alpha));
+    return (rng_beta_density(value, alpha - 1.0, beta - 1.0,
+        rng_beta_log_denominator(alpha, beta)));
 }
 
 double rng_beta_cdf(double alpha, double beta, double value)
 {
-    rng_beta_context context;
-    double integral;
-    int32_t segment_total;
-    double range_end;
-    double result;
-
-    if (alpha <= 0.0 || beta <= 0.0)
-    {
+    if (alpha <= 0.0 || beta <= 0.0 || value <= 0.0)
         return (0.0);
-    }
-    if (value <= 0.0)
-    {
-        return (0.0);
-    }
     if (value >= 1.0)
-    {
         return (1.0);
-    }
-    context.alpha = alpha;
-    context.beta = beta;
-    segment_total = static_cast<int32_t>((alpha + beta) * 64.0) + 256;
-    segment_total = rng_adjust_segment_total(segment_total);
-    range_end = value;
-    integral = rng_simpson_integral(0.0, range_end, segment_total, rng_beta_pdf_integrand, &context);
-    result = integral;
-    if (result < 0.0)
-        result = 0.0;
-    if (result > 1.0)
-        result = 1.0;
-    return (result);
+    const int32_t segment_total = rng_simpson_segment_total((alpha + beta) * 64.0);
+    const double lower_density = rng_beta_boundary_density(alpha, beta);
+    const double upper_density = rng_beta_boundary_density(beta, alpha);
+    const double alpha_minus_one = alpha - 1.0;
+    const double beta_minus_one = beta - 1.0;
+    const double log_denominator = rng_beta_log_denominator(alpha, beta);
+    const auto integrand = [=](double point)
+    {
+        if (point <= 0.0)
+            return (lower_density);
+        if (point >= 1.0)
+            return (upper_density);
+        return (rng_beta_density(point, alpha_minus_one, beta_minus_one, log_denominator));
+    };
+    return (rng_simpson_integral(value, segment_total, integrand));
 }
 
 double rng_chi_squared_pdf(double degrees_of_freedom, double value)
 {
-    double result;
-
     if (degrees_of_freedom <= 0.0)
-    {
         return (0.0);
-    }
-    result = rng_gamma_pdf(degrees_of_freedom * 0.5, 2.0, value);
-    return (result);
+    return (rng_gamma_pdf(degrees_of_freedom * 0.5, 2.0, value));
 }
 
 double rng_chi_squared_cdf(double degrees_of_freedom, double value)
 {
-    double result;
-
     if (degrees_of_freedom <= 0.0)
-    {
         return (0.0);
-    }
-    result = rng_gamma_cdf(degrees_of_freedom * 0.5, 2.0, value);
-    return (result);
+    return (rng_gamma_cdf(degrees_of_freedom * 0.5, 2.0, value));
 }

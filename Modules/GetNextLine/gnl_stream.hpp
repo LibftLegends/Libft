@@ -26,10 +26,7 @@ class gnl_stream
         uint8_t _initialised_state;
         mutable pt_recursive_mutex *_mutex = ft_nullptr;
 
-        int64_t read_from_descriptor(int32_t file_descriptor, char *buffer,
-                    ft_size_t max_size, int32_t *error_code) const noexcept;
-        int64_t read_from_file(FILE *file_handle, char *buffer,
-                    ft_size_t max_size, int32_t *error_code) const noexcept;
+        void reset_source(FILE *retained_file) noexcept;
         void abort_lifecycle_error(const char *method_name,
                     const char *reason) const noexcept;
 

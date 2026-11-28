@@ -462,12 +462,8 @@ inline scma_handle_accessor_const_element_proxy<TValue>    scma_handle_accessor<
 template <typename TValue>
 inline int32_t    scma_handle_accessor<TValue>::read_struct(TValue &destination) const
 {
-    int32_t read_result;
-    ft_size_t required_size;
-    ft_size_t host_size;
-    ft_size_t block_size;
+    int32_t transfer_error;
 
-    read_result = 0;
     if (!this->is_initialised())
     {
         this->set_error(FT_ERR_INVALID_STATE);
@@ -488,46 +484,22 @@ inline int32_t    scma_handle_accessor<TValue>::read_struct(TValue &destination)
         this->set_error(FT_ERR_INVALID_HANDLE);
         goto cleanup;
     }
-    if (!scma_handle_is_valid(this->_handle))
-    {
-        this->set_error(FT_ERR_INVALID_HANDLE);
-        goto cleanup;
-    }
-    host_size = sizeof(TValue);
-    if (host_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
-    {
-        this->set_error(FT_ERR_OUT_OF_RANGE);
-        goto cleanup;
-    }
-    required_size = host_size;
-    block_size = scma_get_size(this->_handle);
-    if (block_size < required_size)
-    {
-        this->set_error(FT_ERR_OUT_OF_RANGE);
-        goto cleanup;
-    }
-    if (!scma_read(this->_handle, 0, &destination, required_size))
-    {
-        this->set_error(FT_ERR_INVALID_OPERATION);
-        goto cleanup;
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    read_result = 1;
+    transfer_error = scma_read(this->_handle, 0U, &destination, sizeof(TValue));
+    if (transfer_error != FT_ERR_SUCCESS && transfer_error != FT_ERR_INVALID_HANDLE
+        && transfer_error != FT_ERR_OUT_OF_RANGE)
+        transfer_error = FT_ERR_INVALID_OPERATION;
+    this->set_error(transfer_error);
 
 cleanup:
     (void)scma_mutex_unlock();
-    return (read_result);
+    return (0);
 }
 
 template <typename TValue>
 inline int32_t    scma_handle_accessor<TValue>::write_struct(const TValue &source) const
 {
-    int32_t write_result;
-    ft_size_t required_size;
-    ft_size_t host_size;
-    ft_size_t block_size;
+    int32_t transfer_error;
 
-    write_result = 0;
     if (!this->is_initialised())
     {
         this->set_error(FT_ERR_INVALID_STATE);
@@ -548,30 +520,16 @@ inline int32_t    scma_handle_accessor<TValue>::write_struct(const TValue &sourc
         this->set_error(FT_ERR_INVALID_HANDLE);
         goto cleanup;
     }
-    host_size = sizeof(TValue);
-    if (host_size > static_cast<ft_size_t>(FT_SYSTEM_SIZE_MAX))
-    {
-        this->set_error(FT_ERR_OUT_OF_RANGE);
-        goto cleanup;
-    }
-    required_size = host_size;
-    block_size = scma_get_size(this->_handle);
-    if (block_size < required_size)
-    {
-        this->set_error(FT_ERR_OUT_OF_RANGE);
-        goto cleanup;
-    }
-    if (scma_write(this->_handle, 0, &source, required_size) != FT_ERR_SUCCESS)
-    {
-        this->set_error(FT_ERR_INVALID_OPERATION);
-        goto cleanup;
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    write_result = FT_ERR_SUCCESS;
+    transfer_error = scma_write(this->_handle, 0U, &source, sizeof(TValue));
+    if (transfer_error == FT_ERR_INVALID_HANDLE)
+        transfer_error = FT_ERR_OUT_OF_RANGE;
+    else if (transfer_error != FT_ERR_SUCCESS && transfer_error != FT_ERR_OUT_OF_RANGE)
+        transfer_error = FT_ERR_INVALID_OPERATION;
+    this->set_error(transfer_error);
 
 cleanup:
     (void)scma_mutex_unlock();
-    return (write_result);
+    return (0);
 }
 
 template <typename TValue>
@@ -581,9 +539,8 @@ inline int32_t    scma_handle_accessor<TValue>::read_at
     int32_t read_result;
     ft_size_t offset;
     ft_size_t element_size;
-    ft_size_t required_size;
     ft_size_t host_size;
-    ft_size_t block_size;
+    int32_t transfer_error;
 
     read_result = FT_ERR_INVALID_STATE;
     if (!this->is_initialised())
@@ -630,14 +587,13 @@ inline int32_t    scma_handle_accessor<TValue>::read_at
         this->set_error(FT_ERR_OUT_OF_RANGE);
         goto cleanup;
     }
-    required_size = offset + element_size;
-    block_size = scma_get_size(this->_handle);
-    if (block_size < required_size)
+    transfer_error = scma_read(this->_handle, offset, &destination, element_size);
+    if (transfer_error == FT_ERR_OUT_OF_RANGE || transfer_error == FT_ERR_INVALID_HANDLE)
     {
         this->set_error(FT_ERR_OUT_OF_RANGE);
         goto cleanup;
     }
-    if (scma_read(this->_handle, offset, &destination, element_size) != FT_ERR_SUCCESS)
+    if (transfer_error != FT_ERR_SUCCESS)
     {
         this->set_error(FT_ERR_INVALID_OPERATION);
         goto cleanup;
@@ -657,9 +613,8 @@ inline int32_t    scma_handle_accessor<TValue>::write_at
     int32_t write_result;
     ft_size_t offset;
     ft_size_t element_size;
-    ft_size_t required_size;
     ft_size_t host_size;
-    ft_size_t block_size;
+    int32_t transfer_error;
 
     write_result = FT_ERR_INVALID_STATE;
     if (!this->is_initialised())
@@ -706,14 +661,13 @@ inline int32_t    scma_handle_accessor<TValue>::write_at
         this->set_error(FT_ERR_OUT_OF_RANGE);
         goto cleanup;
     }
-    required_size = offset + element_size;
-    block_size = scma_get_size(this->_handle);
-    if (block_size < required_size)
+    transfer_error = scma_write(this->_handle, offset, &source, element_size);
+    if (transfer_error == FT_ERR_OUT_OF_RANGE || transfer_error == FT_ERR_INVALID_HANDLE)
     {
         this->set_error(FT_ERR_OUT_OF_RANGE);
         goto cleanup;
     }
-    if (scma_write(this->_handle, offset, &source, element_size) != FT_ERR_SUCCESS)
+    if (transfer_error != FT_ERR_SUCCESS)
     {
         this->set_error(FT_ERR_INVALID_OPERATION);
         goto cleanup;

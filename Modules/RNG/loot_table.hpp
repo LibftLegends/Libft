@@ -9,7 +9,6 @@
 #include "../CMA/CMA.hpp"
 #include "../Template/pair.hpp"
 #include "rng.hpp"
-#include <climits>
 #include <new>
 
 template<typename ElementType>
@@ -64,7 +63,15 @@ template<typename ElementType>
 class ft_loot_table
 {
     private:
-        ft_loot_entry<ElementType> **_entries;
+        struct entry
+        {
+            ElementType *item;
+            uint32_t cumulative_weight;
+        };
+
+        // Oversized tables still accept entries, but cannot be drawn from.
+        static constexpr uint32_t OVERFLOW_WEIGHT = static_cast<uint32_t>(INT32_MAX) + 1U;
+        entry *_entries;
         ft_size_t _size;
         ft_size_t _capacity;
         mutable pt_recursive_mutex *_mutex;
@@ -73,8 +80,7 @@ class ft_loot_table
         int32_t lock_table(ft_bool *lock_acquired) const noexcept;
         void unlock_table(ft_bool lock_acquired) const noexcept;
         int32_t reserve_capacity(ft_size_t requested_capacity);
-        int32_t compute_total_weight_locked(int32_t *total_weight) const noexcept;
-        int32_t locate_entry_by_roll_locked(int32_t roll_value, ft_size_t *result_index) const noexcept;
+        int32_t select_entry_locked(ft_size_t &selected_index) const noexcept;
 
     public:
         ft_loot_table() noexcept;
@@ -104,6 +110,13 @@ class ft_loot_table
         pt_recursive_mutex *get_mutex_for_validation() const noexcept;
 #endif
 };
+
+static inline int32_t rng_loot_effective_weight(int32_t weight, int32_t rarity) noexcept
+{
+    if (rarity >= weight)
+        return (1);
+    return (weight / (rarity + 1));
+}
 
 template<typename ElementType>
 ft_loot_entry<ElementType>::ft_loot_entry() noexcept
@@ -428,9 +441,7 @@ Pair<int32_t,  int32_t> ft_loot_entry<ElementType>::get_effective_weight() const
     lock_error = this->lock_entry(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (Pair<int32_t,  int32_t>(lock_error, effective_weight));
-    effective_weight = this->_weight / (this->_rarity + 1);
-    if (effective_weight < 1)
-        effective_weight = 1;
+    effective_weight = rng_loot_effective_weight(this->_weight, this->_rarity);
     this->unlock_entry(lock_acquired);
     return (Pair<int32_t,  int32_t>(FT_ERR_SUCCESS, effective_weight));
 }
@@ -483,10 +494,6 @@ int32_t ft_loot_table<ElementType>::initialize(const ft_loot_table &other) noexc
 {
     ft_bool lock_acquired;
     int32_t operation_error;
-    ft_size_t index;
-    Pair<int32_t,  ElementType *> item_result;
-    Pair<int32_t,  int32_t> weight_result;
-    Pair<int32_t,  int32_t> rarity_result;
 
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
@@ -518,41 +525,19 @@ int32_t ft_loot_table<ElementType>::initialize(const ft_loot_table &other) noexc
         (void)this->destroy();
         return (operation_error);
     }
-    if (other._mutex != ft_nullptr)
-    {
+    operation_error = this->reserve_capacity(other._size);
+    if (operation_error == FT_ERR_SUCCESS && other._mutex != ft_nullptr)
         operation_error = this->enable_thread_safety();
-        if (operation_error != FT_ERR_SUCCESS)
-        {
-            other.unlock_table(lock_acquired);
-            (void)this->destroy();
-            return (operation_error);
-        }
-    }
-    index = 0;
-    while (index < other._size)
+    if (operation_error == FT_ERR_SUCCESS)
     {
-        item_result = other._entries[index]->get_item();
-        weight_result = other._entries[index]->get_weight();
-        rarity_result = other._entries[index]->get_rarity();
-        if (item_result.key != FT_ERR_SUCCESS
-            || weight_result.key != FT_ERR_SUCCESS
-            || rarity_result.key != FT_ERR_SUCCESS)
-        {
-            other.unlock_table(lock_acquired);
-            (void)this->destroy();
-            return (FT_ERR_INVALID_STATE);
-        }
-        operation_error = this->add_element(item_result.value, weight_result.value, rarity_result.value);
-        if (operation_error != FT_ERR_SUCCESS)
-        {
-            other.unlock_table(lock_acquired);
-            (void)this->destroy();
-            return (operation_error);
-        }
-        index += 1;
+        if (other._size != 0U)
+            ft_memcpy(this->_entries, other._entries, other._size * sizeof(entry));
+        this->_size = other._size;
     }
     other.unlock_table(lock_acquired);
-    return (FT_ERR_SUCCESS);
+    if (operation_error != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (operation_error);
 }
 
 template<typename ElementType>
@@ -614,7 +599,6 @@ int32_t ft_loot_table<ElementType>::initialize(ft_loot_table &&other) noexcept
 template<typename ElementType>
 int32_t ft_loot_table<ElementType>::destroy() noexcept
 {
-    ft_size_t index;
     int32_t thread_error;
     int32_t first_error;
 
@@ -625,12 +609,6 @@ int32_t ft_loot_table<ElementType>::destroy() noexcept
     thread_error = this->disable_thread_safety();
     if (thread_error != FT_ERR_SUCCESS)
         first_error = thread_error;
-    index = 0;
-    while (index < this->_size)
-    {
-        delete this->_entries[index];
-        index += 1;
-    }
     if (this->_entries != ft_nullptr)
         cma_free(this->_entries);
     this->_entries = ft_nullptr;
@@ -714,241 +692,140 @@ void ft_loot_table<ElementType>::unlock_table(ft_bool lock_acquired) const noexc
 template<typename ElementType>
 int32_t ft_loot_table<ElementType>::reserve_capacity(ft_size_t requested_capacity)
 {
-    ft_loot_entry<ElementType> **new_entries;
-    ft_size_t index;
-
     if (requested_capacity <= this->_capacity)
         return (FT_ERR_SUCCESS);
-    new_entries = static_cast<ft_loot_entry<ElementType> **>(
-            cma_malloc(sizeof(ft_loot_entry<ElementType> *) * requested_capacity));
+    if (requested_capacity > SIZE_MAX / sizeof(entry))
+        return (FT_ERR_OUT_OF_RANGE);
+    entry *new_entries = static_cast<entry *>(
+        cma_realloc(this->_entries, requested_capacity * sizeof(entry)));
     if (new_entries == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    index = 0;
-    while (index < this->_size)
-    {
-        new_entries[index] = this->_entries[index];
-        index += 1;
-    }
-    if (this->_entries != ft_nullptr)
-        cma_free(this->_entries);
     this->_entries = new_entries;
     this->_capacity = requested_capacity;
     return (FT_ERR_SUCCESS);
 }
 
 template<typename ElementType>
-int32_t ft_loot_table<ElementType>::compute_total_weight_locked(int32_t *total_weight) const noexcept
+int32_t ft_loot_table<ElementType>::select_entry_locked(ft_size_t &selected_index) const noexcept
 {
-    ft_size_t index;
-    int32_t computed_total;
-    Pair<int32_t,  int32_t> effective_weight;
-
-    if (total_weight == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    computed_total = 0;
-    index = 0;
-    while (index < this->_size)
+    if (this->_size == 0U)
+        return (FT_ERR_EMPTY);
+    const uint32_t total_weight = this->_entries[this->_size - 1U].cumulative_weight;
+    if (total_weight == OVERFLOW_WEIGHT)
+        return (FT_ERR_OUT_OF_RANGE);
+    const int32_t roll = ft_dice_roll(1, static_cast<int32_t>(total_weight));
+    if (roll < 1)
+        return (FT_ERR_OUT_OF_RANGE);
+    ft_size_t first = 0U;
+    ft_size_t end = this->_size;
+    while (first < end)
     {
-        effective_weight = this->_entries[index]->get_effective_weight();
-        if (effective_weight.key != FT_ERR_SUCCESS)
-            return (effective_weight.key);
-        if (INT_MAX - computed_total < effective_weight.value)
-            return (FT_ERR_OUT_OF_RANGE);
-        computed_total += effective_weight.value;
-        index += 1;
+        const ft_size_t midpoint = first + (end - first) / 2U;
+        if (this->_entries[midpoint].cumulative_weight < static_cast<uint32_t>(roll))
+            first = midpoint + 1U;
+        else
+            end = midpoint;
     }
-    *total_weight = computed_total;
+    selected_index = first;
     return (FT_ERR_SUCCESS);
-}
-
-template<typename ElementType>
-int32_t ft_loot_table<ElementType>::locate_entry_by_roll_locked(int32_t roll_value, ft_size_t *result_index) const noexcept
-{
-    ft_size_t index;
-    int32_t accumulated;
-    Pair<int32_t,  int32_t> effective_weight;
-
-    if (result_index == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    accumulated = 0;
-    index = 0;
-    while (index < this->_size)
-    {
-        effective_weight = this->_entries[index]->get_effective_weight();
-        if (effective_weight.key != FT_ERR_SUCCESS)
-            return (effective_weight.key);
-        if (INT_MAX - accumulated < effective_weight.value)
-            return (FT_ERR_OUT_OF_RANGE);
-        accumulated += effective_weight.value;
-        if (roll_value <= accumulated)
-        {
-            *result_index = index;
-            return (FT_ERR_SUCCESS);
-        }
-        index += 1;
-    }
-    return (FT_ERR_OUT_OF_RANGE);
 }
 
 template<typename ElementType>
 int32_t ft_loot_table<ElementType>::add_element(ElementType *element_pointer, int32_t weight, int32_t rarity)
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t operation_error;
-    ft_size_t next_capacity;
-    ft_loot_entry<ElementType> *entry_pointer;
-
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_loot_table::add_element");
     if (weight <= 0)
         return (FT_ERR_INVALID_ARGUMENT);
     if (rarity < 0)
         rarity = 0;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_table(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_table(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    operation_error = FT_ERR_SUCCESS;
+    int32_t operation_error = FT_ERR_SUCCESS;
     if (this->_size == this->_capacity)
     {
-        next_capacity = 4;
-        if (this->_capacity > 0)
-            next_capacity = this->_capacity * 2;
-        operation_error = this->reserve_capacity(next_capacity);
+        constexpr ft_size_t MAX_CAPACITY = SIZE_MAX / sizeof(entry);
+        ft_size_t next_capacity = 4U;
+        if (this->_capacity > MAX_CAPACITY / 2U)
+            next_capacity = MAX_CAPACITY;
+        else if (this->_capacity != 0U)
+            next_capacity = this->_capacity * 2U;
+        if (next_capacity == this->_capacity)
+            operation_error = FT_ERR_OUT_OF_RANGE;
+        else
+            operation_error = this->reserve_capacity(next_capacity);
     }
     if (operation_error == FT_ERR_SUCCESS)
     {
-        entry_pointer = new (std::nothrow) ft_loot_entry<ElementType>();
-        if (entry_pointer == ft_nullptr)
-            operation_error = FT_ERR_NO_MEMORY;
-        else
-        {
-            operation_error = entry_pointer->set_item(element_pointer);
-            if (operation_error == FT_ERR_SUCCESS)
-                operation_error = entry_pointer->set_weight(weight);
-            if (operation_error == FT_ERR_SUCCESS)
-                operation_error = entry_pointer->set_rarity(rarity);
-            if (operation_error != FT_ERR_SUCCESS)
-                delete entry_pointer;
-            else
-            {
-                this->_entries[this->_size] = entry_pointer;
-                this->_size += 1;
-            }
-        }
+        uint32_t cumulative_weight = static_cast<uint32_t>(rng_loot_effective_weight(weight, rarity));
+        if (this->_size != 0U)
+            cumulative_weight += this->_entries[this->_size - 1U].cumulative_weight;
+        if (cumulative_weight > OVERFLOW_WEIGHT)
+            cumulative_weight = OVERFLOW_WEIGHT;
+        this->_entries[this->_size] = {element_pointer, cumulative_weight};
+        this->_size += 1U;
     }
     this->unlock_table(lock_acquired);
     return (operation_error);
 }
 
 template<typename ElementType>
-Pair<int32_t,  ElementType *> ft_loot_table<ElementType>::get_random_loot() const
+Pair<int32_t, ElementType *> ft_loot_table<ElementType>::get_random_loot() const
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t operation_error;
-    int32_t total_weight;
-    int32_t roll_value;
-    ft_size_t selected_index;
-    Pair<int32_t,  ElementType *> loot_result;
-
-    loot_result = Pair<int32_t,  ElementType *>(FT_ERR_SUCCESS, ft_nullptr);
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_table(&lock_acquired);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_loot_table::get_random_loot");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_table(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
-        return (Pair<int32_t,  ElementType *>(lock_error, ft_nullptr));
-    operation_error = FT_ERR_SUCCESS;
-    if (this->_size == 0)
-        operation_error = FT_ERR_EMPTY;
+        return (Pair<int32_t, ElementType *>(lock_error, ft_nullptr));
+    ft_size_t selected_index = 0U;
+    const int32_t operation_error = this->select_entry_locked(selected_index);
+    ElementType *item = ft_nullptr;
     if (operation_error == FT_ERR_SUCCESS)
-    {
-        total_weight = 0;
-        operation_error = this->compute_total_weight_locked(&total_weight);
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        roll_value = ft_dice_roll(1, total_weight);
-        if (roll_value < 1)
-            operation_error = FT_ERR_OUT_OF_RANGE;
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        selected_index = 0;
-        operation_error = this->locate_entry_by_roll_locked(roll_value, &selected_index);
-        if (operation_error == FT_ERR_SUCCESS)
-            loot_result = this->_entries[selected_index]->get_item();
-        if (operation_error == FT_ERR_SUCCESS && loot_result.key != FT_ERR_SUCCESS)
-            operation_error = loot_result.key;
-    }
+        item = this->_entries[selected_index].item;
     this->unlock_table(lock_acquired);
-    if (operation_error != FT_ERR_SUCCESS)
-        return (Pair<int32_t,  ElementType *>(operation_error, ft_nullptr));
-    return (Pair<int32_t,  ElementType *>(FT_ERR_SUCCESS, loot_result.value));
+    return (Pair<int32_t, ElementType *>(operation_error, item));
 }
 
 template<typename ElementType>
-Pair<int32_t,  ElementType *> ft_loot_table<ElementType>::pop_random_loot()
+Pair<int32_t, ElementType *> ft_loot_table<ElementType>::pop_random_loot()
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t operation_error;
-    int32_t total_weight;
-    int32_t roll_value;
-    ft_size_t selected_index;
-    ft_size_t index;
-    Pair<int32_t,  ElementType *> loot_result;
-
-    loot_result = Pair<int32_t,  ElementType *>(FT_ERR_SUCCESS, ft_nullptr);
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_table(&lock_acquired);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_loot_table::pop_random_loot");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_table(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
-        return (Pair<int32_t,  ElementType *>(lock_error, ft_nullptr));
-    operation_error = FT_ERR_SUCCESS;
-    if (this->_size == 0)
-        operation_error = FT_ERR_EMPTY;
+        return (Pair<int32_t, ElementType *>(lock_error, ft_nullptr));
+    ft_size_t index = 0U;
+    const int32_t operation_error = this->select_entry_locked(index);
+    ElementType *item = ft_nullptr;
     if (operation_error == FT_ERR_SUCCESS)
     {
-        total_weight = 0;
-        operation_error = this->compute_total_weight_locked(&total_weight);
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        roll_value = ft_dice_roll(1, total_weight);
-        if (roll_value < 1)
-            operation_error = FT_ERR_OUT_OF_RANGE;
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        selected_index = 0;
-        operation_error = this->locate_entry_by_roll_locked(roll_value, &selected_index);
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        loot_result = this->_entries[selected_index]->get_item();
-        if (loot_result.key != FT_ERR_SUCCESS)
-            operation_error = loot_result.key;
-    }
-    if (operation_error == FT_ERR_SUCCESS)
-    {
-        delete this->_entries[selected_index];
-        index = selected_index;
-        while (index + 1 < this->_size)
+        item = this->_entries[index].item;
+        uint32_t removed_weight = this->_entries[index].cumulative_weight;
+        if (index != 0U)
+            removed_weight -= this->_entries[index - 1U].cumulative_weight;
+        this->_size -= 1U;
+        while (index < this->_size)
         {
-            this->_entries[index] = this->_entries[index + 1];
-            index += 1;
+            this->_entries[index] = this->_entries[index + 1U];
+            this->_entries[index].cumulative_weight -= removed_weight;
+            index += 1U;
         }
-        this->_size -= 1;
-        this->_entries[this->_size] = ft_nullptr;
     }
     this->unlock_table(lock_acquired);
-    if (operation_error != FT_ERR_SUCCESS)
-        return (Pair<int32_t,  ElementType *>(operation_error, ft_nullptr));
-    return (Pair<int32_t,  ElementType *>(FT_ERR_SUCCESS, loot_result.value));
+    return (Pair<int32_t, ElementType *>(operation_error, item));
 }
 
 template<typename ElementType>
 ft_size_t ft_loot_table<ElementType>::size() const noexcept
 {
-    return (this->_size);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_loot_table::size");
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_table(&lock_acquired) != FT_ERR_SUCCESS)
+        return (0U);
+    const ft_size_t size = this->_size;
+    this->unlock_table(lock_acquired);
+    return (size);
 }
 
 #ifdef LIBFT_TEST_BUILD

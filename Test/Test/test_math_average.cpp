@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Math/math.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include <limits>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
@@ -65,5 +66,29 @@ FT_TEST(test_math_average_balances_large_opposites)
     result_long = math_average(positive_large, negative_large);
     FT_ASSERT_EQ(0, result_int);
     FT_ASSERT_EQ(0LL, result_long);
+    return (1);
+}
+
+FT_TEST(test_math_average_handles_integer_extremes)
+{
+    FT_ASSERT_EQ(0, math_average(INT32_MIN, INT32_MAX));
+    FT_ASSERT_EQ(INT32_MAX - 1, math_average(INT32_MAX, INT32_MAX - 1));
+    const int64_t minimum = INT64_MIN;
+    const int64_t maximum = INT64_MAX;
+    FT_ASSERT_EQ(static_cast<int64_t>(0), math_average(minimum, maximum));
+    FT_ASSERT_EQ(minimum, math_average(minimum, minimum));
+    FT_ASSERT_EQ(minimum + 1, math_average(minimum, minimum + 1));
+    FT_ASSERT_EQ(maximum - 1, math_average(maximum, maximum - 1));
+    return (1);
+}
+
+FT_TEST(test_math_average_double_avoids_intermediate_overflow_and_underflow)
+{
+    const double maximum = std::numeric_limits<double>::max();
+    const double smallest = std::numeric_limits<double>::denorm_min();
+    FT_ASSERT_EQ(maximum, math_average(maximum, maximum));
+    FT_ASSERT_EQ(-maximum, math_average(-maximum, -maximum));
+    FT_ASSERT_EQ(smallest, math_average(smallest, smallest));
+    FT_ASSERT_EQ(-0.0, math_average(-0.0, -0.0));
     return (1);
 }

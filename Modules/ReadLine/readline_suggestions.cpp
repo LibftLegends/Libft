@@ -1,51 +1,50 @@
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include "../Advanced/advanced.hpp"
-#include "../CMA/CMA.hpp"
 #include "../Basic/basic.hpp"
-#include "../Errno/errno.hpp"
+#include "../CMA/CMA.hpp"
 #include "../Printf/printf.hpp"
-#include "readline_internal.hpp"
 #include "readline.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include "readline_internal.hpp"
 
 void rl_add_suggestion(const char *word)
 {
-    int32_t index = 0;
-    while (index < suggestion_count)
+    if (word == ft_nullptr)
+        return ;
+    int32_t begin = 0;
+    int32_t end = suggestion_count;
+    while (begin < end)
     {
-        if (strcmp(suggestions[index], word) == FT_ERR_SUCCESS)
+        const int32_t middle = begin + (end - begin) / 2;
+        const int32_t comparison = ft_strcmp(suggestions[middle], word);
+        if (comparison == 0)
             return ;
-        index++;
+        if (comparison < 0)
+            begin = middle + 1;
+        else
+            end = middle;
     }
-    if (suggestion_count < MAX_SUGGESTIONS)
-    {
-        char *new_suggestion;
-
-        new_suggestion = adv_strdup(word);
-        if (new_suggestion == ft_nullptr)
-            return ;
-        suggestions[suggestion_count] = new_suggestion;
-        suggestion_count++;
-    }
-    else
+    if (suggestion_count == MAX_SUGGESTIONS)
     {
         pf_printf_fd(2, "Suggestion list full\n");
+        return ;
     }
+    char *new_suggestion = adv_strdup(word);
+    if (new_suggestion == ft_nullptr)
+        return ;
+    if (begin < suggestion_count)
+        (void)ft_memmove(suggestions + begin + 1, suggestions + begin,
+            static_cast<ft_size_t>(suggestion_count - begin) * sizeof(suggestions[0]));
+    suggestions[begin] = new_suggestion;
+    ++suggestion_count;
     return ;
 }
 
 void rl_clear_suggestions()
 {
-    int32_t index = 0;
-    while (index < suggestion_count)
+    while (suggestion_count > 0)
     {
-        cma_free(suggestions[index]);
-        index++;
+        --suggestion_count;
+        cma_free(suggestions[suggestion_count]);
+        suggestions[suggestion_count] = ft_nullptr;
     }
-    suggestion_count = 0;
     return ;
 }

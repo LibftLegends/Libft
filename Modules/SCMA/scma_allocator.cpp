@@ -198,7 +198,9 @@ scma_handle    scma_allocate(ft_size_t size)
         scma_capture_leak_stack(block, 2);
 #endif
         scma_link_block_at_tail(index);
-        scma_recompute_used_size();
+        const ft_size_t block_end = block->offset + block->size;
+        if (block_end > used_size)
+            used_size = block_end;
         live_size += size;
         result_handle.index = index;
         result_handle.generation = block->generation;
@@ -266,6 +268,7 @@ int32_t    scma_free(scma_handle handle)
     scma_block *block;
     ft_size_t block_offset;
     ft_size_t block_size;
+    ft_size_t &used_size = scma_used_size_ref();
     ft_bool was_tail;
 
     if (scma_mutex_lock() != FT_ERR_SUCCESS)
@@ -279,6 +282,9 @@ int32_t    scma_free(scma_handle handle)
     }
     block_offset = block->offset;
     block_size = block->size;
+    was_tail = FT_FALSE;
+    if (block_offset <= used_size && block_size == used_size - block_offset)
+        was_tail = FT_TRUE;
     scma_secure_bzero(scma_get_heap_data() + block_offset, block_size);
     scma_unlink_block(handle.index);
     block->in_use = 0;
@@ -294,19 +300,26 @@ int32_t    scma_free(scma_handle handle)
         scma_live_size_ref() = 0;
     scma_push_free_block(handle.index);
     scma_coalesce_free_block(handle.index);
-    block_offset = block->offset;
-    block_size = block->size;
-    was_tail = FT_FALSE;
-    if (block_offset <= scma_used_size_ref()
-        && block_size == scma_used_size_ref() - block_offset)
-        was_tail = FT_TRUE;
     if (was_tail == FT_TRUE)
     {
-        scma_recompute_used_size();
+        const ft_size_t live_tail_index = scma_live_tail_ref();
+        const scma_block_span span = scma_get_block_span();
+
+        /* The coalesced free range gives an upper bound for the live end.
+         * If the last linked handle reaches it, there is nothing to scan.
+         * Hole reuse can change link order, so keep the general fallback. */
+        if (scma_live_size_ref() == 0)
+            used_size = 0;
+        else if (live_tail_index < span.count && span.data[live_tail_index].in_use
+            && span.data[live_tail_index].offset <= block->offset
+            && span.data[live_tail_index].size
+                == block->offset - span.data[live_tail_index].offset)
+            used_size = block->offset;
+        else
+            scma_recompute_used_size();
     }
     else
     {
-        scma_recompute_used_size();
         scma_reset_compaction();
         scma_compaction_needed_ref() = FT_TRUE;
     }
@@ -339,7 +352,8 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     }
     old_size = block->size;
     old_offset = block->offset;
-    scma_recompute_used_size();
+    // Shrinking an interior block leaves the live end unchanged.
+    // Growth takes place at the live end, with relocation if necessary.
     if (new_size == old_size)
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -360,7 +374,6 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
             scma_reset_compaction();
             scma_compaction_needed_ref() = FT_TRUE;
         }
-        scma_recompute_used_size();
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
     }
@@ -375,7 +388,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                         FT_ERR_NO_MEMORY)));
         scma_discard_free_spans_from(used_size);
         block->size = new_size;
-        scma_recompute_used_size();
+        used_size = required_size;
         live_size += new_size - old_size;
         return (static_cast<uint32_t>(scma_unlock_and_return_int(
                     FT_ERR_SUCCESS)));
@@ -405,7 +418,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
                 return (static_cast<uint32_t>(scma_unlock_and_return_int(
                             FT_ERR_NO_MEMORY)));
             block->size = new_size;
-            scma_recompute_used_size();
+            used_size = required_size;
             live_size += new_size - old_size;
             return (static_cast<uint32_t>(scma_unlock_and_return_int(
                         FT_ERR_SUCCESS)));
@@ -428,7 +441,7 @@ int32_t    scma_resize(scma_handle handle, ft_size_t new_size)
     block->offset = used_size;
     block->size = new_size;
     scma_link_block_at_tail(handle.index);
-    scma_recompute_used_size();
+    used_size = required_size;
     live_size += new_size - old_size;
     scma_compaction_needed_ref() = FT_TRUE;
     scma_reset_compaction();

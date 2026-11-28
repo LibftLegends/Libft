@@ -42,6 +42,7 @@ FT_TEST(test_scma_accessor_struct_pointer_semantics)
         proxy->second = 14;
     }
     FT_ASSERT_EQ(FT_ERR_SUCCESS, accessor.read_struct(result));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, accessor.get_error());
     FT_ASSERT_EQ(7, result.first);
     FT_ASSERT_EQ(14, result.second);
     scma_shutdown();

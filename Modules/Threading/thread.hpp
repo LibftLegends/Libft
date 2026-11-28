@@ -8,6 +8,7 @@
 #include <utility>
 #include "../Template/function.hpp"
 #include "../Template/invoke.hpp"
+#include "../Template/move.hpp"
 #include "../Errno/errno.hpp"
 #include "../CMA/cma_internal.hpp"
 
@@ -86,7 +87,7 @@ ft_thread::ft_thread(FunctionType function, Args... args)
         this->_start_payload.reset();
         return ;
     }
-    shared_capsule = new (std::nothrow) std::shared_ptr<start_payload>(payload);
+    shared_capsule = new (std::nothrow) std::shared_ptr<start_payload>(ft_move(payload));
     if (!shared_capsule)
     {
         this->_start_payload.reset();

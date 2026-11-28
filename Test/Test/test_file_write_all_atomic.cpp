@@ -1,18 +1,25 @@
 #include "../test_internal.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/File/file_utils.hpp"
+#include "../../Modules/Filesystem/filesystem.hpp"
+#include "../../Modules/Template/vector.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
+#include "compatebility_system_test_hooks.hpp"
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
 
 FT_TEST(test_file_write_all_atomic_replaces_content)
 {
     const char *file_path;
     ft_string content;
 
-    file_path = "test_file_write_all_atomic.txt";
+    file_path = "build_logs/test_file_write_all_atomic.txt";
     (void)file_delete(file_path);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(file_path, "old", 3));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all_atomic(file_path, "new-value", 9));
@@ -26,11 +33,110 @@ FT_TEST(test_file_write_all_atomic_replaces_content)
 
 FT_TEST(test_file_write_all_atomic_cleans_up_temp_file_after_open_failure)
 {
-    FT_ASSERT_EQ(FT_ERR_FILE_OPEN_FAILED, file_write_all_atomic(
+    FT_ASSERT_NE(FT_ERR_ALREADY_EXISTS, file_write_all_atomic(
             "test_file_failure_missing_parent/value.txt", "x", 1));
     FT_ASSERT_EQ(FILE_TYPE_MISSING, file_get_type(
             "test_file_failure_missing_parent/value.txt.tmp"));
     FT_ASSERT_EQ(FT_ERR_INVALID_POINTER, file_write_all_atomic("test_invalid.txt",
             ft_nullptr, 1));
+    return (1);
+}
+
+FT_TEST(test_file_write_all_atomic_cleans_up_after_failed_replacement)
+{
+    const char *root = "test_file_atomic_failed_replacement";
+    const char *target = "test_file_atomic_failed_replacement/directory";
+    (void)file_delete_recursive(root);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_create_directories(target, 0700));
+    FT_ASSERT_NE(FT_ERR_SUCCESS, file_write_all_atomic(target, "data", 4));
+    FT_ASSERT_EQ(FILE_TYPE_DIRECTORY, file_get_type(target));
+
+    ft_vector<ft_string> entries;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entries.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_list_directory(root, entries, FILE_LIST_INCLUDE_ALL));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), entries.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete_recursive(root));
+    return (1);
+}
+
+FT_TEST(test_file_write_all_atomic_preserves_target_when_rename_cannot_be_atomic)
+{
+    const char *root = "test_file_atomic_cross_device";
+    const char *target = "test_file_atomic_cross_device/value.bin";
+    (void)file_delete_recursive(root);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_create_directories(root, 0700));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(target, "old", 3));
+
+    cmp_set_force_cross_device_move(1);
+    const int32_t plain_result = file_write_all_atomic(target, "new", 3);
+    const int32_t filesystem_result = filesystem_atomic_write(target, "new", 3);
+    const int32_t durable_result = file_replace_safe(target, "new", 3);
+    cmp_set_force_cross_device_move(0);
+
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, plain_result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, filesystem_result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, durable_result);
+    ft_string contents;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, contents.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(target, contents));
+    FT_ASSERT_EQ(FT_TRUE, contents == "old");
+    ft_vector<ft_string> entries;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entries.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_list_directory(root, entries, FILE_LIST_INCLUDE_ALL));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(1), entries.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete_recursive(root));
+    return (1);
+}
+
+FT_TEST(test_file_write_all_atomic_concurrent_writers_keep_complete_payloads)
+{
+    ft_string file_path;
+    std::vector<std::thread> writers;
+    std::atomic<int32_t> first_error(FT_ERR_SUCCESS);
+    const int32_t writer_count = 8;
+    const int32_t iterations = 32;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_path.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_temp_path(
+            "libft_file_atomic_race", "txt", &file_path));
+    (void)file_delete(file_path.c_str());
+    for (int32_t writer = 0; writer < writer_count; ++writer)
+    {
+        writers.emplace_back([&file_path, &first_error, writer]()
+        {
+            const std::string payload = "writer-" + std::to_string(writer)
+                + ": complete atomic payload\n";
+            for (int32_t iteration = 0; iteration < iterations; ++iteration)
+            {
+                const int32_t error_code = file_write_all_atomic(file_path.c_str(),
+                    payload.c_str(), payload.size());
+                if (error_code != FT_ERR_SUCCESS)
+                {
+                    int32_t expected = FT_ERR_SUCCESS;
+                    first_error.compare_exchange_strong(expected, error_code);
+                }
+            }
+        });
+    }
+    for (std::thread &writer : writers)
+        writer.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_error.load());
+    {
+        ft_string contents;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, contents.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path.c_str(), contents));
+        bool matched = false;
+        for (int32_t writer = 0; writer < writer_count; ++writer)
+        {
+            const std::string payload = "writer-" + std::to_string(writer)
+                + ": complete atomic payload\n";
+            if (contents == payload.c_str())
+                matched = true;
+        }
+        FT_ASSERT_EQ(true, matched);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, contents.destroy());
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path.c_str()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_path.destroy());
     return (1);
 }

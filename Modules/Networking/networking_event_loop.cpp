@@ -2,16 +2,11 @@
 #include <chrono>
 #include <cstdlib>
 
-#include "networking.hpp"
+#include "networking_event_loop_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
-
-#ifdef _WIN32
-# include <fcntl.h>
-# include <io.h>
-#endif
 
 #ifdef NETWORKING_USE_EPOLL
 # include <sys/epoll.h>
@@ -30,7 +25,7 @@
 static void event_loop_close_descriptor(int32_t file_descriptor)
 {
 #ifdef _WIN32
-    (void)_close(file_descriptor);
+    (void)nw_close(file_descriptor);
 #else
     (void)close(file_descriptor);
 #endif
@@ -51,59 +46,97 @@ static int32_t find_registration(const event_loop *loop, int32_t file_descriptor
     return (-1);
 }
 
-static int32_t build_legacy_arrays(const event_loop_registration *registrations,
-    uint32_t registration_count, int32_t **read_descriptors,
-    uint32_t *read_count, int32_t **write_descriptors,
-    uint32_t *write_count)
+static int32_t event_loop_reserve_registrations(event_loop *loop, uint32_t required)
 {
-    uint32_t index;
-
-    *read_count = 0U;
-    *write_count = 0U;
-    index = 0U;
-    while (index < registration_count)
+    if (required > loop->registration_capacity)
     {
-        if ((registrations[index].interest_mask
-                & EVENT_LOOP_INTEREST_READ) != 0U)
-            *read_count += 1U;
-        if ((registrations[index].interest_mask
-                & EVENT_LOOP_INTEREST_WRITE) != 0U)
-            *write_count += 1U;
-        index += 1U;
+        uint32_t capacity = loop->registration_capacity;
+        if (capacity == 0)
+            capacity = 4;
+        while (capacity < required)
+        {
+            if (capacity > FT_INT32_MAX / 2)
+                capacity = FT_INT32_MAX;
+            else
+                capacity *= 2;
+        }
+        auto *registrations = static_cast<event_loop_registration *>(cma_realloc(
+                loop->registrations, sizeof(event_loop_registration) * capacity));
+        if (!registrations)
+            return (FT_ERR_NO_MEMORY);
+        loop->registrations = registrations;
+        auto *read_descriptors = static_cast<int32_t *>(cma_realloc(
+                loop->read_file_descriptors, sizeof(int32_t) * capacity));
+        if (!read_descriptors)
+            return (FT_ERR_NO_MEMORY);
+        loop->read_file_descriptors = read_descriptors;
+        auto *write_descriptors = static_cast<int32_t *>(cma_realloc(
+                loop->write_file_descriptors, sizeof(int32_t) * capacity));
+        if (!write_descriptors)
+            return (FT_ERR_NO_MEMORY);
+        loop->write_file_descriptors = write_descriptors;
+        auto *ready_events = static_cast<event_loop_ready_event *>(cma_realloc(
+                loop->ready_events, sizeof(event_loop_ready_event) * capacity));
+        if (!ready_events)
+            return (FT_ERR_NO_MEMORY);
+        loop->ready_events = ready_events;
+        loop->ready_capacity = capacity;
+        loop->registration_capacity = capacity;
     }
-    *read_descriptors = ft_nullptr;
-    *write_descriptors = ft_nullptr;
-    if (*read_count > 0U)
-        *read_descriptors = static_cast<int32_t *>(cma_malloc(
-            sizeof(int32_t) * *read_count));
-    if (*write_count > 0U)
-        *write_descriptors = static_cast<int32_t *>(cma_malloc(
-            sizeof(int32_t) * *write_count));
-    if ((*read_count > 0U && *read_descriptors == ft_nullptr)
-        || (*write_count > 0U && *write_descriptors == ft_nullptr))
+#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
+    if (!loop->wait_active && required > loop->backend_event_capacity)
     {
-        if (*read_descriptors != ft_nullptr)
-            cma_free(*read_descriptors);
-        if (*write_descriptors != ft_nullptr)
-            cma_free(*write_descriptors);
-        *read_descriptors = ft_nullptr;
-        *write_descriptors = ft_nullptr;
-        return (FT_ERR_NO_MEMORY);
+# ifdef NETWORKING_USE_EPOLL
+        constexpr ft_size_t EVENT_SIZE = sizeof(struct epoll_event);
+# else
+        constexpr ft_size_t EVENT_SIZE = sizeof(struct kevent);
+# endif
+        void *events = cma_realloc(loop->backend_events, EVENT_SIZE * loop->registration_capacity);
+        if (!events)
+            return (FT_ERR_NO_MEMORY);
+        loop->backend_events = events;
+        loop->backend_event_capacity = loop->registration_capacity;
     }
-    *read_count = 0U;
-    *write_count = 0U;
-    index = 0U;
-    while (index < registration_count)
-    {
-        if ((registrations[index].interest_mask
-                & EVENT_LOOP_INTEREST_READ) != 0U)
-            (*read_descriptors)[(*read_count)++] = registrations[index].file_descriptor;
-        if ((registrations[index].interest_mask
-                & EVENT_LOOP_INTEREST_WRITE) != 0U)
-            (*write_descriptors)[(*write_count)++] = registrations[index].file_descriptor;
-        index += 1U;
-    }
+#endif
     return (FT_ERR_SUCCESS);
+}
+
+static void event_loop_insert_interest(const event_loop *loop, int32_t *descriptors,
+    int32_t &count, uint32_t registration_index, uint32_t mask, int32_t file_descriptor)
+{
+    int32_t index = count;
+    if (registration_index != loop->registration_count)
+    {
+        index = 0;
+        uint32_t previous = 0;
+        while (previous < registration_index)
+        {
+            if ((loop->registrations[previous].interest_mask & mask) != 0U)
+                ++index;
+            ++previous;
+        }
+        if (index < count)
+            ft_memmove(descriptors + index + 1, descriptors + index,
+                sizeof(int32_t) * static_cast<ft_size_t>(count - index));
+    }
+    descriptors[index] = file_descriptor;
+    ++count;
+    return ;
+}
+
+static void event_loop_erase_interest(int32_t *descriptors, int32_t &count,
+    int32_t file_descriptor)
+{
+    int32_t index = 0;
+    while (index < count && descriptors[index] != file_descriptor)
+        ++index;
+    if (index == count)
+        return ;
+    --count;
+    if (index < count)
+        ft_memmove(descriptors + index, descriptors + index + 1,
+            sizeof(int32_t) * static_cast<ft_size_t>(count - index));
+    return ;
 }
 
 static int32_t make_mutex(pt_mutex **mutex_pointer)
@@ -150,7 +183,7 @@ static void release_event_loop_wait(event_loop *loop)
     return ;
 }
 
-#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
+#ifndef _WIN32
 static int32_t event_loop_remaining_timeout(
     const std::chrono::steady_clock::time_point &deadline)
 {
@@ -274,6 +307,46 @@ static int32_t backend_remove(event_loop *loop, int32_t file_descriptor)
     return (FT_ERR_SUCCESS);
 }
 
+#ifdef _WIN32
+static ft_bool event_loop_open_wakeup_sockets(event_loop *loop)
+{
+    const int32_t listener = nw_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener < 0)
+        return (FT_FALSE);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sockaddr *socket_address = reinterpret_cast<sockaddr *>(&address);
+    socklen_t address_size = sizeof(address);
+    if (nw_bind(listener, socket_address, address_size) != 0 || nw_listen(listener, 1) != 0
+        || getsockname(static_cast<SOCKET>(listener), socket_address, &address_size) != 0)
+    {
+        nw_close(listener);
+        return (FT_FALSE);
+    }
+
+    const int32_t sender = nw_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int32_t receiver = -1;
+    if (sender >= 0 && nw_connect(sender, socket_address, address_size) == 0)
+        receiver = nw_accept(listener, ft_nullptr, ft_nullptr);
+    nw_close(listener);
+    const int32_t no_delay = 1;
+    if (receiver < 0 || nw_set_nonblocking(sender) != 0 || nw_set_nonblocking(receiver) != 0
+        || setsockopt(static_cast<SOCKET>(sender), IPPROTO_TCP, TCP_NODELAY,
+            reinterpret_cast<const char *>(&no_delay), sizeof(no_delay)) != 0)
+    {
+        if (receiver >= 0)
+            nw_close(receiver);
+        if (sender >= 0)
+            nw_close(sender);
+        return (FT_FALSE);
+    }
+    loop->wakeup_read_descriptor = receiver;
+    loop->wakeup_write_descriptor = sender;
+    return (FT_TRUE);
+}
+#endif
+
 static void signal_loop(event_loop *loop)
 {
 #ifdef _WIN32
@@ -281,7 +354,8 @@ static void signal_loop(event_loop *loop)
 
     value = 1U;
     if (loop->wakeup_write_descriptor >= 0)
-        (void)_write(loop->wakeup_write_descriptor, &value, 1U);
+        (void)send(static_cast<SOCKET>(loop->wakeup_write_descriptor),
+            reinterpret_cast<const char *>(&value), sizeof(value), 0);
     return ;
 #else
 #ifdef NETWORKING_USE_EPOLL
@@ -305,14 +379,17 @@ static void signal_loop(event_loop *loop)
 #endif
 }
 
-#ifndef _WIN32
 static void drain_loop_signal(event_loop *loop)
 {
 #ifdef _WIN32
-    uint8_t value;
+    char signals[256];
 
     if (loop->wakeup_read_descriptor >= 0)
-        (void)_read(loop->wakeup_read_descriptor, &value, 1U);
+    {
+        while (recv(static_cast<SOCKET>(loop->wakeup_read_descriptor),
+                signals, sizeof(signals), 0) > 0)
+            ;
+    }
     return ;
 #else
 #ifdef NETWORKING_USE_EPOLL
@@ -329,16 +406,15 @@ static void drain_loop_signal(event_loop *loop)
     return ;
 #endif
 }
-#endif
 
 static int32_t append_event(event_loop_ready_event *events,
     uint32_t *event_count, uint32_t event_capacity, int32_t file_descriptor,
-    uint32_t ready_mask, int32_t error_code)
+    uint32_t ready_mask, int32_t error_code, uint32_t merge_count = UINT32_MAX)
 {
     uint32_t index;
 
     index = 0U;
-    while (index < *event_count)
+    while (index < merge_count && index < *event_count)
     {
         if (events[index].file_descriptor == file_descriptor)
         {
@@ -459,17 +535,11 @@ void event_loop_init(event_loop *loop)
         }
     }
 #elif defined(_WIN32)
+    if (!event_loop_open_wakeup_sockets(loop))
     {
-        int32_t descriptors[2];
-
-        if (_pipe(descriptors, 512, _O_BINARY | _O_NOINHERIT) != 0)
-        {
-            free_mutex(&loop->wait_mutex);
-            free_mutex(&loop->mutex);
-            return ;
-        }
-        loop->wakeup_read_descriptor = descriptors[0];
-        loop->wakeup_write_descriptor = descriptors[1];
+        free_mutex(&loop->wait_mutex);
+        free_mutex(&loop->mutex);
+        return ;
     }
 #else
     {
@@ -574,12 +644,6 @@ int32_t event_loop_destroy(event_loop *loop) noexcept
 int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
     uint32_t interest_mask) noexcept
 {
-    int32_t registration_index;
-    uint32_t merged_mask;
-    uint32_t new_count;
-    uint64_t generation;
-    int32_t error_code;
-
     if (loop == ft_nullptr || file_descriptor < 0 || interest_mask == 0U
         || (interest_mask & ~(EVENT_LOOP_INTEREST_READ
             | EVENT_LOOP_INTEREST_WRITE)) != 0U)
@@ -591,160 +655,55 @@ int32_t event_loop_add_interest(event_loop *loop, int32_t file_descriptor,
         event_loop_unlock(loop, FT_TRUE);
         return (FT_ERR_INVALID_STATE);
     }
-    registration_index = find_registration(loop, file_descriptor);
-    if (registration_index >= 0)
+    const int32_t existing = find_registration(loop, file_descriptor);
+    uint32_t index = loop->registration_count;
+    uint32_t previous_mask = 0;
+    const uint64_t generation = loop->next_generation + 1;
+    int32_t error_code = FT_ERR_SUCCESS;
+    if (existing >= 0)
     {
-        uint32_t previous_mask;
-        int32_t *new_read_descriptors;
-        int32_t *new_write_descriptors;
-        uint32_t new_read_count;
-        uint32_t new_write_count;
-
-        merged_mask = loop->registrations[registration_index].interest_mask
-            | interest_mask;
-        if (merged_mask == loop->registrations[registration_index].interest_mask)
-        {
-            event_loop_unlock(loop, FT_TRUE);
-            return (FT_ERR_SUCCESS);
-        }
-        previous_mask = loop->registrations[registration_index].interest_mask;
-        loop->registrations[registration_index].interest_mask = merged_mask;
-        error_code = build_legacy_arrays(loop->registrations,
-            loop->registration_count, &new_read_descriptors, &new_read_count,
-            &new_write_descriptors, &new_write_count);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            loop->registrations[registration_index].interest_mask = previous_mask;
-            event_loop_unlock(loop, FT_TRUE);
-            return (error_code);
-        }
-        error_code = backend_add_or_modify(loop, file_descriptor, merged_mask,
-            loop->registrations[registration_index].generation, FT_TRUE);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            loop->registrations[registration_index].interest_mask = previous_mask;
-            cma_free(new_read_descriptors);
-            cma_free(new_write_descriptors);
-        }
+        index = static_cast<uint32_t>(existing);
+        previous_mask = loop->registrations[index].interest_mask;
+    }
+    const uint32_t added_mask = interest_mask & ~previous_mask;
+    if (added_mask == 0)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        return (FT_ERR_SUCCESS);
+    }
+    if (existing < 0)
+    {
+        if (index >= FT_INT32_MAX)
+            error_code = FT_ERR_OUT_OF_RANGE;
         else
-        {
-            if (loop->read_file_descriptors != ft_nullptr)
-                cma_free(loop->read_file_descriptors);
-            if (loop->write_file_descriptors != ft_nullptr)
-                cma_free(loop->write_file_descriptors);
-            loop->read_file_descriptors = new_read_descriptors;
-            loop->write_file_descriptors = new_write_descriptors;
-            loop->read_count = static_cast<int32_t>(new_read_count);
-            loop->write_count = static_cast<int32_t>(new_write_count);
-        }
+            error_code = event_loop_reserve_registrations(loop, index + 1U);
     }
-    else
+    const uint32_t merged_mask = previous_mask | added_mask;
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = backend_add_or_modify(loop, file_descriptor, merged_mask,
+                generation, existing >= 0);
+    if (error_code == FT_ERR_SUCCESS)
     {
-        new_count = loop->registration_count + 1U;
-        {
-            event_loop_registration *new_registrations;
-            event_loop_ready_event *new_ready_events;
-            void *new_backend_events;
-
-            new_registrations = static_cast<event_loop_registration *>(
-                cma_realloc(loop->registrations,
-                    sizeof(event_loop_registration) * new_count));
-            if (new_registrations == ft_nullptr)
-            {
-                event_loop_unlock(loop, FT_TRUE);
-                return (FT_ERR_NO_MEMORY);
-            }
-            new_ready_events = loop->ready_events;
-            if (loop->wait_active == FT_FALSE || loop->ready_events == ft_nullptr)
-            {
-                new_ready_events = static_cast<event_loop_ready_event *>(
-                    cma_realloc(loop->ready_events,
-                        sizeof(event_loop_ready_event) * new_count));
-                if (new_ready_events == ft_nullptr)
-                {
-                    loop->registrations = new_registrations;
-                    event_loop_unlock(loop, FT_TRUE);
-                    return (FT_ERR_NO_MEMORY);
-                }
-            }
-#if defined(NETWORKING_USE_EPOLL) || defined(NETWORKING_USE_KQUEUE)
-            new_backend_events = loop->backend_events;
-            if (loop->wait_active == FT_FALSE)
-            {
-# ifdef NETWORKING_USE_EPOLL
-                new_backend_events = cma_realloc(loop->backend_events,
-                    sizeof(struct epoll_event) * new_count);
-# else
-                new_backend_events = cma_realloc(loop->backend_events,
-                    sizeof(struct kevent) * new_count);
-# endif
-                if (new_backend_events == ft_nullptr)
-                {
-                    loop->registrations = new_registrations;
-                    loop->ready_events = new_ready_events;
-                    event_loop_unlock(loop, FT_TRUE);
-                    return (FT_ERR_NO_MEMORY);
-                }
-            }
-#else
-            new_backend_events = loop->backend_events;
-#endif
-            loop->registrations = new_registrations;
-            loop->ready_events = new_ready_events;
-            if (loop->wait_active == FT_FALSE)
-                loop->backend_events = new_backend_events;
-        }
-        if (loop->registrations == ft_nullptr || loop->ready_events == ft_nullptr)
-        {
-            event_loop_unlock(loop, FT_TRUE);
-            return (FT_ERR_NO_MEMORY);
-        }
-        generation = loop->next_generation + 1U;
-        error_code = backend_add_or_modify(loop, file_descriptor,
-            interest_mask, generation, FT_FALSE);
-        if (error_code == FT_ERR_SUCCESS)
-        {
-            int32_t *new_read_descriptors;
-            int32_t *new_write_descriptors;
-            uint32_t new_read_count;
-            uint32_t new_write_count;
-
-            loop->registrations[loop->registration_count].file_descriptor
-                = file_descriptor;
-            loop->registrations[loop->registration_count].interest_mask
-                = interest_mask;
-            loop->registrations[loop->registration_count].generation
-                = generation;
-            error_code = build_legacy_arrays(loop->registrations, new_count,
-                &new_read_descriptors, &new_read_count,
-                &new_write_descriptors, &new_write_count);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)backend_remove(loop, file_descriptor);
-                event_loop_unlock(loop, FT_TRUE);
-                return (error_code);
-            }
-            loop->registration_count = new_count;
-            loop->registration_capacity = new_count;
-            loop->next_generation = generation;
-            if (loop->wait_active == FT_FALSE)
-            {
-                loop->ready_capacity = new_count;
-                loop->backend_event_capacity = new_count;
-            }
-            if (loop->read_file_descriptors != ft_nullptr)
-                cma_free(loop->read_file_descriptors);
-            if (loop->write_file_descriptors != ft_nullptr)
-                cma_free(loop->write_file_descriptors);
-            loop->read_file_descriptors = new_read_descriptors;
-            loop->write_file_descriptors = new_write_descriptors;
-            loop->read_count = static_cast<int32_t>(new_read_count);
-            loop->write_count = static_cast<int32_t>(new_write_count);
-        }
+        if ((added_mask & EVENT_LOOP_INTEREST_READ) != 0U)
+            event_loop_insert_interest(loop, loop->read_file_descriptors, loop->read_count,
+                    index, EVENT_LOOP_INTEREST_READ, file_descriptor);
+        if ((added_mask & EVENT_LOOP_INTEREST_WRITE) != 0U)
+            event_loop_insert_interest(loop, loop->write_file_descriptors, loop->write_count,
+                    index, EVENT_LOOP_INTEREST_WRITE, file_descriptor);
+        loop->registrations[index] = {file_descriptor, merged_mask, generation};
+        if (existing < 0)
+            ++loop->registration_count;
+        loop->next_generation = generation;
     }
+#ifdef _WIN32
+    if (error_code == FT_ERR_SUCCESS && loop->wait_active != FT_FALSE)
+        signal_loop(loop);
+    event_loop_unlock(loop, FT_TRUE);
+#else
     event_loop_unlock(loop, FT_TRUE);
     if (error_code == FT_ERR_SUCCESS)
         signal_loop(loop);
+#endif
     return (error_code);
 }
 
@@ -752,7 +711,6 @@ int32_t event_loop_remove_interest(event_loop *loop, int32_t file_descriptor,
     uint32_t interest_mask) noexcept
 {
     int32_t registration_index;
-    uint32_t remaining_mask;
     int32_t error_code;
 
     if (loop == ft_nullptr || file_descriptor < 0 || interest_mask == 0U
@@ -767,122 +725,66 @@ int32_t event_loop_remove_interest(event_loop *loop, int32_t file_descriptor,
         event_loop_unlock(loop, FT_TRUE);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    remaining_mask = loop->registrations[registration_index].interest_mask
-        & ~interest_mask;
+    const uint32_t index = static_cast<uint32_t>(registration_index);
+    const uint32_t previous_mask = loop->registrations[index].interest_mask;
+    const uint32_t removed_mask = previous_mask & interest_mask;
+    if (removed_mask == 0)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        return (FT_ERR_SUCCESS);
+    }
+    const uint32_t remaining_mask = previous_mask & ~removed_mask;
+    const uint64_t generation = loop->next_generation + 1;
     if (remaining_mask != 0U)
-    {
-        uint32_t previous_mask;
-        int32_t *new_read_descriptors;
-        int32_t *new_write_descriptors;
-        uint32_t new_read_count;
-        uint32_t new_write_count;
-
-        previous_mask = loop->registrations[registration_index].interest_mask;
-        loop->registrations[registration_index].interest_mask = remaining_mask;
-        error_code = build_legacy_arrays(loop->registrations,
-            loop->registration_count, &new_read_descriptors, &new_read_count,
-            &new_write_descriptors, &new_write_count);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            loop->registrations[registration_index].interest_mask = previous_mask;
-            event_loop_unlock(loop, FT_TRUE);
-            return (error_code);
-        }
         error_code = backend_add_or_modify(loop, file_descriptor, remaining_mask,
-            loop->registrations[registration_index].generation, FT_TRUE);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            loop->registrations[registration_index].interest_mask = previous_mask;
-            cma_free(new_read_descriptors);
-            cma_free(new_write_descriptors);
-        }
-        else
-        {
-            if (loop->read_file_descriptors != ft_nullptr)
-                cma_free(loop->read_file_descriptors);
-            if (loop->write_file_descriptors != ft_nullptr)
-                cma_free(loop->write_file_descriptors);
-            loop->read_file_descriptors = new_read_descriptors;
-            loop->write_file_descriptors = new_write_descriptors;
-            loop->read_count = static_cast<int32_t>(new_read_count);
-            loop->write_count = static_cast<int32_t>(new_write_count);
-        }
-    }
+                generation, FT_TRUE);
     else
-    {
-        event_loop_registration *new_registrations;
-        int32_t *new_read_descriptors;
-        int32_t *new_write_descriptors;
-        uint32_t new_read_count;
-        uint32_t new_write_count;
-        uint32_t new_count;
-        uint32_t source_index;
-        uint32_t destination_index;
-
-        new_count = loop->registration_count - 1U;
-        new_registrations = ft_nullptr;
-        if (new_count > 0U)
-        {
-            new_registrations = static_cast<event_loop_registration *>(
-                cma_malloc(sizeof(event_loop_registration) * new_count));
-            if (new_registrations == ft_nullptr)
-            {
-                event_loop_unlock(loop, FT_TRUE);
-                return (FT_ERR_NO_MEMORY);
-            }
-        }
-        source_index = 0U;
-        destination_index = 0U;
-        while (source_index < loop->registration_count)
-        {
-            if (source_index != static_cast<uint32_t>(registration_index))
-            {
-                new_registrations[destination_index] =
-                    loop->registrations[source_index];
-                destination_index += 1U;
-            }
-            source_index += 1U;
-        }
-        error_code = build_legacy_arrays(new_registrations, new_count,
-            &new_read_descriptors, &new_read_count,
-            &new_write_descriptors, &new_write_count);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            if (new_registrations != ft_nullptr)
-                cma_free(new_registrations);
-            event_loop_unlock(loop, FT_TRUE);
-            return (error_code);
-        }
         error_code = backend_remove(loop, file_descriptor);
-        if (error_code == FT_ERR_SUCCESS)
+    if (error_code == FT_ERR_SUCCESS)
+    {
+        if ((removed_mask & EVENT_LOOP_INTEREST_READ) != 0U)
+            event_loop_erase_interest(loop->read_file_descriptors, loop->read_count, file_descriptor);
+        if ((removed_mask & EVENT_LOOP_INTEREST_WRITE) != 0U)
+            event_loop_erase_interest(loop->write_file_descriptors, loop->write_count, file_descriptor);
+        if (remaining_mask != 0U)
         {
-            cma_free(loop->registrations);
-            loop->registrations = new_registrations;
-            loop->registration_count = new_count;
-            if (loop->read_file_descriptors != ft_nullptr)
-                cma_free(loop->read_file_descriptors);
-            if (loop->write_file_descriptors != ft_nullptr)
-                cma_free(loop->write_file_descriptors);
-            loop->read_file_descriptors = new_read_descriptors;
-            loop->write_file_descriptors = new_write_descriptors;
-            loop->read_count = static_cast<int32_t>(new_read_count);
-            loop->write_count = static_cast<int32_t>(new_write_count);
+            loop->registrations[index].interest_mask = remaining_mask;
+            loop->registrations[index].generation = generation;
         }
         else
         {
-            if (new_registrations != ft_nullptr)
-                cma_free(new_registrations);
-            cma_free(new_read_descriptors);
-            cma_free(new_write_descriptors);
+            --loop->registration_count;
+            if (index < loop->registration_count)
+                ft_memmove(loop->registrations + index, loop->registrations + index + 1,
+                    sizeof(event_loop_registration) * (loop->registration_count - index));
         }
+        loop->next_generation = generation;
     }
+#ifdef _WIN32
+    if (error_code == FT_ERR_SUCCESS && loop->wait_active != FT_FALSE)
+        signal_loop(loop);
+    event_loop_unlock(loop, FT_TRUE);
+#else
     event_loop_unlock(loop, FT_TRUE);
     if (error_code == FT_ERR_SUCCESS)
         signal_loop(loop);
+#endif
     return (error_code);
 }
 
-int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
+#if !defined(NETWORKING_USE_EPOLL) && !defined(NETWORKING_USE_KQUEUE)
+static ft_bool event_loop_snapshot_is_current(const event_loop *loop, int32_t file_descriptor,
+    uint32_t interest, uint64_t snapshot_generation)
+{
+    const int32_t index = find_registration(loop, file_descriptor);
+    if (index < 0)
+        return (FT_FALSE);
+    const event_loop_registration &current = loop->registrations[index];
+    return (current.generation <= snapshot_generation && (current.interest_mask & interest) != 0U);
+}
+#endif
+
+static int32_t event_loop_wait_impl(event_loop *loop, event_loop_ready_event *events,
     uint32_t event_capacity, uint32_t *event_count,
     int32_t timeout_milliseconds) noexcept
 {
@@ -913,22 +815,30 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
     struct kevent empty_backend_event;
     std::chrono::steady_clock::time_point deadline;
 #else
-    int32_t *read_snapshot;
-    int32_t *write_snapshot;
+#ifdef _WIN32
+    // Cover a standard Winsock descriptor set and the extra read wake socket.
+    constexpr uint32_t STACK_WRITE_INTERESTS = 64U;
+    constexpr uint32_t STACK_READ_INTERESTS = STACK_WRITE_INTERESTS + 1U;
+#else
+    constexpr uint32_t STACK_READ_INTERESTS = 32U;
+    constexpr uint32_t STACK_WRITE_INTERESTS = 32U;
+#endif
+    int32_t read_stack[STACK_READ_INTERESTS];
+    int32_t write_stack[STACK_WRITE_INTERESTS];
+    int32_t *read_snapshot = read_stack;
+    int32_t *write_snapshot = write_stack;
+    int32_t *heap_snapshot = ft_nullptr;
     uint32_t read_count;
     uint32_t write_count;
-    uint32_t read_alloc_count;
-    uint32_t write_alloc_count;
     uint32_t poll_read_count;
     int32_t poll_result;
-    int32_t poll_timeout;
 #endif
 #if !defined(NETWORKING_USE_EPOLL) && !defined(NETWORKING_USE_KQUEUE)
     (void)has_registrations;
 #endif
 
-    if (loop == ft_nullptr || events == ft_nullptr || event_count == ft_nullptr
-        || event_capacity == 0U || timeout_milliseconds < -1)
+    if (loop == ft_nullptr || event_count == ft_nullptr
+        || (events != ft_nullptr && event_capacity == 0U) || timeout_milliseconds < -1)
         return (FT_ERR_INVALID_ARGUMENT);
     *event_count = 0U;
     if (loop->wait_mutex == ft_nullptr
@@ -971,6 +881,9 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         loop->backend_event_capacity = registration_count;
 #endif
     }
+#ifdef _WIN32
+    drain_loop_signal(loop);
+#endif
     loop->wait_active = FT_TRUE;
     event_loop_unlock(loop, FT_TRUE);
     local_count = 0U;
@@ -1031,6 +944,11 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
+    if (events == ft_nullptr)
+    {
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
+    }
     while (index < static_cast<uint32_t>(ready_count))
     {
         token = backend_events[index].data.u64;
@@ -1042,7 +960,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
             file_descriptor = static_cast<int32_t>(token & UINT32_MAX);
             registration_index = find_registration(loop, file_descriptor);
             if (registration_index < 0
-                || loop->registrations[registration_index].generation != generation)
+                || static_cast<uint32_t>(loop->registrations[registration_index].generation)
+                    != generation)
             {
                 index += 1U;
                 continue;
@@ -1165,6 +1084,11 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
+    if (events == ft_nullptr)
+    {
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
+    }
     while (index < static_cast<uint32_t>(ready_count))
     {
         if (backend_events[index].udata == ft_nullptr)
@@ -1177,7 +1101,8 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
             file_descriptor = static_cast<int32_t>(token & UINT32_MAX);
             registration_index = find_registration(loop, file_descriptor);
             if (registration_index < 0
-                || loop->registrations[registration_index].generation != generation)
+                || static_cast<uint32_t>(loop->registrations[registration_index].generation)
+                    != generation)
             {
                 index += 1U;
                 continue;
@@ -1236,89 +1161,62 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
         (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
         return (FT_ERR_THREAD_BUSY);
     }
+    const uint64_t snapshot_generation = loop->next_generation;
     read_count = static_cast<uint32_t>(loop->read_count);
     write_count = static_cast<uint32_t>(loop->write_count);
-    read_alloc_count = read_count + 1U;
-    write_alloc_count = write_count;
-    poll_read_count = read_count;
-#ifndef _WIN32
     poll_read_count = read_count + 1U;
-#endif
-    if (read_alloc_count == 0U)
-        read_alloc_count = 1U;
-    if (write_alloc_count == 0U)
-        write_alloc_count = 1U;
-    read_snapshot = static_cast<int32_t *>(cma_malloc(sizeof(int32_t)
-        * read_alloc_count));
-    write_snapshot = static_cast<int32_t *>(cma_malloc(sizeof(int32_t)
-        * write_alloc_count));
-    if (read_snapshot != ft_nullptr && write_snapshot != ft_nullptr)
+    if (poll_read_count > STACK_READ_INTERESTS || write_count > STACK_WRITE_INTERESTS)
     {
-        index = 0U;
-        while (index < read_count)
+        const ft_size_t interest_count = static_cast<ft_size_t>(poll_read_count) + write_count;
+        heap_snapshot = static_cast<int32_t *>(cma_malloc(sizeof(int32_t) * interest_count));
+        if (!heap_snapshot)
         {
-            read_snapshot[index] = loop->read_file_descriptors[index];
-            index += 1U;
+            event_loop_unlock(loop, FT_TRUE);
+            release_event_loop_wait(loop);
+            return (FT_ERR_NO_MEMORY);
         }
-        index = 0U;
-        while (index < write_count)
-        {
-            write_snapshot[index] = loop->write_file_descriptors[index];
-            index += 1U;
-        }
-#ifndef _WIN32
-        read_snapshot[read_count] = loop->wakeup_read_descriptor;
-#endif
+        read_snapshot = heap_snapshot;
+        write_snapshot = heap_snapshot + poll_read_count;
     }
+    if (read_count != 0U)
+        ft_memcpy(read_snapshot, loop->read_file_descriptors, sizeof(int32_t) * read_count);
+    if (write_count != 0U)
+        ft_memcpy(write_snapshot, loop->write_file_descriptors, sizeof(int32_t) * write_count);
+    read_snapshot[read_count] = loop->wakeup_read_descriptor;
     event_loop_unlock(loop, FT_TRUE);
-    if (read_snapshot == ft_nullptr || write_snapshot == ft_nullptr)
-    {
-        if (read_snapshot != ft_nullptr)
-            cma_free(read_snapshot);
-        if (write_snapshot != ft_nullptr)
-            cma_free(write_snapshot);
-        release_event_loop_wait(loop);
-        return (FT_ERR_NO_MEMORY);
-    }
-    else
-    {
-        poll_timeout = timeout_milliseconds;
-#ifdef _WIN32
-        if (poll_timeout < 0)
-            poll_timeout = 50;
-#endif
-        poll_result = nw_poll(read_snapshot,
-            static_cast<int32_t>(poll_read_count), write_snapshot,
-            static_cast<int32_t>(write_count), poll_timeout);
-    }
+
+    poll_result = nw_poll(read_snapshot, static_cast<int32_t>(poll_read_count), write_snapshot,
+            static_cast<int32_t>(write_count), timeout_milliseconds);
     if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
     {
-        cma_free(read_snapshot);
-        cma_free(write_snapshot);
+        if (heap_snapshot)
+            cma_free(heap_snapshot);
         release_event_loop_wait(loop);
         return (FT_ERR_THREAD_BUSY);
     }
     if (loop->stopping != FT_FALSE)
     {
         event_loop_unlock(loop, FT_TRUE);
-        cma_free(read_snapshot);
-        cma_free(write_snapshot);
+        if (heap_snapshot)
+            cma_free(heap_snapshot);
         release_event_loop_wait(loop);
         return (FT_ERR_INVALID_STATE);
     }
-    event_loop_unlock(loop, FT_TRUE);
-#ifndef _WIN32
-    if (poll_result > 0 && read_snapshot != ft_nullptr
-        && read_snapshot[read_count] >= 0)
+    if (events == ft_nullptr)
     {
-        if (read_snapshot[read_count] == loop->wakeup_read_descriptor)
-            drain_loop_signal(loop);
+        events = loop->ready_events;
+        event_capacity = loop->ready_capacity;
     }
-#endif
+    const ft_bool registrations_changed = (loop->next_generation != snapshot_generation);
+    if (poll_result > 0 && read_snapshot[read_count] == loop->wakeup_read_descriptor)
+        drain_loop_signal(loop);
+    // A snapshot contains at most one entry per descriptor in each direction.
     index = 0U;
     while (poll_result > 0 && index < read_count)
     {
-        if (read_snapshot[index] >= 0)
+        if (read_snapshot[index] >= 0 && (!registrations_changed
+            || event_loop_snapshot_is_current(loop, read_snapshot[index],
+                EVENT_LOOP_INTEREST_READ, snapshot_generation)))
 #ifdef _WIN32
         {
             u_long available_bytes;
@@ -1328,39 +1226,125 @@ int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
                 FIONREAD, &available_bytes) != 0)
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_ERROR,
-                    FT_ERR_INVALID_STATE);
+                    FT_ERR_INVALID_STATE, 0U);
             else if (available_bytes == 0U)
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_HANGUP,
-                    FT_ERR_SUCCESS);
+                    FT_ERR_SUCCESS, 0U);
             else
                 (void)append_event(events, &local_count, event_capacity,
                     read_snapshot[index], EVENT_LOOP_READY_READ,
-                    FT_ERR_SUCCESS);
+                    FT_ERR_SUCCESS, 0U);
         }
 #else
             (void)append_event(events, &local_count, event_capacity,
-                read_snapshot[index], EVENT_LOOP_READY_READ, FT_ERR_SUCCESS);
+                read_snapshot[index], EVENT_LOOP_READY_READ, FT_ERR_SUCCESS, 0U);
 #endif
         index += 1U;
     }
+    const uint32_t read_event_count = local_count;
     index = 0U;
     while (poll_result > 0 && index < write_count)
     {
-        if (write_snapshot[index] >= 0)
+        if (write_snapshot[index] >= 0 && (!registrations_changed
+            || event_loop_snapshot_is_current(loop, write_snapshot[index],
+                EVENT_LOOP_INTEREST_WRITE, snapshot_generation)))
             (void)append_event(events, &local_count, event_capacity,
                 write_snapshot[index], EVENT_LOOP_READY_WRITE,
-                FT_ERR_SUCCESS);
+                FT_ERR_SUCCESS, read_event_count);
         index += 1U;
     }
-    if (read_snapshot != ft_nullptr)
-        cma_free(read_snapshot);
-    if (write_snapshot != ft_nullptr)
-        cma_free(write_snapshot);
+    event_loop_unlock(loop, FT_TRUE);
+    if (heap_snapshot)
+        cma_free(heap_snapshot);
 #endif
     *event_count = local_count;
     release_event_loop_wait(loop);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t event_loop_wait(event_loop *loop, event_loop_ready_event *events,
+    uint32_t event_capacity, uint32_t *event_count,
+    int32_t timeout_milliseconds) noexcept
+{
+    if (events == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    return (event_loop_wait_impl(loop, events, event_capacity, event_count,
+        timeout_milliseconds));
+}
+
+int32_t event_loop_wait_for_socket(event_loop *loop, int32_t socket_descriptor,
+    ft_bool wait_for_write, int32_t timeout_milliseconds) noexcept
+{
+    if (loop == ft_nullptr || socket_descriptor < 0 || timeout_milliseconds < -1
+        || loop->wait_mutex == ft_nullptr
+        || loop->wait_mutex->try_lock() != FT_ERR_SUCCESS)
+        return (-1);
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        return (-1);
+    }
+    if (loop->stopping || loop->wakeup_read_descriptor < 0)
+    {
+        event_loop_unlock(loop, FT_TRUE);
+        (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+        return (-1);
+    }
+    drain_loop_signal(loop);
+    loop->wait_active = FT_TRUE;
+    int32_t read_descriptors[] = {loop->wakeup_read_descriptor, socket_descriptor};
+    event_loop_unlock(loop, FT_TRUE);
+
+    int32_t read_count = 2;
+    int32_t write_count = 0;
+    if (wait_for_write)
+    {
+        read_count = 1;
+        write_count = 1;
+    }
+    int32_t write_descriptor = socket_descriptor;
+#ifndef _WIN32
+    std::chrono::steady_clock::time_point deadline;
+    if (timeout_milliseconds > 0)
+        deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(timeout_milliseconds);
+#endif
+    int32_t poll_result = nw_poll(read_descriptors, read_count, &write_descriptor,
+        write_count, timeout_milliseconds);
+#ifndef _WIN32
+    while (poll_result < 0 && errno == EINTR)
+    {
+        if (timeout_milliseconds > 0)
+            timeout_milliseconds = event_loop_remaining_timeout(deadline);
+        if (timeout_milliseconds == 0)
+        {
+            poll_result = 0;
+            break ;
+        }
+        poll_result = nw_poll(read_descriptors, read_count, &write_descriptor,
+            write_count, timeout_milliseconds);
+    }
+#endif
+
+    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
+    {
+        release_event_loop_wait(loop);
+        return (-1);
+    }
+    const ft_bool stopping = loop->stopping;
+    if (poll_result > 0 && read_descriptors[0] >= 0)
+        drain_loop_signal(loop);
+    loop->wait_active = FT_FALSE;
+    event_loop_unlock(loop, FT_TRUE);
+    (void)pt_mutex_unlock_if_not_null(loop->wait_mutex);
+    if (stopping || poll_result < 0)
+        return (-1);
+    if (poll_result == 0)
+        return (0);
+    if (wait_for_write)
+        return (write_descriptor >= 0);
+    return (read_descriptors[1] >= 0);
 }
 
 int32_t event_loop_interrupt(event_loop *loop) noexcept
@@ -1393,26 +1377,11 @@ int32_t event_loop_remove_socket(event_loop *loop, int32_t socket_fd,
 
 int32_t event_loop_run(event_loop *loop, int32_t timeout_milliseconds)
 {
-    event_loop_ready_event *events;
     uint32_t event_count;
-    uint32_t capacity;
-    int32_t result_code;
 
-    if (loop == ft_nullptr)
-        return (-1);
-    if (event_loop_lock(loop, ft_nullptr) != FT_ERR_SUCCESS)
-        return (-1);
-    capacity = loop->registration_count;
-    event_loop_unlock(loop, FT_TRUE);
-    if (capacity == 0U)
-        capacity = 1U;
-    events = static_cast<event_loop_ready_event *>(cma_malloc(
-        sizeof(event_loop_ready_event) * capacity));
-    if (events == ft_nullptr)
-        return (-1);
-    result_code = event_loop_wait(loop, events, capacity, &event_count,
+    // The wait takes the loop-owned result buffer only while dispatch is locked.
+    const int32_t result_code = event_loop_wait_impl(loop, ft_nullptr, 0U, &event_count,
         timeout_milliseconds);
-    cma_free(events);
     if (result_code != FT_ERR_SUCCESS)
         return (-1);
     return (static_cast<int32_t>(event_count));

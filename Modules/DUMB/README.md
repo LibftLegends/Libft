@@ -41,11 +41,12 @@
 
 - `ft_sound_spec` - Audio format and callback description: frequency, channels, samples, callback, and user data.
 - `ft_sound_clip` - Lifecycle-managed decoded audio clip.
-- `ft_sound_clip::load_wav(...)` - Loads WAV data from disk.
+- `ft_sound_clip::load_wav(...)` - Loads 16-bit PCM RIFF/WAVE samples. A failed load preserves the current clip.
 - `ft_sound_clip::get_data()` / `get_size()` / `get_spec()` - Return decoded sample data, byte size, and sound spec.
 - `ft_sound_device` - Abstract lifecycle audio output device.
 - `ft_sound_device::open(...)` / `close()` - Open or close the platform audio device.
 - `ft_sound_device::pause(...)` / `play(...)` / `stop()` - Control audio playback.
+  Keep a clip and its sample data alive and unchanged during playback. Call `stop()` before reloading or destroying a clip that may still be playing.
 - `ft_create_sound_device()` - Allocates the platform sound device implementation.
 
 Both `ft_sound_clip` and `ft_sound_device` expose lifecycle methods and optional thread-safety toggles.

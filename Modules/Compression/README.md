@@ -21,7 +21,7 @@ The `Compression` module provides zlib-style buffer compression, stream compress
 
 - `t_compress_stream_options()` / `~t_compress_stream_options()` - Construct and destroy the options object.
 - `initialize()` / `destroy()` - Enter and leave the initialized lifecycle state.
-- `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` - Manage optional synchronization for option access.
+- `enable_thread_safety()` / `disable_thread_safety()` / `is_thread_safe()` - Manage optional synchronization for option access. Transition operations serialize with active accessors; disabling waits for an active accessor and destroys the heap mutex before returning.
 - `reset()` - Restores default option values.
 - `set_input_buffer_size(...)` / `set_output_buffer_size(...)` - Configure stream chunk sizes.
 - `set_progress_callback(...)` / `set_cancel_callback(...)` / `set_callbacks(...)` - Configure progress and cancellation callbacks plus user data.
@@ -46,7 +46,7 @@ The `Compression` module provides zlib-style buffer compression, stream compress
 ## Base64 and Container Adapters
 
 - `ft_base64_encode(const unsigned char *input_buffer, std::size_t input_size, std::size_t *encoded_size)` - Encodes binary input into an allocated Base64 buffer.
-- `ft_base64_decode(const unsigned char *input_buffer, std::size_t input_size, std::size_t *decoded_size)` - Decodes Base64 input into an allocated binary buffer.
+- `ft_base64_decode(const unsigned char *input_buffer, std::size_t input_size, std::size_t *decoded_size)` - Decodes standard Base64 input into an allocated binary buffer. ASCII whitespace and a final group without padding are accepted.
 - `ft_compress_string_to_vector(const ft_string &input, ft_vector<unsigned char> &output)` - Compresses a string into an output vector.
 - `ft_compress_vector_to_vector(const ft_vector<unsigned char> &input, ft_vector<unsigned char> &output)` - Compresses a byte vector into another vector.
 - `ft_decompress_vector_to_string(const ft_vector<unsigned char> &input, ft_string &output)` - Decompresses a byte vector into a string.

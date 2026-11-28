@@ -41,18 +41,18 @@ FT_TEST(test_time_now_ms_returns_hooked_value)
     return (1);
 }
 
-#if LONG_MAX < LLONG_MAX
-FT_TEST(test_time_now_ms_detects_overflow)
+FT_TEST(test_time_now_ms_preserves_full_width_epoch_values)
 {
-    int64_t                                     result;
-    std::chrono::milliseconds::rep             overflow_count;
-
-    overflow_count = static_cast<std::chrono::milliseconds::rep>(LONG_MAX) + 1;
-    g_mock_time_now = std::chrono::system_clock::time_point(std::chrono::milliseconds(overflow_count));
+    constexpr int64_t EPOCH_MS = 1700000000123;
+    g_mock_time_now = std::chrono::system_clock::time_point(std::chrono::milliseconds(EPOCH_MS));
     time_set_clock_now_hook(test_time_now_hook);
-    result = time_now_ms();
+    const int64_t modern = time_now_ms();
+    const int64_t legacy = ft_time_ms();
+    g_mock_time_now = std::chrono::system_clock::time_point(std::chrono::milliseconds(-EPOCH_MS));
+    const int64_t before_epoch = time_now_ms();
     time_reset_clock_now_hook();
-    FT_ASSERT_EQ(static_cast<int64_t>(LONG_MAX), result);
+    FT_ASSERT_EQ(EPOCH_MS, modern);
+    FT_ASSERT_EQ(EPOCH_MS, legacy);
+    FT_ASSERT_EQ(-EPOCH_MS, before_epoch);
     return (1);
 }
-#endif

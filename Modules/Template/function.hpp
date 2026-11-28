@@ -16,15 +16,23 @@ template <typename ReturnType, typename... Args>
 class ft_function<ReturnType(Args...)>
 {
     private:
+        template <typename ArgumentType>
+        using dispatch_argument = std::conditional_t<std::is_scalar_v<ArgumentType>
+            || std::is_reference_v<ArgumentType>, ArgumentType, ArgumentType &>;
+
+        template <typename ArgumentType>
+        using callable_argument = std::conditional_t<std::is_rvalue_reference_v<ArgumentType>,
+            ArgumentType, ArgumentType &>;
+
         void *_callable;
-        ReturnType (*_invoke)(void *, Args...);
+        ReturnType (*_invoke)(void *, dispatch_argument<Args>...);
         void (*_destroy)(void *);
         void *(*_clone)(void *);
 
         void    clear_callable();
 
         template <typename FunctionType>
-        static ReturnType invoke(void *callable, Args... args);
+        static ReturnType invoke(void *callable, dispatch_argument<Args>... args);
 
         template <typename FunctionType>
         static void destroy(void *callable);
@@ -65,12 +73,13 @@ void ft_function<ReturnType(Args...)>::clear_callable()
 
 template <typename ReturnType, typename... Args>
 template <typename FunctionType>
-ReturnType ft_function<ReturnType(Args...)>::invoke(void *callable, Args... args)
+ReturnType ft_function<ReturnType(Args...)>::invoke(void *callable,
+    dispatch_argument<Args>... args)
 {
     FunctionType *function;
 
     function = static_cast<FunctionType *>(callable);
-    return ((*function)(args...));
+    return ((*function)(std::forward<callable_argument<Args>>(args)...));
 }
 
 template <typename ReturnType, typename... Args>
@@ -202,7 +211,7 @@ ft_function<ReturnType(Args...)> &ft_function<ReturnType(Args...)>::operator=(ft
 template <typename ReturnType, typename... Args>
 ReturnType ft_function<ReturnType(Args...)>::operator()(Args... args) const
 {
-    ReturnType (*invoke_target)(void *, Args...);
+    ReturnType (*invoke_target)(void *, dispatch_argument<Args>...);
     void *callable;
 
     invoke_target = this->_invoke;
@@ -215,7 +224,7 @@ ReturnType ft_function<ReturnType(Args...)>::operator()(Args... args) const
         }
         return (ReturnType());
     }
-    return (invoke_target(callable, args...));
+    return (invoke_target(callable, std::forward<dispatch_argument<Args>>(args)...));
 }
 
 template <typename ReturnType, typename... Args>

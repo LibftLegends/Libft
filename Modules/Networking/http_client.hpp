@@ -13,8 +13,14 @@ int32_t http_get_stream(const char *host, const char *path, http_response_handle
     ft_bool use_ssl = FT_FALSE, const char *custom_port = NULL);
 int32_t http_get(const char *host, const char *path, ft_string &response, ft_bool use_ssl = FT_FALSE, const char *custom_port = NULL);
 int32_t http_post(const char *host, const char *path, const ft_string &body, ft_string &response, ft_bool use_ssl = FT_FALSE, const char *custom_port = NULL);
+// Document requests require 2xx status. GET returns the body. POST discards the response.
+int32_t http_get_body(const char *host, const char *path, ft_string &response,
+    ft_bool use_ssl = FT_FALSE, const char *custom_port = NULL);
+int32_t http_post_body(const char *host, const char *path, const char *body, ft_size_t body_length,
+    ft_bool use_ssl = FT_FALSE, const char *custom_port = NULL);
 int32_t http_client_send_plain_request(int32_t socket_fd, const char *buffer, ft_size_t length);
 int32_t http_client_send_ssl_request(SSL *ssl_connection, const char *buffer, ft_size_t length);
+// The shared pool is synchronized by default. Disabling it closes idle connections.
 int32_t http_client_pool_enable_thread_safety(void);
 int32_t http_client_pool_disable_thread_safety(void);
 ft_bool http_client_pool_is_thread_safe(void);

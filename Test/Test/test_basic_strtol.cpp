@@ -15,6 +15,16 @@ FT_TEST(test_basic_strtol_decimal)
     return (1);
 }
 
+FT_TEST(test_basic_strtol_exact_negative_limit)
+{
+    const char input[] = "-9223372036854775808!";
+    char *end_pointer = ft_nullptr;
+
+    FT_ASSERT_EQ(FT_LLONG_MIN, ft_strtol(input, &end_pointer, 10));
+    FT_ASSERT_EQ(input + 20U, end_pointer);
+    return (1);
+}
+
 FT_TEST(test_basic_strtol_hex_prefix)
 {
     char *end;

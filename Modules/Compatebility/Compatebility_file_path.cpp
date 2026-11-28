@@ -8,7 +8,6 @@ static char *cmp_duplicate_path_string(const char *source_path)
 {
     char *output_path;
     ft_size_t source_length;
-    ft_size_t index;
 
     if (source_path == ft_nullptr)
         return (ft_nullptr);
@@ -16,13 +15,7 @@ static char *cmp_duplicate_path_string(const char *source_path)
     output_path = static_cast<char *>(cma_malloc(source_length + 1));
     if (output_path == ft_nullptr)
         return (ft_nullptr);
-    index = 0;
-    while (index < source_length)
-    {
-        output_path[index] = source_path[index];
-        index++;
-    }
-    output_path[source_length] = '\0';
+    (void)ft_memcpy(output_path, source_path, source_length + 1);
     return (output_path);
 }
 
@@ -48,58 +41,42 @@ void cmp_normalize_slashes(char *data)
     return ;
 }
 
-int32_t cmp_translate_path_to_native(const char *path, char **output_path)
+static int32_t cmp_translate_windows_path(const char *path, char **output_path,
+    char source_separator, char target_separator, ft_bool strip_leading_separator)
 {
-    char *translated_path;
-    ft_size_t source_length;
-    ft_size_t index;
-
     if (output_path == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
     *output_path = ft_nullptr;
     if (path == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    translated_path = cmp_duplicate_path_string(path);
+    if (strip_leading_separator && (path[0] == '/' || path[0] == '\\'))
+        ++path;
+    const ft_size_t source_length = ft_strlen_size_t(path);
+    char *translated_path = static_cast<char *>(cma_malloc(source_length + 1));
     if (translated_path == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    if (translated_path[0] == '/' || translated_path[0] == '\\')
+    ft_size_t index = 0;
+    while (index < source_length)
     {
-        source_length = ft_strlen_size_t(translated_path);
-        index = 0;
-        while (index < source_length)
-        {
-            translated_path[index] = translated_path[index + 1];
-            index++;
-        }
-        translated_path[source_length] = '\0';
+        char character = path[index];
+        if (character == source_separator)
+            character = target_separator;
+        translated_path[index] = character;
+        ++index;
     }
-    cmp_normalize_slashes(translated_path);
+    translated_path[source_length] = '\0';
     *output_path = translated_path;
     return (FT_ERR_SUCCESS);
 }
 
+int32_t cmp_translate_path_to_native(const char *path, char **output_path)
+{
+    return (cmp_translate_windows_path(path, output_path, '/', '\\', FT_TRUE));
+}
+
 int32_t cmp_translate_path_to_portable(const char *path, char **output_path)
 {
-    char *translated_path;
-    ft_size_t index;
-
-    if (output_path == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    *output_path = ft_nullptr;
-    if (path == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    translated_path = cmp_duplicate_path_string(path);
-    if (translated_path == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    index = 0;
-    while (translated_path[index] != '\0')
-    {
-        if (translated_path[index] == '\\')
-            translated_path[index] = '/';
-        index++;
-    }
-    *output_path = translated_path;
-    return (FT_ERR_SUCCESS);
+    return (cmp_translate_windows_path(path, output_path, '\\', '/', FT_FALSE));
 }
 
 int32_t cmp_get_temp_directory(char **output_path)

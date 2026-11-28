@@ -20,12 +20,10 @@ ft_thread::start_payload::~start_payload()
 void *ft_thread::start_routine(void *data)
 {
     std::shared_ptr<start_payload> *payload_capsule;
-    std::shared_ptr<start_payload> payload;
-
     payload_capsule = static_cast<std::shared_ptr<start_payload> *>(data);
     if (payload_capsule == ft_nullptr)
         return (ft_nullptr);
-    payload = *payload_capsule;
+    std::shared_ptr<start_payload> payload(ft_move(*payload_capsule));
     delete payload_capsule;
     if (!payload)
         return (ft_nullptr);

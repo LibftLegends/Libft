@@ -76,10 +76,8 @@ ft_bitset::~ft_bitset()
     return ;
 }
 
-int32_t ft_bitset::initialize()
+int32_t ft_bitset::initialize_data(const ft_size_t *source_data)
 {
-    ft_size_t index;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         errno_abort_lifecycle(this->_initialised_state, "ft_bitset::initialize",
@@ -87,13 +85,13 @@ int32_t ft_bitset::initialize()
         return (set_error(FT_ERR_INVALID_STATE));
     }
     this->_size = this->_configured_bits;
-    this->_block_count = (this->_configured_bits + BITS_PER_BLOCK - 1)
-        / BITS_PER_BLOCK;
+    this->_block_count = this->_configured_bits / BITS_PER_BLOCK
+        + (this->_configured_bits % BITS_PER_BLOCK != 0);
     this->_data = ft_nullptr;
     if (this->_block_count > 0)
     {
-        this->_data = static_cast<ft_size_t*>(cma_malloc(sizeof(ft_size_t)
-                    * this->_block_count));
+        const ft_size_t byte_count = this->_block_count * sizeof(ft_size_t);
+        this->_data = static_cast<ft_size_t *>(cma_malloc(byte_count));
         if (this->_data == ft_nullptr)
         {
             this->_size = 0;
@@ -101,15 +99,25 @@ int32_t ft_bitset::initialize()
             this->_initialised_state = FT_CLASS_STATE_DESTROYED;
             return (set_error(FT_ERR_BITSET_NO_MEMORY));
         }
-        index = 0;
-        while (index < this->_block_count)
+        if (source_data == ft_nullptr)
         {
-            this->_data[index] = 0;
-            index += 1;
+            ft_size_t index = 0;
+            while (index < this->_block_count)
+            {
+                this->_data[index] = 0;
+                ++index;
+            }
         }
+        else
+            (void)ft_memcpy(this->_data, source_data, byte_count);
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
+}
+
+int32_t ft_bitset::initialize()
+{
+    return (this->initialize_data(ft_nullptr));
 }
 
 int32_t ft_bitset::initialize(ft_size_t bits)
@@ -120,8 +128,6 @@ int32_t ft_bitset::initialize(ft_size_t bits)
 
 int32_t ft_bitset::initialize(const ft_bitset &other)
 {
-    ft_size_t index;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state,
             "ft_bitset::initialize(copy)", "source object is not initialised");
@@ -135,15 +141,7 @@ int32_t ft_bitset::initialize(const ft_bitset &other)
         return (set_error(other._last_error));
     }
     this->_configured_bits = other._size;
-    if (this->initialize() != FT_ERR_SUCCESS)
-        return (set_error(this->_last_error));
-    index = 0;
-    while (index < this->_block_count)
-    {
-        this->_data[index] = other._data[index];
-        index += 1;
-    }
-    return (set_error(other._last_error));
+    return (this->initialize_data(other._data));
 }
 
 int32_t ft_bitset::initialize(ft_bitset &&other)

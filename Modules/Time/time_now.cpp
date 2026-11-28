@@ -9,6 +9,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
+#ifdef LIBFT_TEST_BUILD
 thread_local t_time_clock_now_hook g_time_clock_now_hook = ft_nullptr;
 
 void    time_set_clock_now_hook(t_time_clock_now_hook hook)
@@ -22,13 +23,16 @@ void    time_reset_clock_now_hook(void)
     g_time_clock_now_hook = ft_nullptr;
     return ;
 }
+#endif
 
 t_time  time_now(void)
 {
-    std::chrono::system_clock::time_point current_time;
     std::time_t standard_time;
-    int64_t seconds_count;
     int32_t error_code;
+
+#ifdef LIBFT_TEST_BUILD
+    std::chrono::system_clock::time_point current_time;
+    int64_t seconds_count;
 
     if (g_time_clock_now_hook != ft_nullptr)
     {
@@ -60,6 +64,7 @@ t_time  time_now(void)
         standard_time = ft_platform_cast<std::time_t>(seconds_count);
     }
     else
+#endif
         standard_time = ::time(ft_nullptr);
     if (standard_time == static_cast<std::time_t>(-1))
     {

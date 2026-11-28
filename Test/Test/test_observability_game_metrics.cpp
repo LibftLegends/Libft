@@ -17,6 +17,8 @@
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/pair.hpp"
 #include "../../Modules/Template/shared_ptr.hpp"
+#include <atomic>
+#include <thread>
 #ifndef LIBFT_TEST_BUILD
 #endif
 
@@ -51,6 +53,84 @@ static void observability_game_test_exporter(const ft_game_observability_sample 
     g_game_export_count = g_game_export_count + 1;
     g_game_last_sample = sample;
     return ;
+}
+
+static int32_t g_game_exporter_shutdown_result;
+
+static void observability_game_shutdown_exporter(const ft_game_observability_sample &sample)
+{
+    observability_game_test_exporter(sample);
+    g_game_exporter_shutdown_result = observability_game_metrics_shutdown();
+    return ;
+}
+
+FT_TEST(test_observability_game_exporter_can_shut_down_reentrantly)
+{
+    const ft_game_observability_sample sample{{"event", "entity", "attribute"}, 1, 1,
+        "unit", FT_ERR_SUCCESS, ft_nullptr, FT_TRUE};
+    g_game_export_count = 0;
+    g_game_exporter_shutdown_result = FT_ERR_INTERNAL;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_initialize(observability_game_shutdown_exporter));
+    FT_ASSERT_EQ(FT_TRUE, observability_game_metrics_is_thread_safe());
+    observability_game_metrics_record(sample);
+    observability_game_metrics_record(sample);
+    FT_ASSERT_EQ(1, g_game_export_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, g_game_exporter_shutdown_result);
+    FT_ASSERT_EQ(FT_FALSE, observability_game_metrics_is_thread_safe());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_initialize(observability_game_test_exporter));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_disable_thread_safety());
+    FT_ASSERT_EQ(FT_FALSE, observability_game_metrics_is_thread_safe());
+    observability_game_metrics_record(sample);
+    FT_ASSERT_EQ(2, g_game_export_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_shutdown());
+    return (1);
+}
+
+static std::atomic<uint32_t> g_concurrent_game_samples{0};
+
+static void count_concurrent_game_sample(const ft_game_observability_sample &)
+{
+    g_concurrent_game_samples.fetch_add(1, std::memory_order_relaxed);
+    return ;
+}
+
+FT_TEST(test_observability_game_records_during_exporter_reconfiguration)
+{
+    const ft_game_observability_sample sample{{"event", "entity", "attribute"}, 1, 1,
+        "unit", FT_ERR_SUCCESS, ft_nullptr, FT_TRUE};
+    g_concurrent_game_samples.store(0, std::memory_order_relaxed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_initialize(count_concurrent_game_sample));
+    std::atomic<ft_bool> started{FT_FALSE};
+    std::atomic<ft_bool> stopped{FT_FALSE};
+    std::thread reader([&]()
+    {
+        observability_game_metrics_record(sample);
+        started.store(FT_TRUE, std::memory_order_release);
+        while (!stopped.load(std::memory_order_acquire))
+            observability_game_metrics_record(sample);
+        return ;
+    });
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    uint32_t iteration = 0;
+    int32_t result = FT_ERR_SUCCESS;
+    while (iteration < 1000 && result == FT_ERR_SUCCESS)
+    {
+        result = observability_game_metrics_shutdown();
+        if (result == FT_ERR_SUCCESS)
+            result = observability_game_metrics_initialize(count_concurrent_game_sample);
+        ++iteration;
+    }
+    stopped.store(FT_TRUE, std::memory_order_release);
+    reader.join();
+    const int32_t shutdown = observability_game_metrics_shutdown();
+    const uint32_t count = g_concurrent_game_samples.load(std::memory_order_relaxed);
+    observability_game_metrics_record(sample);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shutdown);
+    FT_ASSERT(count != 0);
+    FT_ASSERT_EQ(count, g_concurrent_game_samples.load(std::memory_order_relaxed));
+    return (1);
 }
 
 FT_TEST(test_observability_game_initialize_rejects_null_exporter)
@@ -177,5 +257,38 @@ FT_TEST(test_game_character_emits_observability_metrics)
     FT_ASSERT_EQ(30, g_game_last_sample.delta_value);
     FT_ASSERT_EQ(70, g_game_last_sample.total_value);
     FT_ASSERT_EQ(0, observability_game_metrics_shutdown());
+    return (1);
+}
+
+FT_TEST(test_game_character_counter_metrics_respect_signed_limits)
+{
+    game_character character;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_initialize(observability_game_test_exporter));
+    g_game_export_count = 0;
+
+    character.set_coins(INT32_MAX);
+    character.add_coins(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, character.get_error());
+    FT_ASSERT_EQ(INT32_MAX, character.get_coins());
+    character.set_valor(INT32_MIN);
+    character.sub_valor(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, character.get_error());
+    FT_ASSERT_EQ(INT32_MIN, character.get_valor());
+    character.add_experience(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.get_error());
+    FT_ASSERT_EQ(0, g_game_export_count);
+
+    character.set_experience(INT32_MIN);
+    character.sub_experience(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, character.get_error());
+    FT_ASSERT_EQ(0, character.get_experience());
+    FT_ASSERT_EQ(1, g_game_export_count);
+    FT_ASSERT_EQ(INT64_C(2147483648), g_game_last_sample.delta_value);
+    FT_ASSERT_EQ(0, g_game_last_sample.total_value);
+    FT_ASSERT(observability_game_strings_equal("character.experience_change",
+        g_game_last_sample.labels.event_name));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_game_metrics_shutdown());
     return (1);
 }

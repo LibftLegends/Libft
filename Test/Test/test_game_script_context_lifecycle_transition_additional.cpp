@@ -109,6 +109,34 @@ FT_TEST(test_game_script_context_self_copy_is_safe)
     return (1);
 }
 
+FT_TEST(test_game_script_context_explicit_move_keeps_owned_variables_and_result)
+{
+    game_script_context source;
+    game_script_context destination;
+    ft_string key;
+    ft_string value;
+    uint32_t user_data = 7U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, key.initialize("record"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize("kept"));
+    source.set_variable(key, value);
+    const ft_string *original_value = source.get_variable(key);
+    FT_ASSERT(original_value != ft_nullptr);
+    source.set_result_integer(19);
+    source.set_user_data(&user_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    const ft_string *moved_value = destination.get_variable(key);
+    FT_ASSERT(moved_value == original_value);
+    FT_ASSERT_STR_EQ("kept", moved_value->c_str());
+    FT_ASSERT_EQ(FT_TRUE, destination.has_result_integer());
+    FT_ASSERT_EQ(19, destination.get_result_integer());
+    FT_ASSERT(destination.get_user_data() == &user_data);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT(source.get_variable(key) == ft_nullptr);
+    return (1);
+}
+
 FT_TEST(test_game_script_context_self_move_is_safe_again)
 {
     game_script_context value;

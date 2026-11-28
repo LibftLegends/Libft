@@ -47,6 +47,10 @@ FT_TEST(test_map_thread_safety_toggles_mutex)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.initialize());
     FT_ASSERT_EQ(false, map_instance.is_thread_safe());
+    lock_acquired = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.lock(&lock_acquired));
+    FT_ASSERT_EQ(FT_FALSE, lock_acquired);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.unlock(lock_acquired));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, map_instance.enable_thread_safety());
     FT_ASSERT_EQ(true, map_instance.is_thread_safe());
     map_instance.insert(1, 2);

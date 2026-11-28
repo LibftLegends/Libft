@@ -4,6 +4,7 @@
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../System_utils/system_utils.hpp"
+#include <array>
 #include <cstdlib>
 #include <ctime>
 #include <cerrno>
@@ -23,20 +24,22 @@ const char *cmp_service_null_device_path(void)
 #endif
 }
 
+uint64_t cmp_get_process_id(void) noexcept
+{
+#if defined(_WIN32) || defined(_WIN64)
+    return (static_cast<uint64_t>(_getpid()));
+#else
+    return (static_cast<uint64_t>(getpid()));
+#endif
+}
+
 int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size,
     ft_size_t *length_out)
 {
     if (!buffer || buffer_size == 0)
         return (FT_ERR_INVALID_ARGUMENT);
-#if defined(_WIN32) || defined(_WIN64)
-    uint64_t pid_value = static_cast<uint64_t>(_getpid());
     int32_t formatted = std::snprintf(buffer, buffer_size, "%" PRIu64 "\n",
-        pid_value);
-#else
-    pid_t pid_value = getpid();
-    int32_t formatted = std::snprintf(buffer, buffer_size, "%" PRId64 "\n",
-        static_cast<int64_t>(pid_value));
-#endif
+        cmp_get_process_id());
     if (formatted < 0 || static_cast<ft_size_t>(formatted) >= buffer_size)
         return (FT_ERR_IO);
     if (length_out != ft_nullptr)
@@ -44,6 +47,7 @@ int32_t cmp_service_format_pid_line(char *buffer, ft_size_t buffer_size,
     return (FT_ERR_SUCCESS);
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_unsetenv_result(int32_t result, int32_t errno_value);
 void cmp_clear_force_unsetenv_result(void);
 void cmp_set_force_unsetenv_windows_errors(int32_t last_error, int32_t socket_error);
@@ -59,6 +63,7 @@ void cmp_set_force_total_memory_failure(int32_t errno_value);
 void cmp_set_force_total_memory_windows_failure(uint64_t last_error);
 #endif
 void cmp_clear_force_total_memory_result(void);
+#endif
 
 #if defined(_WIN32) || defined(_WIN64)
 # include <winsock2.h>
@@ -73,6 +78,7 @@ void cmp_clear_force_total_memory_result(void);
 # endif
 #endif
 
+#if defined(LIBFT_TEST_BUILD)
 static int32_t global_force_unsetenv_enabled = 0;
 static int32_t global_force_unsetenv_result = 0;
 static int32_t global_force_unsetenv_errno_value = 0;
@@ -95,135 +101,133 @@ static int32_t global_force_total_memory_errno_value = 0;
 #if defined(_WIN32) || defined(_WIN64)
 static uint64_t global_force_total_memory_last_error = 0;
 #endif
+#endif
 
 #if defined(_WIN32) || defined(_WIN64)
+struct cmp_windows_error_mapping
+{
+    int32_t native_error;
+    int32_t libft_error;
+};
+
+static constexpr cmp_windows_error_mapping WINDOWS_ERROR_MAPPINGS[] =
+{
+    {WSAEINTR, FT_ERR_INVALID_STATE},
+    {WSAEWOULDBLOCK, FT_ERR_INVALID_STATE},
+    {WSAEINPROGRESS, FT_ERR_INVALID_STATE},
+    {WSAEALREADY, FT_ERR_INVALID_STATE},
+    {WSAENOTSOCK, FT_ERR_INVALID_HANDLE},
+    {WSAEDESTADDRREQ, FT_ERR_INVALID_ARGUMENT},
+    {WSAEMSGSIZE, FT_ERR_INVALID_ARGUMENT},
+    {WSAEPROTOTYPE, FT_ERR_INVALID_ARGUMENT},
+    {WSAENOPROTOOPT, FT_ERR_INVALID_ARGUMENT},
+    {WSAEPROTONOSUPPORT, FT_ERR_UNSUPPORTED_TYPE},
+    {WSAESOCKTNOSUPPORT, FT_ERR_UNSUPPORTED_TYPE},
+    {WSAEOPNOTSUPP, FT_ERR_INVALID_OPERATION},
+    {WSAEPFNOSUPPORT, FT_ERR_UNSUPPORTED_TYPE},
+    {WSAEAFNOSUPPORT, FT_ERR_UNSUPPORTED_TYPE},
+    {WSAEADDRINUSE, FT_ERR_ALREADY_EXISTS},
+    {WSAEADDRNOTAVAIL, FT_ERR_NOT_FOUND},
+    {WSAENETDOWN, FT_ERR_IO},
+    {WSAENETUNREACH, FT_ERR_IO},
+    {WSAENETRESET, FT_ERR_IO},
+    {WSAECONNABORTED, FT_ERR_IO},
+    {WSAECONNRESET, FT_ERR_IO},
+    {WSAENOBUFS, FT_ERR_NO_MEMORY},
+    {WSAEISCONN, FT_ERR_INVALID_STATE},
+    {WSAENOTCONN, FT_ERR_INVALID_STATE},
+    {WSAESHUTDOWN, FT_ERR_INVALID_STATE},
+    {WSAETOOMANYREFS, FT_ERR_FULL},
+    {WSAETIMEDOUT, FT_ERR_IO},
+    {WSAECONNREFUSED, FT_ERR_SOCKET_CONNECT_FAILED},
+    {WSAEHOSTDOWN, FT_ERR_IO},
+    {WSAEHOSTUNREACH, FT_ERR_IO},
+    {WSAEPROCLIM, FT_ERR_FULL},
+    {WSAEUSERS, FT_ERR_FULL},
+    {WSAEDQUOT, FT_ERR_FULL},
+    {WSAESTALE, FT_ERR_IO},
+    {WSAEREMOTE, FT_ERR_IO},
+    {WSAEDISCON, FT_ERR_IO},
+    {WSASYSNOTREADY, FT_ERR_INVALID_STATE},
+    {WSAVERNOTSUPPORTED, FT_ERR_UNSUPPORTED_TYPE},
+    {WSANOTINITIALISED, FT_ERR_INVALID_STATE},
+    {WSAHOST_NOT_FOUND, FT_ERR_SOCKET_RESOLVE_NO_NAME},
+    {WSATRY_AGAIN, FT_ERR_SOCKET_RESOLVE_AGAIN},
+    {WSANO_RECOVERY, FT_ERR_SOCKET_RESOLVE_FAIL},
+    {WSANO_DATA, FT_ERR_SOCKET_RESOLVE_NO_NAME},
+    {ERROR_FILE_NOT_FOUND, FT_ERR_NOT_FOUND},
+    {ERROR_PATH_NOT_FOUND, FT_ERR_NOT_FOUND},
+#if defined(ERROR_FILENAME_EXCED_RANGE)
+    {ERROR_FILENAME_EXCED_RANGE, FT_ERR_OUT_OF_RANGE},
+#endif
+    {EACCES, FT_ERR_INVALID_OPERATION},
+    {EPERM, FT_ERR_INVALID_OPERATION},
+    {EBADF, FT_ERR_INVALID_HANDLE},
+    {ERROR_ACCESS_DENIED, FT_ERR_INVALID_OPERATION},
+    {ERROR_SHARING_VIOLATION, FT_ERR_INVALID_OPERATION},
+    {ERROR_LOCK_VIOLATION, FT_ERR_INVALID_OPERATION},
+    {ERROR_ALREADY_EXISTS, FT_ERR_ALREADY_EXISTS},
+    {ERROR_FILE_EXISTS, FT_ERR_ALREADY_EXISTS},
+    {ERROR_INVALID_HANDLE, FT_ERR_INVALID_HANDLE},
+    {ERROR_NOT_ENOUGH_MEMORY, FT_ERR_NO_MEMORY},
+    {ERROR_OUTOFMEMORY, FT_ERR_NO_MEMORY},
+    {ERROR_DISK_FULL, FT_ERR_FULL},
+#if defined(ERROR_TOO_MANY_OPEN_FILES)
+    {ERROR_TOO_MANY_OPEN_FILES, FT_ERR_FULL},
+#endif
+    {ERROR_HANDLE_EOF, FT_ERR_END_OF_FILE},
+    {ERROR_INVALID_PARAMETER, FT_ERR_INVALID_ARGUMENT},
+    {ERROR_INVALID_NAME, FT_ERR_INVALID_PATH},
+#if defined(ERROR_BAD_PATHNAME)
+    {ERROR_BAD_PATHNAME, FT_ERR_INVALID_PATH},
+#endif
+    {EINVAL, FT_ERR_INVALID_OPERATION},
+    {ERROR_BROKEN_PIPE, FT_ERR_IO},
+};
+
+template <int32_t First, int32_t Last>
+static constexpr std::array<int32_t, Last - First + 1> cmp_make_windows_error_table()
+{
+    std::array<int32_t, Last - First + 1> table{};
+    ft_size_t index = 0;
+    while (index < sizeof(WINDOWS_ERROR_MAPPINGS) / sizeof(WINDOWS_ERROR_MAPPINGS[0]))
+    {
+        const cmp_windows_error_mapping &mapping = WINDOWS_ERROR_MAPPINGS[index];
+        if (mapping.native_error >= First && mapping.native_error <= Last)
+        {
+            const ft_size_t offset = static_cast<ft_size_t>(mapping.native_error - First);
+            // CRT and Win32 error values can overlap. Preserve the first mapping.
+            if (table[offset] == FT_ERR_SUCCESS)
+                table[offset] = mapping.libft_error;
+        }
+        ++index;
+    }
+    return (table);
+}
+
 static int32_t cmp_translate_windows_error(int32_t error_code)
 {
-    if (error_code == WSAEINTR)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAEWOULDBLOCK)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAEINPROGRESS)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAEALREADY)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAENOTSOCK)
-        return (FT_ERR_INVALID_HANDLE);
-    if (error_code == WSAEDESTADDRREQ)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == WSAEMSGSIZE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == WSAEPROTOTYPE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == WSAENOPROTOOPT)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == WSAEPROTONOSUPPORT)
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    if (error_code == WSAESOCKTNOSUPPORT)
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    if (error_code == WSAEOPNOTSUPP)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == WSAEPFNOSUPPORT)
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    if (error_code == WSAEAFNOSUPPORT)
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    if (error_code == WSAEADDRINUSE)
-        return (FT_ERR_ALREADY_EXISTS);
-    if (error_code == WSAEADDRNOTAVAIL)
-        return (FT_ERR_NOT_FOUND);
-    if (error_code == WSAENETDOWN)
-        return (FT_ERR_IO);
-    if (error_code == WSAENETUNREACH)
-        return (FT_ERR_IO);
-    if (error_code == WSAENETRESET)
-        return (FT_ERR_IO);
-    if (error_code == WSAECONNABORTED)
-        return (FT_ERR_IO);
-    if (error_code == WSAECONNRESET)
-        return (FT_ERR_IO);
-    if (error_code == WSAENOBUFS)
-        return (FT_ERR_NO_MEMORY);
-    if (error_code == WSAEISCONN)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAENOTCONN)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAESHUTDOWN)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAETOOMANYREFS)
-        return (FT_ERR_FULL);
-    if (error_code == WSAETIMEDOUT)
-        return (FT_ERR_IO);
-    if (error_code == WSAECONNREFUSED)
-        return (FT_ERR_SOCKET_CONNECT_FAILED);
-    if (error_code == WSAEHOSTDOWN)
-        return (FT_ERR_IO);
-    if (error_code == WSAEHOSTUNREACH)
-        return (FT_ERR_IO);
-    if (error_code == WSAEPROCLIM)
-        return (FT_ERR_FULL);
-    if (error_code == WSAEUSERS)
-        return (FT_ERR_FULL);
-    if (error_code == WSAEDQUOT)
-        return (FT_ERR_FULL);
-    if (error_code == WSAESTALE)
-        return (FT_ERR_IO);
-    if (error_code == WSAEREMOTE)
-        return (FT_ERR_IO);
-    if (error_code == WSAEDISCON)
-        return (FT_ERR_IO);
-    if (error_code == WSASYSNOTREADY)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAVERNOTSUPPORTED)
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    if (error_code == WSANOTINITIALISED)
-        return (FT_ERR_INVALID_STATE);
-    if (error_code == WSAHOST_NOT_FOUND)
-        return (FT_ERR_SOCKET_RESOLVE_NO_NAME);
-    if (error_code == WSATRY_AGAIN)
-        return (FT_ERR_SOCKET_RESOLVE_AGAIN);
-    if (error_code == WSANO_RECOVERY)
-        return (FT_ERR_SOCKET_RESOLVE_FAIL);
-    if (error_code == WSANO_DATA)
-        return (FT_ERR_SOCKET_RESOLVE_NO_NAME);
-    if (error_code == ERROR_FILE_NOT_FOUND)
-        return (FT_ERR_IO);
-    if (error_code == ERROR_PATH_NOT_FOUND)
-        return (FT_ERR_IO);
-    if (error_code == EACCES)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == EPERM)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == EBADF)
-        return (FT_ERR_INVALID_HANDLE);
-    if (error_code == ERROR_ACCESS_DENIED)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == ERROR_SHARING_VIOLATION)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == ERROR_LOCK_VIOLATION)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == ERROR_ALREADY_EXISTS)
-        return (FT_ERR_ALREADY_EXISTS);
-    if (error_code == ERROR_FILE_EXISTS)
-        return (FT_ERR_ALREADY_EXISTS);
-    if (error_code == ERROR_INVALID_HANDLE)
-        return (FT_ERR_INVALID_HANDLE);
-    if (error_code == ERROR_NOT_ENOUGH_MEMORY)
-        return (FT_ERR_NO_MEMORY);
-    if (error_code == ERROR_OUTOFMEMORY)
-        return (FT_ERR_NO_MEMORY);
-    if (error_code == ERROR_DISK_FULL)
-        return (FT_ERR_FULL);
-    if (error_code == ERROR_HANDLE_EOF)
-        return (FT_ERR_END_OF_FILE);
-    if (error_code == ERROR_INVALID_PARAMETER)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == ERROR_INVALID_NAME)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (error_code == EINVAL)
-        return (FT_ERR_INVALID_OPERATION);
-    if (error_code == ERROR_BROKEN_PIPE)
-        return (FT_ERR_IO);
-    return (static_cast<int32_t>(error_code) + ERRNO_OFFSET);
+    constexpr int32_t WIN32_TABLE_MAX = 255;
+    static constexpr auto WIN32_ERRORS = cmp_make_windows_error_table<0, WIN32_TABLE_MAX>();
+    static constexpr auto SOCKET_ERRORS = cmp_make_windows_error_table<WSAEINTR, WSAEDISCON>();
+    static constexpr auto RESOLVER_ERRORS = cmp_make_windows_error_table<WSAHOST_NOT_FOUND, WSANO_DATA>();
+
+    int32_t translated = FT_ERR_SUCCESS;
+    if (error_code >= 0 && error_code <= WIN32_TABLE_MAX)
+        translated = WIN32_ERRORS[static_cast<ft_size_t>(error_code)];
+    else if (error_code >= WSAEINTR && error_code <= WSAEDISCON)
+        translated = SOCKET_ERRORS[static_cast<ft_size_t>(error_code - WSAEINTR)];
+    else if (error_code >= WSAHOST_NOT_FOUND && error_code <= WSANO_DATA)
+        translated = RESOLVER_ERRORS[static_cast<ft_size_t>(error_code - WSAHOST_NOT_FOUND)];
+#if defined(ERROR_NO_SYSTEM_RESOURCES)
+    else if (error_code == ERROR_NO_SYSTEM_RESOURCES)
+        translated = FT_ERR_FULL;
+#endif
+    if (translated != FT_ERR_SUCCESS)
+        return (translated);
+    if (error_code > FT_INT32_MAX - ERRNO_OFFSET)
+        return (FT_ERR_OUT_OF_RANGE);
+    return (error_code + ERRNO_OFFSET);
 }
 #else
 static int32_t cmp_translate_posix_error(int32_t error_code)
@@ -241,7 +245,7 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
     if (error_code == ENOENT)
         return (FT_ERR_NOT_FOUND);
     if (error_code == ENOTDIR)
-        return (FT_ERR_IO);
+        return (FT_ERR_INVALID_OPERATION);
     if (error_code == EISDIR)
         return (FT_ERR_INVALID_OPERATION);
     if (error_code == EACCES)
@@ -286,8 +290,6 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
     if (error_code == ENXIO)
         return (FT_ERR_NOT_FOUND);
 #endif
-    if (error_code == ENOTDIR)
-        return (FT_ERR_IO);
     if (error_code == ENOENT)
         return (FT_ERR_NOT_FOUND);
 #if defined(ENFILE)
@@ -342,7 +344,7 @@ static int32_t cmp_translate_posix_error(int32_t error_code)
         return (FT_ERR_UNSUPPORTED_TYPE);
 #if defined(ENAMETOOLONG)
     if (error_code == ENAMETOOLONG)
-        return (FT_ERR_INVALID_ARGUMENT);
+        return (FT_ERR_OUT_OF_RANGE);
 #endif
 #if defined(ELOOP)
     if (error_code == ELOOP)
@@ -533,6 +535,7 @@ int32_t cmp_decode_errno_offset_error(int32_t error_code)
     return (normalized_error);
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_unsetenv_result(int32_t result, int32_t errno_value)
 {
     global_force_unsetenv_enabled = 1;
@@ -664,6 +667,7 @@ void cmp_clear_force_total_memory_result(void)
 #endif
     return ;
 }
+#endif
 
 int32_t cmp_secure_memzero(void *buffer, ft_size_t length)
 {
@@ -755,6 +759,7 @@ int32_t cmp_unsetenv(const char *name)
         return (FT_ERR_INVALID_ARGUMENT);
     }
 #if defined(_WIN32) || defined(_WIN64)
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_unsetenv_enabled != 0)
     {
         errno = global_force_unsetenv_errno_value;
@@ -762,6 +767,7 @@ int32_t cmp_unsetenv(const char *name)
         WSASetLastError(global_force_unsetenv_socket_error);
         return (global_force_unsetenv_result);
     }
+#endif
     errno = 0;
     SetLastError(0);
     WSASetLastError(0);
@@ -774,11 +780,13 @@ int32_t cmp_unsetenv(const char *name)
     }
     return (FT_ERR_SUCCESS);
 #else
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_unsetenv_enabled != 0)
     {
         errno = global_force_unsetenv_errno_value;
         return (global_force_unsetenv_result);
     }
+#endif
     errno = 0;
     int32_t result = unsetenv(name);
     if (result != 0)
@@ -797,6 +805,7 @@ int32_t cmp_putenv(char *string)
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_putenv_enabled != 0)
     {
         errno = global_force_putenv_errno_value;
@@ -809,6 +818,7 @@ int32_t cmp_putenv(char *string)
             return (cmp_environment_map_last_error());
         return (FT_ERR_SUCCESS);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     SetLastError(0);
     WSASetLastError(0);
@@ -957,12 +967,14 @@ char *cmp_get_home_directory(void)
 
 uint32_t cmp_get_cpu_count(void)
 {
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_cpu_count_enabled != 0)
     {
         if (global_force_cpu_count_should_fail != 0)
             return (0);
         return (global_force_cpu_count_value);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     SYSTEM_INFO system_info;
 
@@ -996,6 +1008,7 @@ int32_t cmp_get_total_memory(uint64_t *total_memory)
     {
         return (FT_ERR_INVALID_ARGUMENT);
     }
+#if defined(LIBFT_TEST_BUILD)
     if (global_force_total_memory_enabled != 0)
     {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1023,6 +1036,7 @@ int32_t cmp_get_total_memory(uint64_t *total_memory)
         *total_memory = global_force_total_memory_value;
         return (FT_ERR_SUCCESS);
     }
+#endif
 #if defined(_WIN32) || defined(_WIN64)
     MEMORYSTATUSEX memory_status;
 

@@ -27,7 +27,7 @@ static void file_copy_move_make_template(char *path_buffer)
     const char *template_value;
     ft_size_t index;
 
-    template_value = "/tmp/libft_file_copy_move_XXXXXX";
+    template_value = "build_logs/libft_file_copy_move_XXXXXX";
     index = 0;
     while (template_value[index] != '\0')
     {

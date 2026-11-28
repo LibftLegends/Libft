@@ -1,5 +1,5 @@
 #include "../Basic/basic.hpp"
-#include "json.hpp"
+#include "json_internal.hpp"
 #include "document.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -97,12 +97,10 @@ static char *json_read_file_content(const char *filename)
     }
     file_size = static_cast<ft_size_t>(file_size_long);
     content = static_cast<char *>(cma_malloc(file_size + 1));
-    io_error = json_reader_get_error();
     if (content == ft_nullptr)
     {
         su_fclose(file_stream);
-        json_reader_get_error();
-        json_reader_set_error(io_error);
+        json_reader_set_error(FT_ERR_NO_MEMORY);
         return (ft_nullptr);
     }
     read_count = su_fread(content, 1, file_size, file_stream);
@@ -170,13 +168,14 @@ static int32_t json_reader_ensure_capacity(char **buffer_ptr, ft_size_t &capacit
         }
         new_capacity = next_capacity;
     }
-    char *resized_buffer = static_cast<char *>(cma_realloc(*buffer_ptr, new_capacity));
-    int32_t realloc_error = json_reader_get_error();
+    char *resized_buffer;
+    if (*buffer_ptr == ft_nullptr)
+        resized_buffer = static_cast<char *>(cma_malloc(new_capacity));
+    else
+        resized_buffer = static_cast<char *>(cma_realloc(*buffer_ptr, new_capacity));
     if (!resized_buffer)
     {
-        if (realloc_error == FT_ERR_SUCCESS)
-            realloc_error = FT_ERR_NO_MEMORY;
-        json_reader_set_error(realloc_error);
+        json_reader_set_error(FT_ERR_NO_MEMORY);
         return (FT_ERR_INVALID_STATE);
     }
     *buffer_ptr = resized_buffer;
@@ -443,90 +442,76 @@ static int32_t json_reader_append_escape(const char *json_string,
     return (FT_ERR_SUCCESS);
 }
 
-static char *parse_string(const char *json_string, ft_size_t &index)
+static char *json_reader_copy_span(const char *start, ft_size_t length)
 {
-    ft_size_t length = ft_strlen_size_t(json_string);
+    char *result = static_cast<char *>(cma_malloc(length + 1U));
+    if (result == ft_nullptr)
+    {
+        json_reader_set_error(FT_ERR_NO_MEMORY);
+        return (ft_nullptr);
+    }
+    ft_memcpy(result, start, length);
+    result[length] = '\0';
+    json_reader_set_error(FT_ERR_SUCCESS);
+    return (result);
+}
+
+static char *parse_string(const char *json_string, ft_size_t length, ft_size_t &index)
+{
     if (index >= length || json_string[index] != '"')
     {
         json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
         return (ft_nullptr);
     }
-    index++;
-    ft_size_t capacity = 32;
-    ft_size_t out_length = 0;
-    char *result = static_cast<char *>(cma_malloc(capacity));
-    int32_t allocation_error = json_reader_get_error();
-    if (!result)
-    {
-        json_reader_set_error(allocation_error);
-        return (ft_nullptr);
-    }
-    ft_bool closed = FT_FALSE;
+    ++index;
+    ft_size_t capacity = 0U;
+    ft_size_t out_length = 0U;
+    char *result = ft_nullptr;
     while (index < length)
     {
-        char current_char = json_string[index];
-        index++;
-        if (current_char == '"')
+        const ft_size_t start = index;
+        while (index < length)
         {
-            closed = FT_TRUE;
+            const unsigned char character = static_cast<unsigned char>(json_string[index]);
+            if (character == '"' || character == '\\' || character < 0x20U)
+                break ;
+            ++index;
+        }
+        const ft_size_t span = index - start;
+        if (index == length || static_cast<unsigned char>(json_string[index]) < 0x20U)
             break ;
-        }
-        if (current_char == '\\')
+        if (json_string[index] == '"' && result == ft_nullptr)
         {
-            if (json_reader_append_escape(json_string,
-                    length,
-                    index,
-                    &result,
-                    capacity,
-                    out_length) != FT_ERR_SUCCESS)
-            {
-                int32_t escape_error = json_reader_get_error();
-                cma_free(result);
-                json_reader_set_error(escape_error);
-                return (ft_nullptr);
-            }
-            json_reader_get_error();
-            continue;
+            ++index;
+            return (json_reader_copy_span(json_string + start, span));
         }
-        if (static_cast<unsigned char>(current_char) < 0x20)
+        if (json_reader_ensure_capacity(&result, capacity, out_length + span) != FT_ERR_SUCCESS)
         {
             cma_free(result);
-            json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
             return (ft_nullptr);
         }
-        if (json_reader_ensure_capacity(&result, capacity, out_length + 1) != FT_ERR_SUCCESS)
+        ft_memcpy(result + out_length, json_string + start, span);
+        out_length += span;
+        if (json_string[index++] == '"')
         {
-            int32_t capacity_error = json_reader_get_error();
+            result[out_length] = '\0';
+            json_reader_set_error(FT_ERR_SUCCESS);
+            return (result);
+        }
+        if (json_reader_append_escape(json_string, length, index, &result, capacity,
+                out_length) != FT_ERR_SUCCESS)
+        {
             cma_free(result);
-            json_reader_set_error(capacity_error);
             return (ft_nullptr);
         }
-        json_reader_get_error();
-        result[out_length] = current_char;
-        out_length++;
     }
-    if (!closed)
-    {
-        cma_free(result);
-        json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
-    if (json_reader_ensure_capacity(&result, capacity, out_length + 1) != FT_ERR_SUCCESS)
-    {
-        int32_t capacity_error = json_reader_get_error();
-        cma_free(result);
-        json_reader_set_error(capacity_error);
-        return (ft_nullptr);
-    }
-    json_reader_get_error();
-    result[out_length] = '\0';
-    json_reader_set_error(FT_ERR_SUCCESS);
-    return (result);
+    cma_free(result);
+    json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
+    return (ft_nullptr);
 }
 
-static char *parse_number(const char *json_string, ft_size_t &index)
+static char *parse_number(const char *json_string, ft_size_t length, ft_size_t &index)
 {
-    ft_size_t length = ft_strlen_size_t(json_string);
     ft_size_t start_index = index;
     if (index < length && (json_string[index] == '-' || json_string[index] == '+'))
         index++;
@@ -580,86 +565,38 @@ static char *parse_number(const char *json_string, ft_size_t &index)
         json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
         return (ft_nullptr);
     }
-    char *number = adv_substr(json_string,
-                               static_cast<uint32_t>(start_index),
-                               index - start_index);
-    int32_t substr_error = json_reader_get_error();
-    if (!number)
-    {
-        json_reader_set_error(substr_error);
-        return (ft_nullptr);
-    }
-    json_reader_set_error(FT_ERR_SUCCESS);
-    return (number);
+    return (json_reader_copy_span(json_string + start_index, index - start_index));
 }
 
-static char *parse_value(const char *json_string, ft_size_t &index)
+static char *parse_value(const char *json_string, ft_size_t length, ft_size_t &index)
 {
     skip_whitespace(json_string, index);
-    ft_size_t length = ft_strlen_size_t(json_string);
     if (index >= length)
     {
         json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
         return (ft_nullptr);
     }
     if (json_string[index] == '"')
-    {
-        char *value = parse_string(json_string, index);
-        int32_t string_error = json_reader_get_error();
-        if (!value)
-        {
-            json_reader_set_error(string_error);
-            return (ft_nullptr);
-        }
-        json_reader_set_error(FT_ERR_SUCCESS);
-        return (value);
-    }
+        return (parse_string(json_string, length, index));
     if (length - index >= 4 && ft_strncmp(json_string + index, "true", 4) == FT_ERR_SUCCESS)
     {
-        index += 4;
-        char *value = adv_strdup("true");
-        int32_t string_error = json_reader_get_error();
-        if (!value)
-        {
-            json_reader_set_error(string_error);
-            return (ft_nullptr);
-        }
-        json_reader_set_error(FT_ERR_SUCCESS);
-        return (value);
+        index += 4U;
+        return (json_reader_copy_span("true", 4U));
     }
     if (length - index >= 5 && ft_strncmp(json_string + index, "false", 5) == FT_ERR_SUCCESS)
     {
-        index += 5;
-        char *value = adv_strdup("false");
-        int32_t string_error = json_reader_get_error();
-        if (!value)
-        {
-            json_reader_set_error(string_error);
-            return (ft_nullptr);
-        }
-        json_reader_set_error(FT_ERR_SUCCESS);
-        return (value);
+        index += 5U;
+        return (json_reader_copy_span("false", 5U));
     }
     if (ft_isdigit(static_cast<unsigned char>(json_string[index]))
         || json_string[index] == '-' || json_string[index] == '+')
-    {
-        char *value = parse_number(json_string, index);
-        int32_t number_error = json_reader_get_error();
-        if (!value)
-        {
-            json_reader_set_error(number_error);
-            return (ft_nullptr);
-        }
-        json_reader_set_error(FT_ERR_SUCCESS);
-        return (value);
-    }
+        return (parse_number(json_string, length, index));
     json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
     return (ft_nullptr);
 }
 
-static json_item *parse_items(const char *json_string, ft_size_t &index)
+static json_item *parse_items(const char *json_string, ft_size_t length, ft_size_t &index)
 {
-    ft_size_t length = ft_strlen_size_t(json_string);
     json_item *head = ft_nullptr;
     json_item *tail = ft_nullptr;
     skip_whitespace(json_string, index);
@@ -679,7 +616,7 @@ static json_item *parse_items(const char *json_string, ft_size_t &index)
             object_closed = FT_TRUE;
             break ;
         }
-        char *key = parse_string(json_string, index);
+        char *key = parse_string(json_string, length, index);
         int32_t key_error = json_reader_get_error();
         if (!key)
         {
@@ -696,8 +633,7 @@ static json_item *parse_items(const char *json_string, ft_size_t &index)
             return (ft_nullptr);
         }
         index++;
-        skip_whitespace(json_string, index);
-        char *value = parse_value(json_string, index);
+        char *value = parse_value(json_string, length, index);
         int32_t value_error = json_reader_get_error();
         if (!value)
         {
@@ -706,14 +642,13 @@ static json_item *parse_items(const char *json_string, ft_size_t &index)
             json_reader_set_error(value_error);
             return (ft_nullptr);
         }
-        json_item *item = json_create_item(key, value);
-        int32_t item_error = json_reader_get_error();
-        cma_free(value);
-        cma_free(key);
+        json_item *item = json_create_item_owned(key, value);
         if (!item)
         {
+            cma_free(value);
+            cma_free(key);
             json_free_items(head);
-            json_reader_set_error(item_error);
+            json_reader_set_error(FT_ERR_NO_MEMORY);
             return (ft_nullptr);
         }
         if (!head)
@@ -742,107 +677,12 @@ static json_item *parse_items(const char *json_string, ft_size_t &index)
 
 json_group *json_read_from_file(const char *filename)
 {
-    char *content;
-    ft_size_t index;
-    ft_size_t length;
-    json_group *head;
-    json_group *tail;
-    ft_bool object_closed;
-
-    content = json_read_file_content(filename);
-    int32_t content_error = json_reader_get_error();
+    char *content = json_read_file_content(filename);
     if (content == ft_nullptr)
-    {
-        json_reader_set_error(content_error);
         return (ft_nullptr);
-    }
-    index = 0;
-    skip_whitespace(content, index);
-    length = ft_strlen_size_t(content);
-    if (index >= length || content[index] != '{')
-    {
-        cma_free(content);
-        json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
-    index++;
-    head = ft_nullptr;
-    tail = ft_nullptr;
-    object_closed = FT_FALSE;
-    while (index < length)
-    {
-        skip_whitespace(content, index);
-        if (index < length && content[index] == '}')
-        {
-            index++;
-            object_closed = FT_TRUE;
-            break ;
-        }
-        char *group_name = parse_string(content, index);
-        int32_t name_error = json_reader_get_error();
-        if (!group_name)
-        {
-            json_free_groups(head);
-            cma_free(content);
-            json_reader_set_error(name_error);
-            return (ft_nullptr);
-        }
-        skip_whitespace(content, index);
-        if (index >= length || content[index] != ':')
-        {
-            cma_free(group_name);
-            json_free_groups(head);
-            cma_free(content);
-            json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
-            return (ft_nullptr);
-        }
-        index++;
-        json_item *items = parse_items(content, index);
-        int32_t items_error = json_reader_get_error();
-        if (items_error != FT_ERR_SUCCESS)
-        {
-            cma_free(group_name);
-            json_free_groups(head);
-            cma_free(content);
-            json_reader_set_error(items_error);
-            return (ft_nullptr);
-        }
-        json_group *group = json_create_json_group(group_name);
-        int32_t group_error = json_reader_get_error();
-        cma_free(group_name);
-        if (!group)
-        {
-            json_free_items(items);
-            json_free_groups(head);
-            cma_free(content);
-            json_reader_set_error(group_error);
-            return (ft_nullptr);
-        }
-        group->items = items;
-        if (!head)
-            head = tail = group;
-        else
-        {
-            tail->next = group;
-            tail = group;
-        }
-        skip_whitespace(content, index);
-        if (index < length && content[index] == ',')
-        {
-            index++;
-            continue;
-        }
-    }
-    if (!object_closed)
-    {
-        json_free_groups(head);
-        cma_free(content);
-        json_reader_set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
+    json_group *result = json_read_from_string(content);
     cma_free(content);
-    json_reader_set_error(FT_ERR_SUCCESS);
-    return (head);
+    return (result);
 }
 
 json_group *json_read_from_backend(ft_document_source &source)
@@ -900,7 +740,7 @@ json_group *json_read_from_string(const char *content)
             object_closed = FT_TRUE;
             break ;
         }
-        char *group_name = parse_string(content, index);
+        char *group_name = parse_string(content, length, index);
         int32_t name_error = json_reader_get_error();
         if (!group_name)
         {
@@ -919,7 +759,7 @@ json_group *json_read_from_string(const char *content)
             return (ft_nullptr);
         }
         index++;
-        json_item *items = parse_items(content, index);
+        json_item *items = parse_items(content, length, index);
         int32_t items_error = json_reader_get_error();
         if (items_error != FT_ERR_SUCCESS)
         {
@@ -928,16 +768,13 @@ json_group *json_read_from_string(const char *content)
             json_reader_set_error(items_error);
             return (ft_nullptr);
         }
-        json_group *group = json_create_json_group(group_name);
-        int32_t group_error = json_reader_get_error();
-        cma_free(group_name);
+        json_group *group = json_create_group_owned(group_name);
         if (!group)
         {
-            if (group_error == FT_ERR_SUCCESS)
-                group_error = FT_ERR_INVALID_ARGUMENT;
+            cma_free(group_name);
             json_free_items(items);
             json_free_groups(head);
-            json_reader_set_error(group_error);
+            json_reader_set_error(FT_ERR_NO_MEMORY);
             return (ft_nullptr);
         }
         group->items = items;

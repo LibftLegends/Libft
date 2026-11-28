@@ -58,21 +58,33 @@ int32_t ft_utf8_transform(const char *input, ft_size_t input_length,
     ft_size_t output_index = 0;
     while (input_index < effective_length)
     {
-        ft_size_t working_index = input_index;
-        uint32_t decoded_code_point = 0;
-        ft_size_t sequence_length = 0;
-        error_code = ft_utf8_next(input, effective_length, &working_index,
-                &decoded_code_point, &sequence_length);
-        if (error_code != FT_ERR_SUCCESS)
-            return (error_code);
-        uint32_t mapped_code_point = case_hook(decoded_code_point);
+        uint32_t decoded_code_point = static_cast<uint8_t>(input[input_index]);
+        if (decoded_code_point < 0x80U)
+            ++input_index;
+        else
+        {
+            error_code = ft_utf8_next(input, effective_length, &input_index,
+                    &decoded_code_point, ft_nullptr);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+        }
+        const uint32_t mapped_code_point = case_hook(decoded_code_point);
+        if (mapped_code_point < 0x80U)
+        {
+            if (output_index >= output_buffer_size
+                || output_buffer_size - output_index <= 1U)
+                return (FT_ERR_OUT_OF_RANGE);
+            output_buffer[output_index++] = static_cast<char>(mapped_code_point);
+            continue ;
+        }
         char encoded_buffer[5];
         ft_size_t encoded_length = 0;
         error_code = ft_utf8_encode(mapped_code_point, encoded_buffer,
                 sizeof(encoded_buffer), &encoded_length);
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
-        if (output_index + encoded_length >= output_buffer_size)
+        if (output_index >= output_buffer_size
+            || encoded_length >= output_buffer_size - output_index)
             return (FT_ERR_OUT_OF_RANGE);
         ft_size_t copy_index = 0;
         while (copy_index < encoded_length)
@@ -81,7 +93,6 @@ int32_t ft_utf8_transform(const char *input, ft_size_t input_length,
             ++output_index;
             ++copy_index;
         }
-        input_index = working_index;
     }
     if (output_index >= output_buffer_size)
         return (FT_ERR_OUT_OF_RANGE);
@@ -100,6 +111,8 @@ int32_t ft_utf8_transform_alloc(const char *input, char **output_pointer,
     error_code = ft_utf8_count(input, &code_point_count);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
+    if (code_point_count > (FT_SYSTEM_SIZE_MAX - 1U) / 4U)
+        return (FT_ERR_OUT_OF_RANGE);
     ft_size_t allocation_size = code_point_count * 4 + 1;
     char *allocated_buffer = static_cast<char *>(cma_malloc(allocation_size));
     if (!allocated_buffer)
@@ -163,16 +176,9 @@ int32_t ft_utf8_duplicate_grapheme(const char *string, ft_size_t string_length,
     error_code = ft_utf8_next_grapheme(string, string_length, index_pointer, &grapheme_length);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    char *allocated_grapheme = static_cast<char *>(cma_malloc(grapheme_length + 1));
+    char *allocated_grapheme = ft_span_dup(string + start_index, grapheme_length);
     if (!allocated_grapheme)
         return (FT_ERR_NO_MEMORY);
-    ft_size_t copy_index = 0;
-    while (copy_index < grapheme_length)
-    {
-        allocated_grapheme[copy_index] = string[start_index + copy_index];
-        ++copy_index;
-    }
-    allocated_grapheme[grapheme_length] = '\0';
     *grapheme_pointer = allocated_grapheme;
     return (FT_ERR_SUCCESS);
 }

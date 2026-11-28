@@ -10,9 +10,10 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include "swap.hpp"
 #include <cstddef>
 #include <functional>
+#include <memory>
+#include <type_traits>
 #include "move.hpp"
 
 template <typename ElementType, typename Compare = std::less<ElementType> >
@@ -32,6 +33,8 @@ class ft_priority_queue
         ft_bool ensure_capacity(ft_size_t desired);
         void heapify_up(ft_size_t index);
         void heapify_down(ft_size_t index);
+        void rebuild_heap();
+        ft_size_t preferred_child(ft_size_t index, ElementType &value);
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
 
@@ -56,11 +59,19 @@ class ft_priority_queue
         void push(const ElementType& value);
         void push(ElementType&& value);
         ElementType pop();
+        // Callbacks run under the queue lock in heap order and must not throw
+        // or call back into the queue. A true result erases or marks a change.
+        template <typename Predicate>
+        ft_bool erase_if(Predicate predicate);
+        template <typename Update>
+        ft_bool update_elements(Update update);
 
         ElementType& top();
         const ElementType& top() const;
 
         ft_size_t size() const;
+        ft_size_t capacity() const;
+        int32_t reserve(ft_size_t capacity);
         ft_bool empty() const;
 
         void clear();
@@ -84,31 +95,36 @@ ft_bool ft_priority_queue<ElementType, Compare>::ensure_capacity(ft_size_t desir
 {
     ft_size_t new_capacity;
     ElementType* new_data;
-    ft_size_t element_index;
-
-    if (desired <= this->_capacity)
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    if (desired > MAXIMUM_CAPACITY)
     {
-        set_error(FT_ERR_SUCCESS);
-        return (FT_TRUE);
+        this->set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY);
+        return (FT_FALSE);
     }
-    if (this->_capacity == 0)
-        new_capacity = 1;
-    else
-        new_capacity = this->_capacity * 2;
-    while (new_capacity < desired)
-        new_capacity *= 2;
+    new_capacity = desired;
+    if (this->_capacity <= MAXIMUM_CAPACITY / 2U && desired < this->_capacity * 2U)
+        new_capacity = this->_capacity * 2U;
     new_data = static_cast<ElementType*>(cma_malloc(sizeof(ElementType) * new_capacity));
     if (new_data == ft_nullptr)
     {
         set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY);
         return (FT_FALSE);
     }
-    element_index = 0;
-    while (element_index < this->_size)
+    if constexpr (std::is_trivially_move_constructible_v<ElementType>
+        && std::is_trivially_destructible_v<ElementType>)
     {
-        ::construct_at(&new_data[element_index], ft_move(this->_data[element_index]));
-        ::destroy_at(&this->_data[element_index]);
-        element_index += 1;
+        if (this->_size != 0U)
+            std::uninitialized_move_n(this->_data, this->_size, new_data);
+    }
+    else
+    {
+        ft_size_t element_index = 0U;
+        while (element_index < this->_size)
+        {
+            ::construct_at(&new_data[element_index], ft_move(this->_data[element_index]));
+            ::destroy_at(&this->_data[element_index]);
+            ++element_index;
+        }
     }
     if (this->_data != ft_nullptr)
         cma_free(this->_data);
@@ -121,41 +137,72 @@ ft_bool ft_priority_queue<ElementType, Compare>::ensure_capacity(ft_size_t desir
 template <typename ElementType, typename Compare>
 void ft_priority_queue<ElementType, Compare>::heapify_up(ft_size_t index)
 {
-    ft_size_t parent_index;
-
-    while (index > 0)
+    if (index == 0U)
+        return ;
+    ft_size_t parent_index = (index - 1U) / 2U;
+    if (!this->_comp(this->_data[parent_index], this->_data[index]))
+        return ;
+    ElementType value(ft_move(this->_data[index]));
+    while (FT_TRUE)
     {
-        parent_index = (index - 1) / 2;
-        if (!this->_comp(this->_data[parent_index], this->_data[index]))
-            break ;
-        ft_swap(this->_data[parent_index], this->_data[index]);
+        this->_data[index] = ft_move(this->_data[parent_index]);
         index = parent_index;
+        if (index == 0U)
+            break ;
+        parent_index = (index - 1U) / 2U;
+        if (!this->_comp(this->_data[parent_index], value))
+            break ;
     }
+    this->_data[index] = ft_move(value);
     return ;
+}
+
+template <typename ElementType, typename Compare>
+ft_size_t ft_priority_queue<ElementType, Compare>::preferred_child(ft_size_t index,
+    ElementType &value)
+{
+    if (index >= this->_size / 2U)
+        return (index);
+    const ft_size_t left_child_index = index * 2U + 1U;
+    const ft_size_t right_child_index = left_child_index + 1U;
+    ft_size_t preferred_index = index;
+    ElementType *preferred = std::addressof(value);
+    if (this->_comp(value, this->_data[left_child_index]))
+    {
+        preferred_index = left_child_index;
+        preferred = this->_data + left_child_index;
+    }
+    if (right_child_index < this->_size
+        && this->_comp(*preferred, this->_data[right_child_index]))
+        preferred_index = right_child_index;
+    return (preferred_index);
 }
 
 template <typename ElementType, typename Compare>
 void ft_priority_queue<ElementType, Compare>::heapify_down(ft_size_t index)
 {
-    ft_size_t left_child_index;
-    ft_size_t right_child_index;
-    ft_size_t largest_index;
-
-    while (FT_TRUE)
+    ft_size_t child_index = this->preferred_child(index, this->_data[index]);
+    if (child_index == index)
+        return ;
+    ElementType value(ft_move(this->_data[index]));
+    while (child_index != index)
     {
-        left_child_index = index * 2 + 1;
-        right_child_index = left_child_index + 1;
-        largest_index = index;
-        if (left_child_index < this->_size
-            && this->_comp(this->_data[largest_index], this->_data[left_child_index]))
-            largest_index = left_child_index;
-        if (right_child_index < this->_size
-            && this->_comp(this->_data[largest_index], this->_data[right_child_index]))
-            largest_index = right_child_index;
-        if (largest_index == index)
-            break ;
-        ft_swap(this->_data[index], this->_data[largest_index]);
-        index = largest_index;
+        this->_data[index] = ft_move(this->_data[child_index]);
+        index = child_index;
+        child_index = this->preferred_child(index, value);
+    }
+    this->_data[index] = ft_move(value);
+    return ;
+}
+
+template <typename ElementType, typename Compare>
+void ft_priority_queue<ElementType, Compare>::rebuild_heap()
+{
+    ft_size_t parent_count = this->_size / 2U;
+    while (parent_count > 0U)
+    {
+        --parent_count;
+        this->heapify_down(parent_count);
     }
     return ;
 }
@@ -221,6 +268,11 @@ int32_t ft_priority_queue<ElementType, Compare>::initialize()
     this->_capacity = 0;
     this->_size = 0;
     this->_mutex = ft_nullptr;
+    if (this->_configured_initial_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ElementType))
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_PRIORITY_QUEUE_NO_MEMORY));
+    }
     if (this->_configured_initial_capacity > 0)
     {
         this->_data = static_cast<ElementType *>(cma_malloc(sizeof(ElementType)
@@ -395,7 +447,7 @@ void ft_priority_queue<ElementType, Compare>::push(const ElementType& value)
         set_error(lock_error);
         return ;
     }
-    if (!this->ensure_capacity(this->_size + 1))
+    if (this->_size == this->_capacity && !this->ensure_capacity(this->_size + 1U))
     {
         set_error(FT_ERR_NO_MEMORY);
         (void)this->unlock_internal(lock_acquired);
@@ -424,7 +476,7 @@ void ft_priority_queue<ElementType, Compare>::push(ElementType&& value)
         set_error(lock_error);
         return ;
     }
-    if (!this->ensure_capacity(this->_size + 1))
+    if (this->_size == this->_capacity && !this->ensure_capacity(this->_size + 1U))
     {
         set_error(FT_ERR_NO_MEMORY);
         (void)this->unlock_internal(lock_acquired);
@@ -469,6 +521,67 @@ ElementType ft_priority_queue<ElementType, Compare>::pop()
     set_error(FT_ERR_SUCCESS);
     (void)this->unlock_internal(lock_acquired);
     return (value);
+}
+
+template <typename ElementType, typename Compare>
+template <typename Predicate>
+ft_bool ft_priority_queue<ElementType, Compare>::erase_if(Predicate predicate)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_priority_queue::erase_if");
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    ft_size_t source_index = 0U;
+    ft_size_t retained_count = 0U;
+    while (source_index < this->_size)
+    {
+        if (predicate(static_cast<const ElementType &>(this->_data[source_index])))
+            ::destroy_at(&this->_data[source_index]);
+        else
+        {
+            if (retained_count != source_index)
+            {
+                ::construct_at(&this->_data[retained_count], ft_move(this->_data[source_index]));
+                ::destroy_at(&this->_data[source_index]);
+            }
+            ++retained_count;
+        }
+        ++source_index;
+    }
+    const ft_bool erased = retained_count != this->_size;
+    if (erased)
+    {
+        this->_size = retained_count;
+        this->rebuild_heap();
+    }
+    set_error(FT_ERR_SUCCESS);
+    (void)this->unlock_internal(lock_acquired);
+    return (erased);
+}
+
+template <typename ElementType, typename Compare>
+template <typename Update>
+ft_bool ft_priority_queue<ElementType, Compare>::update_elements(Update update)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_priority_queue::update_elements");
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
+        return (FT_FALSE);
+    ft_size_t index = 0U;
+    ft_bool changed = FT_FALSE;
+    while (index < this->_size)
+    {
+        if (update(this->_data[index]))
+            changed = FT_TRUE;
+        ++index;
+    }
+    if (changed)
+        this->rebuild_heap();
+    set_error(FT_ERR_SUCCESS);
+    (void)this->unlock_internal(lock_acquired);
+    return (changed);
 }
 
 template <typename ElementType, typename Compare>
@@ -540,6 +653,37 @@ ft_size_t ft_priority_queue<ElementType, Compare>::size() const
     set_error(FT_ERR_SUCCESS);
     (void)this->unlock_internal(lock_acquired);
     return (current_size);
+}
+
+template <typename ElementType, typename Compare>
+ft_size_t ft_priority_queue<ElementType, Compare>::capacity() const
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_priority_queue::capacity");
+    ft_bool lock_acquired = FT_FALSE;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
+        return (0U);
+    const ft_size_t capacity = this->_capacity;
+    set_error(FT_ERR_SUCCESS);
+    (void)this->unlock_internal(lock_acquired);
+    return (capacity);
+}
+
+template <typename ElementType, typename Compare>
+int32_t ft_priority_queue<ElementType, Compare>::reserve(ft_size_t capacity)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_priority_queue::reserve");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    int32_t result = FT_ERR_SUCCESS;
+    if (capacity > this->_capacity && !this->ensure_capacity(capacity))
+        result = this->get_error();
+    set_error(result);
+    (void)this->unlock_internal(lock_acquired);
+    return (result);
 }
 
 template <typename ElementType, typename Compare>

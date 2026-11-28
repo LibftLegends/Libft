@@ -1,4 +1,5 @@
 #include "document.hpp"
+#include "json_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
@@ -6,6 +7,9 @@
 
 #include <cstdio>
 #include <cstddef>
+#include <cstring>
+#include <memory>
+#include <string_view>
 #include <new>
 
 #include "../CMA/CMA.hpp"
@@ -23,57 +27,71 @@ static void json_document_set_error(int32_t error_code)
     return ;
 }
 
-#define JSON_DOCUMENT_ERROR_RETURN(code, value) \
-    do { json_document_set_error(code); return (value); } while (0)
-
-#define JSON_DOCUMENT_SUCCESS_RETURN(value) \
-    do { json_document_set_error(FT_ERR_SUCCESS); return (value); } while (0)
-
 static int32_t json_document_last_error(void)
 {
     return (g_json_document_last_error);
 }
 
-static char *json_document_unescape_pointer_token(const char *start, ft_size_t length) noexcept
+static constexpr ft_size_t JSON_POINTER_INLINE_TOKEN_BYTES = 128U;
+using json_pointer_storage = std::unique_ptr<char, decltype(&cma_free)>;
+
+static int32_t json_document_pointer_token(const char *&cursor, std::string_view &token,
+    char (&scratch)[JSON_POINTER_INLINE_TOKEN_BYTES], json_pointer_storage &storage) noexcept
 {
-    if (!start && length != FT_ERR_SUCCESS)
-        JSON_DOCUMENT_ERROR_RETURN(FT_ERR_INVALID_ARGUMENT, ft_nullptr);
-    ft_size_t allocation_size = length + 1;
-    char *token = static_cast<char *>(cma_malloc(allocation_size));
-    if (!token)
-        JSON_DOCUMENT_ERROR_RETURN(FT_ERR_NO_MEMORY, ft_nullptr);
-    ft_size_t input_index = 0;
-    ft_size_t output_index = 0;
-    while (input_index < length)
+    if (*cursor != '/')
+        return (FT_ERR_INVALID_ARGUMENT);
+    const char *start = ++cursor;
+    ft_bool escaped = FT_FALSE;
+    while (*cursor != '\0' && *cursor != '/')
     {
-        char current_character = start[input_index];
-        if (current_character == '~')
-        {
-            if (input_index + 1 >= length)
-            {
-                cma_free(token);
-                JSON_DOCUMENT_ERROR_RETURN(FT_ERR_INVALID_ARGUMENT, ft_nullptr);
-            }
-            char escape_character = start[input_index + 1];
-            if (escape_character == '0')
-                token[output_index] = '~';
-            else if (escape_character == '1')
-                token[output_index] = '/';
-            else
-            {
-                cma_free(token);
-                JSON_DOCUMENT_ERROR_RETURN(FT_ERR_INVALID_ARGUMENT, ft_nullptr);
-            }
-            input_index += 2;
-            output_index += 1;
-            continue;
-        }
-        token[output_index] = current_character;
-        output_index += 1;
-        input_index += 1;
+        if (*cursor == '~')
+            escaped = FT_TRUE;
+        ++cursor;
     }
-    token[output_index] = '\0';
-    JSON_DOCUMENT_SUCCESS_RETURN(token);
+    const ft_size_t length = static_cast<ft_size_t>(cursor - start);
+    if (length == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (!escaped)
+    {
+        token = std::string_view(start, length);
+        return (FT_ERR_SUCCESS);
+    }
+
+    char *decoded = scratch;
+    if (length > sizeof(scratch))
+    {
+        storage.reset(static_cast<char *>(cma_malloc(length)));
+        decoded = storage.get();
+        if (decoded == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+    }
+    ft_size_t input = 0U;
+    ft_size_t output = 0U;
+    while (input < length)
+    {
+        char character = start[input++];
+        if (character == '~')
+        {
+            if (input == length)
+                return (FT_ERR_INVALID_ARGUMENT);
+            const char escape = start[input++];
+            if (escape == '0')
+                character = '~';
+            else if (escape == '1')
+                character = '/';
+            else
+                return (FT_ERR_INVALID_ARGUMENT);
+        }
+        decoded[output++] = character;
+    }
+    token = std::string_view(decoded, output);
+    return (FT_ERR_SUCCESS);
+}
+
+static ft_bool json_document_pointer_matches(const char *name, std::string_view token) noexcept
+{
+    return (name != ft_nullptr && std::strncmp(name, token.data(), token.size()) == 0
+        && name[token.size()] == '\0');
 }
 
 static void json_document_finalize_guard() noexcept
@@ -115,23 +133,44 @@ void json_document::clear_unlocked() noexcept
     return ;
 }
 
-char *json_document::write_to_string_unlocked() const noexcept
+char *json_document::write_to_string_unlocked(ft_size_t &length) const noexcept
 {
     char *result;
-
-    result = json_write_to_string(this->_groups);
-    if (!result)
-    {
-        int32_t current_error;
-
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        this->set_error_unlocked(current_error);
-        return (ft_nullptr);
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
+    this->set_error_unlocked(json_write_buffer(this->_groups, result, length));
     return (result);
+}
+
+int32_t json_document_serialize_buffer(const json_document &document,
+    char *&output, ft_size_t &length) noexcept
+{
+    output = ft_nullptr;
+    length = 0U;
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(document._mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        document.set_error(lock_error);
+        return (lock_error);
+    }
+    output = document.write_to_string_unlocked(length);
+    const int32_t error = document._error_code;
+    (void)pt_recursive_mutex_unlock_if_not_null(document._mutex);
+    return (error);
+}
+
+int32_t json_document_replace_groups(json_document &document, json_group *groups) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(document._initialised_state,
+        "json_document_replace_groups");
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(document._mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    json_group *previous = document._groups;
+    document._groups = groups;
+    document.set_error_unlocked(FT_ERR_SUCCESS);
+    (void)pt_recursive_mutex_unlock_if_not_null(document._mutex);
+    if (previous != ft_nullptr)
+        json_free_groups(previous);
+    return (FT_ERR_SUCCESS);
 }
 
 json_document::json_document() noexcept
@@ -164,12 +203,46 @@ int32_t json_document::initialize() noexcept
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t json_document_clone_groups(const json_group *source, json_group *&copy) noexcept
+{
+    json_group **next_group = &copy;
+    while (source != ft_nullptr)
+    {
+        const char *name = source->name;
+        if (name == ft_nullptr)
+            name = "";
+        json_group *group = json_create_json_group(name);
+        if (group == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        *next_group = group;
+        next_group = &group->next;
+        json_item **next_item = &group->items;
+        const json_item *source_item = source->items;
+        while (source_item != ft_nullptr)
+        {
+            const char *key = source_item->key;
+            const char *value = source_item->value;
+            if (key == ft_nullptr)
+                key = "";
+            if (value == ft_nullptr)
+                value = "";
+            json_item *item = json_create_item(key, value);
+            if (item == ft_nullptr)
+                return (FT_ERR_NO_MEMORY);
+            *next_item = item;
+            next_item = &item->next;
+            const int32_t error = json_item_get_error(item);
+            if (error != FT_ERR_SUCCESS)
+                return (error);
+            source_item = source_item->next;
+        }
+        source = source->next;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t json_document::initialize(const json_document &other) noexcept
 {
-    int32_t operation_error;
-    char *serialized_content;
-    int32_t current_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state,
@@ -179,37 +252,45 @@ int32_t json_document::initialize(const json_document &other) noexcept
     }
     if (this == &other)
         return (FT_ERR_SUCCESS);
+    json_group *copy = ft_nullptr;
+    ft_bool enable_mutex = FT_FALSE;
+    const ft_bool source_destroyed = other._initialised_state == FT_CLASS_STATE_DESTROYED;
+    if (!source_destroyed)
+    {
+        const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
+        if (lock_error != FT_ERR_SUCCESS)
+            return (lock_error);
+        enable_mutex = other._mutex != ft_nullptr;
+        const int32_t copy_error = json_document_clone_groups(other._groups, copy);
+        (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
+        if (copy_error != FT_ERR_SUCCESS)
+        {
+            json_free_groups(copy);
+            return (copy_error);
+        }
+    }
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        operation_error = this->destroy();
+        const int32_t operation_error = this->destroy();
         if (operation_error != FT_ERR_SUCCESS)
+        {
+            json_free_groups(copy);
             return (operation_error);
+        }
     }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    if (source_destroyed)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    operation_error = this->initialize();
-    if (operation_error != FT_ERR_SUCCESS)
-        return (operation_error);
-    serialized_content = other.write_to_string();
-    if (serialized_content == ft_nullptr)
-    {
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        (void)this->destroy();
-        return (current_error);
-    }
-    operation_error = this->read_from_string(serialized_content);
-    cma_free(serialized_content);
+    int32_t operation_error = this->initialize();
     if (operation_error != FT_ERR_SUCCESS)
     {
-        (void)this->destroy();
+        json_free_groups(copy);
         return (operation_error);
     }
-    if (other._mutex != ft_nullptr)
+    this->_groups = copy;
+    if (enable_mutex)
     {
         operation_error = this->enable_thread_safety();
         if (operation_error != FT_ERR_SUCCESS)
@@ -607,60 +688,30 @@ int32_t json_document::write_to_file(const char *file_path) const noexcept
 
 int32_t json_document::write_to_backend(ft_document_sink &sink) const noexcept
 {
-    int32_t lock_error;
     char *serialized_content;
     ft_size_t serialized_length;
-    int32_t write_result;
-    int32_t current_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
+    const int32_t build_error = json_document_serialize_buffer(*this,
+        serialized_content, serialized_length);
+    if (build_error != FT_ERR_SUCCESS)
+        return (build_error);
+    const int32_t write_error = sink.write_all(serialized_content, serialized_length);
+    cma_free(serialized_content);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
         this->set_error(lock_error);
-        json_document_finalize_guard();
         return (lock_error);
     }
-    serialized_content = this->write_to_string_unlocked();
-    if (!serialized_content)
-    {
-        current_error = this->_error_code;
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        json_document_finalize_guard();
-        return (current_error);
-    }
-    serialized_length = ft_strlen(serialized_content);
-    write_result = sink.write_all(serialized_content, serialized_length);
-    cma_free(serialized_content);
-    if (write_result != FT_ERR_SUCCESS)
-    {
-        this->set_error_unlocked(write_result);
-        json_document_finalize_guard();
-        return (write_result);
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
-    json_document_finalize_guard();
-    return (FT_ERR_SUCCESS);
+    this->set_error_unlocked(write_error);
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (write_error);
 }
 
 char *json_document::write_to_string() const noexcept
 {
-    int32_t lock_error;
     char *result;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        json_document_finalize_guard();
-        return (ft_nullptr);
-    }
-    result = this->write_to_string_unlocked();
-    json_document_finalize_guard();
+    ft_size_t length;
+    (void)json_document_serialize_buffer(*this, result, length);
     return (result);
 }
 
@@ -877,101 +928,50 @@ json_item *json_document::find_item(json_group *group, const char *key) const no
 
 json_item *json_document::find_item_by_pointer_unlocked(const char *pointer) const noexcept
 {
-    if (!pointer)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
-    if (pointer[0] == '\0' || pointer[0] != '/')
+    if (pointer == ft_nullptr)
     {
         this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
         return (ft_nullptr);
     }
     const char *cursor = pointer;
-    json_group *current_group = ft_nullptr;
-    ft_bool expecting_group = FT_TRUE;
-    while (*cursor)
+    std::string_view token;
+    char scratch[JSON_POINTER_INLINE_TOKEN_BYTES];
+    json_pointer_storage storage(nullptr, cma_free);
+    int32_t error = json_document_pointer_token(cursor, token, scratch, storage);
+    if (error != FT_ERR_SUCCESS)
     {
-        if (*cursor != '/')
-        {
-            this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-            return (ft_nullptr);
-        }
-        cursor += 1;
-        const char *segment_start = cursor;
-        while (*cursor && *cursor != '/')
-            cursor += 1;
-        ft_size_t segment_length = static_cast<ft_size_t>(cursor - segment_start);
-        if (segment_length == FT_ERR_SUCCESS)
-        {
-            this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-            return (ft_nullptr);
-        }
-        char *token = json_document_unescape_pointer_token(segment_start, segment_length);
-        if (!token)
-        {
-            this->set_error_unlocked(json_document_last_error());
-            return (ft_nullptr);
-        }
-        if (expecting_group)
-        {
-            json_group *group_iterator = this->_groups;
-            ft_bool found_group = FT_FALSE;
-            while (group_iterator)
-            {
-                const char *group_name = group_iterator->name;
-                if (!group_name)
-                    group_name = "";
-                if (ft_strcmp(group_name, token) == FT_ERR_SUCCESS)
-                {
-                    found_group = FT_TRUE;
-                    break ;
-                }
-                group_iterator = group_iterator->next;
-            }
-            cma_free(token);
-            if (!found_group)
-            {
-                this->set_error_unlocked(FT_ERR_NOT_FOUND);
-                return (ft_nullptr);
-            }
-            current_group = group_iterator;
-            expecting_group = FT_FALSE;
-            if (*cursor == '\0')
-            {
-                this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-                return (ft_nullptr);
-            }
-            continue;
-        }
-        json_item *item_iterator = ft_nullptr;
-        if (current_group)
-            item_iterator = current_group->items;
-        while (item_iterator)
-        {
-            const char *item_key = item_iterator->key;
-            if (!item_key)
-                item_key = "";
-            if (ft_strcmp(item_key, token) == FT_ERR_SUCCESS)
-                break ;
-            item_iterator = item_iterator->next;
-        }
-        cma_free(token);
-        if (!item_iterator)
-        {
-            this->set_error_unlocked(FT_ERR_NOT_FOUND);
-            return (ft_nullptr);
-        }
-        if (*cursor != '\0')
-        {
-            this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-            return (ft_nullptr);
-        }
-        this->set_error_unlocked(FT_ERR_SUCCESS);
-        return (item_iterator);
+        this->set_error_unlocked(error);
+        return (ft_nullptr);
     }
-    this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-    return (ft_nullptr);
+    json_group *group = this->_groups;
+    while (group != ft_nullptr && !json_document_pointer_matches(group->name, token))
+        group = group->next;
+    if (group == ft_nullptr)
+    {
+        this->set_error_unlocked(FT_ERR_NOT_FOUND);
+        return (ft_nullptr);
+    }
+    error = json_document_pointer_token(cursor, token, scratch, storage);
+    if (error != FT_ERR_SUCCESS)
+    {
+        this->set_error_unlocked(error);
+        return (ft_nullptr);
+    }
+    json_item *item = group->items;
+    while (item != ft_nullptr && !json_document_pointer_matches(item->key, token))
+        item = item->next;
+    if (item == ft_nullptr)
+    {
+        this->set_error_unlocked(FT_ERR_NOT_FOUND);
+        return (ft_nullptr);
+    }
+    if (*cursor != '\0')
+    {
+        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
+        return (ft_nullptr);
+    }
+    this->set_error_unlocked(FT_ERR_SUCCESS);
+    return (item);
 }
 
 json_item *json_document::find_item_by_pointer(const char *pointer) const noexcept
@@ -1019,9 +1019,10 @@ const char *json_document::get_value_by_pointer(const char *pointer) const noexc
         json_document_finalize_guard();
         return (ft_nullptr);
     }
+    const char *value = item->value;
     this->set_error_unlocked(FT_ERR_SUCCESS);
     json_document_finalize_guard();
-    return (item->value);
+    return (value);
 }
 
 void json_document::remove_group(const char *name) noexcept
@@ -1074,175 +1075,47 @@ void json_document::remove_item(json_group *group, const char *key) noexcept
     return ;
 }
 
+template <typename Value>
+void json_document::update_item_checked(json_group *group, const char *key,
+    const Value &value) noexcept
+{
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        this->set_error(lock_error);
+        json_document_finalize_guard();
+        return ;
+    }
+    g_json_document_locked_mutex = this->_mutex;
+    int32_t error = json_update_item_checked(group, key, value);
+    if (error == FT_ERR_NOT_FOUND)
+        error = FT_ERR_INVALID_ARGUMENT;
+    this->set_error_unlocked(error);
+    json_document_finalize_guard();
+    return ;
+}
+
 void json_document::update_item(json_group *group, const char *key, const char *value) noexcept
 {
-    int32_t lock_error;
-    json_item *item;
-    int32_t current_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    if (!group || !key || !value)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    item = json_find_item(group, key);
-    if (!item)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    json_update_item(group, key, value);
-    if (!item->value)
-    {
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        this->set_error_unlocked(current_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
-    json_document_finalize_guard();
+    this->update_item_checked(group, key, value);
     return ;
 }
 
-void json_document::update_item(json_group *group, const char *key, const int32_t value) noexcept
+void json_document::update_item(json_group *group, const char *key, int32_t value) noexcept
 {
-    int32_t lock_error;
-    json_item *item;
-    int32_t current_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    if (!group || !key)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    item = json_find_item(group, key);
-    if (!item)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    json_update_item(group, key, value);
-    if (!item->value)
-    {
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        this->set_error_unlocked(current_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
-    json_document_finalize_guard();
+    this->update_item_checked(group, key, value);
     return ;
 }
 
-void json_document::update_item(json_group *group, const char *key, const ft_bool value) noexcept
+void json_document::update_item(json_group *group, const char *key, ft_bool value) noexcept
 {
-    int32_t lock_error;
-    json_item *item;
-    int32_t current_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    if (!group || !key)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    item = json_find_item(group, key);
-    if (!item)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    json_update_item(group, key, value);
-    if (!item->value)
-    {
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        this->set_error_unlocked(current_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
-    json_document_finalize_guard();
+    this->update_item_checked(group, key, value);
     return ;
 }
 
 void json_document::update_item(json_group *group, const char *key, const ft_big_number &value) noexcept
 {
-    int32_t lock_error;
-    json_item *item;
-    int32_t current_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error == FT_ERR_SUCCESS)
-        g_json_document_locked_mutex = this->_mutex;
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    if (!group || !key)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    item = json_find_item(group, key);
-    if (!item)
-    {
-        this->set_error_unlocked(FT_ERR_INVALID_ARGUMENT);
-        json_document_finalize_guard();
-        return ;
-    }
-    json_update_item(group, key, value);
-    if (!item->value)
-    {
-        current_error = json_document_last_error();
-        if (current_error == FT_ERR_SUCCESS)
-            current_error = FT_ERR_NO_MEMORY;
-        this->set_error_unlocked(current_error);
-        json_document_finalize_guard();
-        return ;
-    }
-    this->set_error_unlocked(FT_ERR_SUCCESS);
-    json_document_finalize_guard();
+    this->update_item_checked(group, key, value);
     return ;
 }
 

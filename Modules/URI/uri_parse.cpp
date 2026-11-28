@@ -1,5 +1,5 @@
 #include "uri_internal.hpp"
-#include "uri.hpp"
+#include "../Basic/limits.hpp"
 
 static ft_bool uri_has_scheme(const char *input, ft_size_t input_size,
     ft_size_t *scheme_end) noexcept
@@ -16,8 +16,6 @@ static ft_bool uri_has_scheme(const char *input, ft_size_t input_size,
             *scheme_end = index;
             return (FT_TRUE);
         }
-        if (input[index] == '/' || input[index] == '?' || input[index] == '#')
-            return (FT_FALSE);
         if (uri_is_scheme_character(input[index]) == FT_FALSE)
             return (FT_FALSE);
         index++;
@@ -25,68 +23,28 @@ static ft_bool uri_has_scheme(const char *input, ft_size_t input_size,
     return (FT_FALSE);
 }
 
-static ft_size_t uri_find_authority_end(const char *input,
-    ft_size_t input_size, ft_size_t start) noexcept
-{
-    ft_size_t index;
-
-    index = start;
-    while (index < input_size)
-    {
-        if (input[index] == '/' || input[index] == '?'
-            || input[index] == '#')
-            return (index);
-        index++;
-    }
-    return (input_size);
-}
-
-static ft_size_t uri_find_last_at(const char *input, ft_size_t start,
-    ft_size_t end) noexcept
-{
-    ft_size_t index;
-    ft_size_t result;
-
-    index = start;
-    result = end;
-    while (index < end)
-    {
-        if (input[index] == '@')
-            result = index;
-        index++;
-    }
-    return (result);
-}
-
-static ft_size_t uri_find_last_colon(const char *input, ft_size_t start,
-    ft_size_t end) noexcept
-{
-    ft_size_t index;
-    ft_size_t result;
-
-    index = start;
-    result = end;
-    while (index < end)
-    {
-        if (input[index] == ':')
-            result = index;
-        index++;
-    }
-    return (result);
-}
-
 static int32_t uri_parse_authority(const char *input, ft_size_t start,
-    ft_size_t end, uri_components *components) noexcept
+    ft_size_t input_size, ft_size_t &end, uri_components *components) noexcept
 {
-    ft_size_t host_start;
-    ft_size_t at_index;
-    ft_size_t colon_index;
+    ft_size_t host_start = start;
+    ft_size_t at_index = input_size;
+    ft_size_t colon_index = input_size;
     ft_size_t bracket_index;
     int32_t error_code;
 
-    host_start = start;
-    at_index = uri_find_last_at(input, start, end);
-    if (at_index != end)
+    end = start;
+    while (end < input_size)
+    {
+        const char character = input[end];
+        if (character == '/' || character == '?' || character == '#')
+            break ;
+        if (character == '@')
+            at_index = end;
+        else if (character == ':')
+            colon_index = end;
+        end += 1U;
+    }
+    if (at_index != input_size)
     {
         error_code = uri_assign_component(&components->userinfo, input, start,
                 at_index);
@@ -114,8 +72,7 @@ static int32_t uri_parse_authority(const char *input, ft_size_t start,
         }
         return (FT_ERR_SUCCESS);
     }
-    colon_index = uri_find_last_colon(input, host_start, end);
-    if (colon_index != end)
+    if (colon_index < end && colon_index >= host_start)
     {
         error_code = uri_assign_component(&components->host, input, host_start,
                 colon_index);
@@ -184,6 +141,8 @@ int32_t uri_parse(const char *input, ft_size_t input_size,
     if (components == ft_nullptr || (input == ft_nullptr && input_size != 0))
         return (uri_set_error(FT_ERR_INVALID_ARGUMENT));
     uri_components_reset(components);
+    if (input_size >= FT_SYSTEM_SIZE_MAX)
+        return (uri_set_error(FT_ERR_OUT_OF_RANGE));
     index = 0;
     if (uri_has_scheme(input, input_size, &scheme_end) == FT_TRUE)
     {
@@ -196,9 +155,8 @@ int32_t uri_parse(const char *input, ft_size_t input_size,
     if (index + 1 < input_size && input[index] == '/'
         && input[index + 1] == '/')
     {
-        authority_end = uri_find_authority_end(input, input_size, index + 2);
-        error_code = uri_parse_authority(input, index + 2, authority_end,
-                components);
+        error_code = uri_parse_authority(input, index + 2U, input_size,
+            authority_end, components);
         if (error_code != FT_ERR_SUCCESS)
         {
             uri_delete_components(components);

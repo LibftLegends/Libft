@@ -155,3 +155,123 @@ FT_TEST(test_dumb_render_shader_reports_invalid_inputs)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, render_window_instance.destroy());
     return (1);
 }
+
+struct test_dumb_shader_replacement
+{
+    ft_render_window *window;
+    uint32_t *replacement;
+    int32_t destroy_result;
+    uint32_t disable_result;
+};
+
+static int32_t test_dumb_replace_shader_target(const ft_render_shader_input *input,
+    ft_render_shader_output *output)
+{
+    test_dumb_shader_replacement &state =
+        *static_cast<test_dumb_shader_replacement *>(input->user_data);
+    state.destroy_result = state.window->destroy();
+    state.disable_result = state.window->disable_thread_safety();
+    state.window->framebuffer().pixels = state.replacement;
+    output->color = 99U;
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_dumb_render_shader_stops_when_callback_replaces_framebuffer)
+{
+    ft_render_window window;
+    uint32_t pixels[] = {1U, 2U};
+    uint32_t replacement[] = {3U, 4U};
+    uint8_t depth_values[] = {5U, 6U};
+    test_dumb_shader_replacement state{&window, replacement, FT_ERR_SUCCESS,
+        FT_ERR_SUCCESS};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.enable_thread_safety());
+    window._framebuffer = {2, 1, pixels};
+    window._depth_buffer = {2, 1, depth_values};
+    window._is_initialised = FT_TRUE;
+    const int32_t result = window.shade(test_dumb_replace_shader_target, &state);
+    window._is_initialised = FT_FALSE;
+    window._depth_buffer.values = ft_nullptr;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.disable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.destroy());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, state.destroy_result);
+    FT_ASSERT_EQ(static_cast<uint32_t>(FT_ERR_INVALID_OPERATION), state.disable_result);
+    FT_ASSERT_EQ(1U, pixels[0]);
+    FT_ASSERT_EQ(3U, replacement[0]);
+    FT_ASSERT_EQ(5U, depth_values[0]);
+    return (1);
+}
+
+static int32_t test_dumb_throwing_shader(const ft_render_shader_input *,
+    ft_render_shader_output *)
+{
+    throw static_cast<int32_t>(FT_ERR_INVALID_STATE);
+}
+
+FT_TEST(test_dumb_render_shader_exception_releases_window_lock)
+{
+    ft_render_window window;
+    uint32_t pixel = 5U;
+    uint8_t depth = 6U;
+    int32_t caught_error = FT_ERR_SUCCESS;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.enable_thread_safety());
+    window._framebuffer = {1, 1, &pixel};
+    window._depth_buffer = {1, 1, &depth};
+    window._is_initialised = FT_TRUE;
+    try
+    {
+        (void)window.shade(test_dumb_throwing_shader, ft_nullptr);
+    }
+    catch (int32_t error)
+    {
+        caught_error = error;
+    }
+    window._is_initialised = FT_FALSE;
+    window._depth_buffer.values = ft_nullptr;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.disable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.destroy());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, caught_error);
+    FT_ASSERT_EQ(5U, pixel);
+    FT_ASSERT_EQ(6U, depth);
+    return (1);
+}
+
+FT_TEST(test_dumb_render_clear_and_put_pixel_preserve_framebuffer_bounds)
+{
+    ft_render_window window;
+    uint32_t pixels[8] = {11U, 0U, 0U, 0U, 0U, 0U, 0U, 22U};
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.initialize());
+    window._framebuffer = {3, 2, pixels + 1};
+    window._is_initialised = FT_TRUE;
+    const int32_t repeated_status = window.clear(0x66666666U);
+    const ft_bool repeated_ok = pixels[1] == 0x66666666U && pixels[6] == 0x66666666U;
+    const int32_t mixed_status = window.clear(0x11223344U);
+    const int32_t put_status = window.put_pixel(2, 1, 7U);
+    const int32_t bounds_status = window.put_pixel(3, 1, 8U);
+    window._framebuffer.pixels = ft_nullptr;
+    const int32_t missing_status = window.clear(0U);
+    window._is_initialised = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, window.destroy());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, repeated_status);
+    FT_ASSERT(repeated_ok);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, mixed_status);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, put_status);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, bounds_status);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, missing_status);
+    FT_ASSERT_EQ(11U, pixels[0]);
+    FT_ASSERT_EQ(22U, pixels[7]);
+    ft_size_t index = 1;
+    while (index < 6)
+    {
+        FT_ASSERT_EQ(0x11223344U, pixels[index]);
+        ++index;
+    }
+    FT_ASSERT_EQ(7U, pixels[6]);
+    return (1);
+}

@@ -21,9 +21,9 @@ kv_store::kv_store() noexcept
     , _encryption_algorithm_name()
     , _encryption_enabled(FT_FALSE)
     , _backend_type(KV_STORE_BACKEND_JSON)
-    , _background_thread_active(FT_FALSE)
-    , _background_stop_requested(FT_FALSE)
-    , _background_interval_seconds(0)
+    , _next_expiration(-1)
+    , _background_interval_milliseconds(0)
+    , _background_wake(ft_nullptr)
     , _background_thread()
     , _background_mutex(ft_nullptr)
     , _mutex(ft_nullptr)
@@ -36,93 +36,135 @@ kv_store::kv_store() noexcept
     , _metrics_total_prune_duration_ms(0)
     , _metrics_last_prune_duration_ms(0)
     , _replication_sinks()
+    , _replication_operation_count(0)
     , _replication_mutex(ft_nullptr)
 {
     return ;
 }
 
+int32_t kv_store::initialize_members() noexcept
+{
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    this->_backend_type = KV_STORE_BACKEND_JSON;
+    int32_t result = this->_file_path.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_key.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_algorithm_name.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = this->_replication_sinks.initialize();
+    if (result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (result);
+}
+
+int32_t kv_store::copy_configuration_locked(const kv_store &other) noexcept
+{
+    int32_t result = this->_file_path.append(other._file_path);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_key.append(other._encryption_key);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_encryption_algorithm_name.append(other._encryption_algorithm_name);
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->_encryption_enabled = other._encryption_enabled;
+        this->_backend_type = other._backend_type;
+    }
+    return (result);
+}
+
 int32_t kv_store::initialize(const kv_store &other) noexcept
 {
-    int32_t destroy_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state,
-            "kv_store::initialize(const kv_store &)",
-            "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
+            "kv_store::initialize(const kv_store &)", "source is uninitialised");
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    return (this->initialize(other._file_path.c_str(), other._encryption_key.c_str(),
-        other._encryption_enabled, other._encryption_algorithm_name.c_str()));
+    result = this->initialize_members();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_bool lock_acquired = FT_FALSE;
+    result = other.lock_store(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->copy_configuration_locked(other);
+    if (result == FT_ERR_SUCCESS)
+    {
+        const ft_size_t count = other._data.size();
+        ft_map<ft_string, kv_store_entry> replacement(count);
+        result = replacement.initialize();
+        const Pair<ft_string, kv_store_entry> *const end = other._data.end();
+        const Pair<ft_string, kv_store_entry> *entry = end;
+        if (count != 0)
+            entry -= count;
+        while (result == FT_ERR_SUCCESS && entry != end)
+        {
+            replacement.insert(entry->key, entry->value);
+            result = replacement.get_error();
+            ++entry;
+        }
+        if (result == FT_ERR_SUCCESS)
+            result = this->_data.move_from(replacement);
+        if (result == FT_ERR_SUCCESS)
+            this->_next_expiration = other._next_expiration;
+    }
+    other.unlock_store_guard(lock_acquired, result);
+    if (result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (result);
 }
 
 int32_t kv_store::initialize(kv_store &&other) noexcept
 {
-    int32_t destroy_error;
-
-    if (this == &other)
-        return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        errno_abort_lifecycle(other._initialised_state,
-            "kv_store::initialize(kv_store &&)", "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_SUCCESS);
-    }
     return (this->move(other));
 }
 
 int32_t kv_store::move(kv_store &other) noexcept
 {
-    int32_t destroy_error;
-    int32_t initialize_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "kv_store::move",
             "source is uninitialised");
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        {
-            initialize_error = this->destroy();
-            if (initialize_error != FT_ERR_SUCCESS)
-                return (initialize_error);
-        }
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    result = this->initialize_members();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_bool lock_acquired = FT_FALSE;
+    result = other.lock_store(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = this->copy_configuration_locked(other);
+    other.unlock_store_guard(lock_acquired, result);
+    if (result == FT_ERR_SUCCESS)
+        result = other.stop_background_compaction();
+    if (result == FT_ERR_SUCCESS)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
+        result = other.lock_store(&lock_acquired);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_data.move_from(other._data);
+        if (result == FT_ERR_SUCCESS)
+            this->_next_expiration = other._next_expiration;
+        other.unlock_store_guard(lock_acquired, result);
     }
-    initialize_error = this->initialize(other._file_path.c_str(),
-        other._encryption_key.c_str(), other._encryption_enabled,
-        other._encryption_algorithm_name.c_str());
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    (void)other.destroy();
-    return (FT_ERR_SUCCESS);
+    if (result == FT_ERR_SUCCESS)
+        result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (result);
 }
 
 int32_t kv_store::enable_thread_safety() noexcept
@@ -192,6 +234,12 @@ int32_t kv_store::disable_thread_safety() noexcept
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::disable_thread_safety");
     error_code = FT_ERR_SUCCESS;
+    if (this->_background_wake != ft_nullptr)
+    {
+        error_code = this->stop_background_compaction();
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+    }
     if (this->_replication_mutex != ft_nullptr)
     {
         destroy_error = this->_replication_mutex->destroy();
@@ -227,325 +275,68 @@ ft_bool kv_store::is_thread_safe() const noexcept
 int32_t kv_store::initialize(const char *file_path, const char *encryption_key,
     ft_bool enable_encryption, const char *encryption_algorithm_name)
 {
-    json_group *group_head;
-    json_group *store_group;
-    json_item *item_pointer;
-    ft_map<ft_string, int64_t> ttl_metadata;
-    ft_size_t ttl_prefix_length;
-    int32_t member_error;
-    ft_bool data_initialised = FT_FALSE;
-    ft_bool file_path_initialised = FT_FALSE;
-    ft_bool encryption_key_initialised = FT_FALSE;
-    ft_bool encryption_algorithm_name_initialised = FT_FALSE;
-    ft_bool replication_sinks_initialised = FT_FALSE;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state, "kv_store::initialize", "initialize called on initialised instance");
-    member_error = this->_data.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(FT_FALSE, FT_FALSE,
-            FT_FALSE, FT_FALSE, member_error));
-    data_initialised = FT_TRUE;
-    member_error = this->_file_path.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(data_initialised, FT_FALSE,
-            FT_FALSE, FT_FALSE, member_error));
-    file_path_initialised = FT_TRUE;
-    member_error = this->_encryption_key.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            FT_FALSE, FT_FALSE, member_error));
-    encryption_key_initialised = FT_TRUE;
-    member_error = this->_encryption_algorithm_name.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, FT_FALSE, member_error));
-    encryption_algorithm_name_initialised = FT_TRUE;
-    member_error = this->_replication_sinks.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, encryption_algorithm_name_initialised, member_error));
-    replication_sinks_initialised = FT_TRUE;
-    member_error = ttl_metadata.initialize();
-    if (member_error != FT_ERR_SUCCESS)
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, encryption_algorithm_name_initialised,
-            replication_sinks_initialised, member_error));
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->_data.clear();
-    this->_file_path.clear();
-    this->_encryption_key.clear();
-    this->_encryption_algorithm_name.clear();
-    this->_backend_type = KV_STORE_BACKEND_JSON;
-    this->_encryption_enabled = FT_FALSE;
-    this->_background_thread_active = FT_FALSE;
-    this->_background_stop_requested = FT_FALSE;
-    this->_background_interval_seconds = 0;
-    this->_metrics_set_operations = 0;
-    this->_metrics_delete_operations = 0;
-    this->_metrics_get_hits = 0;
-    this->_metrics_get_misses = 0;
-    this->_metrics_prune_operations = 0;
-    this->_metrics_pruned_entries = 0;
-    this->_metrics_total_prune_duration_ms = 0;
-    this->_metrics_last_prune_duration_ms = 0;
-    this->_replication_sinks.clear();
     if (file_path == ft_nullptr)
     {
-        this->_file_path.clear();
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, encryption_algorithm_name_initialised,
-            replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (FT_ERR_INVALID_ARGUMENT);
     }
-    this->_file_path = file_path;
-    if (enable_encryption)
-    {
-        if (encryption_key == ft_nullptr)
-        {
-            return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-                encryption_key_initialised, encryption_algorithm_name_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-        }
-        this->_encryption_key = encryption_key;
-        if (this->_encryption_key.size() != 16)
-        {
-            return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-                encryption_key_initialised, encryption_algorithm_name_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-        }
-        if (encryption_algorithm_name == ft_nullptr)
-            this->_encryption_algorithm_name = "aes-128-ecb-base64";
-        else
-            this->_encryption_algorithm_name = encryption_algorithm_name;
-        if (this->_encryption_algorithm_name.size() == 0)
-        {
-            return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-                encryption_key_initialised, encryption_algorithm_name_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-        }
-        this->_encryption_enabled = FT_TRUE;
-    }
-    else
-    {
-        this->_encryption_enabled = FT_FALSE;
-        if (encryption_key != ft_nullptr)
-        {
-            this->_encryption_key = encryption_key;
-        }
-        else
-            this->_encryption_key.clear();
-        if (encryption_algorithm_name == ft_nullptr)
-            this->_encryption_algorithm_name = "aes-128-ecb-base64";
-        else
-            this->_encryption_algorithm_name = encryption_algorithm_name;
-    }
+    int32_t result = this->initialize_members();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->_file_path.assign(file_path, ft_strlen_size_t(file_path));
+    if (result == FT_ERR_SUCCESS)
+        result = this->configure_encryption(encryption_key, enable_encryption, encryption_algorithm_name);
 
-    group_head = json_read_from_file(file_path);
-    if (group_head == ft_nullptr)
+    json_group *group = ft_nullptr;
+    if (result == FT_ERR_SUCCESS)
     {
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, replication_sinks_initialised, FT_ERR_IO));
+        group = json_read_from_file(file_path);
+        if (group == ft_nullptr)
+            result = FT_ERR_IO;
     }
-    store_group = json_find_group(group_head, "kv_store");
-    if (store_group == ft_nullptr)
-    {
-        json_free_groups(group_head);
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-    }
-    ttl_prefix_length = std::strlen(g_kv_store_ttl_prefix);
-    item_pointer = store_group->items;
-    while (item_pointer != ft_nullptr)
-    {
-        if (ft_strcmp(item_pointer->key, "__encryption__") == 0)
-        {
-            if (ft_strcmp(item_pointer->value, this->_encryption_algorithm_name.c_str()) == 0)
-            {
-                if (this->_encryption_enabled == FT_FALSE)
-                {
-                    json_free_groups(group_head);
-                    return (this->cleanup_partial_initialization(data_initialised,
-                        file_path_initialised, encryption_key_initialised,
-                        replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-                }
-            }
-            else
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-            }
-            item_pointer = item_pointer->next;
-            continue;
-        }
-        if (ttl_prefix_length > 0 && std::strncmp(item_pointer->key, g_kv_store_ttl_prefix, ttl_prefix_length) == 0)
-        {
-            ft_string ttl_key;
-            ft_string ttl_suffix;
-            if (ttl_suffix.initialize(item_pointer->key + ttl_prefix_length) != FT_ERR_SUCCESS)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-            ttl_key = ttl_suffix;
-            int64_t expiration_timestamp;
-            if (this->parse_expiration_timestamp(item_pointer->value, expiration_timestamp) != 0)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-            }
-            ttl_metadata.insert(ttl_key, expiration_timestamp);
-            item_pointer = item_pointer->next;
-            continue;
-        }
-        ft_string key_storage;
-        if (key_storage.initialize(item_pointer->key) != FT_ERR_SUCCESS)
-        {
-            json_free_groups(group_head);
-            return (this->cleanup_partial_initialization(data_initialised,
-                file_path_initialised, encryption_key_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-        }
-        kv_store_entry entry;
-        if (entry.initialize() != FT_ERR_SUCCESS)
-        {
-            json_free_groups(group_head);
-            return (this->cleanup_partial_initialization(data_initialised,
-                file_path_initialised, encryption_key_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-        }
-        if (entry.configure_expiration(FT_FALSE, 0) != 0)
-        {
-            json_free_groups(group_head);
-            return (this->cleanup_partial_initialization(data_initialised,
-                file_path_initialised, encryption_key_initialised,
-                replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-        }
-        if (this->_encryption_enabled)
-        {
-            ft_string encoded_value;
-            if (encoded_value.initialize(item_pointer->value) != FT_ERR_SUCCESS)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-            ft_string decrypted_value;
-            if (decrypted_value.initialize() != FT_ERR_SUCCESS)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-            if (this->decrypt_value(encoded_value, decrypted_value) != 0)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_ARGUMENT));
-            }
-            if (entry.set_value(decrypted_value) != 0)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-        }
-        else
-        {
-            ft_string plain_value;
-            if (plain_value.initialize(item_pointer->value) != FT_ERR_SUCCESS)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-            if (entry.set_value(plain_value) != 0)
-            {
-                json_free_groups(group_head);
-                return (this->cleanup_partial_initialization(data_initialised,
-                    file_path_initialised, encryption_key_initialised,
-                    replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-            }
-        }
-        this->_data.insert(key_storage, entry);
-        item_pointer = item_pointer->next;
-    }
-    ft_size_t ttl_size;
-
-    ttl_size = ttl_metadata.size();
-    if (ttl_size > 0)
-    {
-        const Pair<ft_string, int64_t> *ttl_end;
-        const Pair<ft_string, int64_t> *ttl_begin;
-        ft_size_t ttl_index;
-
-        ttl_end = ttl_metadata.end();
-        ttl_begin = ttl_end - static_cast<std::ptrdiff_t>(ttl_size);
-        ttl_index = 0;
-        while (ttl_index < ttl_size)
-        {
-            const Pair<ft_string, int64_t> &ttl_entry = ttl_begin[ttl_index];
-            Pair<ft_string, kv_store_entry> *data_pair;
-
-            data_pair = this->_data.find(ttl_entry.key);
-            if (data_pair != ft_nullptr)
-            {
-                if (data_pair->value.configure_expiration(FT_TRUE, ttl_entry.value) != 0)
-                {
-                    json_free_groups(group_head);
-                    return (this->cleanup_partial_initialization(data_initialised,
-                        file_path_initialised, encryption_key_initialised,
-                        replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-                }
-            }
-            ttl_index++;
-        }
-    }
-    if (this->prune_expired() != 0)
-    {
-        json_free_groups(group_head);
-        return (this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-            encryption_key_initialised, replication_sinks_initialised, FT_ERR_INVALID_OPERATION));
-    }
-    json_free_groups(group_head);
-    return (FT_ERR_SUCCESS);
+    ft_vector<kv_store_snapshot_entry> entries;
+    if (result == FT_ERR_SUCCESS)
+        result = entries.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = this->parse_json_groups(group, entries);
+    json_free_groups(group);
+    if (result == FT_ERR_SUCCESS)
+        result = this->apply_loaded_snapshot_locked(entries);
+    if (result == FT_ERR_SUCCESS)
+        result = this->prune_expired();
+    if (result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (result);
 }
 
 int32_t kv_store::destroy()
 {
-    int32_t first_error;
-    int32_t disable_error;
-    int32_t stop_error;
-
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
-    first_error = FT_ERR_SUCCESS;
-    disable_error = this->disable_thread_safety();
-    if (disable_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
-        first_error = disable_error;
-    stop_error = this->stop_background_compaction();
-    if (stop_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
-        first_error = stop_error;
-    this->_data.clear();
-    this->_replication_sinks.clear();
-    this->_file_path.clear();
-    this->_encryption_key.clear();
-    this->_encryption_algorithm_name.clear();
+    const int32_t disable_error = this->disable_thread_safety();
+    if (this->_background_wake != ft_nullptr)
+        return (disable_error);
+    const int32_t errors[] = {
+        disable_error,
+        this->_data.destroy(),
+        this->_replication_sinks.destroy(),
+        this->_file_path.destroy(),
+        this->_encryption_key.destroy(),
+        this->_encryption_algorithm_name.destroy()
+    };
+    int32_t first_error = FT_ERR_SUCCESS;
+    ft_size_t index = 0;
+    while (first_error == FT_ERR_SUCCESS && index < sizeof(errors) / sizeof(errors[0]))
+    {
+        first_error = errors[index];
+        ++index;
+    }
     this->_encryption_enabled = FT_FALSE;
-    this->_background_thread_active = FT_FALSE;
-    this->_background_stop_requested = FT_FALSE;
-    this->_background_interval_seconds = 0;
+    this->_next_expiration = -1;
+    this->_replication_operation_count.store(0, std::memory_order_relaxed);
     this->_metrics_set_operations = 0;
     this->_metrics_delete_operations = 0;
     this->_metrics_get_hits = 0;
@@ -556,35 +347,6 @@ int32_t kv_store::destroy()
     this->_metrics_last_prune_duration_ms = 0;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (first_error);
-}
-
-int32_t kv_store::cleanup_partial_initialization(ft_bool data_initialised, ft_bool file_path_initialised,
-    ft_bool encryption_key_initialised, ft_bool encryption_algorithm_name_initialised,
-    ft_bool replication_sinks_initialised, int32_t error_code) noexcept
-{
-    if (replication_sinks_initialised)
-        (void)this->_replication_sinks.destroy();
-    if (encryption_key_initialised)
-        (void)this->_encryption_key.destroy();
-    if (encryption_algorithm_name_initialised)
-        (void)this->_encryption_algorithm_name.destroy();
-    if (file_path_initialised)
-        (void)this->_file_path.destroy();
-    if (data_initialised)
-        (void)this->_data.destroy();
-    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (error_code);
-}
-
-int32_t kv_store::cleanup_partial_initialization(ft_bool data_initialised, ft_bool file_path_initialised,
-    ft_bool encryption_key_initialised, ft_bool replication_sinks_initialised, int32_t error_code) noexcept
-{
-    int32_t cleanup_error;
-
-    cleanup_error = this->cleanup_partial_initialization(data_initialised, file_path_initialised,
-        encryption_key_initialised, FT_FALSE, replication_sinks_initialised, error_code);
-    (void)this->_encryption_algorithm_name.destroy();
-    return (cleanup_error);
 }
 
 kv_store::~kv_store() noexcept

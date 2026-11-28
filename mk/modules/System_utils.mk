@@ -22,4 +22,6 @@ System_utils_SOURCES := System_utils_assert.cpp \
         System_utils_locale.cpp \
         test_system_utils_runner.cpp
 
+System_utils_TEST_ONLY_SOURCES := test_system_utils_runner.cpp
+
 System_utils_HEADERS := system_utils.hpp test_system_utils_runner.hpp

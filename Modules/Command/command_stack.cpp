@@ -1,4 +1,5 @@
 #include "command.hpp"
+#include "../Basic/basic.hpp"
 #include "../Basic/class_nullptr.hpp"
 
 static ft_bool command_action_is_valid(const command_action *action)
@@ -16,18 +17,8 @@ static ft_bool command_action_is_valid(const command_action *action)
 
 static void command_stack_drop_oldest(command_action *entries, ft_size_t count)
 {
-    ft_size_t index;
-
-    if (entries == ft_nullptr || count == 0)
-    {
-        return ;
-    }
-    index = 1;
-    while (index < count)
-    {
-        entries[index - 1] = entries[index];
-        index++;
-    }
+    if (count > 1)
+        (void)ft_memmove(entries, entries + 1, (count - 1) * sizeof(*entries));
     return ;
 }
 

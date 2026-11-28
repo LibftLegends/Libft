@@ -95,7 +95,10 @@ static void *game_chunk_snapshot_reader(void *argument)
         else
         {
             revision = snapshot.get_revision();
-            if (revision == 0U || (block_id != 1U && block_id != 2U))
+            uint32_t expected = GAME_VOXEL_AIR_BLOCK;
+            if (revision != 0U)
+                expected = static_cast<uint32_t>((revision - 1U) & 1U) + 1U;
+            if (block_id != expected)
                 state->failures->fetch_add(1);
         }
         index += 1;
@@ -162,6 +165,7 @@ FT_TEST(test_game_voxel_chunk_bulk_copy_uses_one_read_snapshot)
         * GAME_VOXEL_CHUNK_HEIGHT];
     uint32_t x_border[GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_DEPTH];
     uint32_t z_border[GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_WIDTH];
+    uint32_t region[2U * 3U * GAME_VOXEL_CHUNK_HEIGHT];
     uint32_t first_index;
     uint32_t second_index;
 
@@ -178,6 +182,15 @@ FT_TEST(test_game_voxel_chunk_bulk_copy_uses_one_read_snapshot)
         * GAME_VOXEL_CHUNK_WIDTH + 15U;
     FT_ASSERT_EQ(41U, blocks[first_index]);
     FT_ASSERT_EQ(99U, blocks[second_index]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, blocks[0U]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, blocks[first_index - 1U]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_region(region,
+        2U * 3U * GAME_VOXEL_CHUNK_HEIGHT, 1U, 2U, 2U, 3U));
+    FT_ASSERT_EQ(41U, region[(1U * GAME_VOXEL_CHUNK_HEIGHT + 17U) * 2U
+        + 1U]);
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, region[0U]);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, chunk.copy_region(region,
+        2U * 3U * GAME_VOXEL_CHUNK_HEIGHT, 15U, 2U, 2U, 3U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_x_border(x_border,
         GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_DEPTH, 2U));
     FT_ASSERT_EQ(41U, x_border[17U * GAME_VOXEL_CHUNK_DEPTH + 3U]);

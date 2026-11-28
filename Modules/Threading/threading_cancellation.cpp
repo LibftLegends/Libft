@@ -185,22 +185,24 @@ int32_t ft_cancellation_state::request_cancel() noexcept
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
+        return (set_error(lock_error));
     if (this->_cancelled.load() == FT_TRUE)
     {
         (void)this->unlock_internal(lock_acquired);
-        return (FT_ERR_SUCCESS);
+        return (set_error(FT_ERR_SUCCESS));
     }
     this->_cancelled.store(FT_TRUE);
+    const ft_size_t count = this->_callbacks.size();
     index = 0;
-    while (index < this->_callbacks.size())
+    if (count != 0U)
     {
-        this->_callbacks[index]();
-        index += 1;
+        ft_function<void()> *callbacks = this->_callbacks.begin();
+        while (index < count)
+            callbacks[index++]();
+        this->_callbacks.clear();
     }
-    this->_callbacks.clear();
     (void)this->unlock_internal(lock_acquired);
-    return (FT_ERR_SUCCESS);
+    return (set_error(FT_ERR_SUCCESS));
 }
 
 ft_bool ft_cancellation_state::is_cancelled() const noexcept

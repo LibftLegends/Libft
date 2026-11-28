@@ -6,6 +6,7 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #include "../../Modules/PThread/mutex.hpp"
+#include "../../Modules/PThread/pthread_lock_tracking.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/pair.hpp"
 #ifndef LIBFT_TEST_BUILD
@@ -15,7 +16,9 @@
 #include "compatebility_system_test_hooks.hpp"
 #endif
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 FT_TEST(test_ft_random_seed_hashes_string)
 {
@@ -93,6 +96,49 @@ FT_TEST(test_ft_seed_random_engine_with_entropy_skips_when_seeded)
     if (g_random_engine_seeded.load(std::memory_order_acquire) != true)
         return (0);
     g_random_engine_seeded.store(false, std::memory_order_release);
+    return (1);
+}
+
+FT_TEST(test_rng_entropy_rechecks_seed_after_acquiring_engine_lock)
+{
+    constexpr uint32_t SEED = 136081U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_enable_random_engine_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_lock_random_engine_mutex());
+    g_random_engine_seeded.store(FT_FALSE, std::memory_order_release);
+    std::atomic<pt_thread_id_type> worker_id{pt_thread_id_type{}};
+    std::thread worker([&worker_id]()
+    {
+        worker_id.store(pt_thread_self(), std::memory_order_release);
+        ft_seed_random_engine_with_entropy();
+        return ;
+    });
+
+    ft_bool worker_waiting = FT_FALSE;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        const pt_thread_id_type identifier = worker_id.load(std::memory_order_acquire);
+        s_pt_lock_tracking_thread_state state;
+        if (identifier != pt_thread_id_type{}
+            && pt_lock_tracking::get_thread_state(identifier, state) == FT_ERR_SUCCESS
+            && state.waiting_mutex != ft_nullptr)
+        {
+            worker_waiting = FT_TRUE;
+            break ;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    g_random_engine.seed(SEED);
+    g_random_engine_seeded.store(FT_TRUE, std::memory_order_release);
+    (void)rng_unlock_random_engine_mutex();
+    worker.join();
+    const int32_t sample = ft_random_int();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rng_disable_random_engine_thread_safety());
+
+    std::mt19937 reference(SEED);
+    const int32_t expected = std::uniform_int_distribution<int32_t>(0, INT32_MAX)(reference);
+    FT_ASSERT_EQ(FT_TRUE, worker_waiting);
+    FT_ASSERT_EQ(expected, sample);
     return (1);
 }
 

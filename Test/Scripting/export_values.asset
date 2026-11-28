@@ -1,0 +1,3 @@
+bridge_integer = 37
+bridge_message = "value exported from custom scripting"
+bridge_enabled = true

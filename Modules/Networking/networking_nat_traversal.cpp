@@ -1,9 +1,101 @@
 #include "networking_nat_traversal.hpp"
 #ifdef LIBFT_TEST_BUILD
-# include "../../Test/Test/networking_test_hooks.hpp"
+# include "networking_test_hooks.hpp"
 #else
 # define NETWORKING_TEST_SHOULD_FAIL(point) FT_FALSE
 #endif
+
+static ft_bool networking_nat_endpoint_valid(
+    const networking_message_endpoint &endpoint) noexcept
+{
+    if (endpoint.length == 0U
+        || endpoint.length > static_cast<socklen_t>(sizeof(endpoint.address)))
+        return (FT_FALSE);
+    if (endpoint.address.ss_family != AF_INET
+        && endpoint.address.ss_family != AF_INET6)
+        return (FT_FALSE);
+    if (endpoint.address.ss_family == AF_INET
+        && endpoint.length != static_cast<socklen_t>(sizeof(sockaddr_in)))
+        return (FT_FALSE);
+    if (endpoint.address.ss_family == AF_INET6
+        && endpoint.length != static_cast<socklen_t>(sizeof(sockaddr_in6)))
+        return (FT_FALSE);
+    return (FT_TRUE);
+}
+
+static ft_bool networking_nat_candidate_type_valid(
+    networking_nat_candidate_type type) noexcept
+{
+    if (type == networking_nat_candidate_type::HOST
+        || type == networking_nat_candidate_type::SERVER_REFLEXIVE
+        || type == networking_nat_candidate_type::RELAY)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+static ft_bool networking_nat_same_endpoint(
+    const networking_message_endpoint &left,
+    const networking_message_endpoint &right) noexcept
+{
+    if (networking_nat_endpoint_valid(left) == FT_FALSE
+        || networking_nat_endpoint_valid(right) == FT_FALSE
+        || left.length != right.length
+        || left.address.ss_family != right.address.ss_family)
+        return (FT_FALSE);
+    if (left.address.ss_family == AF_INET)
+    {
+        const sockaddr_in *left_address =
+            reinterpret_cast<const sockaddr_in *>(&left.address);
+        const sockaddr_in *right_address =
+            reinterpret_cast<const sockaddr_in *>(&right.address);
+
+        if (left_address->sin_port == right_address->sin_port
+            && left_address->sin_addr.s_addr
+                == right_address->sin_addr.s_addr)
+            return (FT_TRUE);
+        return (FT_FALSE);
+    }
+    if (left.address.ss_family == AF_INET6)
+    {
+        const sockaddr_in6 *left_address =
+            reinterpret_cast<const sockaddr_in6 *>(&left.address);
+        const sockaddr_in6 *right_address =
+            reinterpret_cast<const sockaddr_in6 *>(&right.address);
+
+        if (left_address->sin6_port == right_address->sin6_port
+            && left_address->sin6_scope_id == right_address->sin6_scope_id
+            && ft_memcmp(&left_address->sin6_addr, &right_address->sin6_addr,
+                sizeof(left_address->sin6_addr)) == 0)
+            return (FT_TRUE);
+        return (FT_FALSE);
+    }
+    return (FT_FALSE);
+}
+
+static ft_bool networking_nat_same_candidate(
+    const networking_nat_candidate &left,
+    const networking_nat_candidate &right) noexcept
+{
+    if (left.type != right.type || left.component != right.component)
+        return (FT_FALSE);
+    return (networking_nat_same_endpoint(left.endpoint, right.endpoint));
+}
+
+static networking_nat_candidate *networking_nat_find_candidate(
+    networking_nat_candidate *candidates, ft_size_t count,
+    const networking_nat_candidate &candidate) noexcept
+{
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        if (networking_nat_same_candidate(candidates[index], candidate)
+            != FT_FALSE)
+            return (&candidates[index]);
+        index += 1U;
+    }
+    return (ft_nullptr);
+}
+
 networking_nat_candidate::networking_nat_candidate() noexcept
     : endpoint(), type(networking_nat_candidate_type::HOST), priority(0U),
       component(1U), foundation(0U), measured_rtt_milliseconds(0U)
@@ -32,18 +124,22 @@ networking_nat_peer_ticket::~networking_nat_peer_ticket() noexcept
 
 int32_t networking_nat_peer_ticket::initialize() noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
-    if (this->candidates.initialize() != FT_ERR_SUCCESS)
+    result = this->candidates.initialize();
+    if (result != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_INITIALIZATION_FAILED);
+        return (result);
     }
-    if (this->signature.initialize() != FT_ERR_SUCCESS)
+    result = this->signature.initialize();
+    if (result != FT_ERR_SUCCESS)
     {
         (void)this->candidates.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_INITIALIZATION_FAILED);
+        return (result);
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
@@ -51,47 +147,59 @@ int32_t networking_nat_peer_ticket::initialize() noexcept
 
 int32_t networking_nat_peer_ticket::destroy() noexcept
 {
-    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
-        || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+    int32_t first_error;
+    int32_t result;
+
+    if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_SUCCESS);
-    (void)this->candidates.destroy();
-    (void)this->signature.destroy();
+    first_error = FT_ERR_SUCCESS;
+    result = this->candidates.destroy();
+    if (result != FT_ERR_SUCCESS)
+        first_error = result;
+    result = this->signature.destroy();
+    if (first_error == FT_ERR_SUCCESS && result != FT_ERR_SUCCESS)
+        first_error = result;
     this->peer_id = 0U;
     this->attempt_id = 0U;
     this->expires_at = 0U;
     this->tie_breaker = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (first_error);
 }
 
 int32_t networking_nat_peer_ticket::move(networking_nat_peer_ticket &other) noexcept
 {
+    int32_t error_code;
+
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
-    (void)this->destroy();
-    if (this->candidates.initialize(other.candidates) != FT_ERR_SUCCESS)
+    error_code = this->destroy();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = this->candidates.initialize(other.candidates);
+    if (error_code != FT_ERR_SUCCESS)
     {
         (void)this->candidates.destroy();
         (void)this->signature.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (error_code);
     }
-    if (this->signature.initialize(other.signature) != FT_ERR_SUCCESS)
+    error_code = this->signature.initialize(other.signature);
+    if (error_code != FT_ERR_SUCCESS)
     {
         (void)this->candidates.destroy();
         (void)this->signature.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (FT_ERR_NO_MEMORY);
+        return (error_code);
     }
     this->peer_id = other.peer_id;
     this->attempt_id = other.attempt_id;
     this->expires_at = other.expires_at;
     this->tie_breaker = other.tie_breaker;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    (void)other.destroy();
-    return (FT_ERR_SUCCESS);
+    return (other.destroy());
 }
 
 ft_bool networking_nat_peer_ticket::is_initialised() const noexcept
@@ -107,6 +215,13 @@ networking_nat_probe_io::networking_nat_probe_io() noexcept
 networking_nat_probe_io::~networking_nat_probe_io() noexcept
 {
     return ;
+}
+
+int32_t networking_nat_probe_io::send_keepalive(
+    const networking_message_endpoint &local,
+    const networking_message_endpoint &remote, uint64_t attempt_id) noexcept
+{
+    return (this->send_probe(local, remote, attempt_id));
 }
 
 networking_nat_candidate_provider::networking_nat_candidate_provider() noexcept
@@ -165,9 +280,7 @@ int32_t networking_nat_relay_datagram_io::initialize(
 {
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
-    if (relay_endpoint.length == 0U
-        || relay_endpoint.length > static_cast<socklen_t>(
-            sizeof(relay_endpoint.address)))
+    if (networking_nat_endpoint_valid(relay_endpoint) == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     this->_relay_io = &relay_io;
     this->_relay_endpoint = relay_endpoint;
@@ -215,12 +328,8 @@ int32_t networking_nat_relay_datagram_io::send_datagram(
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
         || this->_relay_io == ft_nullptr)
         return (FT_ERR_NOT_INITIALISED);
-    if (destination.length == 0U
-        || destination.length > static_cast<socklen_t>(
-            sizeof(destination.address))
-        || destination.length != this->_relay_endpoint.length
-        || ft_memcmp(&destination.address, &this->_relay_endpoint.address,
-            destination.length) != 0)
+    if (networking_nat_same_endpoint(destination, this->_relay_endpoint)
+        == FT_FALSE)
         return (FT_ERR_INVALID_ARGUMENT);
     if (data == ft_nullptr && size != 0U)
         return (FT_ERR_INVALID_POINTER);
@@ -238,10 +347,20 @@ int32_t networking_nat_relay_datagram_io::receive_datagram(
         return (FT_ERR_NOT_INITIALISED);
     if (data == ft_nullptr || received_size == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    *received_size = 0U;
     result = this->_relay_io->receive_relay(this->_relay_endpoint, data,
         capacity, received_size);
     if (result == FT_ERR_SUCCESS)
+    {
+        if (*received_size > capacity)
+        {
+            *received_size = 0U;
+            return (FT_ERR_OUT_OF_RANGE);
+        }
         source = this->_relay_endpoint;
+    }
+    else
+        *received_size = 0U;
     return (result);
 }
 
@@ -285,6 +404,8 @@ networking_nat_traversal::~networking_nat_traversal() noexcept
 int32_t networking_nat_traversal::initialize(uint64_t local_peer_id,
     uint32_t deadline_milliseconds) noexcept
 {
+    int32_t result;
+
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_ALREADY_INITIALISED);
     if (local_peer_id == 0U || deadline_milliseconds == 0U)
@@ -304,19 +425,71 @@ int32_t networking_nat_traversal::initialize(uint64_t local_peer_id,
     this->_last_probe_at = 0U;
     if (this->_containers_initialised == FT_FALSE)
     {
-        if (this->_local_candidates.initialize() != FT_ERR_SUCCESS)
-            return (FT_ERR_INITIALIZATION_FAILED);
-        if (this->_remote_candidates.initialize() != FT_ERR_SUCCESS)
+        result = this->_local_candidates.initialize();
+        if (result != FT_ERR_SUCCESS)
+        {
+            if (this->_local_candidates.is_initialised()
+                    == FT_CLASS_STATE_INITIALISED
+                || this->_remote_candidates.is_initialised()
+                    == FT_CLASS_STATE_INITIALISED)
+                this->_containers_initialised = FT_TRUE;
+            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            return (result);
+        }
+        result = this->_remote_candidates.initialize();
+        if (result != FT_ERR_SUCCESS)
         {
             (void)this->_local_candidates.destroy();
-            return (FT_ERR_INITIALIZATION_FAILED);
+            if (this->_local_candidates.is_initialised()
+                    == FT_CLASS_STATE_INITIALISED
+                || this->_remote_candidates.is_initialised()
+                    == FT_CLASS_STATE_INITIALISED)
+                this->_containers_initialised = FT_TRUE;
+            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+            return (result);
         }
         this->_containers_initialised = FT_TRUE;
     }
     else
     {
-        this->_local_candidates.clear();
-        this->_remote_candidates.clear();
+        if (this->_local_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED)
+        {
+            result = this->_local_candidates.initialize();
+            if (result != FT_ERR_SUCCESS)
+            {
+                this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+                if (this->_local_candidates.is_initialised()
+                        == FT_CLASS_STATE_INITIALISED
+                    || this->_remote_candidates.is_initialised()
+                        == FT_CLASS_STATE_INITIALISED)
+                    this->_containers_initialised = FT_TRUE;
+                return (result);
+            }
+        }
+        else
+            this->_local_candidates.clear();
+        if (this->_remote_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED)
+        {
+            result = this->_remote_candidates.initialize();
+            if (result != FT_ERR_SUCCESS)
+            {
+                (void)this->_local_candidates.destroy();
+                if (this->_local_candidates.is_initialised()
+                        == FT_CLASS_STATE_INITIALISED
+                    || this->_remote_candidates.is_initialised()
+                        == FT_CLASS_STATE_INITIALISED)
+                    this->_containers_initialised = FT_TRUE;
+                else
+                    this->_containers_initialised = FT_FALSE;
+                this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+                return (result);
+            }
+        }
+        else
+            this->_remote_candidates.clear();
+        this->_containers_initialised = FT_TRUE;
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
@@ -324,17 +497,35 @@ int32_t networking_nat_traversal::initialize(uint64_t local_peer_id,
 
 int32_t networking_nat_traversal::destroy() noexcept
 {
+    int32_t first_error;
+    int32_t result;
+
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
-        || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+        && this->_local_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED
+        && this->_remote_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    if (this->_containers_initialised != FT_FALSE)
-    {
+    first_error = FT_ERR_SUCCESS;
+    if (this->_local_candidates.is_initialised()
+        == FT_CLASS_STATE_INITIALISED)
         this->_local_candidates.clear();
+    if (this->_remote_candidates.is_initialised()
+        == FT_CLASS_STATE_INITIALISED)
         this->_remote_candidates.clear();
-        (void)this->_local_candidates.destroy();
-        (void)this->_remote_candidates.destroy();
+    result = this->_local_candidates.destroy();
+    if (result != FT_ERR_SUCCESS)
+        first_error = result;
+    result = this->_remote_candidates.destroy();
+    if (first_error == FT_ERR_SUCCESS && result != FT_ERR_SUCCESS)
+        first_error = result;
+    if (this->_local_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED
+        && this->_remote_candidates.is_initialised()
+            != FT_CLASS_STATE_INITIALISED)
         this->_containers_initialised = FT_FALSE;
-    }
+    else
+        this->_containers_initialised = FT_TRUE;
     this->_direct_path_valid = FT_FALSE;
     this->_remote_peer_id = 0U;
     this->_relay_available = FT_FALSE;
@@ -345,28 +536,46 @@ int32_t networking_nat_traversal::destroy() noexcept
     this->_probe_count = 0U;
     this->_last_probe_at = 0U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    return (first_error);
 }
 
 int32_t networking_nat_traversal::move(networking_nat_traversal &other) noexcept
 {
+    int32_t error_code;
+
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
-    (void)this->destroy();
-    if (this->_local_candidates.initialize(other._local_candidates)
-        != FT_ERR_SUCCESS)
+    error_code = this->destroy();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = this->_local_candidates.initialize(other._local_candidates);
+    if (error_code != FT_ERR_SUCCESS)
     {
-        this->_containers_initialised = FT_FALSE;
-        return (FT_ERR_NO_MEMORY);
+        if (this->_local_candidates.is_initialised()
+                == FT_CLASS_STATE_INITIALISED
+            || this->_remote_candidates.is_initialised()
+                == FT_CLASS_STATE_INITIALISED)
+            this->_containers_initialised = FT_TRUE;
+        else
+            this->_containers_initialised = FT_FALSE;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (error_code);
     }
-    if (this->_remote_candidates.initialize(other._remote_candidates)
-        != FT_ERR_SUCCESS)
+    error_code = this->_remote_candidates.initialize(other._remote_candidates);
+    if (error_code != FT_ERR_SUCCESS)
     {
         (void)this->_local_candidates.destroy();
-        this->_containers_initialised = FT_FALSE;
-        return (FT_ERR_NO_MEMORY);
+        if (this->_local_candidates.is_initialised()
+                == FT_CLASS_STATE_INITIALISED
+            || this->_remote_candidates.is_initialised()
+                == FT_CLASS_STATE_INITIALISED)
+            this->_containers_initialised = FT_TRUE;
+        else
+            this->_containers_initialised = FT_FALSE;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (error_code);
     }
     this->_containers_initialised = FT_TRUE;
     this->_local_peer_id = other._local_peer_id;
@@ -385,9 +594,7 @@ int32_t networking_nat_traversal::move(networking_nat_traversal &other) noexcept
     this->_selected_local = other._selected_local;
     this->_selected_remote = other._selected_remote;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    other._containers_initialised = FT_FALSE;
-    (void)other.destroy();
-    return (FT_ERR_SUCCESS);
+    return (other.destroy());
 }
 
 int32_t networking_nat_traversal::add_local_candidate(
@@ -395,51 +602,102 @@ int32_t networking_nat_traversal::add_local_candidate(
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    if (candidate.endpoint.length == 0U || candidate.component == 0U)
+    if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
+        || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
+        || candidate.component == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t count = this->_local_candidates.size();
+    networking_nat_candidate *duplicate = networking_nat_find_candidate(
+        this->_local_candidates.begin(), count, candidate);
+    if (duplicate != ft_nullptr)
+    {
+        if (candidate.priority > duplicate->priority)
+            duplicate->priority = candidate.priority;
+        return (FT_ERR_SUCCESS);
+    }
+    if (count >= NETWORKING_NAT_MAX_CANDIDATES)
+        return (FT_ERR_FULL);
     if (NETWORKING_TEST_SHOULD_FAIL(NETWORKING_TEST_NAT_CANDIDATE)
         != FT_FALSE)
         return (FT_ERR_NO_MEMORY);
-    if (this->_local_candidates.push_back(candidate) != FT_ERR_SUCCESS)
-        return (FT_ERR_NO_MEMORY);
-    return (FT_ERR_SUCCESS);
+    return (this->_local_candidates.push_back(candidate));
 }
 
 int32_t networking_nat_traversal::gather_candidates(
     networking_nat_candidate_provider &provider) noexcept
 {
-    ft_size_t index;
+    ft_vector<networking_nat_candidate> gathered_candidates;
     int32_t result;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    this->_local_candidates.clear();
-    result = provider.gather(this->_local_candidates);
+    result = gathered_candidates.initialize();
     if (result != FT_ERR_SUCCESS)
         return (result);
-    index = 0U;
-    while (index < this->_local_candidates.size())
+    result = provider.gather(gathered_candidates);
+    if (result != FT_ERR_SUCCESS)
     {
-        if (this->_local_candidates[index].endpoint.length == 0U
-            || this->_local_candidates[index].endpoint.length
-                > static_cast<socklen_t>(sizeof(
-                    this->_local_candidates[index].endpoint.address))
-            || this->_local_candidates[index].component == 0U)
+        (void)gathered_candidates.destroy();
+        return (result);
+    }
+    ft_size_t count = gathered_candidates.size();
+    if (count > NETWORKING_NAT_MAX_CANDIDATES)
+    {
+        (void)gathered_candidates.destroy();
+        return (FT_ERR_FULL);
+    }
+    networking_nat_candidate *candidates = gathered_candidates.begin();
+    ft_size_t unique_count = 0U;
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        const networking_nat_candidate &candidate = candidates[index];
+        if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
+            || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
+            || candidate.component == 0U)
         {
-            this->_local_candidates.clear();
+            (void)gathered_candidates.destroy();
             return (FT_ERR_INVALID_ARGUMENT);
+        }
+        networking_nat_candidate *duplicate = networking_nat_find_candidate(
+            candidates, unique_count, candidate);
+        if (duplicate != ft_nullptr)
+        {
+            if (candidate.priority > duplicate->priority)
+                duplicate->priority = candidate.priority;
+        }
+        else
+        {
+            if (unique_count != index)
+                candidates[unique_count] = candidate;
+            unique_count += 1U;
         }
         index += 1U;
     }
-    return (FT_ERR_SUCCESS);
+    while (count > unique_count)
+    {
+        gathered_candidates.pop_back();
+        result = gathered_candidates.get_error();
+        if (result != FT_ERR_SUCCESS)
+        {
+            (void)gathered_candidates.destroy();
+            return (result);
+        }
+        count -= 1U;
+    }
+    result = this->_local_candidates.move(gathered_candidates);
+    if (result != FT_ERR_SUCCESS)
+        (void)gathered_candidates.destroy();
+    return (result);
 }
 
-int32_t networking_nat_traversal::candidate_score(
+int64_t networking_nat_traversal::candidate_score(
     const networking_nat_candidate &local, const networking_nat_candidate &remote) noexcept
 {
-    int32_t score;
+    int64_t score;
 
-    score = static_cast<int32_t>(local.priority / 100U + remote.priority / 100U);
+    score = static_cast<int64_t>(local.priority)
+        + static_cast<int64_t>(remote.priority);
     if (local.type == networking_nat_candidate_type::RELAY
         || remote.type == networking_nat_candidate_type::RELAY)
         score -= 1000;
@@ -467,34 +725,35 @@ int32_t networking_nat_traversal::candidate_score(
 
 int32_t networking_nat_traversal::select_pair() noexcept
 {
-    int32_t best_score;
-    ft_bool found;
-    ft_size_t local_index;
-    ft_size_t remote_index;
-
-    found = FT_FALSE;
-    best_score = -2147483647;
-    local_index = 0U;
-    while (local_index < this->_local_candidates.size())
+    const ft_size_t local_count = this->_local_candidates.size();
+    const ft_size_t remote_count = this->_remote_candidates.size();
+    if (local_count == 0U || remote_count == 0U)
+        return (FT_ERR_NOT_FOUND);
+    const networking_nat_candidate *local_candidates = this->_local_candidates.begin();
+    const networking_nat_candidate *remote_candidates = this->_remote_candidates.begin();
+    ft_size_t best_local_index = 0U;
+    ft_size_t best_remote_index = 0U;
+    int64_t best_score = INT64_MIN;
+    ft_size_t local_index = 0U;
+    while (local_index < local_count)
     {
-        remote_index = 0U;
-        while (remote_index < this->_remote_candidates.size())
+        ft_size_t remote_index = 0U;
+        while (remote_index < remote_count)
         {
-            int32_t score = networking_nat_traversal::candidate_score(
-                this->_local_candidates[local_index], this->_remote_candidates[remote_index]);
-            if (found == FT_FALSE || score > best_score)
+            int64_t score = networking_nat_traversal::candidate_score(
+                local_candidates[local_index], remote_candidates[remote_index]);
+            if (score > best_score)
             {
                 best_score = score;
-                this->_selected_local = this->_local_candidates[local_index];
-                this->_selected_remote = this->_remote_candidates[remote_index];
-                found = FT_TRUE;
+                best_local_index = local_index;
+                best_remote_index = remote_index;
             }
             remote_index += 1U;
         }
         local_index += 1U;
     }
-    if (found == FT_FALSE)
-        return (FT_ERR_NOT_FOUND);
+    this->_selected_local = local_candidates[best_local_index];
+    this->_selected_remote = remote_candidates[best_remote_index];
     return (FT_ERR_SUCCESS);
 }
 
@@ -511,42 +770,62 @@ int32_t networking_nat_traversal::set_peer_ticket(const networking_nat_peer_tick
 {
     ft_vector<networking_nat_candidate> new_remote_candidates;
     ft_bool new_relay_available;
-    ft_size_t index;
     int32_t result;
 
-    if (verifier.verify(ticket) == FT_FALSE)
-        return (FT_ERR_PERMISSION_DENIED);
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
     if (ticket.is_initialised() == FT_FALSE
         || ticket.peer_id == 0U || ticket.attempt_id == 0U
         || ticket.expires_at <= now_milliseconds || ticket.signature.empty())
         return (FT_ERR_PERMISSION_DENIED);
+    const ft_size_t count = ticket.candidates.size();
+    if (count == 0U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (this->_local_candidates.empty())
+        return (FT_ERR_NOT_FOUND);
+    if (count > NETWORKING_NAT_MAX_CANDIDATES)
+        return (FT_ERR_FULL);
     result = new_remote_candidates.initialize();
     if (result != FT_ERR_SUCCESS)
         return (result);
     new_relay_available = FT_FALSE;
-    index = 0U;
-    while (index < ticket.candidates.size())
+    ft_size_t unique_count = 0U;
+    ft_size_t index = 0U;
+    while (index < count)
     {
-        if (ticket.candidates[index].endpoint.length == 0U
-            || ticket.candidates[index].endpoint.length
-                > static_cast<socklen_t>(sizeof(
-                    ticket.candidates[index].endpoint.address))
-            || ticket.candidates[index].component == 0U)
+        const networking_nat_candidate &candidate = ticket.candidates[index];
+        if (networking_nat_endpoint_valid(candidate.endpoint) == FT_FALSE
+            || networking_nat_candidate_type_valid(candidate.type) == FT_FALSE
+            || candidate.component == 0U)
         {
             (void)new_remote_candidates.destroy();
             return (FT_ERR_INVALID_ARGUMENT);
         }
-        if (new_remote_candidates.push_back(ticket.candidates[index])
-            != FT_ERR_SUCCESS)
+        networking_nat_candidate *duplicate = networking_nat_find_candidate(
+            new_remote_candidates.begin(), unique_count, candidate);
+        if (duplicate != ft_nullptr)
         {
-            (void)new_remote_candidates.destroy();
-            return (FT_ERR_NO_MEMORY);
+            if (candidate.priority > duplicate->priority)
+                duplicate->priority = candidate.priority;
         }
-        if (ticket.candidates[index].type == networking_nat_candidate_type::RELAY)
+        else
+        {
+            result = new_remote_candidates.push_back(candidate);
+            if (result != FT_ERR_SUCCESS)
+            {
+                (void)new_remote_candidates.destroy();
+                return (result);
+            }
+            unique_count += 1U;
+        }
+        if (candidate.type == networking_nat_candidate_type::RELAY)
             new_relay_available = FT_TRUE;
         index += 1U;
+    }
+    if (verifier.verify(ticket) == FT_FALSE)
+    {
+        (void)new_remote_candidates.destroy();
+        return (FT_ERR_PERMISSION_DENIED);
     }
     result = this->_remote_candidates.move(new_remote_candidates);
     if (result != FT_ERR_SUCCESS)
@@ -661,9 +940,7 @@ int32_t networking_nat_traversal::fallback_to_relay(
         this->_attempt_id, relay_endpoint);
     if (result != FT_ERR_SUCCESS)
         return (result);
-    if (relay_endpoint.length == 0U
-        || relay_endpoint.length > static_cast<socklen_t>(
-            sizeof(relay_endpoint.address)))
+    if (networking_nat_endpoint_valid(relay_endpoint) == FT_FALSE)
     {
         (void)relay_io.close_relay(relay_endpoint);
         return (FT_ERR_INVALID_ARGUMENT);
@@ -675,43 +952,141 @@ int32_t networking_nat_traversal::fallback_to_relay(
     return (FT_ERR_SUCCESS);
 }
 
+int32_t networking_nat_traversal::mark_direct_path_lost(
+    uint64_t now_milliseconds) noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_direct_path_valid == FT_FALSE)
+        return (FT_ERR_INVALID_STATE);
+    if (now_milliseconds < this->_started_at)
+        return (FT_ERR_TIMEOUT);
+    this->_direct_path_valid = FT_FALSE;
+    this->_using_relay = FT_FALSE;
+    this->_probing = FT_TRUE;
+    this->_started_at = now_milliseconds;
+    this->_next_local_probe = 0U;
+    this->_next_remote_probe = 0U;
+    this->_probe_count = 0U;
+    this->_last_probe_at = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t networking_nat_traversal::mark_relay_path_lost(
+    uint64_t now_milliseconds) noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_using_relay == FT_FALSE)
+        return (FT_ERR_INVALID_STATE);
+    if (now_milliseconds < this->_started_at)
+        return (FT_ERR_TIMEOUT);
+    this->_direct_path_valid = FT_FALSE;
+    this->_using_relay = FT_FALSE;
+    this->_probing = FT_TRUE;
+    this->_started_at = now_milliseconds;
+    this->_next_local_probe = 0U;
+    this->_next_remote_probe = 0U;
+    this->_probe_count = 0U;
+    this->_last_probe_at = 0U;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t networking_nat_traversal::send_keepalive(
+    networking_nat_probe_io &probe_io) noexcept
+{
+    int32_t result;
+
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_NOT_INITIALISED);
+    if (this->_direct_path_valid == FT_FALSE || this->_using_relay != FT_FALSE
+        || this->_attempt_id == 0U)
+        return (FT_ERR_INVALID_STATE);
+    if (networking_nat_endpoint_valid(this->_selected_local.endpoint)
+            == FT_FALSE
+        || networking_nat_endpoint_valid(this->_selected_remote.endpoint)
+            == FT_FALSE)
+        return (FT_ERR_INVALID_STATE);
+    result = probe_io.send_keepalive(this->_selected_local.endpoint,
+        this->_selected_remote.endpoint, this->_attempt_id);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t networking_nat_traversal::mark_probe_success(
     const networking_message_endpoint &local,
     const networking_message_endpoint &remote, uint64_t attempt_id) noexcept
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    if (local.length == 0U || remote.length == 0U || attempt_id == 0U)
+    if (networking_nat_endpoint_valid(local) == FT_FALSE
+        || networking_nat_endpoint_valid(remote) == FT_FALSE
+        || attempt_id == 0U)
         return (FT_ERR_INVALID_ARGUMENT);
     if (attempt_id != this->_attempt_id)
         return (FT_ERR_PERMISSION_DENIED);
-    ft_size_t local_index = 0U;
-    ft_bool found = FT_FALSE;
-    while (local_index < this->_local_candidates.size())
+    const ft_size_t remote_count = this->_remote_candidates.size();
+    const networking_nat_candidate *remote_candidates = this->_remote_candidates.begin();
+    const networking_nat_candidate *matching_remotes[NETWORKING_NAT_MAX_CANDIDATES];
+    ft_size_t matching_count = 0U;
+    ft_size_t remote_index = 0U;
+    while (remote_index < remote_count)
     {
-        ft_size_t remote_index = 0U;
-        while (remote_index < this->_remote_candidates.size())
+        if (networking_nat_same_endpoint(remote_candidates[remote_index].endpoint,
+                remote) != FT_FALSE)
         {
-            if (this->_local_candidates[local_index].endpoint.length == local.length
-                && this->_remote_candidates[remote_index].endpoint.length == remote.length
-                && ft_memcmp(&this->_local_candidates[local_index].endpoint.address,
-                    &local.address, local.length) == 0
-                && ft_memcmp(&this->_remote_candidates[remote_index].endpoint.address,
-                    &remote.address, remote.length) == 0)
-            {
-                this->_selected_local = this->_local_candidates[local_index];
-                this->_selected_remote = this->_remote_candidates[remote_index];
-                found = FT_TRUE;
-            }
-            remote_index += 1U;
+            matching_remotes[matching_count] = &remote_candidates[remote_index];
+            matching_count += 1U;
         }
-        local_index += 1U;
+        remote_index += 1U;
     }
-    if (found == FT_FALSE)
+    if (matching_count == 0U)
         return (FT_ERR_NOT_FOUND);
-    this->_direct_path_valid = FT_TRUE;
+    const ft_size_t local_count = this->_local_candidates.size();
+    const networking_nat_candidate *local_candidates = this->_local_candidates.begin();
+    const networking_nat_candidate *nominated_local = ft_nullptr;
+    const networking_nat_candidate *nominated_remote = ft_nullptr;
+    int64_t best_score = INT64_MIN;
+    ft_size_t local_index = 0U;
+    while (local_index < local_count)
+    {
+        const networking_nat_candidate &local_candidate = local_candidates[local_index];
+        local_index += 1U;
+        if (networking_nat_same_endpoint(local_candidate.endpoint, local) == FT_FALSE)
+            continue ;
+        ft_size_t matching_index = 0U;
+        while (matching_index < matching_count)
+        {
+            const networking_nat_candidate *remote_candidate = matching_remotes[matching_index];
+            int64_t score = networking_nat_traversal::candidate_score(
+                local_candidate, *remote_candidate);
+            if (score > best_score)
+            {
+                nominated_local = &local_candidate;
+                nominated_remote = remote_candidate;
+                best_score = score;
+            }
+            matching_index += 1U;
+        }
+    }
+    if (nominated_local == ft_nullptr)
+        return (FT_ERR_NOT_FOUND);
+    this->_selected_local = *nominated_local;
+    this->_selected_remote = *nominated_remote;
     this->_probing = FT_FALSE;
-    this->_using_relay = FT_FALSE;
+    if (this->_selected_local.type == networking_nat_candidate_type::RELAY
+        || this->_selected_remote.type == networking_nat_candidate_type::RELAY)
+    {
+        this->_direct_path_valid = FT_FALSE;
+        this->_using_relay = FT_TRUE;
+        this->_relay_available = FT_TRUE;
+    }
+    else
+    {
+        this->_direct_path_valid = FT_TRUE;
+        this->_using_relay = FT_FALSE;
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -720,6 +1095,12 @@ int32_t networking_nat_traversal::get_selected_pair(networking_nat_candidate &lo
 {
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
+    if (this->_probing != FT_FALSE && this->_direct_path_valid == FT_FALSE
+        && this->_using_relay == FT_FALSE)
+        return (FT_ERR_NOT_FOUND);
+    if (this->_local_candidates.empty()
+        || this->_remote_candidates.empty())
+        return (FT_ERR_NOT_FOUND);
     if (this->_selected_local.endpoint.length == 0U
         || this->_selected_remote.endpoint.length == 0U)
         return (FT_ERR_NOT_FOUND);

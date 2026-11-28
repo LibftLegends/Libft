@@ -3,142 +3,141 @@
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include <cerrno>
-#include <cstddef>
+#include <atomic>
 #include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
-static t_su_write_syscall_hook    g_su_write_syscall_hook = ft_nullptr;
-
-static int64_t su_default_write_syscall(int32_t file_descriptor,
-    const void *buffer, ft_size_t count)
-{
-    int64_t bytes_written;
-    int32_t error_code;
-
-    bytes_written = 0;
-    error_code = cmp_write(file_descriptor, buffer, count, &bytes_written);
-    if (error_code != FT_ERR_SUCCESS)
-        return (-1);
-    return (bytes_written);
-}
+#ifdef LIBFT_TEST_BUILD
+static std::atomic<t_su_write_syscall_hook> g_su_write_syscall_hook{ft_nullptr};
 
 void    su_set_write_syscall_hook(t_su_write_syscall_hook hook)
 {
-    if (hook != ft_nullptr)
-    {
-        g_su_write_syscall_hook = hook;
-        return ;
-    }
-    g_su_write_syscall_hook = ft_nullptr;
+    g_su_write_syscall_hook.store(hook, std::memory_order_relaxed);
     return ;
 }
 
 void    su_reset_write_syscall_hook(void)
 {
-    g_su_write_syscall_hook = ft_nullptr;
+    su_set_write_syscall_hook(ft_nullptr);
     return ;
+}
+#endif
+
+static ft_bool su_retry_file_io(int32_t system_error, uint32_t &retry_attempts)
+{
+    constexpr uint32_t MAX_RETRIES = 10U;
+    constexpr uint32_t RETRY_DELAY_MS = 500U;
+    if (system_error == EINTR)
+        return (FT_TRUE);
+    if (system_error != EAGAIN && system_error != EWOULDBLOCK)
+        return (FT_FALSE);
+    if (retry_attempts >= MAX_RETRIES)
+        return (FT_FALSE);
+    retry_attempts += 1U;
+    (void)cmp_thread_sleep(RETRY_DELAY_MS);
+    return (FT_TRUE);
 }
 
 int64_t su_read(int32_t file_descriptor, void *buffer, ft_size_t count)
 {
-    int32_t retry_attempts;
-    int64_t bytes_read_value;
-
-    retry_attempts = 0;
+    uint32_t retry_attempts = 0U;
     while (1)
     {
-        int32_t error_code;
-
-        bytes_read_value = 0;
-        error_code = cmp_read(file_descriptor, buffer, count, &bytes_read_value);
+        int64_t bytes_read_value;
+        int32_t system_error;
+        const int32_t error_code = cmp_read(file_descriptor, buffer, count,
+            &bytes_read_value, &system_error);
         if (error_code == FT_ERR_SUCCESS)
             return (bytes_read_value);
-        const int32_t max_retries = 10;
-        const int32_t retry_delay_ms = 500;
-        if (error_code == cmp_map_system_error_to_ft(EINTR))
-            continue ;
-        else if (error_code == cmp_map_system_error_to_ft(EAGAIN)
-            || error_code == cmp_map_system_error_to_ft(EWOULDBLOCK))
-        {
-                if (retry_attempts < static_cast<int32_t>(max_retries))
-                {
-                    retry_attempts++;
-                    (void)cmp_thread_sleep(static_cast<uint32_t>(retry_delay_ms));
-                    continue ;
-                }
+        if (su_retry_file_io(system_error, retry_attempts) == FT_FALSE)
             return (-1);
-        }
-        return (-1);
     }
 }
 
-int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
+static int64_t su_write_internal(int32_t file_descriptor,
+    const void *buffer, ft_size_t count, int32_t *error_code_out)
 {
-    ft_size_t total_written;
-    int32_t retry_attempts;
-    const char *byte_buffer;
-    t_su_write_syscall_hook write_function;
-    int64_t bytes_written_value;
-
-    total_written = 0;
-    retry_attempts = 0;
-    byte_buffer = static_cast<const char*>(buffer);
-    write_function = g_su_write_syscall_hook;
-    if (write_function == ft_nullptr)
-        write_function = su_default_write_syscall;
+    if (error_code_out != ft_nullptr)
+        *error_code_out = FT_ERR_SUCCESS;
+    if (count == 0U)
+        return (0);
+    if (buffer == ft_nullptr)
+    {
+        if (error_code_out != ft_nullptr)
+            *error_code_out = FT_ERR_INVALID_ARGUMENT;
+        return (-1);
+    }
+    if (count > static_cast<ft_size_t>(INT64_MAX))
+    {
+        if (error_code_out != ft_nullptr)
+            *error_code_out = FT_ERR_OUT_OF_RANGE;
+        return (-1);
+    }
+    const char *byte_buffer = static_cast<const char *>(buffer);
+    ft_size_t total_written = 0U;
+    uint32_t retry_attempts = 0U;
+#ifdef LIBFT_TEST_BUILD
+    const t_su_write_syscall_hook write_function =
+        g_su_write_syscall_hook.load(std::memory_order_relaxed);
+#endif
     while (total_written < count)
     {
-        int64_t write_result;
-        int32_t error_code;
-
-        error_code = FT_ERR_SUCCESS;
-        if (write_function == su_default_write_syscall)
+        const ft_size_t remaining = count - total_written;
+        int64_t write_result = 0;
+        int32_t system_error = 0;
+        int32_t error_code = FT_ERR_SUCCESS;
+#ifdef LIBFT_TEST_BUILD
+        if (su_test_take_write_interrupt() == FT_TRUE)
         {
-            bytes_written_value = 0;
-            error_code = cmp_write(file_descriptor, byte_buffer + total_written,
-                count - total_written, &bytes_written_value);
-            if (error_code == FT_ERR_SUCCESS)
-                write_result = bytes_written_value;
-            else
-                write_result = -1;
+            errno = EINTR;
+            system_error = EINTR;
+            error_code = cmp_map_system_error_to_ft(system_error);
         }
-        else
+        else if (write_function != ft_nullptr)
         {
-            write_result = write_function(file_descriptor,
-                byte_buffer + total_written, count - total_written);
+            errno = 0;
+            write_result = write_function(file_descriptor, byte_buffer + total_written, remaining);
             if (write_result < 0)
             {
-                error_code = cmp_map_system_error_to_ft(errno);
+                system_error = errno;
+                error_code = cmp_map_system_error_to_ft(system_error);
                 if (error_code == FT_ERR_SUCCESS)
                     error_code = FT_ERR_IO;
             }
         }
-        if (write_result > 0)
-            total_written += static_cast<ft_size_t>(write_result);
         else
+#endif
         {
-            if (write_result == 0)
-                return (-1);
-            const int32_t max_retries = 10;
-            const int32_t retry_delay_ms = 500;
-            if (error_code == cmp_map_system_error_to_ft(EINTR))
-                continue ;
-            else if (error_code == cmp_map_system_error_to_ft(EAGAIN)
-                || error_code == cmp_map_system_error_to_ft(EWOULDBLOCK))
-            {
-                if (retry_attempts < static_cast<int32_t>(max_retries))
-                {
-                    retry_attempts++;
-                    (void)cmp_thread_sleep(static_cast<uint32_t>(retry_delay_ms));
-                    continue ;
-                }
-                return (-1);
-            }
-            return (-1);
+            error_code = cmp_write(file_descriptor, byte_buffer + total_written,
+                remaining, &write_result, &system_error);
         }
+        if (error_code == FT_ERR_SUCCESS && write_result > 0
+            && static_cast<ft_size_t>(write_result) <= remaining)
+        {
+            total_written += static_cast<ft_size_t>(write_result);
+            continue ;
+        }
+        if (su_retry_file_io(system_error, retry_attempts) == FT_TRUE)
+            continue ;
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = FT_ERR_IO;
+        if (error_code_out != ft_nullptr)
+            *error_code_out = error_code;
+        return (-1);
     }
     return (static_cast<int64_t>(total_written));
+}
+
+int64_t su_write(int32_t file_descriptor, const void *buffer, ft_size_t count)
+{
+    return (su_write_internal(file_descriptor, buffer, count, ft_nullptr));
+}
+
+int64_t su_write_with_error(int32_t file_descriptor, const void *buffer,
+    ft_size_t count, int32_t *error_code_out)
+{
+    if (error_code_out == ft_nullptr)
+        return (-1);
+    return (su_write_internal(file_descriptor, buffer, count, error_code_out));
 }
 
 off_t su_lseek(int32_t file_descriptor, off_t offset, int32_t whence)
@@ -148,10 +147,5 @@ off_t su_lseek(int32_t file_descriptor, off_t offset, int32_t whence)
 
 int32_t su_close(int32_t file_descriptor)
 {
-    int32_t close_result;
-
-    close_result = cmp_close(file_descriptor);
-    if (close_result != 0)
-        return (close_result);
-    return (0);
+    return (cmp_close(file_descriptor));
 }

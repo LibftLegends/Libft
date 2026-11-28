@@ -18,6 +18,8 @@
 template <typename Key, typename MappedType>
 class ft_map
 {
+    friend class kv_store;
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else
@@ -30,14 +32,32 @@ class ft_map
         uint8_t                     _initialised_state;
         ft_size_t                      _initial_capacity;
         static thread_local int32_t _last_error;
+        static constexpr ft_size_t MAXIMUM_CAPACITY =
+            FT_SYSTEM_SIZE_MAX / sizeof(Pair<Key, MappedType>);
 
         int32_t set_error(int32_t error_code) const noexcept;
 
-        ft_bool    ensure_capacity(ft_size_t desired_capacity);
-        ft_size_t  find_index(const Key& key) const;
+        ft_size_t next_insert_capacity() const noexcept;
+        int32_t grow_for_insert();
+        template <typename Relocate>
+        int32_t reserve_relocated_unlocked(ft_size_t capacity, Relocate relocate);
+        // The caller must own the map exclusively, have spare capacity, and prove uniqueness.
+        template <typename Relocate>
+        Pair<Key, MappedType> &append_prepared_unlocked(Pair<Key, MappedType> &entry, Relocate relocate);
+        static int32_t copy_entries(Pair<Key, MappedType> *destination,
+            const Pair<Key, MappedType> *source, ft_size_t count);
+        int32_t remove_at_unlocked(ft_size_t index);
+        template <typename Relocate>
+        void relocate_erase_at_unlocked(ft_size_t index, Relocate relocate);
+        template <typename Transfer, typename CanShift>
+        int32_t remove_transactional_unlocked(ft_size_t index, Transfer transfer,
+            CanShift can_shift);
+        template <typename LookupKey>
+        ft_size_t  find_index(const LookupKey &key) const;
         void    destroy_all_unlocked();
         Pair<Key, MappedType>*  end_pointer_unlocked();
         const Pair<Key, MappedType>* end_pointer_unlocked() const;
+        // Callers validate lifecycle state before entering these lock helpers.
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
         int32_t     lock_pair(const ft_map &other, ft_bool *lock_this, ft_bool *lock_other) const;
@@ -93,9 +113,52 @@ class ft_map
 
         void        insert(const Key& key, const MappedType& value);
         void        insert(const Key& key, MappedType&& value);
+        // Insert a prepared entry, leaving it intact on failure. Relocate must transfer
+        // into a default-constructed destination, leave the source destructible,
+        // and neither fail nor reenter the map.
+        template <typename Relocate>
+        int32_t     insert_unique(Pair<Key, MappedType> &entry, Relocate relocate);
         Pair<Key, MappedType>* find(const Key& key);
         const Pair<Key, MappedType>* find(const Key& key) const;
+        // Looks up a comparable key without constructing a stored Key.
+        template <typename LookupKey>
+        Pair<Key, MappedType>* find_as(const LookupKey &key);
+        template <typename LookupKey>
+        const Pair<Key, MappedType>* find_as(const LookupKey &key) const;
+        // Calls visit on a matching value under the map lock. The callback must
+        // not throw or change the map structure.
+        template <typename Visit>
+        int32_t visit_value(const Key &key, Visit visit);
+        template <typename Visit>
+        int32_t visit_value(const Key &key, Visit visit) const;
+        // Visits values in storage order under the map lock and stops on error.
+        // The visitor must leave the map structure intact.
+        template <typename Visit>
+        int32_t visit_values(Visit visit) const;
+        // As visit_values, with the key and value available to the visitor.
+        template <typename Visit>
+        int32_t visit_entries(Visit visit) const;
         void        remove(const Key& key);
+        // Validate the mapped value under the map lock before an in-place
+        // erasure. Relocate must overwrite the destination without failing.
+        template <typename Validate, typename Relocate>
+        int32_t     erase_value(const Key &key, Validate validate, Relocate relocate);
+        // Erase by current insertion-order index. Synchronize index lookup with erasure.
+        template <typename Relocate>
+        int32_t     erase_at(ft_size_t index, Relocate relocate);
+        // Preserve the map if copying a retained entry fails. A successful
+        // non-tail erasure can replace the backing storage. The optional
+        // transfer preserves value state omitted by copies and must not fail.
+        // CanShift must certify that shifting the value in place cannot fail.
+        template <typename Transfer = decltype(nullptr), typename CanShift = decltype(nullptr)>
+        int32_t     remove_transactional(const Key &key, Transfer transfer = nullptr,
+            CanShift can_shift = nullptr);
+        // The callback may update mapped values and must leave the map structure intact.
+        template <typename Visit>
+        int32_t     for_each(Visit visit);
+        // Relocate overwrites a constructed destination and leaves the source destructible.
+        template <typename Predicate, typename Relocate>
+        int32_t     erase_if(Predicate should_erase, Relocate relocate);
         ft_bool        empty() const;
         void        clear();
         ft_size_t      size() const;
@@ -108,6 +171,8 @@ class ft_map
         int32_t enable_thread_safety();
         int32_t disable_thread_safety();
         ft_bool        is_thread_safe() const;
+        // For lifecycle checks when the caller has exclusive access.
+        ft_bool        has_active_lock() const noexcept;
         uint8_t     is_initialised() const noexcept;
         int32_t lock(ft_bool *lock_acquired) const;
         int32_t         unlock(ft_bool lock_acquired) const;
@@ -193,6 +258,12 @@ int32_t ft_map<Key, MappedType>::initialize()
     }
     this->_capacity = this->_initial_capacity;
     this->_size = 0;
+    if (this->_capacity > MAXIMUM_CAPACITY)
+    {
+        this->_capacity = 0;
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_NO_MEMORY));
+    }
     if (this->_capacity > 0)
     {
         void *raw_memory = cma_malloc(sizeof(Pair<Key, MappedType>) * this->_capacity);
@@ -252,9 +323,10 @@ int32_t ft_map<Key, MappedType>::copy_from(const ft_map<Key, MappedType>& other)
     }
     if (this == &other)
         return (this->set_error(FT_ERR_SUCCESS));
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+    const ft_bool needs_initialize = this->_initialised_state != FT_CLASS_STATE_INITIALISED;
+    if (needs_initialize)
     {
-        this->_initial_capacity = other._capacity;
+        this->_initial_capacity = 0;
         int32_t init_error = this->initialize();
         if (init_error != FT_ERR_SUCCESS)
             return (this->set_error(init_error));
@@ -263,26 +335,81 @@ int32_t ft_map<Key, MappedType>::copy_from(const ft_map<Key, MappedType>& other)
     ft_bool lock_other = FT_FALSE;
     int32_t lock_error = this->lock_pair(other, &lock_this, &lock_other);
     if (lock_error != FT_ERR_SUCCESS)
-        return (this->set_error(lock_error));
-    this->destroy_all_unlocked();
-    if (this->_capacity < other._size)
     {
-        ft_size_t next_capacity = other._size;
-        if (!this->ensure_capacity(next_capacity))
+        if (needs_initialize)
+            (void)this->destroy();
+        return (this->set_error(lock_error));
+    }
+    ft_size_t capacity = this->_capacity;
+    if (needs_initialize)
+        capacity = other._capacity;
+    else if (capacity < other._size)
+        capacity = other._size;
+    if (this->_size == 0 && capacity == this->_capacity)
+    {
+        const int32_t result = this->copy_entries(this->_data, other._data, other._size);
+        if (result == FT_ERR_SUCCESS)
+            this->_size = other._size;
+        this->unlock_pair(other, lock_this, lock_other);
+        return (this->set_error(result));
+    }
+    Pair<Key, MappedType> *replacement = ft_nullptr;
+    int32_t result = FT_ERR_SUCCESS;
+    if (capacity != 0)
+    {
+        replacement = static_cast<Pair<Key, MappedType> *>(cma_malloc(sizeof(Pair<Key, MappedType>) * capacity));
+        if (replacement == ft_nullptr)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->copy_entries(replacement, other._data, other._size);
+    }
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->destroy_all_unlocked();
+        cma_free(this->_data);
+        this->_data = replacement;
+        this->_capacity = capacity;
+        this->_size = other._size;
+        if (needs_initialize)
+            this->_initial_capacity = capacity;
+    }
+    else
+        cma_free(replacement);
+    this->unlock_pair(other, lock_this, lock_other);
+    if (needs_initialize && result != FT_ERR_SUCCESS)
+        (void)this->destroy();
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+int32_t ft_map<Key, MappedType>::copy_entries(Pair<Key, MappedType> *destination,
+    const Pair<Key, MappedType> *source, ft_size_t count)
+{
+    ft_size_t index = 0;
+    while (index < count)
+    {
+        ::construct_at(&destination[index]);
+        int32_t result = FT_ERR_SUCCESS;
+        if constexpr (has_initialize_copy<Key>::value)
+            result = destination[index].key.initialize(source[index].key);
+        else
+            pair_assign_copy(destination[index].key, source[index].key);
+        if (result == FT_ERR_SUCCESS)
         {
-            this->unlock_pair(other, lock_this, lock_other);
-            return (this->set_error(FT_ERR_NO_MEMORY));
+            if constexpr (has_initialize_copy<MappedType>::value)
+                result = destination[index].value.initialize(source[index].value);
+            else
+                pair_assign_copy(destination[index].value, source[index].value);
+        }
+        ++index;
+        if (result != FT_ERR_SUCCESS)
+        {
+            while (index != 0)
+                ::destroy_at(&destination[--index]);
+            return (result);
         }
     }
-    ft_size_t index = 0;
-    while (index < other._size)
-    {
-        construct_at(&this->_data[index], other._data[index]);
-        index++;
-    }
-    this->_size = other._size;
-    this->unlock_pair(other, lock_this, lock_other);
-    return (this->set_error(FT_ERR_SUCCESS));
+    return (FT_ERR_SUCCESS);
 }
 
 template <typename Key, typename MappedType>
@@ -296,10 +423,13 @@ int32_t ft_map<Key, MappedType>::move_from(ft_map<Key, MappedType>& other)
     }
     if (this == &other)
         return (this->set_error(FT_ERR_SUCCESS));
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+    const ft_bool needs_initialize = this->_initialised_state != FT_CLASS_STATE_INITIALISED;
+    if (needs_initialize)
     {
+        const ft_size_t initial_capacity = this->_initial_capacity;
         this->_initial_capacity = 0;
-        int32_t init_error = this->initialize();
+        const int32_t init_error = this->initialize();
+        this->_initial_capacity = initial_capacity;
         if (init_error != FT_ERR_SUCCESS)
             return (this->set_error(init_error));
     }
@@ -307,7 +437,11 @@ int32_t ft_map<Key, MappedType>::move_from(ft_map<Key, MappedType>& other)
     ft_bool lock_other = FT_FALSE;
     int32_t lock_error = this->lock_pair(other, &lock_this, &lock_other);
     if (lock_error != FT_ERR_SUCCESS)
+    {
+        if (needs_initialize)
+            (void)this->destroy();
         return (this->set_error(lock_error));
+    }
     this->destroy_all_unlocked();
     if (this->_data != ft_nullptr)
     {
@@ -325,57 +459,114 @@ int32_t ft_map<Key, MappedType>::move_from(ft_map<Key, MappedType>& other)
 }
 
 template <typename Key, typename MappedType>
-ft_bool ft_map<Key, MappedType>::ensure_capacity(ft_size_t desired_capacity)
+ft_size_t ft_map<Key, MappedType>::next_insert_capacity() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::ensure_capacity");
-    if (desired_capacity <= this->_capacity)
-        return (FT_TRUE);
-    void *raw_memory = cma_malloc(sizeof(Pair<Key, MappedType>) * desired_capacity);
+    if (this->_capacity >= MAXIMUM_CAPACITY)
+        return (0);
+    if (this->_capacity != 0U && this->_capacity <= MAXIMUM_CAPACITY / 2U)
+        return (this->_capacity * 2U);
+    return (this->_capacity + 1U);
+}
 
-    if (raw_memory == ft_nullptr)
-        return (FT_FALSE);
-    Pair<Key, MappedType> *new_data = static_cast<Pair<Key, MappedType> *>(raw_memory);
+template <typename Key, typename MappedType>
+int32_t ft_map<Key, MappedType>::grow_for_insert()
+{
+    const ft_size_t new_capacity = this->next_insert_capacity();
+    if (new_capacity == 0)
+        return (FT_ERR_NO_MEMORY);
+    auto *new_data = static_cast<Pair<Key, MappedType> *>(
+        cma_malloc(sizeof(Pair<Key, MappedType>) * new_capacity));
+    if (new_data == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const int32_t result = this->copy_entries(new_data, this->_data, this->_size);
+    if (result != FT_ERR_SUCCESS)
+    {
+        cma_free(new_data);
+        return (result);
+    }
     ft_size_t index = 0;
-
     while (index < this->_size)
     {
-        construct_at(&new_data[index]);
-        new_data[index].key = this->_data[index].key;
-        if constexpr (std::is_pointer<MappedType>::value)
-            new_data[index].value = this->_data[index].value;
-        else if constexpr (has_initialize_move<MappedType>::value)
-        {
-            int32_t initialize_error;
-
-            initialize_error = new_data[index].value.initialize(this->_data[index].value);
-            if (initialize_error != FT_ERR_SUCCESS)
-            {
-                ft_size_t cleanup_index = 0;
-                while (cleanup_index <= index)
-                {
-                    destroy_at(&new_data[cleanup_index]);
-                    cleanup_index++;
-                }
-                cma_free(new_data);
-                return (FT_FALSE);
-            }
-        }
-        else
-            new_data[index].value = this->_data[index].value;
         destroy_at(&this->_data[index]);
-        index++;
+        ++index;
     }
     if (this->_data != ft_nullptr)
         cma_free(this->_data);
     this->_data = new_data;
-    this->_capacity = desired_capacity;
-    return (FT_TRUE);
+    this->_capacity = new_capacity;
+    return (FT_ERR_SUCCESS);
 }
 
 template <typename Key, typename MappedType>
-ft_size_t ft_map<Key, MappedType>::find_index(const Key& key) const
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::insert_unique(Pair<Key, MappedType> &entry, Relocate relocate)
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::find_index");
+    static_assert(std::is_nothrow_default_constructible_v<Key>
+        && std::is_nothrow_default_constructible_v<MappedType>);
+    static_assert(noexcept(relocate(entry, entry)));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::insert_unique");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (this->find_index(entry.key) != this->_size)
+        result = FT_ERR_ALREADY_EXISTS;
+    else if (this->_size == this->_capacity)
+    {
+        const ft_size_t new_capacity = this->next_insert_capacity();
+        if (new_capacity == 0)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->reserve_relocated_unlocked(new_capacity, relocate);
+    }
+    if (result == FT_ERR_SUCCESS)
+        (void)this->append_prepared_unlocked(entry, relocate);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::reserve_relocated_unlocked(ft_size_t capacity, Relocate relocate)
+{
+    if (capacity <= this->_capacity)
+        return (FT_ERR_SUCCESS);
+    if (capacity > MAXIMUM_CAPACITY)
+        return (FT_ERR_NO_MEMORY);
+    auto *replacement = static_cast<Pair<Key, MappedType> *>(
+        cma_malloc(capacity * sizeof(Pair<Key, MappedType>)));
+    if (replacement == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_size_t index = 0;
+    while (index < this->_size)
+    {
+        construct_at(&replacement[index]);
+        relocate(replacement[index], this->_data[index]);
+        destroy_at(&this->_data[index]);
+        ++index;
+    }
+    cma_free(this->_data);
+    this->_data = replacement;
+    this->_capacity = capacity;
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+Pair<Key, MappedType> &ft_map<Key, MappedType>::append_prepared_unlocked(
+    Pair<Key, MappedType> &entry, Relocate relocate)
+{
+    auto *destination = this->_data + this->_size;
+    construct_at(destination);
+    relocate(*destination, entry);
+    ++this->_size;
+    return (*destination);
+}
+
+template <typename Key, typename MappedType>
+template <typename LookupKey>
+ft_size_t ft_map<Key, MappedType>::find_index(const LookupKey &key) const
+{
     ft_size_t index = 0;
 
     while (index < this->_size)
@@ -416,24 +607,15 @@ const Pair<Key, MappedType>* ft_map<Key, MappedType>::end_pointer_unlocked() con
 template <typename Key, typename MappedType>
 int32_t ft_map<Key, MappedType>::lock_internal(ft_bool *lock_acquired) const
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::lock_internal");
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_acquired != ft_nullptr)
-        *lock_acquired = FT_FALSE;
-    if (this->_mutex == ft_nullptr)
-        return (this->set_error(FT_ERR_SUCCESS));
-    int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-
-    if (lock_error != FT_ERR_SUCCESS)
-        return (this->set_error(lock_error));
-    if (lock_acquired != ft_nullptr)
-        *lock_acquired = FT_TRUE;
-    return (this->set_error(FT_ERR_SUCCESS));
+        *lock_acquired = lock_error == FT_ERR_SUCCESS && this->_mutex != ft_nullptr;
+    return (this->set_error(lock_error));
 }
 
 template <typename Key, typename MappedType>
 int32_t ft_map<Key, MappedType>::unlock_internal(ft_bool lock_acquired) const
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::unlock_internal");
     if (!lock_acquired || this->_mutex == ft_nullptr)
     {
         return (this->set_error(FT_ERR_SUCCESS));
@@ -538,29 +720,15 @@ void ft_map<Key, MappedType>::insert(const Key& key, const MappedType& value)
         this->set_error(FT_ERR_SUCCESS);
         return ;
     }
-    ft_size_t next_capacity;
-
-    if (this->_capacity == 0)
-        next_capacity = 1;
-    else
+    if (this->_size == this->_capacity)
     {
-        next_capacity = this->_capacity * 2;
-        if (next_capacity <= this->_capacity)
+        const int32_t result = this->grow_for_insert();
+        if (result != FT_ERR_SUCCESS)
         {
-            ft_size_t incremented_capacity = this->_capacity + 1;
-            if (incremented_capacity == 0)
-            {
-                (void)this->unlock_internal(lock_acquired);
-                return ;
-            }
-            next_capacity = incremented_capacity;
+            (void)this->unlock_internal(lock_acquired);
+            this->set_error(result);
+            return ;
         }
-    }
-    if (!this->ensure_capacity(next_capacity))
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NO_MEMORY);
-        return ;
     }
     if constexpr (ft_map<Key, MappedType>::template has_initialize_copy<MappedType>::value)
     {
@@ -655,29 +823,15 @@ void ft_map<Key, MappedType>::insert(const Key& key, MappedType&& value)
         this->set_error(FT_ERR_SUCCESS);
         return ;
     }
-    ft_size_t next_capacity;
-
-    if (this->_capacity == 0)
-        next_capacity = 1;
-    else
+    if (this->_size == this->_capacity)
     {
-        next_capacity = this->_capacity * 2;
-        if (next_capacity <= this->_capacity)
+        const int32_t result = this->grow_for_insert();
+        if (result != FT_ERR_SUCCESS)
         {
-            ft_size_t incremented_capacity = this->_capacity + 1;
-            if (incremented_capacity == 0)
-            {
-                (void)this->unlock_internal(lock_acquired);
-                return ;
-            }
-            next_capacity = incremented_capacity;
+            (void)this->unlock_internal(lock_acquired);
+            this->set_error(result);
+            return ;
         }
-    }
-    if (!this->ensure_capacity(next_capacity))
-    {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_NO_MEMORY);
-        return ;
     }
     if constexpr (ft_map<Key, MappedType>::template has_initialize_move<MappedType>::value)
     {
@@ -735,6 +889,13 @@ void ft_map<Key, MappedType>::insert(const Key& key, MappedType&& value)
 template <typename Key, typename MappedType>
 Pair<Key, MappedType>* ft_map<Key, MappedType>::find(const Key& key)
 {
+    return (this->find_as(key));
+}
+
+template <typename Key, typename MappedType>
+template <typename LookupKey>
+Pair<Key, MappedType>* ft_map<Key, MappedType>::find_as(const LookupKey &key)
+{
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::find");
     ft_bool lock_acquired = FT_FALSE;
     int32_t lock_error = this->lock_internal(&lock_acquired);
@@ -759,6 +920,13 @@ Pair<Key, MappedType>* ft_map<Key, MappedType>::find(const Key& key)
 template <typename Key, typename MappedType>
 const Pair<Key, MappedType>* ft_map<Key, MappedType>::find(const Key& key) const
 {
+    return (this->find_as(key));
+}
+
+template <typename Key, typename MappedType>
+template <typename LookupKey>
+const Pair<Key, MappedType>* ft_map<Key, MappedType>::find_as(const LookupKey &key) const
+{
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::find_const");
     ft_bool lock_acquired = FT_FALSE;
     int32_t lock_error = this->lock_internal(&lock_acquired);
@@ -781,6 +949,78 @@ const Pair<Key, MappedType>* ft_map<Key, MappedType>::find(const Key& key) const
 }
 
 template <typename Key, typename MappedType>
+template <typename Visit>
+int32_t ft_map<Key, MappedType>::visit_value(const Key &key, Visit visit)
+{
+    static_assert(noexcept(visit(std::declval<MappedType &>())));
+    const auto &read_only = *static_cast<const ft_map *>(this);
+    return (read_only.visit_value(key, [&visit](const MappedType &value) noexcept
+    {
+        return (visit(const_cast<MappedType &>(value)));
+    }));
+}
+
+template <typename Key, typename MappedType>
+template <typename Visit>
+int32_t ft_map<Key, MappedType>::visit_value(const Key &key, Visit visit) const
+{
+    static_assert(noexcept(visit(std::declval<const MappedType &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::visit_value");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    result = FT_ERR_NOT_FOUND;
+    if (this->_size != 0U)
+    {
+        const Pair<Key, MappedType> *entry = this->_data;
+        const Pair<Key, MappedType> *end = entry + this->_size;
+        while (entry != end)
+        {
+            if (entry->key == key)
+            {
+                result = visit(entry->value);
+                break ;
+            }
+            ++entry;
+        }
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Visit>
+int32_t ft_map<Key, MappedType>::visit_values(Visit visit) const
+{
+    static_assert(noexcept(visit(std::declval<const MappedType &>())));
+    return (this->visit_entries([&visit](const Pair<Key, MappedType> &entry) noexcept
+    {
+        return (visit(entry.value));
+    }));
+}
+
+template <typename Key, typename MappedType>
+template <typename Visit>
+int32_t ft_map<Key, MappedType>::visit_entries(Visit visit) const
+{
+    static_assert(noexcept(visit(std::declval<const Pair<Key, MappedType> &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::visit_entries");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    ft_size_t index = 0U;
+    while (index < this->_size && result == FT_ERR_SUCCESS)
+    {
+        result = visit(static_cast<const Pair<Key, MappedType> &>(this->_data[index]));
+        ++index;
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
 void ft_map<Key, MappedType>::remove(const Key& key)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::remove");
@@ -792,14 +1032,76 @@ void ft_map<Key, MappedType>::remove(const Key& key)
         this->set_error(lock_error);
         return ;
     }
-    ft_size_t index = this->find_index(key);
+    const ft_size_t index = this->find_index(key);
+    int32_t result = FT_ERR_SUCCESS;
+    if (index != this->_size)
+        result = this->remove_at_unlocked(index);
+    (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
+    return ;
+}
 
+template <typename Key, typename MappedType>
+template <typename Validate, typename Relocate>
+int32_t ft_map<Key, MappedType>::erase_value(const Key &key, Validate validate, Relocate relocate)
+{
+    static_assert(noexcept(validate(std::declval<const MappedType &>())));
+    static_assert(noexcept(relocate(std::declval<Pair<Key, MappedType> &>(),
+        std::declval<Pair<Key, MappedType> &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::erase_value");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    ft_size_t index = this->find_index(key);
     if (index == this->_size)
+        result = FT_ERR_NOT_FOUND;
+    else
     {
-        (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-        return ;
+        result = validate(this->_data[index].value);
+        if (result == FT_ERR_SUCCESS)
+            this->relocate_erase_at_unlocked(index, relocate);
     }
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::erase_at(ft_size_t index, Relocate relocate)
+{
+    static_assert(noexcept(relocate(std::declval<Pair<Key, MappedType> &>(),
+        std::declval<Pair<Key, MappedType> &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::erase_at");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    if (index >= this->_size)
+        result = FT_ERR_OUT_OF_RANGE;
+    else
+        this->relocate_erase_at_unlocked(index, relocate);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+void ft_map<Key, MappedType>::relocate_erase_at_unlocked(ft_size_t index, Relocate relocate)
+{
+    while (index + 1U < this->_size)
+    {
+        relocate(this->_data[index], this->_data[index + 1U]);
+        ++index;
+    }
+    ::destroy_at(&this->_data[index]);
+    --this->_size;
+    return ;
+}
+
+template <typename Key, typename MappedType>
+int32_t ft_map<Key, MappedType>::remove_at_unlocked(ft_size_t index)
+{
     ft_size_t move_index = index;
 
     while (move_index + 1 < this->_size)
@@ -810,31 +1112,149 @@ void ft_map<Key, MappedType>::remove(const Key& key)
         {
             int32_t destroy_error = this->_data[move_index].value.destroy();
             if (destroy_error != FT_ERR_SUCCESS)
-            {
-                (void)this->unlock_internal(lock_acquired);
-                this->set_error(destroy_error);
-                return ;
-            }
+                return (destroy_error);
             int32_t initialize_error = this->_data[move_index].value.initialize(this->_data[move_index + 1].value);
             if (initialize_error != FT_ERR_SUCCESS)
-            {
-                (void)this->unlock_internal(lock_acquired);
-                this->set_error(initialize_error);
-                return ;
-            }
+                return (initialize_error);
         }
         else if constexpr (std::is_copy_assignable<MappedType>::value)
             this->_data[move_index].value = this->_data[move_index + 1].value;
         move_index++;
     }
-    if (this->_size > 0)
+    ::destroy_at(&this->_data[this->_size - 1U]);
+    --this->_size;
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename Key, typename MappedType>
+template <typename Transfer, typename CanShift>
+int32_t ft_map<Key, MappedType>::remove_transactional(const Key &key, Transfer transfer,
+    CanShift can_shift)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_map::remove_transactional");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    const ft_size_t index = this->find_index(key);
+    if (index != this->_size)
+        result = this->remove_transactional_unlocked(index, transfer, can_shift);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Transfer, typename CanShift>
+int32_t ft_map<Key, MappedType>::remove_transactional_unlocked(ft_size_t index, Transfer transfer,
+    CanShift can_shift)
+{
+    const ft_size_t retained_size = this->_size - 1U;
+    if (index == retained_size)
+        return (this->remove_at_unlocked(index));
+    if constexpr (!std::is_same<CanShift, decltype(nullptr)>::value)
     {
-        destroy_at(&this->_data[this->_size - 1]);
-        this->_size -= 1;
+        static_assert(std::is_nothrow_copy_assignable<Key>::value
+            && !has_initialize_copy<Key>::value);
+        static_assert(noexcept(can_shift(std::declval<const MappedType &>())));
+        ft_size_t probe = index;
+        while (probe < this->_size && can_shift(this->_data[probe].value))
+            ++probe;
+        if (probe == this->_size)
+            return (this->remove_at_unlocked(index));
+    }
+
+    auto *replacement = static_cast<Pair<Key, MappedType> *>(
+        cma_malloc(sizeof(Pair<Key, MappedType>) * this->_capacity));
+    if (replacement == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    int32_t result = this->copy_entries(replacement, this->_data, index);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->copy_entries(replacement + index, this->_data + index + 1U,
+            retained_size - index);
+        if (result != FT_ERR_SUCCESS)
+        {
+            while (index != 0U)
+                ::destroy_at(&replacement[--index]);
+        }
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        cma_free(replacement);
+        return (result);
+    }
+    if constexpr (!std::is_same<Transfer, decltype(nullptr)>::value)
+    {
+        static_assert(noexcept(transfer(std::declval<MappedType &>(), std::declval<MappedType &>())));
+        ft_size_t retained_index = 0U;
+        while (retained_index < retained_size)
+        {
+            ft_size_t source_index = retained_index;
+            if (retained_index >= index)
+                ++source_index;
+            transfer(replacement[retained_index].value, this->_data[source_index].value);
+            ++retained_index;
+        }
+    }
+    this->destroy_all_unlocked();
+    cma_free(this->_data);
+    this->_data = replacement;
+    this->_size = retained_size;
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename Key, typename MappedType>
+template <typename Visit>
+int32_t ft_map<Key, MappedType>::for_each(Visit visit)
+{
+    static_assert(noexcept(visit(std::declval<const Key &>(), std::declval<MappedType &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::for_each");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    ft_size_t index = 0;
+    while (index < this->_size)
+    {
+        auto &entry = this->_data[index];
+        visit(static_cast<const Key &>(entry.key), entry.value);
+        ++index;
     }
     (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return ;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+template <typename Key, typename MappedType>
+template <typename Predicate, typename Relocate>
+int32_t ft_map<Key, MappedType>::erase_if(Predicate should_erase, Relocate relocate)
+{
+    static_assert(noexcept(should_erase(std::declval<const Pair<Key, MappedType> &>(), ft_size_t{})));
+    static_assert(noexcept(relocate(std::declval<Pair<Key, MappedType> &>(),
+        std::declval<Pair<Key, MappedType> &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::erase_if");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    ft_size_t retained = 0;
+    ft_size_t index = 0;
+    while (index < this->_size)
+    {
+        const Pair<Key, MappedType> &entry = this->_data[index];
+        if (!should_erase(entry, index))
+        {
+            if (retained != index)
+                relocate(this->_data[retained], this->_data[index]);
+            ++retained;
+        }
+        ++index;
+    }
+    while (index > retained)
+        ::destroy_at(&this->_data[--index]);
+    this->_size = retained;
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 template <typename Key, typename MappedType>
@@ -1041,6 +1461,12 @@ ft_bool ft_map<Key, MappedType>::is_thread_safe() const
     const ft_bool result = (this->_mutex != ft_nullptr);
     this->set_error(FT_ERR_SUCCESS);
     return (result);
+}
+
+template <typename Key, typename MappedType>
+ft_bool ft_map<Key, MappedType>::has_active_lock() const noexcept
+{
+    return (this->_mutex != ft_nullptr && this->_mutex->lockState());
 }
 
 template <typename Key, typename MappedType>

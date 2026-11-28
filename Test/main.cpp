@@ -52,7 +52,7 @@ namespace
         SYMBOL_INFO *symbol_info;
         DWORD64 symbol_displacement;
 
-        file_handle = CreateFileA("windows_crash_stack_trace.log",
+        file_handle = CreateFileA("build_logs/windows_crash_stack_trace.log",
             GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
             FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_handle == INVALID_HANDLE_VALUE)
@@ -391,23 +391,38 @@ namespace
         preserve_test_trace = std::getenv("FT_TEST_TRACE_CURRENT_TEST");
         if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1")
         {
-            artifact_path = root_path + L"\\test_failures.log";
+            artifact_path = root_path + L"\\build_logs\\test_failures.log";
+            if (test_remove_windows_path(artifact_path, root_path) == 0)
+                cleanup_status = 0;
+            artifact_path = root_path + L"\\Test\\build_logs\\test_failures.log";
             if (test_remove_windows_path(artifact_path, root_path) == 0)
                 cleanup_status = 0;
         }
         if (preserve_test_trace == NULL || std::string(preserve_test_trace) != "1")
         {
-            artifact_path = root_path + L"\\Test\\test_current.log";
+            artifact_path = root_path + L"\\build_logs\\test_current.log";
+            if (test_remove_windows_path(artifact_path, root_path) == 0)
+                cleanup_status = 0;
+            artifact_path = root_path + L"\\Test\\build_logs\\test_current.log";
             if (test_remove_windows_path(artifact_path, root_path) == 0)
                 cleanup_status = 0;
         }
-        artifact_path = root_path + L"\\test_file_io.txt";
+        artifact_path = root_path + L"\\build_logs\\test_file_io.txt";
         if (test_remove_windows_path(artifact_path, root_path) == 0)
             cleanup_status = 0;
-        artifact_path = root_path + L"\\test_cmp_system_io.txt";
+        artifact_path = root_path + L"\\Test\\build_logs\\test_file_io.txt";
         if (test_remove_windows_path(artifact_path, root_path) == 0)
             cleanup_status = 0;
-        artifact_path = root_path + L"\\test_su_file_stream.txt";
+        artifact_path = root_path + L"\\build_logs\\test_cmp_system_io.txt";
+        if (test_remove_windows_path(artifact_path, root_path) == 0)
+            cleanup_status = 0;
+        artifact_path = root_path + L"\\Test\\build_logs\\test_cmp_system_io.txt";
+        if (test_remove_windows_path(artifact_path, root_path) == 0)
+            cleanup_status = 0;
+        artifact_path = root_path + L"\\build_logs\\test_su_file_stream.txt";
+        if (test_remove_windows_path(artifact_path, root_path) == 0)
+            cleanup_status = 0;
+        artifact_path = root_path + L"\\Test\\build_logs\\test_su_file_stream.txt";
         if (test_remove_windows_path(artifact_path, root_path) == 0)
             cleanup_status = 0;
         artifact_path = root_path + L"\\Test\\tmp_json_stream_reader.json";
@@ -494,13 +509,27 @@ namespace
             return ;
         preserve_failure_log = std::getenv("FT_TEST_PRESERVE_FAILURE_LOG"); // CI_DIAGNOSTIC: Preserve failure details for CI diagnosis.
         preserve_test_trace = std::getenv("FT_TEST_TRACE_CURRENT_TEST"); // CI_DIAGNOSTIC: Preserve the last started test marker.
-        if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
-            test_remove_path(root_path / "test_failures.log"); // CI_DIAGNOSTIC: Remove the diagnostic log outside CI diagnosis.
-        if (preserve_test_trace == NULL || std::string(preserve_test_trace) != "1") // CI_DIAGNOSTIC: Keep normal local cleanup unchanged.
-            test_remove_path(root_path / "Test" / "test_current.log"); // CI_DIAGNOSTIC: Remove the trace outside CI diagnosis.
-        test_remove_path(root_path / "test_file_io.txt");
-        test_remove_path(root_path / "test_cmp_system_io.txt");
-        test_remove_path(root_path / "test_su_file_stream.txt");
+        if (preserve_failure_log == NULL || std::string(preserve_failure_log) != "1")
+        {
+            test_remove_path(root_path / "build_logs" / "test_failures.log");
+            test_remove_path(root_path / "Test" / "build_logs" / "test_failures.log");
+        }
+        if (preserve_test_trace == NULL || std::string(preserve_test_trace) != "1")
+        {
+            test_remove_path(root_path / "build_logs" / "test_current.log");
+            test_remove_path(root_path / "Test" / "build_logs" / "test_current.log");
+        }
+        const char *scratch_files[] = {
+            "test_file_io.txt", "test_cmp_system_io.txt", "test_su_file_stream.txt"
+        };
+        ft_size_t index = 0U;
+        while (index < sizeof(scratch_files) / sizeof(scratch_files[0]))
+        {
+            const char *file = scratch_files[index];
+            test_remove_path(root_path / "build_logs" / file);
+            test_remove_path(root_path / "Test" / "build_logs" / file);
+            index += 1U;
+        }
         test_remove_path(root_path / "Test" / "tmp_json_stream_reader.json");
         test_remove_path(root_path / "Test" / "tmp");
         return ;
@@ -522,6 +551,7 @@ int main(int argc, char **argv)
 #endif
     }
 #if defined(_WIN32) || defined(_WIN64)
+    (void)CreateDirectoryA("build_logs", NULL);
     (void)SetUnhandledExceptionFilter(test_windows_unhandled_exception);
 #endif
     const int test_status = ft_run_registered_tests();

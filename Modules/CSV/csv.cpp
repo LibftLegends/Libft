@@ -8,22 +8,6 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
 
-static char *csv_duplicate_c_string(const char *string)
-{
-    ft_size_t length;
-    char *copy_pointer;
-
-    if (string == ft_nullptr)
-        return (ft_nullptr);
-    length = std::strlen(string);
-    copy_pointer = static_cast<char *>(cma_malloc(length + 1));
-    if (copy_pointer == ft_nullptr)
-        return (ft_nullptr);
-    std::memcpy(copy_pointer, string, length);
-    copy_pointer[length] = '\0';
-    return (copy_pointer);
-}
-
 static ft_bool csv_is_space_character(char character)
 {
     if (character == ' ')
@@ -37,61 +21,119 @@ static ft_bool csv_is_space_character(char character)
     return (FT_FALSE);
 }
 
-static ft_bool csv_field_needs_quotes(const char *field, char delimiter)
+static ft_bool csv_is_valid_delimiter(char delimiter)
 {
-    ft_size_t index;
-    ft_size_t length;
-
-    if (field == ft_nullptr)
+    if (delimiter == '\0' || delimiter == '"' || delimiter == '\n'
+        || delimiter == '\r')
         return (FT_FALSE);
-    length = std::strlen(field);
-    if (length == 0)
+    return (FT_TRUE);
+}
+
+static ft_bool csv_field_needs_quotes(const char *field, ft_size_t length,
+    char delimiter)
+{
+    if (length == 0U || csv_is_space_character(field[0]) == FT_TRUE
+        || csv_is_space_character(field[length - 1U]) == FT_TRUE)
         return (FT_TRUE);
-    if (csv_is_space_character(field[0]) == FT_TRUE)
-        return (FT_TRUE);
-    if (csv_is_space_character(field[length - 1]) == FT_TRUE)
-        return (FT_TRUE);
-    index = 0;
+    ft_size_t index = 0U;
     while (index < length)
     {
         if (field[index] == delimiter || field[index] == '"'
             || field[index] == '\n' || field[index] == '\r')
             return (FT_TRUE);
-        index += 1;
+        index += 1U;
     }
     return (FT_FALSE);
 }
 
 static int32_t csv_append_escaped_field(ft_string &output, const char *field,
-    char delimiter)
+    ft_size_t length, char delimiter)
 {
-    ft_bool needs_quotes;
-    ft_size_t index;
-    ft_size_t field_length;
-
-    if (field == ft_nullptr)
-        return (FT_ERR_INVALID_POINTER);
-    needs_quotes = csv_field_needs_quotes(field, delimiter);
-    if (needs_quotes == FT_FALSE)
-        return (output.append(field, std::strlen(field)));
-    if (output.append('"') != FT_ERR_SUCCESS)
-        return (output.get_error());
-    field_length = std::strlen(field);
-    index = 0;
-    while (index < field_length)
+    if (csv_field_needs_quotes(field, length, delimiter) == FT_FALSE)
+        return (output.append(field, length));
+    int32_t error_code = output.append('"');
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    const char *end = field + length;
+    while (field < end)
     {
-        if (field[index] == '"')
+        const char *quote = static_cast<const char *>(
+            ft_memchr(field, '"', static_cast<ft_size_t>(end - field)));
+        if (quote == ft_nullptr)
         {
-            if (output.append('"') != FT_ERR_SUCCESS)
-                return (output.get_error());
+            error_code = output.append(field, static_cast<ft_size_t>(end - field));
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+            break ;
         }
-        if (output.append(field[index]) != FT_ERR_SUCCESS)
-            return (output.get_error());
-        index += 1;
+        const char *next = quote + 1U;
+        error_code = output.append(field, static_cast<ft_size_t>(next - field));
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        error_code = output.append('"');
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        field = next;
     }
-    if (output.append('"') != FT_ERR_SUCCESS)
-        return (output.get_error());
-    return (FT_ERR_SUCCESS);
+    return (output.append('"'));
+}
+
+static ft_bool csv_is_field_boundary(char character, char delimiter,
+    ft_bool split_document)
+{
+    return (character == '\0' || character == delimiter
+        || (split_document == FT_TRUE && (character == '\r' || character == '\n')));
+}
+
+static int32_t csv_read_field(const char *&cursor, char delimiter,
+    ft_bool split_document, ft_string &field)
+{
+    if (*cursor != '"')
+    {
+        const char *start = cursor;
+        while (csv_is_field_boundary(*cursor, delimiter, split_document) == FT_FALSE)
+        {
+            if (*cursor == '"')
+                return (FT_ERR_INVALID_OPERATION);
+            cursor += 1U;
+        }
+        if (cursor == start)
+            return (FT_ERR_SUCCESS);
+        return (field.append(start, static_cast<ft_size_t>(cursor - start)));
+    }
+    cursor += 1U;
+    while (FT_TRUE)
+    {
+        const char *start = cursor;
+        while (*cursor != '\0' && *cursor != '"')
+            cursor += 1U;
+        if (*cursor == '\0')
+            return (FT_ERR_INVALID_OPERATION);
+        if (cursor[1] == '"')
+        {
+            int32_t error_code = field.append(start,
+                static_cast<ft_size_t>(cursor - start) + 1U);
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+            cursor += 2U;
+            continue ;
+        }
+        if (cursor != start)
+        {
+            int32_t error_code = field.append(start,
+                static_cast<ft_size_t>(cursor - start));
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
+        }
+        cursor += 1U;
+        while (csv_is_field_boundary(*cursor, delimiter, split_document) == FT_FALSE)
+        {
+            if (csv_is_space_character(*cursor) == FT_FALSE)
+                return (FT_ERR_INVALID_OPERATION);
+            cursor += 1U;
+        }
+        return (FT_ERR_SUCCESS);
+    }
 }
 
 static int32_t csv_finalize_field(ft_vector<ft_string> &fields,
@@ -124,7 +166,10 @@ static int32_t csv_finalize_row(ft_vector<ft_size_t> &row_offsets,
         return (error_code);
     error_code = row_lengths.push_back(row_length);
     if (error_code != FT_ERR_SUCCESS)
+    {
+        row_offsets.pop_back();
         return (error_code);
+    }
     return (FT_ERR_SUCCESS);
 }
 
@@ -198,190 +243,42 @@ int32_t ft_csv_document::initialize() noexcept
 int32_t ft_csv_document::parse_content(const char *content, char delimiter,
     ft_bool has_header) noexcept
 {
-    ft_string current_field;
-    ft_size_t index;
-    ft_size_t row_field_count;
-    ft_size_t row_offset;
-    ft_bool field_started;
-    ft_bool in_quotes;
-    ft_bool quote_closed;
-    int32_t error_code;
-
     if (content == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
-    error_code = current_field.initialize();
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_string current_field;
+    int32_t error_code = current_field.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    index = 0;
-    row_field_count = 0;
-    row_offset = 0;
-    field_started = FT_FALSE;
-    in_quotes = FT_FALSE;
-    quote_closed = FT_FALSE;
-    while (content[index] != '\0')
+    const char *cursor = content;
+    ft_size_t row_offset = 0U;
+    while (*cursor != '\0')
     {
-        if (quote_closed == FT_TRUE)
+        ft_size_t row_field_count = 0U;
+        while (FT_TRUE)
         {
-            if (content[index] == delimiter)
-            {
-                error_code = csv_finalize_field(this->_fields, current_field);
-                if (error_code != FT_ERR_SUCCESS)
-                {
-                    (void)current_field.destroy();
-                    return (error_code);
-                }
-                row_field_count += 1;
-                quote_closed = FT_FALSE;
-                field_started = FT_FALSE;
-                index += 1;
-                continue ;
-            }
-            if (content[index] == '\n' || content[index] == '\r')
-            {
-                error_code = csv_finalize_field(this->_fields, current_field);
-                if (error_code != FT_ERR_SUCCESS)
-                {
-                    (void)current_field.destroy();
-                    return (error_code);
-                }
-                row_field_count += 1;
-                error_code = csv_finalize_row(this->_row_offsets,
-                        this->_row_lengths, row_offset, row_field_count);
-                if (error_code != FT_ERR_SUCCESS)
-                {
-                    (void)current_field.destroy();
-                    return (error_code);
-                }
-                row_offset += row_field_count;
-                row_field_count = 0;
-                quote_closed = FT_FALSE;
-                field_started = FT_FALSE;
-                if (content[index] == '\r' && content[index + 1] == '\n')
-                    index += 1;
-                index += 1;
-                continue ;
-            }
-            if (csv_is_space_character(content[index]) == FT_TRUE)
-            {
-                index += 1;
-                continue ;
-            }
-            (void)current_field.destroy();
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        if (in_quotes == FT_TRUE)
-        {
-            if (content[index] == '"')
-            {
-                if (content[index + 1] == '"')
-                {
-                    if (current_field.append('"') != FT_ERR_SUCCESS)
-                    {
-                        error_code = current_field.get_error();
-                        (void)current_field.destroy();
-                        return (error_code);
-                    }
-                    index += 2;
-                    continue ;
-                }
-                in_quotes = FT_FALSE;
-                quote_closed = FT_TRUE;
-                index += 1;
-                continue ;
-            }
-            if (current_field.append(content[index]) != FT_ERR_SUCCESS)
-            {
-                error_code = current_field.get_error();
-                (void)current_field.destroy();
+            error_code = csv_read_field(cursor, delimiter, FT_TRUE, current_field);
+            if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
-            }
-            index += 1;
-            continue ;
-        }
-        if (content[index] == delimiter)
-        {
             error_code = csv_finalize_field(this->_fields, current_field);
             if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)current_field.destroy();
                 return (error_code);
-            }
-            row_field_count += 1;
-            field_started = FT_FALSE;
-            index += 1;
-            continue ;
+            row_field_count += 1U;
+            if (*cursor != delimiter)
+                break ;
+            cursor += 1U;
         }
-        if (content[index] == '\n' || content[index] == '\r')
-        {
-            error_code = csv_finalize_field(this->_fields, current_field);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)current_field.destroy();
-                return (error_code);
-            }
-            row_field_count += 1;
-            error_code = csv_finalize_row(this->_row_offsets,
-                    this->_row_lengths, row_offset, row_field_count);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)current_field.destroy();
-                return (error_code);
-            }
-            row_offset += row_field_count;
-            row_field_count = 0;
-            field_started = FT_FALSE;
-            if (content[index] == '\r' && content[index + 1] == '\n')
-                index += 1;
-            index += 1;
-            continue ;
-        }
-        if (content[index] == '"')
-        {
-            if (field_started == FT_TRUE || current_field.size() != 0)
-            {
-                (void)current_field.destroy();
-                return (FT_ERR_INVALID_OPERATION);
-            }
-            in_quotes = FT_TRUE;
-            field_started = FT_TRUE;
-            index += 1;
-            continue ;
-        }
-        if (current_field.append(content[index]) != FT_ERR_SUCCESS)
-        {
-            error_code = current_field.get_error();
-            (void)current_field.destroy();
-            return (error_code);
-        }
-        field_started = FT_TRUE;
-        index += 1;
-    }
-    if (in_quotes == FT_TRUE)
-    {
-        (void)current_field.destroy();
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    if (field_started == FT_TRUE || current_field.size() > 0)
-    {
-        error_code = csv_finalize_field(this->_fields, current_field);
-        if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)current_field.destroy();
-            return (error_code);
-        }
-        row_field_count += 1;
-    }
-    if (row_field_count > 0)
-    {
         error_code = csv_finalize_row(this->_row_offsets, this->_row_lengths,
-                row_offset, row_field_count);
+            row_offset, row_field_count);
         if (error_code != FT_ERR_SUCCESS)
-        {
-            (void)current_field.destroy();
             return (error_code);
-        }
+        row_offset += row_field_count;
+        if (*cursor == '\r' && cursor[1] == '\n')
+            cursor += 1U;
+        if (*cursor != '\0')
+            cursor += 1U;
     }
-    (void)current_field.destroy();
     this->_delimiter = delimiter;
     this->_has_header = has_header;
     return (FT_ERR_SUCCESS);
@@ -392,6 +289,8 @@ int32_t ft_csv_document::initialize(const char *content, char delimiter,
 {
     int32_t error_code;
 
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (ft_csv_document::set_error(FT_ERR_INVALID_ARGUMENT));
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         error_code = this->destroy();
@@ -614,7 +513,7 @@ ft_bool ft_csv_document::find_header_column_index(const char *column_name,
         *column_index_out = 0;
     if (column_name == ft_nullptr)
         return (FT_FALSE);
-    if (this->_has_header == FT_FALSE)
+    if (this->_has_header == FT_FALSE || this->_row_lengths.empty() == FT_TRUE)
         return (FT_FALSE);
     column_index = 0;
     while (column_index < this->_row_lengths[0])
@@ -937,20 +836,20 @@ int32_t ft_csv_document::write_to_string(ft_string &output) const noexcept
     row_index = 0;
     while (row_index < row_total)
     {
-        column_total = this->_row_lengths[row_index];
+        field_pointer = this->get_row(row_index, &column_total);
+        if (field_pointer == ft_nullptr)
+            return (FT_ERR_INVALID_OPERATION);
         column_index = 0;
         while (column_index < column_total)
         {
-            field_pointer = this->get_field(row_index, column_index);
-            if (field_pointer == ft_nullptr)
-                return (FT_ERR_INVALID_OPERATION);
             if (column_index > 0)
             {
                 if (output.append(this->_delimiter) != FT_ERR_SUCCESS)
                     return (output.get_error());
             }
-            error_code = csv_append_escaped_field(output, field_pointer->c_str(),
-                    this->_delimiter);
+            const ft_string &field = field_pointer[column_index];
+            error_code = csv_append_escaped_field(output, field.c_str(),
+                field.size(), this->_delimiter);
             if (error_code != FT_ERR_SUCCESS)
                 return (error_code);
             column_index += 1;
@@ -1088,203 +987,80 @@ const char *ft_csv_document::get_error_str() const noexcept
 int32_t csv_split_line(const char *line, ft_vector<ft_string> &fields,
     char delimiter) noexcept
 {
-    ft_string current_field;
-    ft_size_t index;
-    ft_bool in_quotes;
-    ft_bool field_started;
-    ft_bool quote_closed;
-    int32_t error_code;
-
     if (line == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
+    if (csv_is_valid_delimiter(delimiter) == FT_FALSE)
+        return (FT_ERR_INVALID_ARGUMENT);
     if (fields.is_initialised() == FT_FALSE)
     {
-        error_code = fields.initialize();
+        int32_t error_code = fields.initialize();
         if (error_code != FT_ERR_SUCCESS)
             return (error_code);
     }
     else
         fields.clear();
-    error_code = current_field.initialize();
+    if (*line == '\0')
+        return (FT_ERR_SUCCESS);
+    ft_string current_field;
+    int32_t error_code = current_field.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    index = 0;
-    in_quotes = FT_FALSE;
-    field_started = FT_FALSE;
-    quote_closed = FT_FALSE;
-    while (line[index] != '\0')
+    const char *cursor = line;
+    while (FT_TRUE)
     {
-        if (quote_closed == FT_TRUE)
-        {
-            if (line[index] == delimiter)
-            {
-                error_code = fields.push_back(current_field);
-                if (error_code != FT_ERR_SUCCESS)
-                {
-                    (void)current_field.destroy();
-                    fields.clear();
-                    return (error_code);
-                }
-                error_code = current_field.clear();
-                if (error_code != FT_ERR_SUCCESS)
-                {
-                    (void)current_field.destroy();
-                    fields.clear();
-                    return (error_code);
-                }
-                field_started = FT_FALSE;
-                quote_closed = FT_FALSE;
-                index += 1;
-                continue ;
-            }
-            if (csv_is_space_character(line[index]) == FT_TRUE)
-            {
-                index += 1;
-                continue ;
-            }
-            (void)current_field.destroy();
-            fields.clear();
-            return (FT_ERR_INVALID_OPERATION);
-        }
-        if (in_quotes == FT_TRUE)
-        {
-            if (line[index] == '"')
-            {
-                if (line[index + 1] == '"')
-                {
-                    if (current_field.append('"') != FT_ERR_SUCCESS)
-                    {
-                        error_code = current_field.get_error();
-                        (void)current_field.destroy();
-                        fields.clear();
-                        return (error_code);
-                    }
-                    index += 2;
-                    continue ;
-                }
-                in_quotes = FT_FALSE;
-                quote_closed = FT_TRUE;
-                index += 1;
-                continue ;
-            }
-            if (current_field.append(line[index]) != FT_ERR_SUCCESS)
-            {
-                error_code = current_field.get_error();
-                (void)current_field.destroy();
-                fields.clear();
-                return (error_code);
-            }
-            index += 1;
-            continue ;
-        }
-        if (line[index] == delimiter)
-        {
-            error_code = fields.push_back(current_field);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)current_field.destroy();
-                fields.clear();
-                return (error_code);
-            }
-            error_code = current_field.clear();
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                (void)current_field.destroy();
-                fields.clear();
-                return (error_code);
-            }
-            field_started = FT_FALSE;
-            index += 1;
-            continue ;
-        }
-        if (line[index] == '"')
-        {
-            if (field_started == FT_TRUE || current_field.size() != 0)
-            {
-                (void)current_field.destroy();
-                fields.clear();
-                return (FT_ERR_INVALID_OPERATION);
-            }
-            in_quotes = FT_TRUE;
-            field_started = FT_TRUE;
-            index += 1;
-            continue ;
-        }
-        if (current_field.append(line[index]) != FT_ERR_SUCCESS)
-        {
-            error_code = current_field.get_error();
-            (void)current_field.destroy();
-            fields.clear();
-            return (error_code);
-        }
-        field_started = FT_TRUE;
-        index += 1;
-    }
-    if (in_quotes == FT_TRUE)
-    {
-        (void)current_field.destroy();
-        fields.clear();
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    if (field_started == FT_TRUE || current_field.size() > 0)
-    {
-        error_code = fields.push_back(current_field);
+        error_code = csv_read_field(cursor, delimiter, FT_FALSE, current_field);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = csv_finalize_field(fields, current_field);
         if (error_code != FT_ERR_SUCCESS)
         {
-            (void)current_field.destroy();
             fields.clear();
             return (error_code);
         }
+        if (*cursor == '\0')
+            break ;
+        cursor += 1U;
     }
-    (void)current_field.destroy();
     return (FT_ERR_SUCCESS);
 }
 
 char *csv_escape_field(const char *field, char delimiter) noexcept
 {
-    ft_string output;
-    char *escaped_field;
-    ft_size_t length;
-    ft_size_t index;
-    ft_bool needs_quotes;
-
     if (field == ft_nullptr)
         return (ft_nullptr);
-    needs_quotes = csv_field_needs_quotes(field, delimiter);
-    if (needs_quotes == FT_FALSE)
-        return (csv_duplicate_c_string(field));
-    if (output.initialize() != FT_ERR_SUCCESS)
-        return (ft_nullptr);
-    length = std::strlen(field);
-    if (output.append('"') != FT_ERR_SUCCESS)
+    const ft_size_t field_length = std::strlen(field);
+    if (csv_field_needs_quotes(field, field_length, delimiter) == FT_FALSE)
     {
-        (void)output.destroy();
-        return (ft_nullptr);
+        char *escaped = static_cast<char *>(cma_malloc(field_length + 1U));
+        if (escaped != ft_nullptr)
+            ft_memcpy(escaped, field, field_length + 1U);
+        return (escaped);
     }
-    index = 0;
-    while (index < length)
+    ft_size_t quote_count = 0U;
+    ft_size_t index = 0U;
+    while (index < field_length)
     {
         if (field[index] == '"')
-        {
-            if (output.append('"') != FT_ERR_SUCCESS)
-            {
-                (void)output.destroy();
-                return (ft_nullptr);
-            }
-        }
-        if (output.append(field[index]) != FT_ERR_SUCCESS)
-        {
-            (void)output.destroy();
-            return (ft_nullptr);
-        }
-        index += 1;
+            quote_count += 1U;
+        index += 1U;
     }
-    if (output.append('"') != FT_ERR_SUCCESS)
-    {
-        (void)output.destroy();
+    if (field_length > SIZE_MAX - 3U
+        || quote_count > SIZE_MAX - 3U - field_length)
         return (ft_nullptr);
+    char *escaped = static_cast<char *>(cma_malloc(field_length + quote_count + 3U));
+    if (escaped == ft_nullptr)
+        return (ft_nullptr);
+    char *destination = escaped;
+    *destination++ = '"';
+    index = 0U;
+    while (index < field_length)
+    {
+        const char character = field[index];
+        if (character == '"')
+            *destination++ = '"';
+        *destination++ = character;
+        index += 1U;
     }
-    escaped_field = csv_duplicate_c_string(output.c_str());
-    (void)output.destroy();
-    return (escaped_field);
+    *destination++ = '"';
+    *destination = '\0';
+    return (escaped);
 }

@@ -22,3 +22,15 @@ FT_TEST(test_uri_normalize_lowercases_and_removes_dot_segments)
     cma_free(normalized_uri);
     return (1);
 }
+
+FT_TEST(test_uri_normalize_reuses_path_storage)
+{
+    const char *path = "/foo/bar/..";
+    cma_set_alloc_limit(12U);
+    char *normalized = uri_normalize(path, ft_strlen_size_t(path));
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(normalized != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_strcmp("/foo", normalized));
+    cma_free(normalized);
+    return (1);
+}

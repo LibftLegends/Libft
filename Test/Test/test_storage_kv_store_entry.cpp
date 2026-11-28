@@ -4,6 +4,7 @@
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -119,5 +120,20 @@ FT_TEST(test_kv_store_entry_expiration_controls)
     FT_ASSERT_EQ(0, entry.is_expired(300, expired));
     FT_ASSERT_EQ(false, expired);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, FT_ERR_SUCCESS);
+    return (1);
+}
+
+FT_TEST(test_kv_store_entry_failed_replacement_preserves_existing_value)
+{
+    kv_store_entry entry;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entry.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entry.set_value("original"));
+    cma_set_alloc_limit(1);
+    const int32_t error_code = entry.set_value("a larger replacement");
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, error_code);
+    const char *value = ft_nullptr;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entry.get_value_pointer(&value));
+    FT_ASSERT_EQ(0, ft_strcmp(value, "original"));
     return (1);
 }

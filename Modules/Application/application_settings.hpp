@@ -26,6 +26,7 @@ class application_settings
 
         int32_t initialize_from_copy(const application_settings &other) noexcept;
         int32_t initialize_from_move(application_settings &other) noexcept;
+        void copy_scalar_settings(const application_settings &other) noexcept;
         void destroy_partial_copy_state() noexcept;
 
     public:

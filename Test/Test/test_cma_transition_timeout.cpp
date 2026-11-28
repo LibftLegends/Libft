@@ -32,6 +32,53 @@ static void *cma_transition_worker(void *argument)
     return (ft_nullptr);
 }
 
+static void *cma_disable_transition_worker(void *argument)
+{
+    int32_t *result = static_cast<int32_t *>(argument);
+
+    *result = cma_disable_thread_safety_timed(2000U);
+    return (ft_nullptr);
+}
+
+FT_TEST(test_cma_timed_transition_finishes_when_active_operation_releases)
+{
+    pthread_t transition_thread;
+    ft_bool lock_acquired = FT_FALSE;
+    ft_bool saw_transition = FT_FALSE;
+    int32_t disable_error = FT_ERR_INVALID_STATE;
+    int32_t join_error = FT_ERR_INVALID_STATE;
+    uint32_t wait_count = 0U;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_enable_thread_safety_timed(1000U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_lock_allocator(&lock_acquired));
+    const int32_t create_error = pthread_create(&transition_thread, ft_nullptr,
+        cma_disable_transition_worker, &disable_error);
+    if (create_error == 0)
+    {
+        while (wait_count < 1000U
+            && cma_allocator_transition_pending_for_test() == FT_FALSE)
+        {
+            (void)pt_thread_sleep(1);
+            wait_count++;
+        }
+        saw_transition = cma_allocator_transition_pending_for_test();
+    }
+    const int32_t unlock_error = cma_unlock_allocator(lock_acquired);
+    if (create_error == 0)
+        join_error = pt_thread_join(transition_thread, ft_nullptr);
+    const ft_bool enabled_after_transition = cma_is_thread_safe_enabled();
+    const int32_t enable_error = cma_enable_thread_safety_timed(1000U);
+
+    FT_ASSERT_EQ(0, create_error);
+    FT_ASSERT_EQ(FT_TRUE, saw_transition);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, unlock_error);
+    FT_ASSERT_EQ(0, join_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, disable_error);
+    FT_ASSERT_EQ(FT_FALSE, enabled_after_transition);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, enable_error);
+    return (1);
+}
+
 FT_TEST(test_cma_timed_transition_returns_timeout_for_active_operation)
 {
     s_cma_transition_state state;

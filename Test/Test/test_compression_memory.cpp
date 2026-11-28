@@ -118,3 +118,28 @@ FT_TEST(test_ft_decompress_vector_to_string_reports_allocator_failure)
         return (0);
     return (1);
 }
+
+FT_TEST(test_compression_vector_round_trip_in_place_matches_buffer_format)
+{
+    const uint8_t expected[] = {0U, 1U, 0xFFU, 0x00U, 0xFFU, 5U};
+    ft_vector<uint8_t> bytes;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bytes.initialize());
+    ft_size_t index = 0U;
+    while (index < sizeof(expected))
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, bytes.push_back(expected[index]));
+        ++index;
+    }
+    ft_size_t compressed_size = 0U;
+    uint8_t *compressed = ft_compress(expected, sizeof(expected), &compressed_size);
+    FT_ASSERT(compressed != ft_nullptr);
+    FT_ASSERT_EQ(0, ft_compress_vector_to_vector(bytes, bytes));
+    const ft_bool same_bytes = compressed_size == bytes.size()
+        && ft_memcmp(compressed, bytes.begin(), compressed_size) == 0;
+    cma_free(compressed);
+    FT_ASSERT(same_bytes == FT_TRUE);
+    FT_ASSERT_EQ(0, ft_decompress_vector_to_vector(bytes, bytes));
+    FT_ASSERT_EQ(sizeof(expected), bytes.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected, bytes.begin(), sizeof(expected)));
+    return (1);
+}

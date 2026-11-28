@@ -10,8 +10,11 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
-void cma_free(void* memory_pointer)
+static void cma_free_uninstrumented(void *memory_pointer)
 {
     ft_bool lock_acquired = FT_FALSE;
 
@@ -29,14 +32,18 @@ void cma_free(void* memory_pointer)
         cma_backend_deallocate(memory_pointer);
         return ;
     }
-    if (cma_lock_allocator(&lock_acquired) != FT_ERR_SUCCESS)
+    if (cma_lock_allocator_arena(&lock_acquired) != FT_ERR_SUCCESS)
         return ;
-    if (cma_small_arena_owns_pointer_locked(memory_pointer) == FT_TRUE)
+    if (cma_small_arena_deallocate_locked(memory_pointer) == FT_ERR_SUCCESS)
     {
-        (void)cma_small_arena_deallocate_locked(memory_pointer);
         cma_unlock_allocator(lock_acquired);
         lock_acquired = FT_FALSE;
         cma_record_allocation_log("cma_free %p", memory_pointer);
+        return ;
+    }
+    if (cma_require_metadata_locked() != FT_ERR_SUCCESS)
+    {
+        (void)cma_unlock_allocator(lock_acquired);
         return ;
     }
     Block* block = cma_find_block_for_pointer(memory_pointer);
@@ -75,4 +82,29 @@ void cma_free(void* memory_pointer)
     lock_acquired = FT_FALSE;
     cma_record_allocation_log("cma_free %p", memory_pointer);
     return ;
+}
+
+void cma_free(void *memory_pointer)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_FREE, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+    {
+        cma_free_uninstrumented(memory_pointer);
+        return ;
+    }
+    cma_free_uninstrumented(memory_pointer);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr, "[LIBFT][Analytics] cma_free scope failed: %d\n",
+            analytics_error);
+    return ;
+#else
+    cma_free_uninstrumented(memory_pointer);
+    return ;
+#endif
 }

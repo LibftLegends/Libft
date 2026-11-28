@@ -56,6 +56,56 @@ FT_TEST(test_cma_arena_reuses_freed_size_class_while_live)
     return (1);
 }
 
+FT_TEST(test_cma_arena_resize_reuses_size_class_and_preserves_bytes)
+{
+    void *original = cma_malloc(32U);
+    void *available = cma_malloc(64U);
+
+    FT_ASSERT(original != ft_nullptr);
+    FT_ASSERT(available != ft_nullptr);
+    ft_memset(original, 0xA5, 32U);
+    FT_ASSERT_EQ(original, cma_realloc(original, 32U));
+    cma_free(available);
+    void *resized = cma_realloc(original, 64U);
+    FT_ASSERT_EQ(available, resized);
+    FT_ASSERT_EQ(64U, cma_alloc_size(resized));
+    uint8_t *bytes = static_cast<uint8_t *>(resized);
+    ft_size_t index = 0U;
+    while (index < 32U)
+    {
+        FT_ASSERT_EQ(0xA5U, bytes[index]);
+        ++index;
+    }
+    resized = cma_realloc(resized, 39U);
+    FT_ASSERT(resized != ft_nullptr);
+    FT_ASSERT_EQ(39U, cma_alloc_size(resized));
+    cma_free(resized);
+    return (1);
+}
+
+FT_TEST(test_cma_arena_metadata_guard_is_acquired_only_on_demand)
+{
+    ft_bool arena_lock = FT_FALSE;
+    ft_bool metadata_lock = FT_FALSE;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_lock_allocator_arena(&arena_lock));
+    const int64_t depth = g_cma_metadata_access_depth;
+    FT_ASSERT_EQ(0, depth);
+    void *small = cma_malloc(32U);
+    FT_ASSERT(small != ft_nullptr);
+    FT_ASSERT_EQ(depth, g_cma_metadata_access_depth);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_lock_allocator(&metadata_lock));
+    FT_ASSERT_EQ(depth + 1, g_cma_metadata_access_depth);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_unlock_allocator(metadata_lock));
+    FT_ASSERT_EQ(depth, g_cma_metadata_access_depth);
+    void *large = cma_realloc(small, 512U);
+    FT_ASSERT(large != ft_nullptr);
+    FT_ASSERT_EQ(depth, g_cma_metadata_access_depth);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_unlock_allocator(arena_lock));
+    cma_free(large);
+    return (1);
+}
+
 FT_TEST(test_cma_arena_reuses_every_small_size_class_lifo)
 {
     void *first_pointer;

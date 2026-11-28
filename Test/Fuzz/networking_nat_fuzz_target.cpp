@@ -1,6 +1,7 @@
 #include "../../Modules/Networking/networking_nat_traversal.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Errno/errno.hpp"
+#include "networking_structured_fuzz_mutator.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -175,4 +176,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         bounded_size = 256U;
     networking_nat_fuzz_run(data, bounded_size);
     return (0);
+}
+
+extern "C" size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size,
+    size_t maximum_size, unsigned int seed)
+{
+    return (networking_structured_fuzz_mutate(data, size, maximum_size,
+        seed, 256U));
 }

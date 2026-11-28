@@ -1,8 +1,10 @@
 #include "ft_dual_number.hpp"
 
 #include <cmath>
+#include <functional>
 #include <new>
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/basic.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/pthread.hpp"
@@ -46,6 +48,12 @@ int32_t ft_dual_number::lock_pair(const ft_dual_number &first,
     const ft_dual_number *ordered_first;
     const ft_dual_number *ordered_second;
 
+    if (first._mutex == ft_nullptr && second._mutex == ft_nullptr)
+    {
+        lower = ft_nullptr;
+        upper = ft_nullptr;
+        return (FT_ERR_SUCCESS);
+    }
     if (&first == &second)
     {
         lower = &first;
@@ -54,7 +62,7 @@ int32_t ft_dual_number::lock_pair(const ft_dual_number &first,
     }
     ordered_first = &first;
     ordered_second = &second;
-    if (ordered_first > ordered_second)
+    if (std::less<const ft_dual_number *>{}(ordered_second, ordered_first))
     {
         const ft_dual_number *temporary;
 
@@ -112,7 +120,7 @@ ft_dual_number::ft_dual_number(double value, double derivative) noexcept
     , _initialised_state(FT_CLASS_STATE_UNINITIALISED)
     , _operation_error(FT_ERR_SUCCESS)
 {
-    uint32_t previous_last_error;
+    int32_t previous_last_error;
 
     previous_last_error = ft_dual_number::_last_error;
     this->_operation_error = this->initialize(value, derivative);
@@ -203,12 +211,6 @@ int32_t ft_dual_number::initialize(const ft_dual_number &other) noexcept
 
 int32_t ft_dual_number::move(ft_dual_number &other) noexcept
 {
-    const ft_dual_number *lower;
-    const ft_dual_number *upper;
-    int32_t initialize_error;
-    int32_t destroy_error;
-    int32_t lock_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         other.abort_lifecycle_error("ft_dual_number::move source",
@@ -217,95 +219,43 @@ int32_t ft_dual_number::move(ft_dual_number &other) noexcept
     }
     if (this == &other)
         return (ft_dual_number::set_error(FT_ERR_SUCCESS));
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
+    }
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        {
-            destroy_error = this->destroy();
-            if (destroy_error != FT_ERR_SUCCESS)
-                return (ft_dual_number::set_error(static_cast<uint32_t>(destroy_error)));
-        }
         this->_value = 0.0;
         this->_derivative = 0.0;
         this->_operation_error = FT_ERR_SUCCESS;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (ft_dual_number::set_error(FT_ERR_SUCCESS));
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (ft_dual_number::set_error(static_cast<uint32_t>(destroy_error)));
-    }
-    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        initialize_error = this->initialize();
-        if (initialize_error != FT_ERR_SUCCESS)
-            return (ft_dual_number::set_error(static_cast<uint32_t>(initialize_error)));
-    }
-    lock_error = ft_dual_number::lock_pair(*this, other, lower, upper);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
         this->_value = 0.0;
         this->_derivative = 0.0;
         this->_operation_error = FT_ERR_SUCCESS;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (ft_dual_number::set_error(static_cast<uint32_t>(lock_error)));
+        return (ft_dual_number::set_error(lock_error));
     }
     this->_value = other._value;
     this->_derivative = other._derivative;
     this->_operation_error = other._operation_error;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._value = 0.0;
     other._derivative = 0.0;
     other._operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::unlock_pair(lower, upper);
+    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
     return (ft_dual_number::set_error(FT_ERR_SUCCESS));
 }
 
 int32_t ft_dual_number::initialize(ft_dual_number &&other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-    int32_t move_error;
-
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        other.abort_lifecycle_error("ft_dual_number::initialize(ft_dual_number &&) source",
-            "called with uninitialised source object");
-        return (ft_dual_number::set_error(FT_ERR_INVALID_STATE));
-    }
-    if (this == &other)
-        return (ft_dual_number::set_error(FT_ERR_SUCCESS));
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        {
-            destroy_error = this->destroy();
-            if (destroy_error != FT_ERR_SUCCESS)
-                return (ft_dual_number::set_error(static_cast<uint32_t>(destroy_error)));
-        }
-        this->_value = 0.0;
-        this->_derivative = 0.0;
-        this->_operation_error = FT_ERR_SUCCESS;
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (ft_dual_number::set_error(FT_ERR_SUCCESS));
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (ft_dual_number::set_error(static_cast<uint32_t>(destroy_error)));
-    }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (ft_dual_number::set_error(static_cast<uint32_t>(initialize_error)));
-    move_error = this->move(other);
-    if (move_error != FT_ERR_SUCCESS)
-    {
-        this->destroy();
-        return (ft_dual_number::set_error(static_cast<uint32_t>(move_error)));
-    }
-    return (ft_dual_number::set_error(FT_ERR_SUCCESS));
+    return (this->move(other));
 }
 
 int32_t ft_dual_number::destroy() noexcept
@@ -333,7 +283,7 @@ int32_t ft_dual_number::destroy() noexcept
 
 ft_dual_number::~ft_dual_number() noexcept
 {
-    uint32_t previous_last_error;
+    int32_t previous_last_error;
 
     previous_last_error = ft_dual_number::_last_error;
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
@@ -390,58 +340,31 @@ ft_dual_number *ft_dual_number::variable(double value) noexcept
 
 int32_t ft_dual_number::enable_thread_safety() noexcept
 {
-    pt_recursive_mutex *mutex_pointer;
-    int32_t enable_error;
-    int32_t mutex_error;
-
     this->abort_if_not_initialised("ft_dual_number::enable_thread_safety");
     if (this->_mutex != ft_nullptr)
-        enable_error = FT_ERR_SUCCESS;
-    else
+        return (ft_dual_number::set_error(FT_ERR_SUCCESS));
+    pt_recursive_mutex *mutex_pointer = new (std::nothrow) pt_recursive_mutex();
+    if (mutex_pointer == ft_nullptr)
+        return (ft_dual_number::set_error(FT_ERR_NO_MEMORY));
+    const int32_t error = mutex_pointer->initialize();
+    if (error != FT_ERR_SUCCESS)
     {
-        mutex_pointer = new (std::nothrow) pt_recursive_mutex();
-        if (mutex_pointer == ft_nullptr)
-            enable_error = FT_ERR_NO_MEMORY;
-        else
-        {
-            mutex_error = mutex_pointer->initialize();
-            if (mutex_error != FT_ERR_SUCCESS)
-            {
-                delete mutex_pointer;
-                enable_error = mutex_error;
-            }
-            else
-            {
-                this->_mutex = mutex_pointer;
-                enable_error = FT_ERR_SUCCESS;
-            }
-        }
+        delete mutex_pointer;
+        return (ft_dual_number::set_error(error));
     }
-    this->_operation_error = enable_error;
-    ft_dual_number::set_error(this->_operation_error);
-    return (enable_error);
+    this->_mutex = mutex_pointer;
+    return (ft_dual_number::set_error(FT_ERR_SUCCESS));
 }
 
 int32_t ft_dual_number::disable_thread_safety() noexcept
 {
-    int32_t mutex_error;
-
     this->abort_if_not_initialised("ft_dual_number::disable_thread_safety");
-    if (this->_mutex != ft_nullptr)
-    {
-        mutex_error = this->_mutex->destroy();
-        delete this->_mutex;
-        this->_mutex = ft_nullptr;
-        if (mutex_error != FT_ERR_SUCCESS)
-        {
-            this->_operation_error = mutex_error;
-            ft_dual_number::set_error(this->_operation_error);
-            return (mutex_error);
-        }
-    }
-    this->_operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::set_error(this->_operation_error);
-    return (FT_ERR_SUCCESS);
+    if (this->_mutex == ft_nullptr)
+        return (ft_dual_number::set_error(FT_ERR_SUCCESS));
+    const int32_t error = this->_mutex->destroy();
+    delete this->_mutex;
+    this->_mutex = ft_nullptr;
+    return (ft_dual_number::set_error(error));
 }
 
 ft_bool ft_dual_number::is_thread_safe() const noexcept
@@ -508,10 +431,11 @@ ft_dual_number_proxy::ft_dual_number_proxy(const ft_dual_number &value,
     : _value()
     , _operation_error(error_code)
 {
-    if (this->_value.initialize(value) != FT_ERR_SUCCESS)
-        this->_operation_error = this->_value._operation_error;
-    this->_value._operation_error = error_code;
-    ft_dual_number::set_error(error_code);
+    const int32_t copy_error = this->_value.initialize(value);
+    if (copy_error != FT_ERR_SUCCESS)
+        this->_operation_error = copy_error;
+    this->_value._operation_error = this->_operation_error;
+    ft_dual_number::set_error(this->_operation_error);
     return ;
 }
 
@@ -593,355 +517,194 @@ int32_t ft_dual_number_proxy::get_error() const noexcept
     return (this->_operation_error);
 }
 
-ft_dual_number_proxy ft_dual_number::operator+(const ft_dual_number &other) const noexcept
+ft_dual_number_proxy::ft_dual_number_proxy(double value, double derivative) noexcept
+    : _value(value, derivative)
+    , _operation_error(FT_ERR_SUCCESS)
 {
-    ft_dual_number result;
+    ft_dual_number::set_error(FT_ERR_SUCCESS);
+    return ;
+}
+
+static double math_dual_scaled_quotient_derivative(double left_value, double right_value,
+    double left_derivative, double right_derivative) noexcept
+{
+    int32_t denominator_exponent;
+    int32_t numerator_exponent;
+    int32_t left_derivative_exponent;
+    int32_t right_derivative_exponent;
+    const double denominator = std::frexp(right_value, &denominator_exponent);
+    const double numerator = std::frexp(left_value, &numerator_exponent);
+    const double left = std::frexp(left_derivative, &left_derivative_exponent);
+    const double right = std::frexp(right_derivative, &right_derivative_exponent);
+
+    const double first = left * denominator;
+    const double second = numerator * right;
+    const int32_t first_exponent = left_derivative_exponent + denominator_exponent;
+    const int32_t second_exponent = numerator_exponent + right_derivative_exponent;
+    int32_t scale = first_exponent;
+    if (std::fpclassify(first) == FP_ZERO
+        || (std::fpclassify(second) != FP_ZERO && second_exponent > scale))
+        scale = second_exponent;
+    const double difference = std::scalbn(first, first_exponent - scale)
+        - std::scalbn(second, second_exponent - scale);
+    return (std::scalbn(difference / (denominator * denominator),
+        scale - 2 * denominator_exponent));
+}
+
+static double math_dual_quotient_derivative(double left_value, double right_value,
+    double left_derivative, double right_derivative) noexcept
+{
+    if (std::fpclassify(right_derivative) == FP_ZERO
+        && std::isfinite(left_value) && std::isfinite(right_value))
+        return (left_derivative / right_value);
+
+    const double first = left_derivative * right_value;
+    const double second = left_value * right_derivative;
+    const double divisor = right_value * right_value;
+    const double difference = first - second;
+    if (((std::fpclassify(left_derivative) == FP_ZERO || std::isnormal(first))
+            && (std::fpclassify(left_value) == FP_ZERO
+                || std::fpclassify(right_derivative) == FP_ZERO || std::isnormal(second))
+            && std::isfinite(difference) && std::isfinite(divisor))
+        || !std::isfinite(left_value) || !std::isfinite(right_value)
+        || !std::isfinite(left_derivative) || !std::isfinite(right_derivative))
+        return (difference / divisor);
+    return (math_dual_scaled_quotient_derivative(left_value, right_value,
+        left_derivative, right_derivative));
+}
+
+template <char Operation>
+ft_dual_number_proxy ft_dual_number::apply_binary(const ft_dual_number &other,
+    const char *method_name) const noexcept
+{
+    this->abort_if_not_initialised(method_name);
+    other.abort_if_not_initialised(method_name);
     const ft_dual_number *lower;
     const ft_dual_number *upper;
-    int32_t initialize_error;
-    int32_t lock_error;
-
-    this->abort_if_not_initialised("ft_dual_number::operator+");
-    other.abort_if_not_initialised("ft_dual_number::operator+ source");
-    if (this->_operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(this->_operation_error);
-        return (ft_dual_number_proxy(this->_operation_error));
-    }
-    if (other._operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(other._operation_error);
-        return (ft_dual_number_proxy(other._operation_error));
-    }
-    initialize_error = result.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = initialize_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    lock_error = ft_dual_number::lock_pair(*this, other, lower, upper);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = lock_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    result._value = this->_value + other._value;
-    result._derivative = this->_derivative + other._derivative;
-    result._operation_error = FT_ERR_SUCCESS;
+    int32_t error = ft_dual_number::lock_pair(*this, other, lower, upper);
+    if (error != FT_ERR_SUCCESS)
+        return (ft_dual_number_proxy(error));
+    error = this->_operation_error;
+    if (error == FT_ERR_SUCCESS)
+        error = other._operation_error;
+    const double left_value = this->_value;
+    const double right_value = other._value;
+    const double left_derivative = this->_derivative;
+    const double right_derivative = other._derivative;
     ft_dual_number::unlock_pair(lower, upper);
-    ft_dual_number::set_error(result._operation_error);
-    return (ft_dual_number_proxy(result, result._operation_error));
+    if (error != FT_ERR_SUCCESS)
+        return (ft_dual_number_proxy(error));
+
+    if constexpr (Operation == '+')
+        return (ft_dual_number_proxy(left_value + right_value, left_derivative + right_derivative));
+    else if constexpr (Operation == '-')
+        return (ft_dual_number_proxy(left_value - right_value, left_derivative - right_derivative));
+    else if constexpr (Operation == '*')
+        return (ft_dual_number_proxy(left_value * right_value,
+            left_value * right_derivative + left_derivative * right_value));
+    else
+    {
+        constexpr double DENOMINATOR_EPSILON = 1e-12;
+        if (std::fabs(right_value) <= DENOMINATOR_EPSILON)
+            return (ft_dual_number_proxy(FT_ERR_DIVIDE_BY_ZERO));
+        return (ft_dual_number_proxy(left_value / right_value,
+            math_dual_quotient_derivative(left_value, right_value,
+                left_derivative, right_derivative)));
+    }
+}
+
+ft_dual_number_proxy ft_dual_number::operator+(const ft_dual_number &other) const noexcept
+{
+    return (this->apply_binary<'+'>(other, "ft_dual_number::operator+"));
 }
 
 ft_dual_number_proxy ft_dual_number::operator-(const ft_dual_number &other) const noexcept
 {
-    ft_dual_number result;
-    const ft_dual_number *lower;
-    const ft_dual_number *upper;
-    int32_t initialize_error;
-    int32_t lock_error;
-
-    this->abort_if_not_initialised("ft_dual_number::operator-");
-    other.abort_if_not_initialised("ft_dual_number::operator- source");
-    if (this->_operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(this->_operation_error);
-        return (ft_dual_number_proxy(this->_operation_error));
-    }
-    if (other._operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(other._operation_error);
-        return (ft_dual_number_proxy(other._operation_error));
-    }
-    initialize_error = result.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = initialize_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    lock_error = ft_dual_number::lock_pair(*this, other, lower, upper);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = lock_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    result._value = this->_value - other._value;
-    result._derivative = this->_derivative - other._derivative;
-    result._operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::unlock_pair(lower, upper);
-    ft_dual_number::set_error(result._operation_error);
-    return (ft_dual_number_proxy(result, result._operation_error));
+    return (this->apply_binary<'-'>(other, "ft_dual_number::operator-"));
 }
 
 ft_dual_number_proxy ft_dual_number::operator*(const ft_dual_number &other) const noexcept
 {
-    ft_dual_number result;
-    const ft_dual_number *lower;
-    const ft_dual_number *upper;
-    int32_t initialize_error;
-    int32_t lock_error;
-
-    this->abort_if_not_initialised("ft_dual_number::operator*");
-    other.abort_if_not_initialised("ft_dual_number::operator* source");
-    if (this->_operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(this->_operation_error);
-        return (ft_dual_number_proxy(this->_operation_error));
-    }
-    if (other._operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(other._operation_error);
-        return (ft_dual_number_proxy(other._operation_error));
-    }
-    initialize_error = result.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = initialize_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    lock_error = ft_dual_number::lock_pair(*this, other, lower, upper);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = lock_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    result._value = this->_value * other._value;
-    result._derivative = this->_value * other._derivative
-        + this->_derivative * other._value;
-    result._operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::unlock_pair(lower, upper);
-    ft_dual_number::set_error(result._operation_error);
-    return (ft_dual_number_proxy(result, result._operation_error));
+    return (this->apply_binary<'*'>(other, "ft_dual_number::operator*"));
 }
 
 ft_dual_number_proxy ft_dual_number::operator/(const ft_dual_number &other) const noexcept
 {
-    ft_dual_number result;
-    const ft_dual_number *lower;
-    const ft_dual_number *upper;
-    int32_t initialize_error;
-    int32_t lock_error;
-    double denominator;
-    double epsilon;
+    return (this->apply_binary<'/'>(other, "ft_dual_number::operator/"));
+}
 
-    this->abort_if_not_initialised("ft_dual_number::operator/");
-    other.abort_if_not_initialised("ft_dual_number::operator/ source");
-    if (this->_operation_error != FT_ERR_SUCCESS)
+template <typename Operation>
+ft_dual_number *ft_dual_number::apply_unary(Operation operation, const char *method_name) const noexcept
+{
+    double value = 0.0;
+    double derivative_value = 0.0;
+    int32_t error = this->read_result(value, derivative_value, method_name);
+
+    ft_dual_number *result = new (std::nothrow) ft_dual_number();
+    if (result == ft_nullptr)
     {
-        ft_dual_number::set_error(this->_operation_error);
-        return (ft_dual_number_proxy(this->_operation_error));
+        ft_dual_number::set_error(FT_ERR_NO_MEMORY);
+        return (ft_nullptr);
     }
-    if (other._operation_error != FT_ERR_SUCCESS)
-    {
-        ft_dual_number::set_error(other._operation_error);
-        return (ft_dual_number_proxy(other._operation_error));
-    }
-    initialize_error = result.initialize();
+    const int32_t initialize_error = result->initialize();
     if (initialize_error != FT_ERR_SUCCESS)
     {
-        result._operation_error = initialize_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
+        delete result;
+        ft_dual_number::set_error(initialize_error);
+        return (ft_nullptr);
     }
-    lock_error = ft_dual_number::lock_pair(*this, other, lower, upper);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result._operation_error = lock_error;
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    denominator = other._value;
-    epsilon = 0.000000000001;
-    if (std::fabs(denominator) <= epsilon)
-    {
-        result._operation_error = FT_ERR_DIVIDE_BY_ZERO;
-        ft_dual_number::unlock_pair(lower, upper);
-        ft_dual_number::set_error(result._operation_error);
-        return (ft_dual_number_proxy(result, result._operation_error));
-    }
-    result._value = this->_value / denominator;
-    result._derivative = (this->_derivative * denominator - this->_value * other._derivative)
-        / (denominator * denominator);
-    result._operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::unlock_pair(lower, upper);
-    ft_dual_number::set_error(result._operation_error);
-    return (ft_dual_number_proxy(result, result._operation_error));
+    if (error == FT_ERR_SUCCESS)
+        error = operation(value, derivative_value, result->_value, result->_derivative);
+    result->_operation_error = error;
+    ft_dual_number::set_error(error);
+    return (result);
 }
 
 ft_dual_number *ft_dual_number::apply_sin() const noexcept
 {
-    ft_dual_number *result;
-    int32_t initialize_error;
-    int32_t lock_error;
-    double value;
-    double derivative_value;
-
-    this->abort_if_not_initialised("ft_dual_number::apply_sin");
-    result = new (std::nothrow) ft_dual_number();
-    if (result == ft_nullptr)
+    return (this->apply_unary([](double value, double derivative, double &output,
+        double &output_derivative) noexcept -> int32_t
     {
-        ft_dual_number::set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    initialize_error = result->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)result->destroy();
-        delete result;
-        ft_dual_number::set_error(initialize_error);
-        return (ft_nullptr);
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result->_operation_error = lock_error;
-        ft_dual_number::set_error(result->_operation_error);
-        return (result);
-    }
-    value = this->_value;
-    derivative_value = this->_derivative;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    result->_value = std::sin(value);
-    result->_derivative = std::cos(value) * derivative_value;
-    result->_operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::set_error(result->_operation_error);
-    return (result);
+        output = std::sin(value);
+        output_derivative = std::cos(value) * derivative;
+        return (FT_ERR_SUCCESS);
+    }, "ft_dual_number::apply_sin"));
 }
 
 ft_dual_number *ft_dual_number::apply_cos() const noexcept
 {
-    ft_dual_number *result;
-    int32_t initialize_error;
-    int32_t lock_error;
-    double value;
-    double derivative_value;
-
-    this->abort_if_not_initialised("ft_dual_number::apply_cos");
-    result = new (std::nothrow) ft_dual_number();
-    if (result == ft_nullptr)
+    return (this->apply_unary([](double value, double derivative, double &output,
+        double &output_derivative) noexcept -> int32_t
     {
-        ft_dual_number::set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    initialize_error = result->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)result->destroy();
-        delete result;
-        ft_dual_number::set_error(initialize_error);
-        return (ft_nullptr);
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result->_operation_error = lock_error;
-        ft_dual_number::set_error(result->_operation_error);
-        return (result);
-    }
-    value = this->_value;
-    derivative_value = this->_derivative;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    result->_value = std::cos(value);
-    result->_derivative = -std::sin(value) * derivative_value;
-    result->_operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::set_error(result->_operation_error);
-    return (result);
+        output = std::cos(value);
+        output_derivative = -std::sin(value) * derivative;
+        return (FT_ERR_SUCCESS);
+    }, "ft_dual_number::apply_cos"));
 }
 
 ft_dual_number *ft_dual_number::apply_exp() const noexcept
 {
-    ft_dual_number *result;
-    int32_t initialize_error;
-    int32_t lock_error;
-    double value;
-    double derivative_value;
-    double exponential;
-
-    this->abort_if_not_initialised("ft_dual_number::apply_exp");
-    result = new (std::nothrow) ft_dual_number();
-    if (result == ft_nullptr)
+    return (this->apply_unary([](double value, double derivative, double &output,
+        double &output_derivative) noexcept -> int32_t
     {
-        ft_dual_number::set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    initialize_error = result->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)result->destroy();
-        delete result;
-        ft_dual_number::set_error(initialize_error);
-        return (ft_nullptr);
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result->_operation_error = lock_error;
-        ft_dual_number::set_error(result->_operation_error);
-        return (result);
-    }
-    value = this->_value;
-    derivative_value = this->_derivative;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    exponential = std::exp(value);
-    result->_value = exponential;
-    result->_derivative = exponential * derivative_value;
-    result->_operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::set_error(result->_operation_error);
-    return (result);
+        output = std::exp(value);
+        output_derivative = output * derivative;
+        return (FT_ERR_SUCCESS);
+    }, "ft_dual_number::apply_exp"));
 }
 
 ft_dual_number *ft_dual_number::apply_log() const noexcept
 {
-    ft_dual_number *result;
-    int32_t initialize_error;
-    int32_t lock_error;
-    double value;
-    double derivative_value;
-
-    this->abort_if_not_initialised("ft_dual_number::apply_log");
-    result = new (std::nothrow) ft_dual_number();
-    if (result == ft_nullptr)
+    return (this->apply_unary([](double value, double derivative, double &output,
+        double &output_derivative) noexcept -> int32_t
     {
-        ft_dual_number::set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    initialize_error = result->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        (void)result->destroy();
-        delete result;
-        ft_dual_number::set_error(initialize_error);
-        return (ft_nullptr);
-    }
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        result->_operation_error = lock_error;
-        ft_dual_number::set_error(result->_operation_error);
-        return (result);
-    }
-    value = this->_value;
-    derivative_value = this->_derivative;
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    if (value <= 0.0)
-    {
-        result->_operation_error = FT_ERR_INVALID_ARGUMENT;
-        ft_dual_number::set_error(result->_operation_error);
-        return (result);
-    }
-    result->_value = std::log(value);
-    result->_derivative = derivative_value / value;
-    result->_operation_error = FT_ERR_SUCCESS;
-    ft_dual_number::set_error(result->_operation_error);
-    return (result);
+        if (value <= 0.0)
+            return (FT_ERR_INVALID_ARGUMENT);
+        output = std::log(value);
+        output_derivative = derivative / value;
+        return (FT_ERR_SUCCESS);
+    }, "ft_dual_number::apply_log"));
 }
-
 
 int32_t ft_dual_number::get_error() const noexcept
 {
@@ -959,127 +722,141 @@ const char *ft_dual_number::get_error_str() const noexcept
     return (ft_strerror(this->get_error()));
 }
 
-static int32_t math_autodiff_prepare_inputs(const ft_vector<double> &point,
-    uint64_t active_index, ft_vector<ft_dual_number> &dual_inputs) noexcept
+int32_t ft_dual_number::read_result(double &value, double &derivative,
+    const char *method_name) const noexcept
 {
-    uint64_t dimension;
-    uint64_t index;
-    int32_t initialize_error;
-
-    dual_inputs.clear();
-    dimension = point.size();
-    dual_inputs.reserve(dimension);
-    index = 0;
-    while (index < dimension)
+    this->abort_if_not_initialised(method_name);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t operation_error = this->_operation_error;
+    if (operation_error == FT_ERR_SUCCESS)
     {
-        ft_dual_number variable;
-        double value;
-
-        value = point[index];
-        if (index == active_index)
-            initialize_error = variable.initialize(value, 1.0);
-        else
-            initialize_error = variable.initialize(value, 0.0);
-        if (initialize_error != FT_ERR_SUCCESS)
-            return (FT_ERR_INITIALIZATION_FAILED);
-        dual_inputs.push_back(variable);
-        index++;
+        value = this->_value;
+        derivative = this->_derivative;
     }
-    return (FT_ERR_SUCCESS);
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (operation_error);
+}
+
+static int32_t math_autodiff_prepare_inputs(const ft_vector<double> &point,
+    ft_vector<ft_dual_number> &dual_inputs) noexcept
+{
+    ft_bool acquired = FT_FALSE;
+    int32_t error = point.lock(&acquired);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+
+    const ft_size_t dimension = point.size();
+    error = point.get_error();
+    if (error == FT_ERR_SUCCESS)
+    {
+        dual_inputs.reserve(dimension);
+        error = dual_inputs.get_error();
+    }
+    if (error == FT_ERR_SUCCESS && dimension != 0U)
+    {
+        const double *coordinates = point.begin();
+        error = point.get_error();
+        ft_size_t index = 0U;
+        while (error == FT_ERR_SUCCESS && index < dimension)
+        {
+            ft_dual_number variable;
+            error = variable.initialize(coordinates[index], 0.0);
+            if (error == FT_ERR_SUCCESS)
+                error = dual_inputs.push_back(variable);
+            index += 1U;
+        }
+    }
+    point.unlock(acquired);
+    return (error);
 }
 
 int32_t math_autodiff_univariate(math_autodiff_univariate_function function,
     double point, double *value, double *derivative, void *user_data) noexcept
 {
-    ft_dual_number variable;
-    ft_dual_number *result;
-    int32_t initialize_error;
-    int32_t return_error;
-
     if (function == ft_nullptr || value == ft_nullptr || derivative == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    initialize_error = variable.initialize(point, 1.0);
+    ft_dual_number variable;
+    const int32_t initialize_error = variable.initialize(point, 1.0);
     if (initialize_error != FT_ERR_SUCCESS)
         return (initialize_error);
-    result = function(variable, user_data);
+    ft_dual_number *result = function(variable, user_data);
     if (result == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    *value = result->value();
-    if (result->get_error() != FT_ERR_SUCCESS)
-    {
-        (void)result->destroy();
-        delete result;
-        return (FT_ERR_INTERNAL);
-    }
-    *derivative = result->derivative();
-    if (result->get_error() != FT_ERR_SUCCESS)
-        return_error = FT_ERR_INTERNAL;
-    else
-        return_error = FT_ERR_SUCCESS;
-    (void)result->destroy();
+    const int32_t error = result->read_result(*value, *derivative);
     delete result;
-    if (return_error != FT_ERR_SUCCESS)
-        return (return_error);
-    return (FT_ERR_SUCCESS);
+    return (error);
+}
+
+static int32_t math_autodiff_publish_gradient(ft_vector<double> &gradient,
+    const double *pending, ft_size_t dimension) noexcept
+{
+    ft_bool acquired = FT_FALSE;
+    int32_t error = gradient.lock(&acquired);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    gradient.resize(dimension);
+    error = gradient.get_error();
+    if (error == FT_ERR_SUCCESS && dimension != 0U)
+    {
+        double *output = gradient.begin();
+        error = gradient.get_error();
+        if (error == FT_ERR_SUCCESS)
+            ft_memcpy(output, pending, dimension * sizeof(double));
+    }
+    gradient.unlock(acquired);
+    return (error);
 }
 
 int32_t math_autodiff_gradient(math_autodiff_multivariate_function function,
     const ft_vector<double> &point, ft_vector<double> &gradient,
     double *value, void *user_data) noexcept
 {
-    uint64_t dimension;
-    uint64_t index;
-    ft_bool value_set;
-
     if (function == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    dimension = point.size();
-    gradient.clear();
-    gradient.reserve(dimension);
-    index = 0;
-    value_set = FT_FALSE;
+    ft_vector<ft_dual_number> dual_inputs;
+    int32_t error = dual_inputs.initialize();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    error = math_autodiff_prepare_inputs(point, dual_inputs);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    const ft_size_t dimension = dual_inputs.size();
+    if (dimension == 0U)
+        return (math_autodiff_publish_gradient(gradient, ft_nullptr, 0U));
+
+    ft_vector<double> pending;
+    error = pending.initialize();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    pending.resize(dimension);
+    error = pending.get_error();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+
+    ft_dual_number *inputs = dual_inputs.begin();
+    double *partials = pending.begin();
+    double function_value = 0.0;
+    ft_size_t index = 0U;
     while (index < dimension)
     {
-        ft_vector<ft_dual_number> dual_inputs;
-        ft_dual_number *result;
-        int32_t return_error;
-
-        if (math_autodiff_prepare_inputs(point, index, dual_inputs) != FT_ERR_SUCCESS)
-        {
-            gradient.clear();
-            return (FT_ERR_INITIALIZATION_FAILED);
-        }
-        result = function(dual_inputs, user_data);
+        inputs[index]._derivative = 1.0;
+        ft_dual_number *result = function(dual_inputs, user_data);
+        inputs[index]._derivative = 0.0;
         if (result == ft_nullptr)
-        {
-            gradient.clear();
             return (FT_ERR_NO_MEMORY);
-        }
-        return_error = FT_ERR_SUCCESS;
-        if (!value_set && value != ft_nullptr)
-        {
-            *value = result->value();
-            if (result->get_error() != FT_ERR_SUCCESS)
-            {
-                gradient.clear();
-                return_error = FT_ERR_INTERNAL;
-            }
-            value_set = FT_TRUE;
-        }
-        if (return_error == FT_ERR_SUCCESS)
-        {
-            gradient.push_back(result->derivative());
-            if (result->get_error() != FT_ERR_SUCCESS)
-            {
-                gradient.clear();
-                return_error = FT_ERR_INTERNAL;
-            }
-        }
-        (void)result->destroy();
+        double sample_value = 0.0;
+        error = result->read_result(sample_value, partials[index]);
         delete result;
-        if (return_error != FT_ERR_SUCCESS)
-            return (return_error);
-        index++;
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        if (index == 0U)
+            function_value = sample_value;
+        index += 1U;
     }
-    return (FT_ERR_SUCCESS);
+    error = math_autodiff_publish_gradient(gradient, partials, dimension);
+    if (error == FT_ERR_SUCCESS && value != ft_nullptr)
+        *value = function_value;
+    return (error);
 }

@@ -5,6 +5,7 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include <vector>
+#include <atomic>
 #include <mutex>
 #include <chrono>
 #include <thread>
@@ -25,6 +26,37 @@
 
 static std::mutex g_trace_mutex;
 static std::vector<ft_task_trace_event> g_recorded_events;
+static std::atomic<uint32_t> g_trace_sink_mask{0U};
+
+template <uint32_t index>
+static void task_scheduler_trace_mask_sink(const ft_task_trace_event &)
+{
+    g_trace_sink_mask.fetch_or(1U << index, std::memory_order_relaxed);
+    return ;
+}
+
+FT_TEST(test_threading_trace_dispatches_all_sinks_past_inline_capacity)
+{
+    const task_scheduler_trace_sink sinks[] = {
+        task_scheduler_trace_mask_sink<0>, task_scheduler_trace_mask_sink<1>,
+        task_scheduler_trace_mask_sink<2>, task_scheduler_trace_mask_sink<3>,
+        task_scheduler_trace_mask_sink<4>, task_scheduler_trace_mask_sink<5>,
+        task_scheduler_trace_mask_sink<6>, task_scheduler_trace_mask_sink<7>,
+        task_scheduler_trace_mask_sink<8>
+    };
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, task_scheduler_trace_reset_for_tests());
+    g_trace_sink_mask.store(0U);
+    uint32_t index = 0U;
+    while (index < 9U)
+        FT_ASSERT_EQ(0, task_scheduler_register_trace_sink(sinks[index++]));
+    const ft_task_trace_event event{};
+    task_scheduler_trace_emit(event);
+    const int32_t error = task_scheduler_trace_get_error();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, task_scheduler_trace_reset_for_tests());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, error);
+    FT_ASSERT_EQ(0x1FFU, g_trace_sink_mask.load());
+    return (1);
+}
 
 static void task_scheduler_trace_test_sink(const ft_task_trace_event &event)
 {

@@ -27,8 +27,9 @@ pt_recursive_mutex::~pt_recursive_mutex()
 
 int pt_recursive_mutex::ensure_native_mutex() const
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
-        "pt_recursive_mutex::ensure_native_mutex");
+    if (this->_initialised_state != pt_recursive_mutex::_state_initialised)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+            "pt_recursive_mutex::ensure_native_mutex");
     if (this->_native_mutex == ft_nullptr)
     {
         errno_abort_lifecycle(this->_initialised_state,

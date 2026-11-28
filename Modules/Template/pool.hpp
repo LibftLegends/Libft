@@ -25,8 +25,8 @@ class Pool
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
-        T* ptr_at(ft_size_t index) noexcept;
         void release(ft_size_t index) noexcept;
+        int32_t resize_unlocked(ft_size_t new_size);
 
     public:
         class Object
@@ -131,18 +131,6 @@ int32_t Pool<T>::unlock_internal(ft_bool lock_acquired) const
 }
 
 template<typename T>
-T* Pool<T>::ptr_at(ft_size_t index) noexcept
-{
-    if (index >= this->_slots.size())
-    {
-        set_error(FT_ERR_INVALID_ARGUMENT);
-        return (ft_nullptr);
-    }
-    set_error(FT_ERR_SUCCESS);
-    return (this->_slots[index]);
-}
-
-template<typename T>
 void Pool<T>::release(ft_size_t index) noexcept
 {
     ft_bool lock_acquired;
@@ -160,9 +148,12 @@ void Pool<T>::release(ft_size_t index) noexcept
     if (index < this->_slots.size())
     {
         pointer_to_release = this->_slots[index];
-        this->_slots[index] = ft_nullptr;
+        if (pointer_to_release != ft_nullptr)
+        {
+            this->_slots[index] = ft_nullptr;
+            this->_free_indices.push_back(index);
+        }
     }
-    this->_free_indices.push_back(index);
     (void)this->unlock_internal(lock_acquired);
     if (pointer_to_release != ft_nullptr)
         cma_free(pointer_to_release);
@@ -539,31 +530,77 @@ int32_t Pool<T>::move(Pool<T> &other)
 }
 
 template<typename T>
-void Pool<T>::resize(ft_size_t new_size)
+int32_t Pool<T>::resize_unlocked(ft_size_t new_size)
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t index;
-
-    errno_abort_if_uninitialised(this->_initialised_state, "Pool::resize");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    const ft_size_t old_size = this->_slots.size();
+    if (new_size == old_size)
+        return (FT_ERR_SUCCESS);
+    if (new_size < old_size)
     {
-        set_error(lock_error);
-        return ;
+        ft_size_t index = new_size;
+        while (index < old_size)
+        {
+            if (this->_slots[index] != ft_nullptr)
+                return (FT_ERR_INVALID_OPERATION);
+            ++index;
+        }
+        const ft_size_t free_count = this->_free_indices.size();
+        ft_size_t retained_count = 0U;
+        index = 0U;
+        while (index < free_count)
+        {
+            const ft_size_t free_index = this->_free_indices[index++];
+            if (free_index < new_size)
+                this->_free_indices[retained_count++] = free_index;
+        }
+        this->_free_indices.resize(retained_count);
+        this->_slots.resize(new_size, ft_nullptr);
+        return (FT_ERR_SUCCESS);
     }
+    constexpr ft_size_t MAXIMUM_SLOTS = FT_SYSTEM_SIZE_MAX / sizeof(T *);
+    constexpr ft_size_t MAXIMUM_INDICES = FT_SYSTEM_SIZE_MAX / sizeof(ft_size_t);
+    if (new_size > MAXIMUM_SLOTS || new_size > MAXIMUM_INDICES)
+        return (FT_ERR_NO_MEMORY);
+    const ft_size_t current_capacity = this->_slots.capacity();
+    ft_size_t capacity = new_size;
+    if (current_capacity < new_size && current_capacity <= MAXIMUM_SLOTS / 2U
+        && current_capacity <= MAXIMUM_INDICES / 2U && current_capacity * 2U > new_size)
+        capacity = current_capacity * 2U;
+    this->_free_indices.reserve(capacity);
+    int32_t error = this->_free_indices.get_error();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    this->_slots.reserve(capacity);
+    error = this->_slots.get_error();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
     this->_slots.resize(new_size, ft_nullptr);
-    this->_free_indices.clear();
-    this->_free_indices.reserve(new_size);
-    index = 0;
+    error = this->_slots.get_error();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    ft_size_t index = old_size;
     while (index < new_size)
     {
         this->_free_indices.push_back(index);
         ++index;
     }
+    return (FT_ERR_SUCCESS);
+}
+
+template<typename T>
+void Pool<T>::resize(ft_size_t new_size)
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "Pool::resize");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        set_error(lock_error);
+        return ;
+    }
+    const int32_t resize_error = this->resize_unlocked(new_size);
     (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    set_error(resize_error);
     return ;
 }
 
@@ -596,15 +633,14 @@ typename Pool<T>::Object Pool<T>::acquire(Args&&... args)
     }
     last_index = free_count - 1;
     storage_index = this->_free_indices[last_index];
-    this->_free_indices.pop_back();
     constructed_pointer = static_cast<T*>(cma_malloc(sizeof(T)));
     if (constructed_pointer == ft_nullptr)
     {
-        this->_free_indices.push_back(storage_index);
         (void)this->unlock_internal(lock_acquired);
         set_error(FT_ERR_NO_MEMORY);
         return (result);
     }
+    this->_free_indices.pop_back();
     construct_at(constructed_pointer, std::forward<Args>(args)...);
     this->_slots[storage_index] = constructed_pointer;
     result = Object(this, storage_index, constructed_pointer);

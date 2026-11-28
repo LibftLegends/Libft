@@ -9,9 +9,7 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/pthread.hpp"
-#include <chrono>
 #include <cstdlib>
-#include <thread>
 
 template <typename ValueType>
 class ft_future
@@ -22,7 +20,6 @@ class ft_future
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;
-        int32_t wait_ready() const;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
         static int32_t set_error(int32_t error_code) noexcept;
@@ -65,7 +62,6 @@ class ft_future<void>
         mutable pt_recursive_mutex *_mutex;
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;
-        int32_t wait_ready() const;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
         static int32_t set_error(int32_t error_code) noexcept;
@@ -502,35 +498,6 @@ int32_t ft_future<ValueType>::move(ft_future<ValueType> &other)
 }
 
 template <typename ValueType>
-int32_t ft_future<ValueType>::wait_ready() const
-{
-    ft_bool lock_acquired;
-    ft_promise<ValueType> *promise_pointer;
-    std::chrono::steady_clock::time_point start_time;
-
-    lock_acquired = FT_FALSE;
-    promise_pointer = ft_nullptr;
-    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
-    promise_pointer = this->_promise;
-    this->unlock_internal(lock_acquired);
-    if (promise_pointer == ft_nullptr)
-    {
-        return (FT_ERR_INVALID_STATE);
-    }
-    start_time = std::chrono::steady_clock::now();
-    while (!promise_pointer->is_ready())
-    {
-        if (std::chrono::steady_clock::now() - start_time > std::chrono::seconds(30))
-        {
-            return (FT_ERR_TIMEOUT);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-template <typename ValueType>
 ValueType ft_future<ValueType>::get() const
 {
     ft_bool lock_acquired;
@@ -557,7 +524,7 @@ ValueType ft_future<ValueType>::get() const
         (void)set_error(FT_ERR_INVALID_STATE);
         return (ValueType());
     }
-    wait_error = this->wait_ready();
+    wait_error = promise_pointer->wait_ready();
     if (wait_error != FT_ERR_SUCCESS)
     {
         (void)set_error(wait_error);
@@ -594,7 +561,7 @@ void ft_future<ValueType>::wait() const
         (void)set_error(FT_ERR_INVALID_STATE);
         return ;
     }
-    wait_error = this->wait_ready();
+    wait_error = promise_pointer->wait_ready();
     if (wait_error != FT_ERR_SUCCESS)
     {
         (void)set_error(wait_error);
@@ -976,34 +943,6 @@ inline int32_t ft_future<void>::move(ft_future<void> &other)
     return (FT_ERR_SUCCESS);
 }
 
-inline int32_t ft_future<void>::wait_ready() const
-{
-    ft_bool lock_acquired;
-    ft_promise<void> *promise_pointer;
-    std::chrono::steady_clock::time_point start_time;
-
-    lock_acquired = FT_FALSE;
-    promise_pointer = ft_nullptr;
-    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_STATE);
-    promise_pointer = this->_promise;
-    this->unlock_internal(lock_acquired);
-    if (promise_pointer == ft_nullptr)
-    {
-        return (FT_ERR_INVALID_STATE);
-    }
-    start_time = std::chrono::steady_clock::now();
-    while (!promise_pointer->is_ready())
-    {
-        if (std::chrono::steady_clock::now() - start_time > std::chrono::seconds(30))
-        {
-            return (FT_ERR_TIMEOUT);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return (FT_ERR_SUCCESS);
-}
-
 inline void ft_future<void>::get() const
 {
     ft_bool lock_acquired;
@@ -1029,7 +968,7 @@ inline void ft_future<void>::get() const
         (void)set_error(FT_ERR_INVALID_STATE);
         return ;
     }
-    wait_error = this->wait_ready();
+    wait_error = promise_pointer->wait_ready();
     if (wait_error != FT_ERR_SUCCESS)
     {
         (void)set_error(wait_error);
@@ -1064,7 +1003,7 @@ inline void ft_future<void>::wait() const
         (void)set_error(FT_ERR_INVALID_STATE);
         return ;
     }
-    wait_error = this->wait_ready();
+    wait_error = promise_pointer->wait_ready();
     if (wait_error != FT_ERR_SUCCESS)
     {
         (void)set_error(wait_error);

@@ -266,6 +266,20 @@ void game_price_definition::unlock(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+int32_t game_price_definition::copy_values(const game_price_definition &other) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_price_definition::copy_values destination");
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
+        "game_price_definition::copy_values source");
+    this->_item_id = other._item_id;
+    this->_rarity = other._rarity;
+    this->_base_value = other._base_value;
+    this->_minimum_value = other._minimum_value;
+    this->_maximum_value = other._maximum_value;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
 int32_t game_price_definition::get_item_id() const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_price_definition::get_item_id");

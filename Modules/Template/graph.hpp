@@ -8,11 +8,13 @@
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../Printf/printf.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <new>
 
 template <typename VertexType>
@@ -25,6 +27,12 @@ class ft_graph
             ft_size_t   *_edges;
             ft_size_t    _degree;
             ft_size_t    _edge_capacity;
+        };
+
+        struct traversal_frame
+        {
+            ft_size_t _vertex;
+            ft_size_t _next_edge;
         };
 
         graph_node               *_nodes;
@@ -43,6 +51,8 @@ class ft_graph
         ft_bool ensure_node_capacity(ft_size_t desired_capacity);
         ft_bool ensure_edge_capacity(graph_node &node, ft_size_t desired_capacity);
         void destroy_all_nodes_unlocked();
+        template <typename WorkItem>
+        static WorkItem *allocate_traversal(ft_size_t count, ft_bool *&visited);
 
     public:
         explicit ft_graph(ft_size_t initial_capacity = 0);
@@ -146,43 +156,26 @@ void ft_graph<VertexType>::destroy_node(graph_node &node)
 template <typename VertexType>
 ft_bool ft_graph<VertexType>::ensure_node_capacity(ft_size_t desired_capacity)
 {
-    ft_size_t new_capacity;
-    graph_node *new_nodes;
-    ft_size_t index;
-
     if (desired_capacity <= this->_node_capacity)
         return (FT_TRUE);
-    if (this->_node_capacity == 0)
-        new_capacity = 1;
-    else
-        new_capacity = this->_node_capacity * 2;
-    while (new_capacity < desired_capacity)
-        new_capacity *= 2;
-    new_nodes = static_cast<graph_node*>(cma_malloc(sizeof(graph_node) * new_capacity));
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(graph_node);
+    if (desired_capacity > MAXIMUM_CAPACITY)
+    {
+        set_error(FT_ERR_NO_MEMORY);
+        return (FT_FALSE);
+    }
+    ft_size_t new_capacity = desired_capacity;
+    if (this->_node_capacity <= MAXIMUM_CAPACITY / 2U
+        && this->_node_capacity * 2U > desired_capacity)
+        new_capacity = this->_node_capacity * 2U;
+    graph_node *new_nodes = static_cast<graph_node*>(cma_malloc(sizeof(graph_node) * new_capacity));
     if (new_nodes == ft_nullptr)
     {
         set_error(FT_ERR_NO_MEMORY);
         return (FT_FALSE);
     }
-    index = 0;
-    while (index < new_capacity)
-    {
-        new_nodes[index]._value_pointer = ft_nullptr;
-        new_nodes[index]._edges = ft_nullptr;
-        new_nodes[index]._degree = 0;
-        new_nodes[index]._edge_capacity = 0;
-        ++index;
-    }
-    index = 0;
-    while (index < this->_size)
-    {
-        new_nodes[index]._value_pointer = this->_nodes[index]._value_pointer;
-        new_nodes[index]._edges = this->_nodes[index]._edges;
-        new_nodes[index]._degree = this->_nodes[index]._degree;
-        new_nodes[index]._edge_capacity = this->_nodes[index]._edge_capacity;
-        this->reset_node(this->_nodes[index]);
-        ++index;
-    }
+    if (this->_size != 0U)
+        std::uninitialized_copy_n(this->_nodes, this->_size, new_nodes);
     if (this->_nodes != ft_nullptr)
         cma_free(this->_nodes);
     this->_nodes = new_nodes;
@@ -195,30 +188,26 @@ template <typename VertexType>
 ft_bool ft_graph<VertexType>::ensure_edge_capacity(graph_node &node,
     ft_size_t desired_capacity)
 {
-    ft_size_t new_capacity;
-    ft_size_t *new_edges;
-    ft_size_t index;
-
     if (desired_capacity <= node._edge_capacity)
         return (FT_TRUE);
-    if (node._edge_capacity == 0)
-        new_capacity = 1;
-    else
-        new_capacity = node._edge_capacity * 2;
-    while (new_capacity < desired_capacity)
-        new_capacity *= 2;
-    new_edges = static_cast<ft_size_t*>(cma_malloc(sizeof(ft_size_t) * new_capacity));
+    constexpr ft_size_t MAXIMUM_CAPACITY = FT_SYSTEM_SIZE_MAX / sizeof(ft_size_t);
+    if (desired_capacity > MAXIMUM_CAPACITY)
+    {
+        set_error(FT_ERR_NO_MEMORY);
+        return (FT_FALSE);
+    }
+    ft_size_t new_capacity = desired_capacity;
+    if (node._edge_capacity <= MAXIMUM_CAPACITY / 2U
+        && node._edge_capacity * 2U > desired_capacity)
+        new_capacity = node._edge_capacity * 2U;
+    ft_size_t *new_edges = static_cast<ft_size_t*>(cma_malloc(sizeof(ft_size_t) * new_capacity));
     if (new_edges == ft_nullptr)
     {
         set_error(FT_ERR_NO_MEMORY);
         return (FT_FALSE);
     }
-    index = 0;
-    while (index < node._degree)
-    {
-        new_edges[index] = node._edges[index];
-        ++index;
-    }
+    if (node._degree != 0U)
+        std::uninitialized_copy_n(node._edges, node._degree, new_edges);
     if (node._edges != ft_nullptr)
         cma_free(node._edges);
     node._edges = new_edges;
@@ -271,8 +260,6 @@ ft_graph<VertexType>::~ft_graph()
 template <typename VertexType>
 int32_t ft_graph<VertexType>::initialize()
 {
-    ft_size_t index;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         errno_abort_lifecycle(this->_initialised_state, "ft_graph::initialize", "called while object is already initialised");
@@ -281,25 +268,10 @@ int32_t ft_graph<VertexType>::initialize()
     this->_nodes = ft_nullptr;
     this->_node_capacity = 0;
     this->_size = 0;
-    if (this->_initial_capacity > 0)
+    if (this->ensure_node_capacity(this->_initial_capacity) == FT_FALSE)
     {
-        this->_nodes = static_cast<graph_node*>(cma_malloc(sizeof(graph_node)
-                * this->_initial_capacity));
-        if (this->_nodes == ft_nullptr)
-        {
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (set_error(FT_ERR_NO_MEMORY));
-        }
-        this->_node_capacity = this->_initial_capacity;
-        index = 0;
-        while (index < this->_node_capacity)
-        {
-            this->_nodes[index]._value_pointer = ft_nullptr;
-            this->_nodes[index]._edges = ft_nullptr;
-            this->_nodes[index]._degree = 0;
-            this->_nodes[index]._edge_capacity = 0;
-            ++index;
-        }
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (set_error(FT_ERR_NO_MEMORY));
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
@@ -401,10 +373,7 @@ ft_size_t ft_graph<VertexType>::add_vertex(const VertexType& value)
     }
     construct_at(new_value, value);
     index = this->_size;
-    this->_nodes[index]._value_pointer = new_value;
-    this->_nodes[index]._edges = ft_nullptr;
-    this->_nodes[index]._degree = 0;
-    this->_nodes[index]._edge_capacity = 0;
+    ::construct_at(this->_nodes + index, graph_node{new_value, ft_nullptr, 0U, 0U});
     this->_size += 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -442,10 +411,7 @@ ft_size_t ft_graph<VertexType>::add_vertex(VertexType&& value)
     }
     construct_at(new_value, ft_move(value));
     index = this->_size;
-    this->_nodes[index]._value_pointer = new_value;
-    this->_nodes[index]._edges = ft_nullptr;
-    this->_nodes[index]._degree = 0;
-    this->_nodes[index]._edge_capacity = 0;
+    ::construct_at(this->_nodes + index, graph_node{new_value, ft_nullptr, 0U, 0U});
     this->_size += 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -479,7 +445,7 @@ void ft_graph<VertexType>::add_edge(ft_size_t from, ft_size_t to)
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    node->_edges[node->_degree] = to;
+    ::construct_at(node->_edges + node->_degree, to);
     node->_degree += 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -487,76 +453,74 @@ void ft_graph<VertexType>::add_edge(ft_size_t from, ft_size_t to)
 }
 
 template <typename VertexType>
+template <typename WorkItem>
+WorkItem *ft_graph<VertexType>::allocate_traversal(ft_size_t count, ft_bool *&visited)
+{
+    constexpr ft_size_t BYTES_PER_VERTEX = sizeof(WorkItem) + sizeof(ft_bool);
+    if (count > FT_SYSTEM_SIZE_MAX / BYTES_PER_VERTEX)
+        return (ft_nullptr);
+    void *storage = cma_malloc(count * BYTES_PER_VERTEX);
+    if (storage == ft_nullptr)
+        return (ft_nullptr);
+    visited = reinterpret_cast<ft_bool *>(static_cast<unsigned char *>(storage)
+        + count * sizeof(WorkItem));
+    std::uninitialized_fill_n(visited, count, FT_FALSE);
+    return (static_cast<WorkItem *>(storage));
+}
+
+template <typename VertexType>
 template <typename Func>
 void ft_graph<VertexType>::bfs(ft_size_t start, Func visit)
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_bool *visited;
-    ft_size_t *queue_buffer;
-    ft_size_t queue_head;
-    ft_size_t queue_tail;
-    ft_size_t current;
-    ft_size_t edge_index;
-    ft_size_t adjacent;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_graph::bfs");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         set_error(lock_error);
         return ;
     }
-    if (start >= this->_size)
+    const ft_size_t vertex_count = this->_size;
+    if (start >= vertex_count)
     {
         (void)this->unlock_internal(lock_acquired);
         set_error(FT_ERR_NOT_FOUND);
         return ;
     }
-    visited = static_cast<ft_bool*>(cma_malloc(sizeof(ft_bool) * this->_size));
-    queue_buffer = static_cast<ft_size_t*>(cma_malloc(sizeof(ft_size_t) * this->_size));
-    if (visited == ft_nullptr || queue_buffer == ft_nullptr)
+    ft_bool *visited;
+    ft_size_t *queue = allocate_traversal<ft_size_t>(vertex_count, visited);
+    if (queue == ft_nullptr)
     {
-        if (visited != ft_nullptr)
-            cma_free(visited);
-        if (queue_buffer != ft_nullptr)
-            cma_free(queue_buffer);
         (void)this->unlock_internal(lock_acquired);
         set_error(FT_ERR_NO_MEMORY);
         return ;
     }
-    current = 0;
-    while (current < this->_size)
-    {
-        visited[current] = FT_FALSE;
-        ++current;
-    }
-    queue_head = 0;
-    queue_tail = 0;
+    ft_size_t queue_head = 0U;
+    ft_size_t queue_tail = 1U;
     visited[start] = FT_TRUE;
-    queue_buffer[queue_tail] = start;
-    queue_tail += 1;
+    ::construct_at(queue, start);
     while (queue_head < queue_tail)
     {
-        current = queue_buffer[queue_head];
-        queue_head += 1;
+        const ft_size_t current = queue[queue_head++];
+        if (current >= this->_size)
+            continue ;
         visit(*this->_nodes[current]._value_pointer);
-        edge_index = 0;
-        while (edge_index < this->_nodes[current]._degree)
+        if (current >= this->_size)
+            continue ;
+        const graph_node &node = this->_nodes[current];
+        ft_size_t edge_index = 0U;
+        while (edge_index < node._degree)
         {
-            adjacent = this->_nodes[current]._edges[edge_index];
-            if (visited[adjacent] == FT_FALSE)
+            const ft_size_t adjacent = node._edges[edge_index++];
+            if (adjacent < vertex_count && visited[adjacent] == FT_FALSE)
             {
                 visited[adjacent] = FT_TRUE;
-                queue_buffer[queue_tail] = adjacent;
-                queue_tail += 1;
+                ::construct_at(queue + queue_tail, adjacent);
+                ++queue_tail;
             }
-            ++edge_index;
         }
     }
-    cma_free(queue_buffer);
-    cma_free(visited);
+    cma_free(queue);
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
     return ;
@@ -566,72 +530,52 @@ template <typename VertexType>
 template <typename Func>
 void ft_graph<VertexType>::dfs(ft_size_t start, Func visit)
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_bool *visited;
-    ft_size_t *stack_buffer;
-    ft_size_t stack_size;
-    ft_size_t current;
-    ft_size_t edge_index;
-    ft_size_t adjacent;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_graph::dfs");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         set_error(lock_error);
         return ;
     }
-    if (start >= this->_size)
+    const ft_size_t vertex_count = this->_size;
+    if (start >= vertex_count)
     {
         (void)this->unlock_internal(lock_acquired);
         set_error(FT_ERR_NOT_FOUND);
         return ;
     }
-    visited = static_cast<ft_bool*>(cma_malloc(sizeof(ft_bool) * this->_size));
-    stack_buffer = static_cast<ft_size_t*>(cma_malloc(sizeof(ft_size_t) * this->_size));
-    if (visited == ft_nullptr || stack_buffer == ft_nullptr)
+    ft_bool *visited;
+    traversal_frame *stack = allocate_traversal<traversal_frame>(vertex_count, visited);
+    if (stack == ft_nullptr)
     {
-        if (visited != ft_nullptr)
-            cma_free(visited);
-        if (stack_buffer != ft_nullptr)
-            cma_free(stack_buffer);
         (void)this->unlock_internal(lock_acquired);
         set_error(FT_ERR_NO_MEMORY);
         return ;
     }
-    current = 0;
-    while (current < this->_size)
+    // A frame resumes at the next edge after its child returns.
+    ft_size_t stack_size = 1U;
+    visited[start] = FT_TRUE;
+    ::construct_at(stack, traversal_frame{start, 0U});
+    visit(*this->_nodes[start]._value_pointer);
+    while (stack_size != 0U)
     {
-        visited[current] = FT_FALSE;
-        ++current;
-    }
-    stack_size = 0;
-    stack_buffer[stack_size] = start;
-    stack_size += 1;
-    while (stack_size > 0)
-    {
-        stack_size -= 1;
-        current = stack_buffer[stack_size];
-        if (visited[current])
-            continue ;
-        visited[current] = FT_TRUE;
-        visit(*this->_nodes[current]._value_pointer);
-        edge_index = this->_nodes[current]._degree;
-        while (edge_index > 0)
+        traversal_frame &frame = stack[stack_size - 1U];
+        if (frame._vertex >= this->_size
+            || frame._next_edge >= this->_nodes[frame._vertex]._degree)
         {
-            edge_index -= 1;
-            adjacent = this->_nodes[current]._edges[edge_index];
-            if (visited[adjacent] == FT_FALSE)
-            {
-                stack_buffer[stack_size] = adjacent;
-                stack_size += 1;
-            }
+            --stack_size;
+            continue ;
         }
+        const ft_size_t adjacent = this->_nodes[frame._vertex]._edges[frame._next_edge++];
+        if (adjacent >= vertex_count || visited[adjacent] != FT_FALSE)
+            continue ;
+        visited[adjacent] = FT_TRUE;
+        ::construct_at(stack + stack_size, traversal_frame{adjacent, 0U});
+        ++stack_size;
+        visit(*this->_nodes[adjacent]._value_pointer);
     }
-    cma_free(stack_buffer);
-    cma_free(visited);
+    cma_free(stack);
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
     return ;
@@ -643,7 +587,6 @@ void ft_graph<VertexType>::neighbors(ft_size_t index,
 {
     ft_bool lock_acquired;
     int32_t lock_error;
-    ft_size_t edge_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_graph::neighbors");
     lock_acquired = FT_FALSE;
@@ -659,14 +602,12 @@ void ft_graph<VertexType>::neighbors(ft_size_t index,
         set_error(FT_ERR_NOT_FOUND);
         return ;
     }
-    edge_index = 0;
-    while (edge_index < this->_nodes[index]._degree)
-    {
-        out.push_back(this->_nodes[index]._edges[edge_index]);
-        ++edge_index;
-    }
+    const graph_node &node = this->_nodes[index];
+    int32_t result = FT_ERR_SUCCESS;
+    if (node._degree != 0U)
+        result = out.append(node._edges, node._degree);
     (void)this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    set_error(result);
     return ;
 }
 

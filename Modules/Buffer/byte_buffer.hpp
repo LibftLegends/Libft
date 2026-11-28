@@ -41,6 +41,11 @@ class ft_byte_buffer
 
         int32_t initialize() noexcept;
         int32_t initialize(ft_size_t capacity, ft_bool fixed_capacity) noexcept;
+        // The reader must fill exactly length bytes on success and must not re-enter the buffer.
+        // Zero length skips the reader. Success leaves a fixed-capacity buffer.
+        int32_t initialize_from_reader(ft_size_t length,
+            int32_t (*reader)(uint8_t *destination, ft_size_t length, void *user_data) noexcept,
+            void *user_data) noexcept;
         int32_t initialize(const ft_byte_buffer &other) noexcept;
         int32_t initialize(ft_byte_buffer &&other) noexcept;
         int32_t destroy() noexcept;
@@ -64,6 +69,7 @@ class ft_byte_buffer
         int32_t append_u16_le(uint16_t value) noexcept;
         int32_t append_u32_be(uint32_t value) noexcept;
         int32_t append_u32_le(uint32_t value) noexcept;
+        int32_t overwrite_u32_le(ft_size_t offset, uint32_t value) noexcept;
         int32_t append_u64_be(uint64_t value) noexcept;
         int32_t append_u64_le(uint64_t value) noexcept;
         int32_t append_varuint64(uint64_t value) noexcept;

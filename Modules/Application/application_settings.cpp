@@ -7,8 +7,8 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static const int64_t application_settings_default_login_signal_token_timeout_seconds = 300LL;
-static const int64_t application_settings_default_login_session_timeout_seconds = 28800LL;
+static constexpr int64_t DEFAULT_LOGIN_SIGNAL_TOKEN_TIMEOUT_SECONDS = 300;
+static constexpr int64_t DEFAULT_LOGIN_SESSION_TIMEOUT_SECONDS = 28800;
 
 void application_settings::destroy_partial_copy_state() noexcept
 {
@@ -19,8 +19,8 @@ void application_settings::destroy_partial_copy_state() noexcept
     this->_encryption_enabled = FT_FALSE;
     this->_manual_login_approval_enabled = FT_FALSE;
     this->_login_signal_output_file_descriptor = STDOUT_FILENO;
-    this->_login_signal_token_timeout_seconds = application_settings_default_login_signal_token_timeout_seconds;
-    this->_login_session_timeout_seconds = application_settings_default_login_session_timeout_seconds;
+    this->_login_signal_token_timeout_seconds = DEFAULT_LOGIN_SIGNAL_TOKEN_TIMEOUT_SECONDS;
+    this->_login_session_timeout_seconds = DEFAULT_LOGIN_SESSION_TIMEOUT_SECONDS;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return ;
 }
@@ -34,8 +34,8 @@ application_settings::application_settings() noexcept
     , _encryption_enabled(FT_FALSE)
     , _manual_login_approval_enabled(FT_FALSE)
     , _login_signal_output_file_descriptor(STDOUT_FILENO)
-    , _login_signal_token_timeout_seconds(application_settings_default_login_signal_token_timeout_seconds)
-    , _login_session_timeout_seconds(application_settings_default_login_session_timeout_seconds)
+    , _login_signal_token_timeout_seconds(DEFAULT_LOGIN_SIGNAL_TOKEN_TIMEOUT_SECONDS)
+    , _login_session_timeout_seconds(DEFAULT_LOGIN_SESSION_TIMEOUT_SECONDS)
 {
     return ;
 }
@@ -72,8 +72,8 @@ int32_t application_settings::destroy() noexcept
     this->_encryption_enabled = FT_FALSE;
     this->_manual_login_approval_enabled = FT_FALSE;
     this->_login_signal_output_file_descriptor = STDOUT_FILENO;
-    this->_login_signal_token_timeout_seconds = application_settings_default_login_signal_token_timeout_seconds;
-    this->_login_session_timeout_seconds = application_settings_default_login_session_timeout_seconds;
+    this->_login_signal_token_timeout_seconds = DEFAULT_LOGIN_SIGNAL_TOKEN_TIMEOUT_SECONDS;
+    this->_login_session_timeout_seconds = DEFAULT_LOGIN_SESSION_TIMEOUT_SECONDS;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     return (error_code);
 }
@@ -123,28 +123,68 @@ int32_t application_settings::initialize_from_copy(const application_settings &o
         this->destroy_partial_copy_state();
         return (error_code);
     }
+    this->copy_scalar_settings(other);
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (FT_ERR_SUCCESS);
+}
+
+void application_settings::copy_scalar_settings(const application_settings &other) noexcept
+{
     this->_encryption_enabled = other._encryption_enabled;
     this->_manual_login_approval_enabled = other._manual_login_approval_enabled;
     this->_login_signal_output_file_descriptor = other._login_signal_output_file_descriptor;
     this->_login_signal_token_timeout_seconds = other._login_signal_token_timeout_seconds;
     this->_login_session_timeout_seconds = other._login_session_timeout_seconds;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
 int32_t application_settings::initialize_from_move(application_settings &other) noexcept
 {
-    int32_t error_code;
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state, "application_settings::initialize(move)",
+            "source is uninitialised");
+        return (FT_ERR_INVALID_STATE);
+    }
+    if (this == &other)
+        return (FT_ERR_SUCCESS);
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (FT_ERR_SUCCESS);
 
-    error_code = this->initialize_from_copy(other);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    error_code = other.destroy();
-    if (error_code != FT_ERR_SUCCESS)
+    constexpr ft_string application_settings::* STRING_FIELDS[] = {
+        &application_settings::_database_root_path,
+        &application_settings::_database_relative_path,
+        &application_settings::_encryption_key,
+        &application_settings::_encryption_algorithm_name
+    };
+    ft_size_t index = 0;
+    while (index < sizeof(STRING_FIELDS) / sizeof(*STRING_FIELDS))
+    {
+        const int32_t result = (this->*STRING_FIELDS[index]).move(other.*STRING_FIELDS[index]);
+        if (result != FT_ERR_SUCCESS)
+        {
+            while (index > 0)
+            {
+                --index;
+                (void)(other.*STRING_FIELDS[index]).move(this->*STRING_FIELDS[index]);
+            }
+            this->destroy_partial_copy_state();
+            return (result);
+        }
+        ++index;
+    }
+    this->copy_scalar_settings(other);
+    const int32_t source_destroy_error = other.destroy();
+    if (source_destroy_error != FT_ERR_SUCCESS)
     {
         this->destroy_partial_copy_state();
-        return (error_code);
+        return (source_destroy_error);
     }
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
 
@@ -154,16 +194,16 @@ int32_t application_settings::initialize() noexcept
 
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         errno_abort_lifecycle(this->_initialised_state, "application_settings::initialize", "initialize called on initialised instance");
-    error_code = this->_database_root_path.initialize("");
+    error_code = this->_database_root_path.initialize();
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = this->_database_relative_path.initialize("");
+    error_code = this->_database_relative_path.initialize();
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)this->_database_root_path.destroy();
         return (error_code);
     }
-    error_code = this->_encryption_key.initialize("");
+    error_code = this->_encryption_key.initialize();
     if (error_code != FT_ERR_SUCCESS)
     {
         (void)this->_database_root_path.destroy();
@@ -181,8 +221,8 @@ int32_t application_settings::initialize() noexcept
     this->_encryption_enabled = FT_FALSE;
     this->_manual_login_approval_enabled = FT_FALSE;
     this->_login_signal_output_file_descriptor = STDOUT_FILENO;
-    this->_login_signal_token_timeout_seconds = application_settings_default_login_signal_token_timeout_seconds;
-    this->_login_session_timeout_seconds = application_settings_default_login_session_timeout_seconds;
+    this->_login_signal_token_timeout_seconds = DEFAULT_LOGIN_SIGNAL_TOKEN_TIMEOUT_SECONDS;
+    this->_login_session_timeout_seconds = DEFAULT_LOGIN_SESSION_TIMEOUT_SECONDS;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -246,18 +286,18 @@ int32_t application_settings::set_database_location(const char *database_root_pa
         return (FT_ERR_INVALID_ARGUMENT);
     if (database_relative_path == ft_nullptr || database_relative_path[0] == '\0')
         return (FT_ERR_INVALID_ARGUMENT);
-    (void)this->_database_root_path.destroy();
-    (void)this->_database_relative_path.destroy();
-    error_code = this->_database_root_path.initialize(database_root_path);
+    ft_string root_path;
+    ft_string relative_path;
+    error_code = root_path.initialize(database_root_path);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    error_code = this->_database_relative_path.initialize(database_relative_path);
+    error_code = relative_path.initialize(database_relative_path);
     if (error_code != FT_ERR_SUCCESS)
-    {
-        (void)this->_database_root_path.destroy();
         return (error_code);
-    }
-    return (FT_ERR_SUCCESS);
+    error_code = this->_database_root_path.move(root_path);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (this->_database_relative_path.move(relative_path));
 }
 
 int32_t application_settings::get_database_root_path(ft_string &database_root_path) const noexcept

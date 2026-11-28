@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/CMA/cma_internal.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
@@ -14,6 +15,10 @@
 #include "../../Modules/Template/pair.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+static_assert(align16(0U) == 0U);
+static_assert(align16(16U) == 16U);
+static_assert(align16(17U) == 32U);
 
 FT_TEST(test_cma_calloc_overflow_guard)
 {

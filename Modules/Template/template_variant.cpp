@@ -4,7 +4,7 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static int32_t check_variant_usage()
+[[maybe_unused]] static int32_t check_variant_usage()
 {
     ft_variant<int32_t, const char*> variant_value;
     variant_value.emplace<int32_t>(42);
@@ -22,4 +22,3 @@ static int32_t check_variant_usage()
             + static_cast<int32_t>(variant_value.holds_alternative<const char*>()));
 }
 
-static volatile int32_t template_variant_result = check_variant_usage();

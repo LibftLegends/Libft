@@ -68,52 +68,47 @@ int32_t game_region_definition::initialize() noexcept
 
 int32_t game_region_definition::initialize(const game_region_definition &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_region_definition::initialize(copy)",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
+        return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
+        result = this->initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = this->_name.assign(other._name);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_description.assign(other._description);
+        if (result == FT_ERR_SUCCESS)
         {
-            this->set_error(initialize_error);
-            return (initialize_error);
+            this->_region_id = other._region_id;
+            this->_recommended_level = other._recommended_level;
         }
+        (void)other.unlock_internal(source_locked);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        (void)this->destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(result));
     }
-    this->_region_id = other._region_id;
-    this->_name = other._name;
-    this->_description = other._description;
-    this->_recommended_level = other._recommended_level;
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -124,51 +119,97 @@ int32_t game_region_definition::initialize(game_region_definition &&other) noexc
 
 int32_t game_region_definition::move(game_region_definition &other) noexcept
 {
-    int32_t initialize_error;
-
-    if (&other == this)
-        return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_region_definition::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_region_definition &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
+    if (&other == this)
+        return (FT_ERR_SUCCESS);
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+    result = this->initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
+    {
+        // The private strings are synchronized by the region mutex.
+        result = this->_name.move(other._name);
+        if (result == FT_ERR_SUCCESS)
+        {
+            result = this->_description.move(other._description);
+            if (result != FT_ERR_SUCCESS)
+                (void)other._name.move(this->_name);
+        }
+        if (result == FT_ERR_SUCCESS)
+        {
+            this->_region_id = other._region_id;
+            this->_recommended_level = other._recommended_level;
+        }
+        (void)other.unlock_internal(source_locked);
+    }
+    if (result == FT_ERR_SUCCESS)
+        result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_region_definition::initialize(int32_t region_id, const ft_string &name,
     const ft_string &description, int32_t recommended_level) noexcept
 {
-    int32_t initialize_error;
+    ft_string staged_name;
+    ft_string staged_description;
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
 
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    // Either argument may refer to a string in this region.
+    if (name.is_initialised() && description.is_initialised())
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
+        result = staged_name.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = staged_description.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = staged_name.assign(name);
+        if (result == FT_ERR_SUCCESS)
+            result = staged_description.assign(description);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(result));
+    }
+    result = this->initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->_name.move(staged_name);
+    if (result == FT_ERR_SUCCESS)
+        result = this->_description.move(staged_description);
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
     }
     this->_region_id = region_id;
-    this->_name = name;
-    this->_description = description;
     this->_recommended_level = recommended_level;
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_region_definition::destroy() noexcept
@@ -265,10 +306,7 @@ int32_t game_region_definition::lock_internal(ft_bool *lock_acquired) const noex
         *lock_acquired = FT_FALSE;
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
+        return (this->set_error(lock_error));
     if (lock_acquired != ft_nullptr)
         *lock_acquired = FT_TRUE;
     this->set_error(FT_ERR_SUCCESS);
@@ -282,7 +320,8 @@ int32_t game_region_definition::unlock_internal(ft_bool lock_acquired) const noe
         this->set_error(FT_ERR_SUCCESS);
         return (FT_ERR_SUCCESS);
     }
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    if (this->_mutex != ft_nullptr)
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (FT_ERR_SUCCESS);
 }
 
@@ -309,9 +348,9 @@ int32_t game_region_definition::get_region_id() const noexcept
     const int32_t lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
         return (0);
-    this->set_error(FT_ERR_SUCCESS);
+    const int32_t region_id = this->_region_id;
     (void)this->unlock_internal(lock_acquired);
-    return (this->_region_id);
+    return (region_id);
 }
 
 void game_region_definition::set_region_id(int32_t region_id) noexcept
@@ -342,8 +381,11 @@ void game_region_definition::set_name(const ft_string &name) noexcept
     const int32_t lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
         return ;
-    this->_name = name;
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
+    if (name.is_initialised())
+        result = this->_name.assign(name);
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
     return ;
 }
 
@@ -362,16 +404,23 @@ void game_region_definition::set_description(const ft_string &description) noexc
     const int32_t lock_result = this->lock_internal(&lock_acquired);
     if (lock_result != FT_ERR_SUCCESS)
         return ;
-    this->_description = description;
+    int32_t result = FT_ERR_INVALID_ARGUMENT;
+    if (description.is_initialised())
+        result = this->_description.assign(description);
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
     return ;
 }
 
 int32_t game_region_definition::get_recommended_level() const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_region_definition::get_recommended_level");
-    this->set_error(FT_ERR_SUCCESS);
-    return (this->_recommended_level);
+    ft_bool lock_acquired;
+    if (this->lock_internal(&lock_acquired) != FT_ERR_SUCCESS)
+        return (0);
+    const int32_t recommended_level = this->_recommended_level;
+    (void)this->unlock_internal(lock_acquired);
+    return (recommended_level);
 }
 
 void game_region_definition::set_recommended_level(int32_t recommended_level) noexcept

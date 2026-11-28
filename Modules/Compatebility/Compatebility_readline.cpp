@@ -23,11 +23,15 @@ static int32_t cmp_map_last_error_to_ft_error()
     return (error_code);
 }
 
-int32_t cmp_readline_enable_raw_mode()
+int32_t cmp_readline_enable_raw_mode(ft_bool *activated)
 {
     HANDLE handle;
     DWORD mode;
 
+    if (activated != ft_nullptr)
+        *activated = FT_FALSE;
+    if (g_raw_mode_active == FT_TRUE)
+        return (FT_ERR_SUCCESS);
     handle = GetStdHandle(STD_INPUT_HANDLE);
     if (handle == INVALID_HANDLE_VALUE)
     {
@@ -51,9 +55,8 @@ int32_t cmp_readline_enable_raw_mode()
         }
         return (error_code);
     }
-    g_orig_mode = mode;
-    mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
-    if (!SetConsoleMode(handle, mode))
+    const DWORD raw_mode = mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+    if (!SetConsoleMode(handle, raw_mode))
     {
         int32_t error_code = cmp_map_last_error_to_ft_error();
 
@@ -64,7 +67,10 @@ int32_t cmp_readline_enable_raw_mode()
         }
         return (error_code);
     }
+    g_orig_mode = mode;
     g_raw_mode_active = FT_TRUE;
+    if (activated != ft_nullptr)
+        *activated = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -86,36 +92,6 @@ int32_t cmp_readline_disable_raw_mode()
         return (cmp_map_last_error_to_ft_error());
     }
     g_raw_mode_active = FT_FALSE;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols,
-    unsigned short *x_pixels, unsigned short *y_pixels)
-{
-    CONSOLE_SCREEN_BUFFER_INFO info;
-    HANDLE handle;
-    unsigned short computed_rows;
-    unsigned short computed_columns;
-
-    handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (handle == INVALID_HANDLE_VALUE)
-    {
-        return (cmp_map_last_error_to_ft_error());
-    }
-    if (!GetConsoleScreenBufferInfo(handle, &info))
-    {
-        return (cmp_map_last_error_to_ft_error());
-    }
-    computed_rows = static_cast<unsigned short>(info.srWindow.Bottom - info.srWindow.Top + 1);
-    computed_columns = static_cast<unsigned short>(info.srWindow.Right - info.srWindow.Left + 1);
-    if (rows != ft_nullptr)
-        *rows = computed_rows;
-    if (cols != ft_nullptr)
-        *cols = computed_columns;
-    if (x_pixels != ft_nullptr)
-        *x_pixels = 0;
-    if (y_pixels != ft_nullptr)
-        *y_pixels = 0;
     return (FT_ERR_SUCCESS);
 }
 
@@ -150,26 +126,32 @@ static int32_t cmp_map_errno_to_ft_error()
     return (cmp_map_system_error_to_ft(errno));
 }
 
-int32_t cmp_readline_enable_raw_mode()
+int32_t cmp_readline_enable_raw_mode(ft_bool *activated)
 {
-    struct termios raw;
-
+    if (activated != ft_nullptr)
+        *activated = FT_FALSE;
+    if (g_raw_mode_active == FT_TRUE)
+        return (FT_ERR_SUCCESS);
+    struct termios original;
     if (isatty(STDIN_FILENO) == 0)
     {
         g_raw_mode_active = FT_FALSE;
         return (FT_ERR_SUCCESS);
     }
-    if (tcgetattr(STDIN_FILENO, &raw) == -1)
+    if (tcgetattr(STDIN_FILENO, &original) == -1)
     {
         return (cmp_map_errno_to_ft_error());
     }
-    g_orig_termios = raw;
+    struct termios raw = original;
     raw.c_lflag &= ~(ECHO | ICANON);
     if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1)
     {
         return (cmp_map_errno_to_ft_error());
     }
+    g_orig_termios = original;
     g_raw_mode_active = FT_TRUE;
+    if (activated != ft_nullptr)
+        *activated = FT_TRUE;
     return (FT_ERR_SUCCESS);
 }
 
@@ -182,24 +164,6 @@ int32_t cmp_readline_disable_raw_mode()
         return (cmp_map_errno_to_ft_error());
     }
     g_raw_mode_active = FT_FALSE;
-    return (FT_ERR_SUCCESS);
-}
-
-int32_t cmp_readline_terminal_dimensions(unsigned short *rows, unsigned short *cols,
-    unsigned short *x_pixels, unsigned short *y_pixels)
-{
-    struct winsize window_size;
-
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window_size) == -1)
-        return (cmp_map_errno_to_ft_error());
-    if (rows != ft_nullptr)
-        *rows = window_size.ws_row;
-    if (cols != ft_nullptr)
-        *cols = window_size.ws_col;
-    if (x_pixels != ft_nullptr)
-        *x_pixels = window_size.ws_xpixel;
-    if (y_pixels != ft_nullptr)
-        *y_pixels = window_size.ws_ypixel;
     return (FT_ERR_SUCCESS);
 }
 

@@ -30,5 +30,6 @@ Time_SOURCES := time_active_clock.cpp \
         time_basic.cpp
 
 Time_HEADERS := time.hpp \
+           time_format_internal.hpp \
            time_fps.hpp \
            time_timer.hpp

@@ -2,12 +2,13 @@
 #include "../../Modules/Math/roll.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
+#include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
 #ifndef LIBFT_TEST_BUILD
 #endif
 
-int test_math_eval_basic(void)
+FT_TEST(test_math_eval_basic)
 {
     int *value;
     int ok;
@@ -20,7 +21,7 @@ int test_math_eval_basic(void)
     return (ok);
 }
 
-int test_math_eval_parentheses(void)
+FT_TEST(test_math_eval_parentheses)
 {
     int *value;
     int ok;
@@ -33,7 +34,7 @@ int test_math_eval_parentheses(void)
     return (ok);
 }
 
-int test_math_eval_dice_rejected(void)
+FT_TEST(test_math_eval_dice_rejected)
 {
     int *value;
 

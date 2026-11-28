@@ -1,5 +1,5 @@
 #include <new>
-#include "json.hpp"
+#include "json_internal.hpp"
 #include "../Errno/errno.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../CMA/CMA.hpp"
@@ -10,107 +10,68 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static ft_bool json_string_is_integral(const char *value)
-{
-    if (!value)
-        return (FT_FALSE);
-    if (!(*value))
-        return (FT_FALSE);
-    ft_size_t index = 0;
-    if (value[index] == '+' || value[index] == '-')
-        index++;
-    if (!value[index])
-        return (FT_FALSE);
-    while (value[index])
-    {
-        if (ft_isdigit(static_cast<unsigned char>(value[index])) == FT_ERR_SUCCESS)
-            return (FT_FALSE);
-        index++;
-    }
-    return (FT_TRUE);
-}
-
 static ft_bool json_string_exceeds_signed_long_long(const char *value)
 {
-    if (json_string_is_integral(value) == FT_FALSE)
+    if (value == ft_nullptr)
         return (FT_FALSE);
-    ft_size_t index = 0;
-    ft_bool is_negative = FT_FALSE;
-    if (value[index] == '+' || value[index] == '-')
-    {
-        if (value[index] == '-')
-            is_negative = FT_TRUE;
-        index++;
-    }
-    while (value[index] == '0' && value[index + 1] != '\0')
-        index++;
-    const char *digits = value + index;
-    ft_size_t digits_length = ft_strlen_size_t(digits);
-    if (digits_length == FT_ERR_SUCCESS)
+    const ft_bool negative = *value == '-';
+    if (negative || *value == '+')
+        ++value;
+    while (*value == '0')
+        ++value;
+    const char *end = value;
+    while (*end >= '0' && *end <= '9')
+        ++end;
+    if (*end != '\0' || end - value < 19)
         return (FT_FALSE);
-    if (digits_length > 19)
+    if (end - value > 19)
         return (FT_TRUE);
-    if (digits_length < 19)
-        return (FT_FALSE);
-    if (is_negative)
+    if (negative)
+        return (ft_strcmp(value, "9223372036854775808") > 0);
+    return (ft_strcmp(value, "9223372036854775807") > 0);
+}
+
+int32_t json_build_item_number(const char *value, ft_big_number *&number)
+{
+    number = ft_nullptr;
+    if (json_string_exceeds_signed_long_long(value) == FT_FALSE)
+        return (FT_ERR_SUCCESS);
+    ft_big_number *allocated = new (std::nothrow) ft_big_number;
+    if (allocated == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const int32_t initialize_error = allocated->initialize();
+    if (initialize_error != FT_ERR_SUCCESS)
     {
-        if (ft_strcmp(digits, "9223372036854775808") > 0)
-            return (FT_TRUE);
-        return (FT_FALSE);
+        delete allocated;
+        return (initialize_error);
     }
-    if (ft_strcmp(digits, "9223372036854775807") > 0)
-        return (FT_TRUE);
-    return (FT_FALSE);
+    if (*value == '+')
+        ++value;
+    allocated->assign(value);
+    // A freshly initialized big number has no digits if its first allocation fails.
+    if (allocated->empty())
+    {
+        delete allocated;
+        return (FT_ERR_NO_MEMORY);
+    }
+    number = allocated;
+    return (FT_ERR_SUCCESS);
 }
 
 void json_item_refresh_numeric_state(json_item *item)
 {
-    int32_t lock_error;
-    int32_t result_code;
-    ft_big_number *allocated_number;
-
-    if (!item)
+    if (item == ft_nullptr)
         return ;
-    if (json_item_enable_thread_safety(item) != FT_ERR_SUCCESS)
+    if (item->_mutex == ft_nullptr && json_item_enable_thread_safety(item) != FT_ERR_SUCCESS)
         return ;
-    if (item->_mutex == ft_nullptr)
+    if (pt_recursive_mutex_lock_if_not_null(item->_mutex) != FT_ERR_SUCCESS)
         return ;
-    lock_error = pt_recursive_mutex_lock_if_not_null(item->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    result_code = FT_ERR_SUCCESS;
-    if (item->big_number)
-    {
-        delete item->big_number;
-        item->big_number = ft_nullptr;
-    }
-    item->is_big_number = FT_FALSE;
-    if (item->value)
-    {
-        if (json_string_exceeds_signed_long_long(item->value) == FT_TRUE)
-        {
-            allocated_number = new(std::nothrow) ft_big_number;
-            if (!allocated_number)
-            {
-                result_code = FT_ERR_NO_MEMORY;
-            }
-            else
-            {
-                result_code = allocated_number->initialize();
-                if (result_code != FT_ERR_SUCCESS)
-                {
-                    delete allocated_number;
-                }
-                else
-                {
-                    allocated_number->assign(item->value);
-                    item->big_number = allocated_number;
-                    item->is_big_number = FT_TRUE;
-                }
-            }
-        }
-    }
-    json_item_set_error_unlocked(item, result_code);
+    ft_big_number *replacement;
+    const int32_t error = json_build_item_number(item->value, replacement);
+    delete item->big_number;
+    item->big_number = replacement;
+    item->is_big_number = replacement != ft_nullptr;
+    json_item_set_error_unlocked(item, error);
     (void)pt_recursive_mutex_unlock_if_not_null(item->_mutex);
     return ;
 }
@@ -144,29 +105,30 @@ void json_add_item_to_group(json_group *group, json_item *item)
     return ;
 }
 
-json_group* json_create_json_group(const char *name)
+json_group *json_create_group_owned(char *name)
 {
-    json_group *group = new(std::nothrow) json_group;
+    json_group *group = new (std::nothrow) json_group{};
     if (!group)
         return (ft_nullptr);
-    group->name = adv_strdup(name);
-    if (!group->name)
-    {
-        delete group;
-        return (ft_nullptr);
-    }
-    group->items = ft_nullptr;
-    group->next = ft_nullptr;
-    group->_mutex = ft_nullptr;
     if (json_group_enable_thread_safety(group) != FT_ERR_SUCCESS)
     {
-        cma_free(group->name);
         delete group;
         return (ft_nullptr);
     }
+    group->name = name;
     return (group);
 }
 
+json_group *json_create_json_group(const char *name)
+{
+    char *owned_name = adv_strdup(name);
+    if (owned_name == ft_nullptr)
+        return (ft_nullptr);
+    json_group *group = json_create_group_owned(owned_name);
+    if (group == ft_nullptr)
+        cma_free(owned_name);
+    return (group);
+}
 void json_append_group(json_group **head, json_group *new_group)
 {
     int32_t lock_error;

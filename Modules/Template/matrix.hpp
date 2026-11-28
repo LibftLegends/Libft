@@ -8,12 +8,15 @@
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/basic.hpp"
+#include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../Printf/printf.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <new>
+#include <type_traits>
 
 template <typename ElementType>
 class ft_matrix
@@ -31,6 +34,9 @@ class ft_matrix
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
+        int32_t lock_operands(const ft_matrix &other, ft_bool &this_locked,
+            ft_bool &other_locked) const;
+        static ft_matrix *create_result(ft_size_t rows, ft_size_t cols);
         void clear_unlocked();
         ft_bool init_unlocked(ft_size_t rows, ft_size_t cols);
 
@@ -138,6 +144,12 @@ ft_bool ft_matrix<ElementType>::init_unlocked(ft_size_t rows, ft_size_t cols)
     ft_size_t total;
     ft_size_t index;
 
+    constexpr ft_size_t MAXIMUM_ELEMENTS = FT_SYSTEM_SIZE_MAX / sizeof(ElementType);
+    if (cols != 0U && rows > MAXIMUM_ELEMENTS / cols)
+    {
+        set_error(FT_ERR_NO_MEMORY);
+        return (FT_FALSE);
+    }
     this->clear_unlocked();
     total = rows * cols;
     if (total == 0)
@@ -471,225 +483,187 @@ ft_size_t ft_matrix<ElementType>::cols() const
 }
 
 template <typename ElementType>
-static void ft_matrix_delete_result(ft_matrix<ElementType> *result)
+int32_t ft_matrix<ElementType>::lock_operands(const ft_matrix &other,
+    ft_bool &this_locked, ft_bool &other_locked) const
 {
+    this_locked = FT_FALSE;
+    other_locked = FT_FALSE;
+    if (this == &other)
+        return (this->lock_internal(&this_locked));
+    const ft_matrix *first = this;
+    const ft_matrix *second = &other;
+    ft_bool *first_locked = &this_locked;
+    ft_bool *second_locked = &other_locked;
+    if (std::less<const ft_matrix *>{}(&other, this))
+    {
+        first = &other;
+        second = this;
+        first_locked = &other_locked;
+        second_locked = &this_locked;
+    }
+    int32_t error = first->lock_internal(first_locked);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    error = second->lock_internal(second_locked);
+    if (error != FT_ERR_SUCCESS)
+        (void)first->unlock_internal(*first_locked);
+    return (error);
+}
+
+template <typename ElementType>
+ft_matrix<ElementType> *ft_matrix<ElementType>::create_result(ft_size_t rows, ft_size_t cols)
+{
+    ft_matrix *result = new (std::nothrow) ft_matrix(rows, cols);
     if (result == ft_nullptr)
-        return ;
-    (void)result->destroy();
-    delete result;
-    return ;
+    {
+        set_error(FT_ERR_NO_MEMORY);
+        return (ft_nullptr);
+    }
+    const int32_t error = result->initialize();
+    if (error != FT_ERR_SUCCESS)
+    {
+        delete result;
+        set_error(error);
+        return (ft_nullptr);
+    }
+    return (result);
 }
 
 template <typename ElementType>
 ft_matrix<ElementType> *ft_matrix<ElementType>::add(const ft_matrix& other) const
 {
-    ft_matrix<ElementType> *result;
-    ft_bool this_lock_acquired;
-    ft_bool other_lock_acquired;
-    int32_t this_lock_error;
-    int32_t other_lock_error;
-    ft_size_t total;
-    ft_size_t index;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_matrix::add");
-    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
-        "ft_matrix::add(other)");
-    result = new (std::nothrow) ft_matrix<ElementType>(this->_rows, this->_cols);
-    if (result == ft_nullptr)
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state, "ft_matrix::add(other)");
+    ft_bool this_locked;
+    ft_bool other_locked;
+    const int32_t lock_error = this->lock_operands(other, this_locked, other_locked);
+    if (lock_error != FT_ERR_SUCCESS)
     {
-        set_error(FT_ERR_NO_MEMORY);
+        set_error(lock_error);
         return (ft_nullptr);
     }
-    if (result->initialize() != FT_ERR_SUCCESS)
-    {
-        set_error(static_cast<uint32_t>(result->get_error()));
-        delete result;
-        return (ft_nullptr);
-    }
-    this_lock_acquired = FT_FALSE;
-    other_lock_acquired = FT_FALSE;
-    this_lock_error = this->lock_internal(&this_lock_acquired);
-    if (this_lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(this_lock_error);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    other_lock_error = other.lock_internal(&other_lock_acquired);
-    if (other_lock_error != FT_ERR_SUCCESS)
-    {
-        this->unlock_internal(this_lock_acquired);
-        set_error(other_lock_error);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
+    ft_matrix *result = ft_nullptr;
     if (this->_rows != other._rows || this->_cols != other._cols)
-    {
-        this->unlock_internal(this_lock_acquired);
-        other.unlock_internal(other_lock_acquired);
         set_error(FT_ERR_INVALID_ARGUMENT);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    if (result->init(this->_rows, this->_cols) == FT_FALSE)
+    else
+        result = create_result(this->_rows, this->_cols);
+    if (result != ft_nullptr)
     {
-        this->unlock_internal(this_lock_acquired);
-        other.unlock_internal(other_lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
+        const ft_size_t total = this->_rows * this->_cols;
+        ft_size_t index = 0;
+        while (index < total)
+        {
+            result->_data[index] = this->_data[index] + other._data[index];
+            ++index;
+        }
     }
-    total = this->_rows * this->_cols;
-    index = 0;
-    while (index < total)
-    {
-        result->_data[index] = this->_data[index] + other._data[index];
-        index = index + 1;
-    }
-    (void)this->unlock_internal(this_lock_acquired);
-    (void)other.unlock_internal(other_lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    (void)other.unlock_internal(other_locked);
+    (void)this->unlock_internal(this_locked);
+    if (result != ft_nullptr)
+        set_error(FT_ERR_SUCCESS);
     return (result);
 }
 
 template <typename ElementType>
 ft_matrix<ElementType> *ft_matrix<ElementType>::multiply(const ft_matrix& other) const
 {
-    ft_matrix<ElementType> *result;
-    ft_bool this_lock_acquired;
-    ft_bool other_lock_acquired;
-    int32_t this_lock_error;
-    int32_t other_lock_error;
-    ft_size_t row_index;
-    ft_size_t column_index;
-    ft_size_t inner_index;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_matrix::multiply");
-    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
-        "ft_matrix::multiply(other)");
-    result = new (std::nothrow) ft_matrix<ElementType>(this->_rows, other._cols);
-    if (result == ft_nullptr)
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state, "ft_matrix::multiply(other)");
+    ft_bool this_locked;
+    ft_bool other_locked;
+    const int32_t lock_error = this->lock_operands(other, this_locked, other_locked);
+    if (lock_error != FT_ERR_SUCCESS)
     {
-        set_error(FT_ERR_NO_MEMORY);
+        set_error(lock_error);
         return (ft_nullptr);
     }
-    if (result->initialize() != FT_ERR_SUCCESS)
-    {
-        set_error(static_cast<uint32_t>(result->get_error()));
-        delete result;
-        return (ft_nullptr);
-    }
-    this_lock_acquired = FT_FALSE;
-    other_lock_acquired = FT_FALSE;
-    this_lock_error = this->lock_internal(&this_lock_acquired);
-    if (this_lock_error != FT_ERR_SUCCESS)
-    {
-        set_error(this_lock_error);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    other_lock_error = other.lock_internal(&other_lock_acquired);
-    if (other_lock_error != FT_ERR_SUCCESS)
-    {
-        this->unlock_internal(this_lock_acquired);
-        set_error(other_lock_error);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
+    ft_matrix *result = ft_nullptr;
     if (this->_cols != other._rows)
-    {
-        this->unlock_internal(this_lock_acquired);
-        other.unlock_internal(other_lock_acquired);
         set_error(FT_ERR_INVALID_ARGUMENT);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    if (result->init(this->_rows, other._cols) == FT_FALSE)
+    else
+        result = create_result(this->_rows, other._cols);
+    if (result != ft_nullptr && result->_data != ft_nullptr)
     {
-        this->unlock_internal(this_lock_acquired);
-        other.unlock_internal(other_lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    row_index = 0;
-    while (row_index < this->_rows)
-    {
-        column_index = 0;
-        while (column_index < other._cols)
+        ft_size_t row_index = 0;
+        while (row_index < this->_rows)
         {
-            ElementType sum_value;
-
-            sum_value = ElementType();
-            inner_index = 0;
-            while (inner_index < this->_cols)
+            ElementType *result_row = result->_data + row_index * other._cols;
+            if constexpr (std::is_arithmetic_v<ElementType>)
             {
-                sum_value = sum_value + this->_data[row_index * this->_cols + inner_index]
-                    * other._data[inner_index * other._cols + column_index];
-                inner_index = inner_index + 1;
+                // Process contiguous right-hand and output rows in inner-index order.
+                ft_size_t inner_index = 0;
+                while (inner_index < this->_cols)
+                {
+                    const ElementType left_value = this->_data[row_index * this->_cols + inner_index];
+                    const ElementType *right_row = other._data + inner_index * other._cols;
+                    ft_size_t column_index = 0;
+                    while (column_index < other._cols)
+                    {
+                        result_row[column_index] = result_row[column_index]
+                            + left_value * right_row[column_index];
+                        ++column_index;
+                    }
+                    ++inner_index;
+                }
             }
-            result->_data[row_index * other._cols + column_index] = sum_value;
-            column_index = column_index + 1;
+            else
+            {
+                ft_size_t column_index = 0;
+                while (column_index < other._cols)
+                {
+                    ElementType sum_value;
+                    sum_value = ElementType();
+                    ft_size_t inner_index = 0;
+                    while (inner_index < this->_cols)
+                    {
+                        sum_value = sum_value + this->_data[row_index * this->_cols + inner_index]
+                            * other._data[inner_index * other._cols + column_index];
+                        ++inner_index;
+                    }
+                    result_row[column_index] = sum_value;
+                    ++column_index;
+                }
+            }
+            ++row_index;
         }
-        row_index = row_index + 1;
     }
-    this->unlock_internal(this_lock_acquired);
-    other.unlock_internal(other_lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    (void)other.unlock_internal(other_locked);
+    (void)this->unlock_internal(this_locked);
+    if (result != ft_nullptr)
+        set_error(FT_ERR_SUCCESS);
     return (result);
 }
 
 template <typename ElementType>
 ft_matrix<ElementType> *ft_matrix<ElementType>::transpose() const
 {
-    ft_matrix<ElementType> *result;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    ft_size_t row_index;
-    ft_size_t column_index;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_matrix::transpose");
-    result = new (std::nothrow) ft_matrix<ElementType>(this->_cols, this->_rows);
-    if (result == ft_nullptr)
-    {
-        set_error(FT_ERR_NO_MEMORY);
-        return (ft_nullptr);
-    }
-    if (result->initialize() != FT_ERR_SUCCESS)
-    {
-        set_error(result->get_error());
-        delete result;
-        return (ft_nullptr);
-    }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
+    ft_bool lock_acquired;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
     {
         set_error(lock_error);
-        ft_matrix_delete_result(result);
         return (ft_nullptr);
     }
-    if (result->init(this->_cols, this->_rows) == FT_FALSE)
+    ft_matrix *result = create_result(this->_cols, this->_rows);
+    if (result != ft_nullptr && result->_data != ft_nullptr)
     {
-        this->unlock_internal(lock_acquired);
-        set_error(FT_ERR_NO_MEMORY);
-        ft_matrix_delete_result(result);
-        return (ft_nullptr);
-    }
-    row_index = 0;
-    while (row_index < this->_rows)
-    {
-        column_index = 0;
-        while (column_index < this->_cols)
+        ft_size_t row_index = 0;
+        while (row_index < this->_rows)
         {
-            result->_data[column_index * this->_rows + row_index] =
-                this->_data[row_index * this->_cols + column_index];
-            column_index = column_index + 1;
+            ft_size_t column_index = 0;
+            while (column_index < this->_cols)
+            {
+                result->_data[column_index * this->_rows + row_index] =
+                    this->_data[row_index * this->_cols + column_index];
+                ++column_index;
+            }
+            ++row_index;
         }
-        row_index = row_index + 1;
     }
-    this->unlock_internal(lock_acquired);
-    set_error(FT_ERR_SUCCESS);
+    (void)this->unlock_internal(lock_acquired);
+    if (result != ft_nullptr)
+        set_error(FT_ERR_SUCCESS);
     return (result);
 }
 

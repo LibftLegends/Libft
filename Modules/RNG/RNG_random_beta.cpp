@@ -1,39 +1,24 @@
 #include "rng.hpp"
 #include "rng_internal.hpp"
 #include "../Errno/errno.hpp"
-#include <random>
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
+#include <cmath>
 
 float ft_random_beta(float alpha, float beta)
 {
-    std::gamma_distribution<float> alpha_distribution;
-    std::gamma_distribution<float> beta_distribution;
-    float alpha_sample;
-    float beta_sample;
-    float sum;
-    float result;
-    int32_t lock_error;
-    int32_t unlock_error;
-
     ft_init_random_engine();
-    if (alpha <= 0.0f || beta <= 0.0f)
+    if (!(alpha > 0.0f && beta > 0.0f) || !std::isfinite(alpha) || !std::isfinite(beta))
         return (0.0f);
-    alpha_distribution = std::gamma_distribution<float>(alpha, 1.0f);
-    beta_distribution = std::gamma_distribution<float>(beta, 1.0f);
-    lock_error = rng_lock_random_engine_mutex();
-    if (lock_error != FT_ERR_SUCCESS)
+    std::gamma_distribution<float> alpha_distribution(alpha, 1.0f);
+    std::gamma_distribution<float> beta_distribution(beta, 1.0f);
+    if (rng_lock_random_engine_mutex() != FT_ERR_SUCCESS)
         return (0.0f);
-    alpha_sample = alpha_distribution(g_random_engine);
-    beta_sample = beta_distribution(g_random_engine);
-    unlock_error = rng_unlock_random_engine_mutex();
-    if (unlock_error != FT_ERR_SUCCESS)
-        return (0.0f);
-    sum = alpha_sample + beta_sample;
+    const float alpha_sample = alpha_distribution(g_random_engine);
+    const float beta_sample = beta_distribution(g_random_engine);
+    (void)rng_unlock_random_engine_mutex();
+    const float sum = alpha_sample + beta_sample;
     if (sum <= 0.0f)
         return (0.0f);
-    result = alpha_sample / sum;
+    float result = alpha_sample / sum;
     if (result < 0.0f)
         result = 0.0f;
     if (result > 1.0f)

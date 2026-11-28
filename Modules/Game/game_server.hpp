@@ -16,6 +16,8 @@
 
 typedef int32_t (*game_server_message_callback)(int32_t client_handle,
     const char *message, void *user_data);
+typedef int32_t (*game_server_parsed_message_callback)(int32_t client_handle,
+    const char *message, json_group &revision, void *user_data);
 
 class game_server
 {
@@ -31,6 +33,7 @@ class game_server
         void              (*_on_join)(int32_t);
         void              (*_on_leave)(int32_t);
         game_server_message_callback _on_message;
+        game_server_parsed_message_callback _on_parsed_message;
         void                         *_message_user_data;
         mutable pt_recursive_mutex    *_mutex;
         static thread_local int32_t _last_error;
@@ -38,10 +41,15 @@ class game_server
         int32_t handle_message_locked(int32_t client_handle,
                 const ft_string &message) noexcept;
         int32_t serialize_world_locked(ft_string &out) const noexcept;
-        void join_client_locked(int32_t client_id, int32_t client_handle) noexcept;
-        void leave_client_locked(int32_t client_id) noexcept;
+        int32_t broadcast_world_locked() noexcept;
+        int32_t join_client_locked(int32_t client_id, int32_t client_handle) noexcept;
+        int32_t leave_client_locked(int32_t client_id) noexcept;
+        int32_t schedule_event_locked(int32_t event_id, int32_t duration) noexcept;
+        void configure_message_callbacks(game_server_message_callback raw_callback,
+            game_server_parsed_message_callback parsed_callback, void *user_data) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        ft_bool has_active_lock() const noexcept;
         static int32_t set_error(int32_t error_code) noexcept;
 
     public:
@@ -56,12 +64,19 @@ class game_server
         int32_t initialize(const ft_sharedptr<game_world> &world,
             const char *auth_token = ft_nullptr) noexcept;
         int32_t destroy() noexcept;
+        // Moving requires exclusive access to both servers.
         int32_t move(game_server &other) noexcept;
 
         void set_join_callback(void (*callback)(int32_t)) noexcept;
         void set_leave_callback(void (*callback)(int32_t)) noexcept;
         void set_message_callback(game_server_message_callback callback,
             void *user_data) noexcept;
+        // Replaces the raw callback. The revision group is borrowed for the call
+        // and must remain part of the server-owned JSON document.
+        void set_parsed_message_callback(game_server_parsed_message_callback callback,
+            void *user_data) noexcept;
+        int32_t send_to_client(int32_t client_handle,
+            const ft_string &message) noexcept;
         int32_t enable_thread_safety() noexcept;
         int32_t disable_thread_safety() noexcept;
         ft_bool is_thread_safe() const noexcept;

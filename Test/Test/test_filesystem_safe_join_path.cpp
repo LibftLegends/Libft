@@ -25,3 +25,15 @@ FT_TEST(test_filesystem_safe_join_path_keeps_path_inside_root)
     delete joined_path;
     return (1);
 }
+
+FT_TEST(test_filesystem_safe_join_path_checks_roots_and_normalized_relative_paths)
+{
+    ft_string *joined = filesystem_safe_join_path("C:/world", "region/./sub/../chunk.bin");
+    FT_ASSERT(joined != ft_nullptr);
+    FT_ASSERT_EQ(FT_TRUE, filesystem_is_inside_root("C:/world", joined->c_str()));
+    delete joined;
+    FT_ASSERT(filesystem_safe_join_path("C:/world", "region/../../chunk.bin") == ft_nullptr);
+    FT_ASSERT(filesystem_safe_join_path("C:/world", "region/../D:/elsewhere") == ft_nullptr);
+    FT_ASSERT(filesystem_safe_join_path(".", "region/chunk.bin") == ft_nullptr);
+    return (1);
+}

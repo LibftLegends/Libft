@@ -41,6 +41,7 @@ class ft_blocking_queue
         pt_mutex _mutex;
         pt_condition_variable _condition;
         bool _shutdown;
+        std::atomic<ft_size_t> _waiting_workers;
         uint8_t _initialised_state;
         ft_queue<ElementType> _storage;
         mutable pt_mutex *_state_mutex;
@@ -265,6 +266,7 @@ class ft_task_scheduler
 template <typename ElementType>
 ft_blocking_queue<ElementType>::ft_blocking_queue()
     : _mutex(), _condition(), _shutdown(false),
+      _waiting_workers(0U),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       _storage(), _state_mutex(ft_nullptr)
 {
@@ -288,6 +290,7 @@ int ft_blocking_queue<ElementType>::initialize()
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_INVALID_STATE);
     this->_shutdown = false;
+    this->_waiting_workers = 0U;
     mutex_initialize_error = this->_mutex.initialize();
     if (mutex_initialize_error != FT_ERR_SUCCESS)
     {
@@ -478,7 +481,6 @@ void ft_blocking_queue<ElementType>::unlock(bool lock_acquired) const
 template <typename ElementType>
 int ft_blocking_queue<ElementType>::push(ElementType &&value)
 {
-    bool was_empty;
     bool state_lock_acquired;
     int state_lock_error;
 
@@ -495,23 +497,15 @@ int ft_blocking_queue<ElementType>::push(ElementType &&value)
         this->unlock_internal(state_lock_acquired);
         return (mutex_error);
     }
-    was_empty = this->_storage.empty();
-    int storage_error = this->_storage.get_error();
-    if (storage_error != FT_ERR_SUCCESS)
-    {
-        this->_mutex.unlock();
-        this->unlock_internal(state_lock_acquired);
-        return (storage_error);
-    }
     this->_storage.enqueue(ft_move(value));
-    storage_error = this->_storage.get_error();
+    const int storage_error = this->_storage.get_error();
     if (storage_error != FT_ERR_SUCCESS)
     {
         this->_mutex.unlock();
         this->unlock_internal(state_lock_acquired);
         return (storage_error);
     }
-    if (was_empty)
+    if (this->_waiting_workers.load(std::memory_order_relaxed) != 0U)
     {
         if (this->_condition.signal() != 0)
         {
@@ -624,16 +618,25 @@ bool ft_blocking_queue<ElementType>::wait_pop(ElementType &result, const std::at
         }
         this->unlock_internal(state_lock_acquired);
         state_lock_acquired = false;
-        if (this->_condition.wait(this->_mutex) != 0)
+        this->_waiting_workers.fetch_add(1U, std::memory_order_relaxed);
+        const int wait_error = this->_condition.wait(this->_mutex);
+        this->_waiting_workers.fetch_sub(1U, std::memory_order_relaxed);
+        if (wait_error != 0)
         {
             this->_mutex.unlock();
             return (false);
         }
-        int relock_error = this->lock_internal(&state_lock_acquired);
-        if (relock_error != FT_ERR_SUCCESS)
+        if (this->_state_mutex != ft_nullptr)
         {
-            this->_mutex.unlock();
-            return (false);
+            if (this->_mutex.unlock() != FT_ERR_SUCCESS)
+                return (false);
+            if (this->lock_internal(&state_lock_acquired) != FT_ERR_SUCCESS)
+                return (false);
+            if (this->_mutex.lock() != FT_ERR_SUCCESS)
+            {
+                this->unlock_internal(state_lock_acquired);
+                return (false);
+            }
         }
     }
     value = this->_storage.dequeue();
@@ -723,7 +726,7 @@ int32_t ft_task_scheduler::submit(
     promise_capture.reset(new (std::nothrow) ft_sharedptr<promise_type>());
     if (!promise_capture)
         return (FT_ERR_NO_MEMORY);
-    promise_shared_initialize_error = promise_capture->initialize(promise_shared);
+    promise_shared_initialize_error = promise_capture->move(promise_shared);
     if (promise_shared_initialize_error != FT_ERR_SUCCESS)
         return (promise_shared_initialize_error);
     auto task_body = [promise_capture, function, args...]() mutable
@@ -856,14 +859,14 @@ auto ft_task_scheduler::schedule_after(std::chrono::duration<Rep, Period> delay,
     start_point = time_monotonic_point_now();
     task_entry._time = time_monotonic_point_add_ms(start_point, delay_milliseconds);
     task_entry._interval_ms = 0;
-    task_entry._state = state_shared;
+    task_entry._state = ft_move(state_shared);
     std::shared_ptr<ft_sharedptr<ft_promise<return_type> > > promise_capture(
         new (std::nothrow) ft_sharedptr<ft_promise<return_type> >());
     if (!promise_capture)
     {
         return (result_pair);
     }
-    if (promise_capture->initialize(promise_shared) != FT_ERR_SUCCESS)
+    if (promise_capture->move(promise_shared) != FT_ERR_SUCCESS)
     {
         return (result_pair);
     }
@@ -980,7 +983,7 @@ ft_scheduled_task_handle ft_task_scheduler::schedule_every(std::chrono::duration
     {
         return (handle_result);
     }
-    task_entry._state = state_shared;
+    task_entry._state = ft_move(state_shared);
     task_entry._function = ft_function<void()>([function, args...]()
     {
         function(args...);

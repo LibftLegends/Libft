@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#if defined(_WIN32) || defined(_WIN64)
+# include <io.h>
+#endif
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -19,7 +22,7 @@ static void create_test_file_stream_file(void)
 {
     FILE *file_handle;
 
-    file_handle = std::fopen("test_su_file_stream.txt", "w");
+    file_handle = std::fopen("build_logs/test_su_file_stream.txt", "w");
     if (file_handle != ft_nullptr)
     {
         std::fputs("data", file_handle);
@@ -76,7 +79,7 @@ FT_TEST(test_su_fopen_allocation_failure_sets_ft_ealloc)
 
     create_test_file_stream_file();
     su_force_file_stream_allocation_failure(true);
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     su_force_file_stream_allocation_failure(false);
     FT_ASSERT_EQ(ft_nullptr, file_stream);
     return (1);
@@ -87,7 +90,7 @@ FT_TEST(test_su_fopen_success_clears_errno)
     su_file *file_stream;
 
     create_test_file_stream_file();
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     if (file_stream == ft_nullptr)
         return (0);
     FT_ASSERT_EQ(0, su_fclose(file_stream));
@@ -174,7 +177,7 @@ FT_TEST(test_su_fread_success_clears_errno)
     size_t read_count;
 
     create_test_file_stream_file();
-    file_stream = su_fopen("test_su_file_stream.txt");
+    file_stream = su_fopen("build_logs/test_su_file_stream.txt");
     if (file_stream == ft_nullptr)
         return (0);
     read_count = su_fread(buffer, 1, 4, file_stream);
@@ -255,3 +258,28 @@ FT_TEST(test_su_ftell_null_stream_sets_ft_einval)
     FT_ASSERT_EQ(-1L, su_ftell(ft_nullptr));
     return (1);
 }
+
+#if defined(_WIN32) || defined(_WIN64)
+FT_TEST(test_su_file_seeks_64_bits_on_a_crt_descriptor)
+{
+    create_test_file_stream_file();
+    FILE *backing = std::fopen("build_logs/test_su_file_stream.txt", "rb");
+    FT_ASSERT(backing != ft_nullptr);
+    su_file stream{};
+    stream._descriptor = _fileno(backing);
+    constexpr int64_t offset = 4294967313LL;
+    const int32_t seek_status = su_fseek(&stream, offset, SEEK_SET);
+    const int64_t position = su_ftell(&stream);
+    const int32_t rewind_status = su_fseek(&stream, 0, SEEK_SET);
+    char byte = '\0';
+    const ft_size_t read_count = su_fread(&byte, 1U, 1U, &stream);
+    const int32_t close_status = std::fclose(backing);
+    FT_ASSERT_EQ(0, seek_status);
+    FT_ASSERT_EQ(offset, position);
+    FT_ASSERT_EQ(0, rewind_status);
+    FT_ASSERT_EQ(1U, read_count);
+    FT_ASSERT_EQ('d', byte);
+    FT_ASSERT_EQ(0, close_status);
+    return (1);
+}
+#endif

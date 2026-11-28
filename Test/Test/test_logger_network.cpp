@@ -2,6 +2,8 @@
 #include "../../Modules/Logger/logger_internal.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Basic/basic.hpp"
+#include "../../Modules/Networking/networking.hpp"
+#include "../../Modules/Networking/socket_handle.hpp"
 #include <atomic>
 #include <chrono>
 #include <string>
@@ -27,6 +29,70 @@ struct mock_network_send_state
 static mock_network_send_state g_mock_network_send_state = {"", 0, 0, 0, false};
 
 static s_network_sink *g_sink_to_remove = ft_nullptr;
+static std::atomic<uint32_t> g_scheduled_health_probes{0U};
+
+static ssize_t logger_count_scheduled_probe(int32_t, const void *,
+    ft_size_t length, int32_t)
+{
+    g_scheduled_health_probes.fetch_add(1U, std::memory_order_release);
+    return (static_cast<ssize_t>(length));
+}
+
+static ft_bool logger_wait_for_scheduled_probe(uint32_t count)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (g_scheduled_health_probes.load(std::memory_order_acquire) < count)
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return (FT_FALSE);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return (FT_TRUE);
+}
+
+FT_TEST(test_logger_remote_health_wakes_when_interval_changes)
+{
+    ft_log_enable_remote_health(FT_FALSE);
+    g_scheduled_health_probes.store(0U, std::memory_order_relaxed);
+    s_network_sink sink;
+    sink.socket_fd = 1001;
+    sink.send_function = logger_count_scheduled_probe;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sink.host.initialize("local-health-test"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_add_sink(ft_network_sink, &sink));
+    ft_log_set_remote_health_interval(3600U);
+    ft_log_enable_remote_health(FT_TRUE);
+    const ft_bool initial_probe = logger_wait_for_scheduled_probe(1U);
+    ft_log_set_remote_health_interval(1U);
+    const ft_bool updated_probe = logger_wait_for_scheduled_probe(2U);
+    ft_log_enable_remote_health(FT_FALSE);
+    ft_log_remove_sink(ft_network_sink, &sink);
+    ft_log_set_remote_health_interval(30U);
+    FT_ASSERT_EQ(FT_TRUE, initial_probe);
+    FT_ASSERT_EQ(FT_TRUE, updated_probe);
+    return (1);
+}
+
+FT_TEST(test_logger_remote_health_serializes_concurrent_worker_controls)
+{
+    ft_log_enable_remote_health(FT_FALSE);
+    const auto toggle = []()
+    {
+        uint32_t index = 0U;
+        while (index < 8U)
+        {
+            ft_log_enable_remote_health(FT_TRUE);
+            ft_log_enable_remote_health(FT_FALSE);
+            index += 1U;
+        }
+        return ;
+    };
+    std::thread first(toggle);
+    std::thread second(toggle);
+    first.join();
+    second.join();
+    ft_log_enable_remote_health(FT_FALSE);
+    return (1);
+}
 
 static ssize_t mock_partial_send(int socket_fd, const void *buffer,
     ft_size_t length, int flags)
@@ -73,11 +139,17 @@ FT_TEST(test_logger_network_sink_prepare_thread_safety_initializes_mutex)
     sink.socket_fd = 0;
     sink.send_function = ft_nullptr;
     FT_ASSERT_EQ(0, network_sink_prepare_thread_safety(&sink));
+    const pt_mutex *first_mutex = sink.mutex;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, network_sink_prepare_thread_safety(&sink));
+    FT_ASSERT(sink.mutex == first_mutex);
     lock_acquired = FT_FALSE;
     FT_ASSERT_EQ(0, network_sink_lock(&sink, &lock_acquired));
     FT_ASSERT(lock_acquired == FT_TRUE);
     network_sink_unlock(&sink, lock_acquired);
     network_sink_teardown_thread_safety(&sink);
+    network_sink_teardown_thread_safety(&sink);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, network_sink_lock(&sink, &lock_acquired));
+    FT_ASSERT_EQ(FT_FALSE, lock_acquired);
     return (1);
 }
 
@@ -232,6 +304,28 @@ FT_TEST(test_logger_network_sink_handles_zero_byte_send)
     return (1);
 }
 
+static ssize_t mock_oversized_send(int32_t, const void *, ft_size_t length, int32_t)
+{
+    return (static_cast<ssize_t>(length + 1U));
+}
+
+FT_TEST(test_logger_network_sink_rejects_oversized_send_and_closes_socket)
+{
+    s_network_sink sink;
+    const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    FT_ASSERT(descriptor >= 0);
+    sink.socket_fd = descriptor;
+    sink.send_function = mock_oversized_send;
+    const int32_t send_error = ft_network_sink("message", &sink);
+    const int32_t descriptor_result = nw_set_nonblocking(descriptor);
+    if (descriptor_result == 0)
+        (void)nw_close(descriptor);
+    FT_ASSERT_EQ(FT_ERR_SOCKET_SEND_FAILED, send_error);
+    FT_ASSERT_EQ(-1, sink.socket_fd);
+    FT_ASSERT_EQ(-1, descriptor_result);
+    return (1);
+}
+
 FT_TEST(test_logger_remote_health_probe_records_success)
 {
     s_network_sink *sink;
@@ -269,6 +363,80 @@ FT_TEST(test_logger_remote_health_probe_records_success)
     return (1);
 }
 
+FT_TEST(test_logger_remote_health_restarts_for_reused_registration_address)
+{
+    s_network_sink sink;
+    s_log_remote_health status{};
+    ft_size_t status_count = 0U;
+
+    ft_log_enable_remote_health(FT_FALSE);
+    sink.socket_fd = 777;
+    sink.send_function = mock_successful_send;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sink.host.initialize("first"));
+    FT_ASSERT_EQ(0, ft_log_add_sink(ft_network_sink, &sink));
+    const int32_t probe_result = ft_log_probe_remote_health();
+    const int32_t first_status_result = ft_log_get_remote_health(&status, 1, &status_count);
+    const ft_bool first_reachable = status.reachable;
+    const ft_size_t first_count = status_count;
+    ft_log_remove_sink(ft_network_sink, &sink);
+
+    FT_ASSERT_EQ(0, probe_result);
+    FT_ASSERT_EQ(0, first_status_result);
+    FT_ASSERT_EQ(1U, first_count);
+    FT_ASSERT_EQ(FT_TRUE, first_reachable);
+    FT_ASSERT_EQ(0, ft_log_add_sink(ft_network_sink, &sink));
+    const int32_t replacement_status_result = ft_log_get_remote_health(&status, 1, &status_count);
+    ft_log_remove_sink(ft_network_sink, &sink);
+    FT_ASSERT_EQ(0, replacement_status_result);
+    FT_ASSERT_EQ(1U, status_count);
+    FT_ASSERT_EQ(FT_FALSE, status.reachable);
+    FT_ASSERT_EQ(0, status.last_check);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, status.last_error);
+    return (1);
+}
+
+FT_TEST(test_logger_remote_sink_delivers_native_udp_messages_and_closes)
+{
+    ft_socket_handle receiver;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, receiver.initialize());
+    int32_t receiver_descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    FT_ASSERT(receiver_descriptor >= 0);
+    FT_ASSERT(receiver.reset(receiver_descriptor));
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sockaddr *socket_address = reinterpret_cast<sockaddr *>(&address);
+    socklen_t address_size = sizeof(address);
+    FT_ASSERT_EQ(0, nw_bind(receiver_descriptor, socket_address, address_size));
+    FT_ASSERT_EQ(0, getsockname(receiver_descriptor, socket_address, &address_size));
+    FT_ASSERT_EQ(0, nw_set_nonblocking(receiver_descriptor));
+
+    ft_log_close();
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, ft_log_set_remote_sink("invalid", ntohs(address.sin_port), FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_log_set_remote_sink("127.0.0.1", ntohs(address.sin_port), FT_FALSE));
+    const auto *sink = static_cast<const s_network_sink *>(g_sinks[0].user_data);
+    const int32_t sender_descriptor = sink->socket_fd;
+    const int32_t probe_result = ft_log_probe_remote_health();
+    ft_log_info("UDP loopback log message");
+    ft_log_close();
+    const int32_t descriptor_result = nw_set_nonblocking(sender_descriptor);
+    if (descriptor_result == 0)
+        (void)nw_close(sender_descriptor);
+    FT_ASSERT_EQ(0, probe_result);
+    FT_ASSERT_EQ(-1, descriptor_result);
+    FT_ASSERT_EQ(1, nw_poll(&receiver_descriptor, 1, ft_nullptr, 0, 1000));
+    constexpr char EXPECTED_PROBE[] = "[ft_logger] health probe\n";
+    char received_probe[sizeof(EXPECTED_PROBE)]{};
+    FT_ASSERT_EQ(sizeof(EXPECTED_PROBE) - 1U,
+        static_cast<ft_size_t>(nw_recv(receiver_descriptor, received_probe, sizeof(received_probe) - 1U, 0)));
+    FT_ASSERT_EQ(0, ft_strcmp(EXPECTED_PROBE, received_probe));
+    FT_ASSERT_EQ(1, nw_poll(&receiver_descriptor, 1, ft_nullptr, 0, 1000));
+    char received_message[256]{};
+    FT_ASSERT(nw_recv(receiver_descriptor, received_message, sizeof(received_message) - 1U, 0) > 0);
+    FT_ASSERT(ft_strstr(received_message, "UDP loopback log message") != ft_nullptr);
+    return (1);
+}
+
 FT_TEST(test_logger_remote_health_probe_records_failure)
 {
     s_network_sink *sink;
@@ -287,6 +455,12 @@ FT_TEST(test_logger_remote_health_probe_records_failure)
     sink->use_tcp = false;
     FT_ASSERT_EQ(0, ft_log_add_sink(ft_network_sink, sink));
     int probe_result;
+    ft_logger logger;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, logger.initialize());
+    FT_ASSERT_EQ(FT_ERR_SOCKET_SEND_FAILED, logger.probe_remote_health());
+    FT_ASSERT_EQ(FT_ERR_SOCKET_SEND_FAILED, logger.get_error());
+    reset_mock_network_send_state();
+    g_mock_network_send_state.failure_call_index = 1;
     probe_result = ft_log_probe_remote_health();
     FT_ASSERT_EQ(-1, probe_result);
     status_count = 0;

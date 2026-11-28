@@ -1,8 +1,10 @@
 #include "../PThread/pthread_internal.hpp"
 #include "game_item.hpp"
+#include "game_inventory.hpp"
 #include "../Basic/basic.hpp"
 #include "../PThread/pthread.hpp"
 #include "../Errno/errno_internal.hpp"
+#include <functional>
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -321,6 +323,155 @@ void game_item::unlock_internal(ft_bool lock_acquired) const noexcept
     return ;
 }
 
+int32_t game_item_modifier::capture_value(game_item_modifier_value &value) const noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        value = {};
+        return (FT_ERR_SUCCESS);
+    }
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    const int32_t result = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    value = {this->_id, this->_value};
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t game_item::capture_modifiers(game_item_modifier_value (&modifiers)[4]) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    result = this->capture_modifiers_unlocked(modifiers);
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+int32_t game_item::capture_modifiers_unlocked(
+    game_item_modifier_value (&modifiers)[4]) const noexcept
+{
+    const game_item_modifier *const fields[] = {
+        &this->_modifier1, &this->_modifier2, &this->_modifier3, &this->_modifier4};
+    ft_size_t index = 0;
+    int32_t result = FT_ERR_SUCCESS;
+    while (index < 4U && result == FT_ERR_SUCCESS)
+    {
+        result = fields[index]->capture_value(modifiers[index]);
+        ++index;
+    }
+    return (result);
+}
+
+int32_t game_item::capture_inventory_fields(int32_t slot,
+    game_inventory_item_snapshot &snapshot) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t error = this->lock_internal(&lock_acquired);
+    if (error != FT_ERR_SUCCESS)
+        return (this->set_error(error));
+    game_item_modifier_value modifiers[4];
+    const int32_t result = this->capture_modifiers_unlocked(modifiers);
+    if (result == FT_ERR_SUCCESS)
+    {
+        snapshot = {slot, this->_item_id, this->_instance_id, this->_stack_size,
+            this->_max_stack, this->_rarity, this->_width, this->_height,
+            modifiers[0].id, modifiers[0].value, modifiers[1].id, modifiers[1].value,
+            modifiers[2].id, modifiers[2].value, modifiers[3].id, modifiers[3].value};
+    }
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+int32_t game_item::stack_room_for(const game_item &other, int32_t &room) const noexcept
+{
+    ft_bool this_locked = FT_FALSE;
+    ft_bool other_locked = FT_FALSE;
+    if (this->_mutex != ft_nullptr || other._mutex != ft_nullptr)
+    {
+        const int32_t error = game_item::lock_pair(*this, other, &this_locked, &other_locked);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    const int32_t result = this->stack_room_unlocked(other, room);
+    if (other_locked == FT_TRUE)
+        other.unlock_internal(other_locked);
+    if (this_locked == FT_TRUE)
+        this->unlock_internal(this_locked);
+    return (result);
+}
+
+int32_t game_item::merge_stack_from(const game_item &other, int32_t requested,
+    int32_t &merged) noexcept
+{
+    merged = 0;
+    if (requested <= 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_bool this_locked = FT_FALSE;
+    ft_bool other_locked = FT_FALSE;
+    if (this->_mutex != ft_nullptr || other._mutex != ft_nullptr)
+    {
+        const int32_t error = game_item::lock_pair(*this, other, &this_locked, &other_locked);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    int32_t room = 0;
+    const int32_t result = this->stack_room_unlocked(other, room);
+    if (result == FT_ERR_SUCCESS && room > 0)
+    {
+        merged = room;
+        if (requested < room)
+            merged = requested;
+        this->_stack_size += merged;
+    }
+    if (other_locked == FT_TRUE)
+        other.unlock_internal(other_locked);
+    if (this_locked == FT_TRUE)
+        this->unlock_internal(this_locked);
+    return (result);
+}
+
+int32_t game_item::stack_room_unlocked(const game_item &other, int32_t &room) const noexcept
+{
+    room = 0;
+    int32_t result = FT_ERR_SUCCESS;
+    if (this->_item_id == other._item_id && this->_instance_id == other._instance_id
+        && this->_max_stack == other._max_stack && this->_stack_size < this->_max_stack
+        && this->_rarity == other._rarity && this->_width == other._width
+        && this->_height == other._height)
+    {
+        const game_item_modifier *const left[] = {&this->_modifier1, &this->_modifier2,
+            &this->_modifier3, &this->_modifier4};
+        const game_item_modifier *const right[] = {&other._modifier1, &other._modifier2,
+            &other._modifier3, &other._modifier4};
+        ft_size_t index = 0U;
+        while (index < sizeof(left) / sizeof(left[0]))
+        {
+            game_item_modifier_value left_value;
+            game_item_modifier_value right_value;
+            result = left[index]->capture_value(left_value);
+            if (result == FT_ERR_SUCCESS)
+                result = right[index]->capture_value(right_value);
+            if (result != FT_ERR_SUCCESS || left_value.id != right_value.id
+                || left_value.value != right_value.value)
+                break ;
+            ++index;
+        }
+        if (index == sizeof(left) / sizeof(left[0]))
+        {
+            const int64_t available = static_cast<int64_t>(this->_max_stack) - this->_stack_size;
+            if (available > INT32_MAX)
+                result = FT_ERR_OUT_OF_RANGE;
+            else
+                room = static_cast<int32_t>(available);
+        }
+    }
+    return (result);
+}
+
 int32_t game_item::lock_pair(const game_item &first, const game_item &second,
         ft_bool *first_locked, ft_bool *second_locked)
 {
@@ -338,7 +489,7 @@ int32_t game_item::lock_pair(const game_item &first, const game_item &second,
     ordered_first = &first;
     ordered_second = &second;
     swapped = FT_FALSE;
-    if (ordered_first > ordered_second)
+    if (std::less<const game_item *>()(ordered_second, ordered_first))
     {
         const game_item *temporary;
 
@@ -388,7 +539,7 @@ int32_t game_item::lock_pair(const game_item &first, const game_item &second,
 
 game_item::game_item() noexcept
     : _max_stack(0), _stack_size(0), _item_id(0), _rarity(0),
-      _width(1), _height(1), _modifier1(), _modifier2(),
+      _width(1), _height(1), _instance_id(0U), _modifier1(), _modifier2(),
       _modifier3(), _modifier4(),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED), _mutex(ft_nullptr)
 {
@@ -414,6 +565,7 @@ int32_t game_item::initialize() noexcept
     this->_rarity = 0;
     this->_width = 1;
     this->_height = 1;
+    this->_instance_id = 0U;
     (void)this->_modifier1.initialize();
     (void)this->_modifier2.initialize();
     (void)this->_modifier3.initialize();
@@ -454,6 +606,7 @@ int32_t game_item::initialize(const game_item &other) noexcept
     this->_rarity = other._rarity;
     this->_width = other._width;
     this->_height = other._height;
+    this->_instance_id = other._instance_id;
     modifier_error = this->_modifier1.initialize(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -517,6 +670,7 @@ int32_t game_item::initialize(game_item &&other) noexcept
     this->_rarity = other._rarity;
     this->_width = other._width;
     this->_height = other._height;
+    this->_instance_id = other._instance_id;
     modifier_error = this->_modifier1.initialize(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -556,6 +710,7 @@ int32_t game_item::initialize(game_item &&other) noexcept
     other._rarity = 0;
     other._width = 1;
     other._height = 1;
+    other._instance_id = 0U;
     modifier_error = game_item_reset_modifier(other._modifier1);
     if (modifier_error != FT_ERR_SUCCESS)
     {
@@ -624,6 +779,7 @@ int32_t game_item::destroy() noexcept
     this->_rarity = 0;
     this->_width = 1;
     this->_height = 1;
+    this->_instance_id = 0U;
     (void)this->_modifier1.destroy();
     (void)this->_modifier2.destroy();
     (void)this->_modifier3.destroy();
@@ -746,43 +902,38 @@ void game_item::set_stack_size(int32_t amount) noexcept
     return ;
 }
 
-void game_item::add_to_stack(int32_t amount) noexcept
+void game_item::change_stack(int64_t delta, ft_bool cap_at_max) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
+        this->set_error(result);
         return ;
     }
-    this->_stack_size += amount;
-    if (this->_stack_size > this->_max_stack)
-        this->_stack_size = this->_max_stack;
-    this->set_error(FT_ERR_SUCCESS);
+    int64_t total = static_cast<int64_t>(this->_stack_size) + delta;
+    if (cap_at_max == FT_TRUE && total > this->_max_stack)
+        total = this->_max_stack;
+    if (cap_at_max == FT_FALSE && total < 0)
+        total = 0;
+    if (total < INT32_MIN || total > INT32_MAX)
+        result = FT_ERR_OUT_OF_RANGE;
+    else
+        this->_stack_size = static_cast<int32_t>(total);
     this->unlock_internal(lock_acquired);
+    this->set_error(result);
+    return ;
+}
+
+void game_item::add_to_stack(int32_t amount) noexcept
+{
+    this->change_stack(amount, FT_TRUE);
     return ;
 }
 
 void game_item::sub_from_stack(int32_t amount) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    this->_stack_size -= amount;
-    if (this->_stack_size < 0)
-        this->_stack_size = 0;
-    this->set_error(FT_ERR_SUCCESS);
-    this->unlock_internal(lock_acquired);
+    this->change_stack(-static_cast<int64_t>(amount), FT_FALSE);
     return ;
 }
 
@@ -821,6 +972,42 @@ void game_item::set_item_id(int32_t id) noexcept
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return ;
+}
+
+uint64_t game_item::get_instance_id() const noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+    uint64_t instance_identifier;
+
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        const_cast<game_item *>(this)->set_error(lock_error);
+        return (0U);
+    }
+    instance_identifier = this->_instance_id;
+    const_cast<game_item *>(this)->set_error(FT_ERR_SUCCESS);
+    this->unlock_internal(lock_acquired);
+    return (instance_identifier);
+}
+
+void game_item::set_instance_id(uint64_t instance_id) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t lock_error;
+
+    lock_acquired = FT_FALSE;
+    lock_error = this->lock_internal(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+    {
+        this->set_error(lock_error);
+        return ;
+    }
+    this->_instance_id = instance_id;
+    this->set_error(FT_ERR_SUCCESS);
+    this->unlock_internal(lock_acquired);
 }
 
 int32_t game_item::get_width() const noexcept

@@ -2,6 +2,7 @@
 #include "../../Modules/Game/game_upgrade.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
+#include <thread>
 
 FT_TEST(test_game_upgrade_default_fields)
 {
@@ -176,6 +177,68 @@ FT_TEST(test_game_upgrade_lock_without_mutex)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, upgrade.lock(&acquired));
     FT_ASSERT_EQ(FT_TRUE, acquired);
     upgrade.unlock(acquired);
+    return (1);
+}
+
+FT_TEST(test_game_upgrade_modifier_overflow_preserves_value)
+{
+    game_upgrade upgrade;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgrade.initialize());
+    upgrade.set_modifier1(INT32_MAX);
+    upgrade.add_modifier1(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, upgrade.get_error());
+    FT_ASSERT_EQ(INT32_MAX, upgrade.get_modifier1());
+    upgrade.set_modifier2(INT32_MIN);
+    upgrade.sub_modifier2(1);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, upgrade.get_error());
+    FT_ASSERT_EQ(INT32_MIN, upgrade.get_modifier2());
+    upgrade.set_modifier3(-1);
+    upgrade.sub_modifier3(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgrade.get_error());
+    FT_ASSERT_EQ(INT32_MAX, upgrade.get_modifier3());
+    upgrade.add_modifier4(INT32_MIN);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, upgrade.get_error());
+    FT_ASSERT_EQ(INT32_MIN, upgrade.get_modifier4());
+    return (1);
+}
+
+FT_TEST(test_game_upgrade_copy_reads_consistent_values_during_updates)
+{
+    game_upgrade source;
+    game_upgrade copy;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    int32_t writer_result = FT_ERR_SUCCESS;
+    std::thread writer([&source, &writer_result]()
+    {
+        int32_t identifier = 1;
+        while (identifier <= 2000)
+        {
+            ft_bool locked;
+            writer_result = source.lock(&locked);
+            if (writer_result != FT_ERR_SUCCESS)
+                return ;
+            source.set_id(identifier);
+            source.set_modifier1(-identifier);
+            source.unlock(locked);
+            ++identifier;
+        }
+    });
+    ft_bool coherent = FT_TRUE;
+    uint32_t iteration = 0U;
+    while (iteration < 2000U && coherent)
+    {
+        coherent = copy.initialize(source) == FT_ERR_SUCCESS
+            && copy.get_id() == -copy.get_modifier1();
+        ++iteration;
+    }
+    writer.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer_result);
+    FT_ASSERT_EQ(FT_TRUE, coherent);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy.move(source));
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    FT_ASSERT_EQ(2000, copy.get_id());
+    FT_ASSERT_EQ(-2000, copy.get_modifier1());
     return (1);
 }
 

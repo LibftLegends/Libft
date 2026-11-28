@@ -6,10 +6,16 @@ make_command=$1
 build_target=$2
 script_directory=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 progress_session_directory=$(mktemp -d "${TMPDIR:-/tmp}/libft-build-progress.XXXXXX")
+build_process_id=''
 
 cleanup()
 {
-    rm -rf "$progress_session_directory"
+	if [ -n "$build_process_id" ]
+	then
+		kill "$build_process_id" 2>/dev/null || true
+		build_process_id=''
+	fi
+	rm -rf "$progress_session_directory"
 }
 
 trap cleanup EXIT
@@ -29,6 +35,13 @@ then
     make_output_sync='--output-sync=target'
 fi
 "$make_command" --no-print-directory $make_output_sync -s \
-    BUILD_PROGRESS_ACTIVE=1 \
-    BUILD_PROGRESS_SESSION_DIR="$progress_session_directory" \
-    "$build_target"
+	BUILD_PROGRESS_ACTIVE=1 \
+	BUILD_PROGRESS_SESSION_DIR="$progress_session_directory" \
+	"$build_target" &
+build_process_id=$!
+set +e
+wait "$build_process_id"
+build_status=$?
+set -e
+build_process_id=''
+exit "$build_status"

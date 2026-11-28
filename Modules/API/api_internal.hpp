@@ -14,10 +14,11 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifdef LIBFT_TEST_BUILD
 typedef ft_bool (*api_request_wait_until_ready_hook)(void);
-
 void api_request_set_downgrade_wait_hook(
     api_request_wait_until_ready_hook hook);
+#endif
 
 enum class api_connection_security_mode
 {
@@ -38,6 +39,7 @@ class api_connection_pool_handle
         void abort_lifecycle_error(const char *method_name,
             const char *reason) const noexcept;
         void abort_if_not_initialised(const char *method_name) const noexcept;
+        void reset_connection_state() noexcept;
 
     public:
         ft_string key;
@@ -63,6 +65,7 @@ class api_connection_pool_handle
         api_connection_pool_handle &operator=(api_connection_pool_handle &&other) = delete;
 
         int32_t initialize() noexcept;
+        // Copy the connection key and policy. A live transport is transferable by move.
         int32_t initialize(const api_connection_pool_handle &other) noexcept;
         int32_t initialize(api_connection_pool_handle &&other) noexcept;
         int32_t destroy() noexcept;

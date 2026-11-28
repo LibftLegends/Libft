@@ -11,6 +11,7 @@
 #include "move.hpp"
 #include <cstdint>
 #include <new>
+#include <utility>
 
 template <typename ElementType>
 class ft_queue
@@ -24,6 +25,7 @@ class ft_queue
 
         QueueNode*                  _front;
         QueueNode*                  _rear;
+        QueueNode*                  _spare_node;
         ft_size_t                      _size;
         mutable pt_recursive_mutex* _mutex;
         mutable uint8_t             _initialised_state;
@@ -31,6 +33,8 @@ class ft_queue
         static thread_local int32_t _last_error;
 
         void destroy_all_unlocked();
+        template <typename ValueType>
+        void enqueue_impl(ValueType &&value, const char *operation);
         int32_t lock_internal(ft_bool *lock_acquired) const;
         int32_t unlock_internal(ft_bool lock_acquired) const;
         static int32_t set_error(int32_t error_code) noexcept;
@@ -189,6 +193,7 @@ template <typename ElementType>
 ft_queue<ElementType>::ft_queue()
     : _front(ft_nullptr)
     , _rear(ft_nullptr)
+    , _spare_node(ft_nullptr)
     , _size(0)
     , _mutex(ft_nullptr)
     , _initialised_state(FT_CLASS_STATE_UNINITIALISED)
@@ -220,6 +225,7 @@ int32_t ft_queue<ElementType>::initialize()
     }
     this->_front = ft_nullptr;
     this->_rear = ft_nullptr;
+    this->_spare_node = ft_nullptr;
     this->_size = 0;
     this->_mutex = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
@@ -268,11 +274,13 @@ int32_t ft_queue<ElementType>::move(ft_queue<ElementType> &other)
     }
     this->_front = other._front;
     this->_rear = other._rear;
+    this->_spare_node = other._spare_node;
     this->_size = other._size;
     this->_mutex = other._mutex;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._front = ft_nullptr;
     other._rear = ft_nullptr;
+    other._spare_node = ft_nullptr;
     other._size = 0;
     other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -288,8 +296,13 @@ void ft_queue<ElementType>::destroy_all_unlocked()
     {
         node = this->_front;
         this->_front = this->_front->_next;
-        destroy_at(&node->_data);
+        ::destroy_at(&node->_data);
         cma_free(node);
+    }
+    if (this->_spare_node != ft_nullptr)
+    {
+        cma_free(this->_spare_node);
+        this->_spare_node = ft_nullptr;
     }
     this->_rear = ft_nullptr;
     this->_size = 0;
@@ -390,51 +403,26 @@ int32_t ft_queue<ElementType>::unlock_internal(ft_bool lock_acquired) const
 template <typename ElementType>
 void ft_queue<ElementType>::enqueue(const ElementType& value)
 {
-    QueueNode *node;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_queue::enqueue(const ElementType&)");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        ft_queue<ElementType>::set_error(lock_error);
-        return ;
-    }
-    node = static_cast<QueueNode *>(cma_malloc(sizeof(QueueNode)));
-    if (node == ft_nullptr)
-    {
-        (void)this->unlock_internal(lock_acquired);
-            ft_queue<ElementType>::set_error(FT_ERR_NO_MEMORY);
-        return ;
-    }
-    construct_at(&node->_data, value);
-    node->_next = ft_nullptr;
-    if (this->_rear == ft_nullptr)
-    {
-        this->_front = node;
-        this->_rear = node;
-    }
-    else
-    {
-        this->_rear->_next = node;
-        this->_rear = node;
-    }
-    this->_size += 1;
-    (void)this->unlock_internal(lock_acquired);
-    ft_queue<ElementType>::set_error(FT_ERR_SUCCESS);
+    this->enqueue_impl(value, "ft_queue::enqueue(const ElementType&)");
     return ;
 }
 
 template <typename ElementType>
 void ft_queue<ElementType>::enqueue(ElementType&& value)
 {
+    this->enqueue_impl(ft_move(value), "ft_queue::enqueue(ElementType&&)");
+    return ;
+}
+
+template <typename ElementType>
+template <typename ValueType>
+void ft_queue<ElementType>::enqueue_impl(ValueType &&value, const char *operation)
+{
     QueueNode *node;
     ft_bool lock_acquired;
     int32_t lock_error;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_queue::enqueue(ElementType&&)");
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, operation);
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -442,25 +430,24 @@ void ft_queue<ElementType>::enqueue(ElementType&& value)
         ft_queue<ElementType>::set_error(lock_error);
         return ;
     }
-    node = static_cast<QueueNode *>(cma_malloc(sizeof(QueueNode)));
+    node = this->_spare_node;
+    if (node != ft_nullptr)
+        this->_spare_node = ft_nullptr;
+    else
+        node = static_cast<QueueNode *>(cma_malloc(sizeof(QueueNode)));
     if (node == ft_nullptr)
     {
         (void)this->unlock_internal(lock_acquired);
-            ft_queue<ElementType>::set_error(FT_ERR_NO_MEMORY);
+        this->set_error(FT_ERR_NO_MEMORY);
         return ;
     }
-    construct_at(&node->_data, ft_move(value));
+    ::construct_at(&node->_data, std::forward<ValueType>(value));
     node->_next = ft_nullptr;
     if (this->_rear == ft_nullptr)
-    {
         this->_front = node;
-        this->_rear = node;
-    }
     else
-    {
         this->_rear->_next = node;
-        this->_rear = node;
-    }
+    this->_rear = node;
     this->_size += 1;
     (void)this->unlock_internal(lock_acquired);
     ft_queue<ElementType>::set_error(FT_ERR_SUCCESS);
@@ -491,11 +478,14 @@ ElementType ft_queue<ElementType>::dequeue()
     }
     node = this->_front;
     result = ft_move(node->_data);
-    destroy_at(&node->_data);
+    ::destroy_at(&node->_data);
     this->_front = node->_next;
     if (this->_front == ft_nullptr)
         this->_rear = ft_nullptr;
-    cma_free(node);
+    if (this->_spare_node == ft_nullptr)
+        this->_spare_node = node;
+    else
+        cma_free(node);
     this->_size -= 1;
     (void)this->unlock_internal(lock_acquired);
     ft_queue<ElementType>::set_error(FT_ERR_SUCCESS);

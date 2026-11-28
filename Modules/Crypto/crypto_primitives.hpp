@@ -6,6 +6,8 @@
 
 int32_t crypto_secure_wipe(void *buffer, ft_size_t buffer_size) noexcept;
 
+struct crypto_hkdf_sha256_label;
+
 class crypto_sha256
 {
     private:
@@ -16,6 +18,12 @@ class crypto_sha256
         uint64_t _message_length_bytes;
 
         void process_block(const uint8_t block[64]) noexcept;
+        void copy_hmac_prefix(const crypto_sha256 &prefix) noexcept;
+        friend int32_t crypto_hkdf_sha256_expand(const uint8_t pseudorandom_key[32],
+            const uint8_t *info, ft_size_t info_length, uint8_t *output,
+            ft_size_t output_length) noexcept;
+        friend int32_t crypto_hkdf_sha256_expand_labels(const uint8_t pseudorandom_key[32],
+            const crypto_hkdf_sha256_label *labels, ft_size_t label_count) noexcept;
 
     public:
         crypto_sha256() noexcept;
@@ -31,6 +39,9 @@ class crypto_sha256
         int32_t move(crypto_sha256 &other) noexcept;
         int32_t update(const void *data, ft_size_t length) noexcept;
         int32_t final(uint8_t digest[32]) noexcept;
+#ifdef LIBFT_TEST_BUILD
+        ft_bool test_state_is_wiped() const noexcept;
+#endif
 };
 
 int32_t crypto_sha256_hash(const void *data, ft_size_t length,

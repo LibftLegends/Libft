@@ -89,27 +89,21 @@ int32_t ft_ofstream::move(ft_ofstream &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (set_error(FT_ERR_SUCCESS));
     }
-    uint32_t initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (set_error(initialize_error));
-    int32_t file_move_error = this->_file.move(other._file);
-    if (file_move_error != FT_ERR_SUCCESS)
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    pt_recursive_mutex *source_mutex = other._mutex;
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(source_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+    const int32_t file_move_error = this->_file.move(other._file);
+    if (file_move_error == FT_ERR_SUCCESS)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (set_error(file_move_error));
+        this->_mutex = source_mutex;
+        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+        other._mutex = ft_nullptr;
+        other._initialised_state = FT_CLASS_STATE_DESTROYED;
     }
-    if (other._mutex != ft_nullptr)
-    {
-        int32_t thread_safety_error = this->enable_thread_safety();
-        if (thread_safety_error != FT_ERR_SUCCESS)
-        {
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (set_error(thread_safety_error));
-        }
-        (void)other.disable_thread_safety();
-    }
-    other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (set_error(FT_ERR_SUCCESS));
+    (void)pt_recursive_mutex_unlock_if_not_null(source_mutex);
+    return (set_error(file_move_error));
 }
 
 int32_t ft_ofstream::enable_thread_safety(void) noexcept
@@ -219,6 +213,7 @@ int32_t ft_ofstream::close() noexcept
     if (lock_error != FT_ERR_SUCCESS)
         return (set_error(lock_error));
     this->_file.close();
+    const int32_t close_error = this->_file.get_error();
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (set_error(FT_ERR_SUCCESS));
+    return (set_error(close_error));
 }

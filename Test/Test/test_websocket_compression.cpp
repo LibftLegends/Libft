@@ -41,7 +41,7 @@ FT_TEST(test_websocket_server_negotiates_permessage_deflate)
     ft_string reply;
     unsigned char header_bytes[2];
     ssize_t header_received;
-    unsigned char payload_buffer[256];
+    unsigned char payload_buffer[16384];
     size_t payload_received;
     ft_string decompressed_reply;
 
@@ -131,7 +131,17 @@ FT_TEST(test_websocket_server_negotiates_permessage_deflate)
         server_thread.join();
         return (0);
     }
-    if (expected_message.initialize("compress me") != FT_ERR_SUCCESS)
+    char message_data[8193];
+    uint32_t random_state = 13U;
+    ft_size_t message_index = 0U;
+    while (message_index < sizeof(message_data))
+    {
+        random_state = random_state * 1664525U + 1013904223U;
+        message_data[message_index++] = static_cast<char>(' ' + ((random_state >> 16U) % 95U));
+    }
+    message_data[15] = '\0';
+    if (expected_message.initialize() != FT_ERR_SUCCESS
+        || expected_message.assign(message_data, sizeof(message_data)) != FT_ERR_SUCCESS)
     {
         nw_close(client_socket);
         server_thread.join();
@@ -272,7 +282,8 @@ FT_TEST(test_websocket_server_negotiates_permessage_deflate)
             nw_close(context.client_fd);
         return (0);
     }
-    if (context.message != expected_message)
+    if (context.message.size() != sizeof(message_data)
+        || ft_memcmp(context.message.c_str(), message_data, sizeof(message_data)) != 0)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, frame_buffer.destroy());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, compressed_payload.destroy());
@@ -281,7 +292,8 @@ FT_TEST(test_websocket_server_negotiates_permessage_deflate)
             nw_close(context.client_fd);
         return (0);
     }
-    if (reply.initialize("response payload") != FT_ERR_SUCCESS)
+    if (reply.initialize() != FT_ERR_SUCCESS
+        || reply.assign(message_data, sizeof(message_data)) != FT_ERR_SUCCESS)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, frame_buffer.destroy());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, compressed_payload.destroy());
@@ -413,5 +425,6 @@ FT_TEST(test_websocket_server_negotiates_permessage_deflate)
     nw_close(client_socket);
     if (context.client_fd >= 0)
         nw_close(context.client_fd);
-    return (decompressed_reply == reply);
+    return (decompressed_reply.size() == sizeof(message_data)
+        && ft_memcmp(decompressed_reply.c_str(), message_data, sizeof(message_data)) == 0);
 }

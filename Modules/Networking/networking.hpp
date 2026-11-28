@@ -26,12 +26,17 @@ int32_t nw_bind(int32_t sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int32_t nw_connect(int32_t sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int32_t nw_accept(int32_t sockfd, struct sockaddr *addr, socklen_t *addrlen);
 int32_t nw_listen(int32_t sockfd, int32_t backlog);
+#ifdef LIBFT_TEST_BUILD
 typedef int32_t (*t_nw_socket_hook)(int32_t domain, int32_t type, int32_t protocol);
+#endif
 
 int32_t nw_socket(int32_t domain, int32_t type, int32_t protocol);
 int32_t nw_close(int32_t sockfd);
 int32_t nw_shutdown(int32_t sockfd, int32_t how);
+#ifdef LIBFT_TEST_BUILD
 void nw_set_socket_hook(t_nw_socket_hook hook);
+#endif
+// On Windows, these single-call I/O wrappers report WSAEMSGSIZE for len > FT_INT32_MAX.
 ssize_t nw_send(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_recv(int32_t sockfd, void *buf, ft_size_t len, int32_t flags);
 ssize_t nw_sendto(int32_t sockfd, const void *buf, ft_size_t len, int32_t flags,
@@ -143,6 +148,8 @@ void event_loop_teardown_thread_safety(event_loop *loop);
 int32_t event_loop_lock(event_loop *loop, ft_bool *lock_acquired);
 void event_loop_unlock(event_loop *loop, ft_bool lock_acquired);
 
+// Waits for this UDP socket only and leaves loop registrations intact.
+// Returns 1 for readiness, 0 for a timeout or interruption, and -1 on error.
 int32_t udp_event_loop_wait_read(event_loop *loop, udp_socket &socket, int32_t timeout_milliseconds);
 int32_t udp_event_loop_wait_write(event_loop *loop, udp_socket &socket, int32_t timeout_milliseconds);
 ssize_t udp_event_loop_receive(event_loop *loop, udp_socket &socket, void *buffer, ft_size_t size,

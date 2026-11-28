@@ -3,6 +3,7 @@
 #include "../../Modules/Errno/errno.hpp"
 
 #include <cstdint>
+#include <cstdio>
 
 int main()
 {
@@ -17,19 +18,44 @@ int main()
     uint8_t old_scalar[32];
     uint8_t result[32];
     uint32_t iteration;
+    int32_t error_code;
+    int32_t print_result;
 
     iteration = 0U;
     while (iteration < 1000000U)
     {
         ft_memcpy(old_scalar, scalar, sizeof(old_scalar));
-        if (crypto_x25519_shared_secret(scalar, u_coordinate, result)
-            != FT_ERR_SUCCESS)
+        error_code = crypto_x25519_shared_secret(scalar, u_coordinate, result);
+        if (error_code != FT_ERR_SUCCESS)
+        {
+            print_result = std::fprintf(stderr,
+                "crypto_x25519_million: shared-secret failure at %u/%u: %d\n",
+                iteration, 1000000U, error_code);
+            if (print_result < 0)
+                return (1);
             return (1);
+        }
         ft_memcpy(scalar, result, sizeof(scalar));
         ft_memcpy(u_coordinate, old_scalar, sizeof(u_coordinate));
         iteration += 1U;
+        if (iteration % 100000U == 0U)
+        {
+            print_result = std::printf("crypto_x25519_million: %u/1000000\n",
+                iteration);
+            if (print_result < 0 || std::fflush(stdout) != 0)
+                return (1);
+        }
     }
     if (ft_memcmp(scalar, expected, sizeof(expected)) != 0)
+    {
+        print_result = std::fprintf(stderr,
+            "crypto_x25519_million: final vector mismatch\n");
+        if (print_result < 0)
+            return (1);
+        return (1);
+    }
+    print_result = std::printf("crypto_x25519_million: passed\n");
+    if (print_result < 0 || std::fflush(stdout) != 0)
         return (1);
     return (0);
 }

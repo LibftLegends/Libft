@@ -1,5 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/File/file_utils.hpp"
+#include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/Compatebility/compatebility_internal.hpp"
 #include "../../Modules/Filesystem/filesystem.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <cstring>
@@ -57,6 +59,41 @@ FT_TEST(test_file_hash_sha256_depends_on_contents)
     return (1);
 }
 
+FT_TEST(test_file_hash_streams_binary_files_without_allocating_the_payload)
+{
+    constexpr uint8_t SHA1_EXPECTED[20] = {
+        0x65, 0xd1, 0x4e, 0xcd, 0x3a, 0xc4, 0x57, 0xc1, 0xf2, 0x49,
+        0x9a, 0x1e, 0xfe, 0x42, 0xeb, 0xa0, 0x52, 0xe0, 0x22, 0x4b
+    };
+    constexpr uint8_t SHA256_EXPECTED[32] = {
+        0x51, 0xe3, 0xca, 0x48, 0x22, 0x3e, 0x56, 0x30, 0xe6, 0xba, 0x69,
+        0xbf, 0x82, 0xe4, 0x51, 0xde, 0x9c, 0xaf, 0xc9, 0x0d, 0x55, 0x56,
+        0x67, 0x8f, 0xaa, 0x0e, 0xaa, 0xe0, 0xd4, 0xf6, 0x8f, 0xfe
+    };
+    const char *path = "test_file_hash_binary.bin";
+    uint8_t payload[65536 + 56];
+    ft_size_t index = 0;
+    while (index < sizeof(payload))
+    {
+        payload[index] = static_cast<uint8_t>(index * 17 + 3);
+        ++index;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path,
+        reinterpret_cast<const char *>(payload), sizeof(payload)));
+    uint8_t sha1[20];
+    uint8_t sha256[32];
+    cma_set_alloc_limit(1);
+    const int32_t sha1_error = file_hash_sha1(path, sha1);
+    const int32_t sha256_error = file_hash_sha256(path, sha256);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sha1_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, sha256_error);
+    FT_ASSERT_EQ(FT_TRUE, file_test_digest_equals(sha1, SHA1_EXPECTED, sizeof(sha1)));
+    FT_ASSERT_EQ(FT_TRUE, file_test_digest_equals(sha256, SHA256_EXPECTED, sizeof(sha256)));
+    return (1);
+}
+
 FT_TEST(test_file_metadata_diff_reports_type_size_and_missing_changes)
 {
     const char *root_path;
@@ -91,5 +128,23 @@ FT_TEST(test_file_metadata_diff_reports_type_size_and_missing_changes)
     FT_ASSERT_EQ(FT_TRUE, file_test_flag_is_set(difference_flags,
             FILE_METADATA_DIFF_MISSING));
     (void)file_delete_recursive(root_path);
+    return (1);
+}
+
+FT_TEST(test_file_metadata_diff_reports_permission_change_without_size_change)
+{
+    const char *left = "test_file_metadata_permissions_left.txt";
+    const char *right = "test_file_metadata_permissions_right.txt";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(left, "x", 1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(right, "x", 1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_file_set_permissions(left, 6, 4, 4, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_file_set_permissions(right, 4, 4, 4, ft_nullptr));
+    uint32_t differences = FILE_METADATA_DIFF_NONE;
+    const int32_t result = file_metadata_diff(left, right, &differences);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cmp_file_set_permissions(right, 6, 4, 4, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(left));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(right));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(static_cast<uint32_t>(FILE_METADATA_DIFF_PERMISSIONS), differences);
     return (1);
 }

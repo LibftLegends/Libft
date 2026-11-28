@@ -1,5 +1,6 @@
 #include "class_istringstream.hpp"
 #include "../Basic/basic.hpp"
+#include "../Template/move.hpp"
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
@@ -66,10 +67,7 @@ int32_t ft_istringstream::move(ft_istringstream &other) noexcept
 
 ssize_t ft_istringstream::do_read(char *buffer, ft_size_t count)
 {
-    ssize_t result;
-
-    result = this->_buffer.read(buffer, count);
-    return (result);
+    return (this->_buffer.read(buffer, count));
 }
 
 ft_string *ft_istringstream::get_string() const
@@ -81,40 +79,28 @@ ft_string *ft_istringstream::get_string() const
     if (value == ft_nullptr)
         return (ft_nullptr);
     initialize_error = value->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (initialize_error != FT_ERR_SUCCESS || this->_buffer.get_string(*value) != FT_ERR_SUCCESS)
     {
         delete value;
         return (ft_nullptr);
     }
-    if (this->_buffer.get_string(*value) != FT_ERR_SUCCESS)
-        return (value);
     return (value);
 }
 
 ft_istringstream &operator>>(ft_istringstream &input, int32_t &value)
 {
-    ft_string *content;
-
-    content = input.get_string();
-    if (content != ft_nullptr)
-    {
-        value = ft_atoi(content->c_str());
-        (void)content->destroy();
-        delete content;
-    }
+    ft_string content;
+    if (content.initialize() == FT_ERR_SUCCESS
+        && input._buffer.get_string(content) == FT_ERR_SUCCESS)
+        value = ft_atoi(content.c_str());
     return (input);
 }
 
 ft_istringstream &operator>>(ft_istringstream &input, ft_string &value)
 {
-    ft_string *content;
-
-    content = input.get_string();
-    if (content != ft_nullptr)
-    {
-        value = *content;
-        (void)content->destroy();
-        delete content;
-    }
+    ft_string content;
+    if (content.initialize() == FT_ERR_SUCCESS
+        && input._buffer.get_string(content) == FT_ERR_SUCCESS)
+        value = ft_move(content);
     return (input);
 }

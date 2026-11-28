@@ -61,6 +61,7 @@ else
 endif
 
 SUBDIRS := Modules/Basic \
+           Modules/BMP \
            Modules/Advanced \
            Modules/Compatebility \
            Modules/Debug \
@@ -106,13 +107,13 @@ SUBDIRS := Modules/Basic \
            Modules/Sink \
            Modules/Logger \
            Modules/Parser \
-           Modules/Lua \
            Modules/Game \
            Modules/Voxel \
            Modules/GPGR
 
 LIB_BASES := \
   Modules/Basic/Basic \
+  Modules/BMP/bmp \
   Modules/Advanced/Advanced \
   Modules/Compatebility/Compatebility \
   Modules/Debug/Debug \
@@ -157,7 +158,6 @@ LIB_BASES := \
   Modules/Sink/Sink \
   Modules/Logger/Logger \
   Modules/Parser/parser \
-  Modules/Lua/Lua \
   Modules/Game/Game \
   Modules/Voxel/Voxel \
   Modules/GPGR/GPGR
@@ -169,8 +169,8 @@ TOTAL_LIBS := $(words $(LIBS))
 TOTAL_DEBUG_LIBS := $(words $(DEBUG_LIBS))
 TOTAL_TEST_LIBS := $(words $(TEST_LIBS))
 
-TARGET        := Full_Libft.a
-DEBUG_TARGET  := Full_Libft_debug.a
+TARGET        := build/archives/Full_Libft.a
+DEBUG_TARGET  := build/archives/Full_Libft_debug.a
 TEST_TARGET   := Test/Full_Libft_test.a
 TEST_DEBUG_TARGET := Test/Full_Libft_test_debug.a
 

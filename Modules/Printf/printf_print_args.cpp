@@ -1,18 +1,8 @@
 #include "printf_internal.hpp"
-#include "../Basic/basic.hpp"
+#include "printf_engine.hpp"
 #include "../CPP_class/class_string.hpp"
-#include <cstdarg>
-#include <unistd.h>
 #include "../System_utils/system_utils.hpp"
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <limits.h>
-#include <stddef.h>
-#include <cstdio>
 #include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
 static const char G_DECIMAL_PAIRS[200] =
 {
@@ -369,48 +359,26 @@ static void write_octal_from_triplets(uint64_t number, int32_t file_descriptor, 
     return ;
 }
 
-static int32_t format_double_output(char specifier, int32_t precision, double number, ft_string &output)
+static int32_t write_formatted_fd(const char *data, ft_size_t length, void *context,
+    ft_size_t *count)
 {
+    write_buffer_fd(data, length, *static_cast<int32_t *>(context), count);
+    if (count_has_error(count))
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
+static void write_double_fd(const char *format, double number, int32_t precision,
+    int32_t file_descriptor, ft_size_t *count)
+{
+    if (count_has_error(count))
+        return ;
     if (precision < 0)
         precision = 6;
-    if ((specifier == 'g' || specifier == 'G') && precision == 0)
-        precision = 1;
-    int32_t initialization_error = output.initialize();
-    if (initialization_error != FT_ERR_SUCCESS)
-        return (initialization_error);
-#define FORMAT_DOUBLE_CASE(character, literal) \
-    if (specifier == character) \
-    { \
-        int32_t required_length = std::snprintf(ft_nullptr, 0, literal, precision, number); \
-        char *output_buffer = ft_nullptr; \
-        if (required_length < 0) \
-            return (FT_ERR_IO); \
-        output.clear(); \
-        if (output.get_error() != FT_ERR_SUCCESS) \
-            return (FT_ERR_INTERNAL); \
-        output.resize_length(static_cast<ft_size_t>(required_length)); \
-        if (output.get_error() != FT_ERR_SUCCESS) \
-            return (FT_ERR_INTERNAL); \
-        output_buffer = output.print(); \
-        if (output.get_error() != FT_ERR_SUCCESS || output_buffer == ft_nullptr) \
-            return (FT_ERR_INTERNAL); \
-        int32_t written_length = std::snprintf(output_buffer, static_cast<ft_size_t>(required_length) + 1, literal, precision, number); \
-        if (written_length < 0) \
-            return (FT_ERR_IO); \
-        output.resize_length(static_cast<ft_size_t>(written_length)); \
-        if (output.get_error() != FT_ERR_SUCCESS) \
-            return (FT_ERR_INTERNAL); \
-        return (FT_ERR_SUCCESS); \
-    }
-
-    FORMAT_DOUBLE_CASE('f', "%.*f");
-    FORMAT_DOUBLE_CASE('F', "%.*f");
-    FORMAT_DOUBLE_CASE('e', "%.*e");
-    FORMAT_DOUBLE_CASE('E', "%.*E");
-    FORMAT_DOUBLE_CASE('g', "%.*g");
-    FORMAT_DOUBLE_CASE('G', "%.*G");
-#undef FORMAT_DOUBLE_CASE
-    return (FT_ERR_INVALID_ARGUMENT);
+    if (pf_engine_format_with_snprintf(format, write_formatted_fd, &file_descriptor,
+            count, precision, number) != FT_ERR_SUCCESS)
+        mark_count_error(count);
+    return ;
 }
 
 ft_size_t ft_strlen_printf(const char *string)
@@ -496,64 +464,27 @@ void ft_putptr_fd(void *pointer, int32_t file_descriptor, ft_size_t *count)
 
 void ft_putfloat_fd(double number, int32_t file_descriptor, ft_size_t *count, int32_t precision)
 {
-    if (count_has_error(count))
-        return ;
-    ft_string formatted_output;
-    if (format_double_output('f', precision, number, formatted_output) != FT_ERR_SUCCESS)
-    {
-        mark_count_error(count);
-        return ;
-    }
-    ft_size_t output_length = formatted_output.size();
-    if (output_length == 0)
-        return ;
-    write_buffer_fd(formatted_output.c_str(), output_length, file_descriptor, count);
+    write_double_fd("%.*f", number, precision, file_descriptor, count);
     return ;
 }
 
 void ft_putscientific_fd(double number, ft_bool uppercase, int32_t file_descriptor, ft_size_t *count, int32_t precision)
 {
-    if (count_has_error(count))
-        return ;
-    char specifier;
-
+    const char *format = "%.*e";
     if (uppercase)
-        specifier = 'E';
-    else
-        specifier = 'e';
-    ft_string formatted_output;
-    if (format_double_output(specifier, precision, number, formatted_output) != FT_ERR_SUCCESS)
-    {
-        mark_count_error(count);
-        return ;
-    }
-    ft_size_t output_length = formatted_output.size();
-    if (output_length == 0)
-        return ;
-    write_buffer_fd(formatted_output.c_str(), output_length, file_descriptor, count);
+        format = "%.*E";
+    write_double_fd(format, number, precision, file_descriptor, count);
     return ;
 }
 
 void ft_putgeneral_fd(double number, ft_bool uppercase, int32_t file_descriptor, ft_size_t *count, int32_t precision)
 {
-    if (count_has_error(count))
-        return ;
-    char specifier;
-
+    const char *format = "%.*g";
+    if (precision == 0)
+        precision = 1;
     if (uppercase)
-        specifier = 'G';
-    else
-        specifier = 'g';
-    ft_string formatted_output;
-    if (format_double_output(specifier, precision, number, formatted_output) != FT_ERR_SUCCESS)
-    {
-        mark_count_error(count);
-        return ;
-    }
-    ft_size_t output_length = formatted_output.size();
-    if (output_length == 0)
-        return ;
-    write_buffer_fd(formatted_output.c_str(), output_length, file_descriptor, count);
+        format = "%.*G";
+    write_double_fd(format, number, precision, file_descriptor, count);
     return ;
 }
 

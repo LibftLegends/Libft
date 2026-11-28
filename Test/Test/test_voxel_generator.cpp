@@ -3,12 +3,173 @@
 
 #ifdef GAME_USE_VOXEL_REGION_BACKEND
 
-#include "../../Modules/Voxel/terrain_api.hpp"
+#include "../../Modules/Voxel/voxel_api.hpp"
+#include "../../Modules/Voxel/voxel_internal.hpp"
 #include "../../Modules/Game/game_voxel_region.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/Compatebility/compatebility_internal.hpp"
 #include <stdio.h>
+#include <cerrno>
+#include <cstdio>
 
-static int32_t test_terrain_surface_height(game_voxel_chunk &chunk,
+static_assert(voxel_floor_div(-17, 16) == -2);
+static_assert(voxel_floor_div(-16, 16) == -1);
+static_assert(voxel_floor_div(17, 16) == 1);
+static_assert(voxel_mix_u64(1U) == UINT64_C(0x5692161D100B05E5));
+static_assert(voxel_lerp(2.0, 6.0, 0.5) > 3.99
+    && voxel_lerp(2.0, 6.0, 0.5) < 4.01);
+static_assert(voxel_smooth_factor(0.25) > 0.156
+    && voxel_smooth_factor(0.25) < 0.157);
+
+FT_TEST(test_voxel_value_noise_handles_coordinate_limits)
+{
+    constexpr uint64_t SEED = UINT64_C(0x2a92198858);
+    constexpr int32_t SCALE = 3;
+    const int32_t grid_x = INT32_MIN / SCALE - 1;
+    const int32_t grid_z = INT32_MAX / SCALE;
+    const double factor = voxel_smooth_factor(1.0 / SCALE);
+    const double top = voxel_lerp(voxel_signed_unit_noise(SEED, grid_x, grid_z),
+        voxel_signed_unit_noise(SEED, grid_x + 1, grid_z), factor);
+    const double bottom = voxel_lerp(voxel_signed_unit_noise(SEED, grid_x, grid_z + 1),
+        voxel_signed_unit_noise(SEED, grid_x + 1, grid_z + 1), factor);
+    FT_ASSERT_EQ(voxel_lerp(top, bottom, factor),
+        voxel_value_noise(SEED, INT32_MIN, INT32_MAX, SCALE));
+    FT_ASSERT_EQ(voxel_signed_unit_noise(SEED, INT32_MAX, INT32_MAX),
+        voxel_value_noise(SEED, INT32_MAX, INT32_MAX, 1));
+    return (1);
+}
+
+FT_TEST(test_voxel_clear_generated_blocks_resets_materialized_sections)
+{
+    game_voxel_chunk chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(1, 4, 6, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(15, 255, 15, VOXEL_GENERATOR_DIRT_BLOCK));
+    FT_ASSERT_EQ(FT_TRUE, chunk.get_section(0).is_materialized());
+    FT_ASSERT_EQ(FT_TRUE, chunk.get_section(15).is_materialized());
+    chunk.clear_dirty();
+    const uint64_t revision = chunk.get_revision();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.clear_generated_blocks());
+    FT_ASSERT_EQ(FT_TRUE, chunk.is_dirty());
+    FT_ASSERT_EQ(revision, chunk.get_revision());
+    uint8_t section = 0U;
+    while (section < GAME_VOXEL_CHUNK_SECTION_COUNT)
+    {
+        FT_ASSERT_EQ(FT_TRUE, chunk.get_section(section).is_uniform());
+        FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, chunk.get_section(section).get_uniform_block());
+        section += 1U;
+    }
+    return (1);
+}
+
+FT_TEST(test_voxel_clear_generated_blocks_retains_player_blocks_and_revision)
+{
+    game_voxel_chunk chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(1, 17, 2, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(8, 33, 7, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(10, 250, 10, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 17, 2, VOXEL_GENERATOR_DIRT_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(8, 33, 7, GAME_VOXEL_AIR_BLOCK));
+    FT_ASSERT_EQ(2U, chunk.get_player_override_count());
+    FT_ASSERT_EQ(FT_TRUE, chunk.get_section(2).is_uniform());
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, chunk.get_section(2).get_uniform_block());
+    const uint64_t revision = chunk.get_revision();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.clear_generated_blocks());
+    FT_ASSERT_EQ(revision, chunk.get_revision());
+    FT_ASSERT_EQ(1U, chunk.get_player_override_count());
+    FT_ASSERT_EQ(FT_TRUE, chunk.is_generation_protected());
+    uint32_t value = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.get_generated_block(1, 17, 2, &value));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 17, 2, &value));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_DIRT_BLOCK, value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(10, 250, 10, &value));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, value);
+    return (1);
+}
+
+FT_TEST(test_voxel_generated_column_preflights_and_preserves_write_order)
+{
+    game_voxel_chunk chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(1, 17, 2, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(1, 17, 2, VOXEL_GENERATOR_DIRT_BLOCK));
+    const uint64_t revision = chunk.get_revision();
+    constexpr game_voxel_generated_column_block INVALID[] = {
+        {255, VOXEL_GENERATOR_STONE_BLOCK}, {256, VOXEL_GENERATOR_STONE_BLOCK}
+    };
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, chunk.write_generated_column(1, 2, INVALID, 2U));
+    uint32_t value = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 255, 2, &value));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, value);
+    constexpr game_voxel_generated_column_block VALID[] = {
+        {17, GAME_VOXEL_AIR_BLOCK}, {17, VOXEL_GENERATOR_DIRT_BLOCK},
+        {17, VOXEL_GENERATOR_STONE_BLOCK}, {255, VOXEL_GENERATOR_STONE_BLOCK}
+    };
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_column(1, 2, VALID, 4U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 17, 2, &value));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK, value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 255, 2, &value));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK, value);
+    FT_ASSERT_EQ(0U, chunk.get_player_override_count());
+    FT_ASSERT_EQ(revision, chunk.get_revision());
+    return (1);
+}
+
+FT_TEST(test_voxel_generated_column_guard_rejects_obstruction_before_writing)
+{
+    game_voxel_chunk chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(2, 10, 3, VOXEL_GENERATOR_STONE_BLOCK));
+    constexpr game_voxel_generated_column_block WATER[] = {
+        {9, VOXEL_GENERATOR_WATER_BLOCK}, {10, VOXEL_GENERATOR_WATER_BLOCK}
+    };
+    const game_voxel_generated_column_check check = {9, 10,
+        [](int32_t, uint32_t block, const void *) noexcept -> ft_bool
+        {
+            return (block == GAME_VOXEL_AIR_BLOCK);
+        },
+        nullptr
+    };
+    ft_bool applied = FT_TRUE;
+    chunk.clear_dirty();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_column(2, 3, WATER, 2U, &check, &applied));
+    FT_ASSERT_EQ(FT_FALSE, applied);
+    FT_ASSERT_EQ(FT_FALSE, chunk.is_dirty());
+    uint32_t block = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(2, 9, 3, &block));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(2, 10, 3, GAME_VOXEL_AIR_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_column(2, 3, WATER, 2U, &check, &applied));
+    FT_ASSERT_EQ(FT_TRUE, applied);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(2, 9, 3, &block));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, block);
+    return (1);
+}
+
+FT_TEST(test_voxel_generated_beach_depth_stays_within_the_column)
+{
+    voxel_generation_config config;
+    game_voxel_chunk chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(255));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_enabled(FT_TRUE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_depths(UINT32_MAX, UINT32_MAX, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk, 0, 0,
+        "deep-beach", config, VOXEL_STAGE_BASE_TERRAIN));
+    uint32_t value = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 0, 0, &value));
+    FT_ASSERT_EQ(config.layers.beach_block_id, value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 255, 0, &value));
+    FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, value);
+    return (1);
+}
+
+static int32_t test_voxel_surface_height(game_voxel_chunk &chunk,
     int32_t local_x, int32_t local_z) noexcept
 {
     int32_t local_y;
@@ -28,7 +189,7 @@ static int32_t test_terrain_surface_height(game_voxel_chunk &chunk,
     return (-1);
 }
 
-static ft_bool test_terrain_height_is_within_builtin_envelope(
+static ft_bool test_voxel_height_is_within_builtin_envelope(
     int32_t surface_height)
 {
     if (surface_height < 66 || surface_height > 121)
@@ -36,120 +197,445 @@ static ft_bool test_terrain_height_is_within_builtin_envelope(
     return (FT_TRUE);
 }
 
-static ft_bool test_terrain_is_builtin_surface_block(uint32_t block_id)
+static ft_bool test_voxel_is_builtin_surface_block(uint32_t block_id)
 {
     uint32_t biome_index;
 
-    if (block_id == TERRAIN_GENERATOR_SNOW_BLOCK)
+    if (block_id == VOXEL_GENERATOR_SNOW_BLOCK)
         return (FT_TRUE);
     biome_index = 0U;
-    while (biome_index <= TERRAIN_BIOME_MOUNTAINS)
+    while (biome_index <= VOXEL_BIOME_MOUNTAINS)
     {
-        if (block_id == terrain_surface_block_for_biome(
-                static_cast<terrain_biome>(biome_index)))
+        if (block_id == voxel_surface_block_for_biome(
+                static_cast<voxel_biome>(biome_index)))
             return (FT_TRUE);
         biome_index += 1U;
     }
     return (FT_FALSE);
 }
 
-FT_TEST(test_terrain_generate_chunk_generates_default_surface_chunk)
+static int32_t test_voxel_prepare_surface_water_config(
+    voxel_generation_config &config, ft_bool enable_rivers,
+    ft_bool enable_lakes, int32_t surface_height, int32_t height_variation,
+    uint32_t river_depth, uint32_t lake_depth) noexcept
+{
+    int32_t error_code;
+
+    error_code = voxel_default_generation_config(config);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_biome_count(1U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_sea_level(50);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_water_chance_percent(0U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_biome_height_profile(0U, surface_height,
+        height_variation, 0);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE,
+        0U, 0U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.set_feature_count(0U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.layers.set_enabled(FT_FALSE, FT_FALSE);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.underground_structures.set_enabled(FT_FALSE,
+        FT_FALSE);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.fluids.set_enabled(enable_rivers, enable_lakes);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.fluids.set_river_settings(96, 100);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.fluids.set_lake_settings(8, 100U);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    error_code = config.fluids.set_surface_water_depths(river_depth,
+        lake_depth);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    return (config.fluids.set_underground_lakes_enabled(FT_FALSE));
+}
+
+static ft_bool test_voxel_is_non_aquatic_vegetation(uint32_t block_id)
+{
+    if (block_id == VOXEL_GENERATOR_SHRUB_BLOCK
+        || block_id == VOXEL_GENERATOR_OAK_LOG_BLOCK
+        || block_id == VOXEL_GENERATOR_OAK_LEAVES_BLOCK
+        || block_id == VOXEL_GENERATOR_PINE_LOG_BLOCK
+        || block_id == VOXEL_GENERATOR_PINE_LEAVES_BLOCK
+        || block_id == VOXEL_GENERATOR_BIRCH_LOG_BLOCK
+        || block_id == VOXEL_GENERATOR_BIRCH_LEAVES_BLOCK
+        || block_id == VOXEL_GENERATOR_CACTUS_BLOCK
+        || block_id == VOXEL_GENERATOR_RED_FLOWER_BLOCK
+        || block_id == VOXEL_GENERATOR_YELLOW_FLOWER_BLOCK
+        || block_id == VOXEL_GENERATOR_TALL_GRASS_BLOCK
+        || block_id == VOXEL_GENERATOR_FERN_BLOCK
+        || block_id == VOXEL_GENERATOR_DEAD_BUSH_BLOCK
+        || block_id == VOXEL_GENERATOR_RED_MUSHROOM_BLOCK
+        || block_id == VOXEL_GENERATOR_BROWN_MUSHROOM_BLOCK
+        || block_id == VOXEL_GENERATOR_MUSHROOM_STEM_BLOCK)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
+
+static int32_t test_voxel_measure_water_columns(game_voxel_chunk &chunk,
+    int32_t *water_count_out, int32_t *maximum_depth_out,
+    int32_t *unsupported_count_out) noexcept
+{
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+    int32_t current_depth;
+    int32_t maximum_depth;
+    int32_t water_count;
+    int32_t unsupported_count;
+    uint32_t block_id;
+    uint32_t below_block_id;
+
+    water_count = 0;
+    maximum_depth = 0;
+    unsupported_count = 0;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            current_depth = 0;
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                if (chunk.read_block(local_x, local_y, local_z, &block_id)
+                    != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (block_id != VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    current_depth = 0;
+                    local_y += 1;
+                    continue ;
+                }
+                water_count += 1;
+                current_depth += 1;
+                if (current_depth > maximum_depth)
+                    maximum_depth = current_depth;
+                if (local_y == 0)
+                {
+                    unsupported_count += 1;
+                    local_y += 1;
+                    continue ;
+                }
+                if (chunk.read_block(local_x, local_y - 1, local_z,
+                        &below_block_id) != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (below_block_id == VOXEL_GENERATOR_WATER_BLOCK
+                    || voxel_block_is_solid(below_block_id) == FT_TRUE)
+                {
+                    local_y += 1;
+                    continue ;
+                }
+                if (below_block_id == VOXEL_GENERATOR_SEAGRASS_BLOCK
+                    && local_y > 1
+                    && chunk.read_block(local_x, local_y - 2, local_z,
+                        &below_block_id) == FT_ERR_SUCCESS
+                    && voxel_block_is_solid(below_block_id) == FT_TRUE)
+                {
+                    local_y += 1;
+                    continue ;
+                }
+                unsupported_count += 1;
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    *water_count_out = water_count;
+    *maximum_depth_out = maximum_depth;
+    *unsupported_count_out = unsupported_count;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t test_voxel_measure_water_vegetation_overlap(
+    game_voxel_chunk &chunk, int32_t *overlap_count_out) noexcept
+{
+    ft_bool water_columns[GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH];
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+    int32_t index;
+    int32_t overlap_count;
+    uint32_t block_id;
+
+    index = 0;
+    while (index < GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH)
+    {
+        water_columns[index] = FT_FALSE;
+        index += 1;
+    }
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                if (chunk.read_block(local_x, local_y, local_z, &block_id)
+                    != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                    water_columns[local_z * GAME_VOXEL_CHUNK_WIDTH + local_x]
+                        = FT_TRUE;
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    overlap_count = 0;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            if (water_columns[local_z * GAME_VOXEL_CHUNK_WIDTH + local_x]
+                == FT_TRUE)
+            {
+                local_y = 0;
+                while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+                {
+                    if (chunk.read_block(local_x, local_y, local_z,
+                            &block_id) != FT_ERR_SUCCESS)
+                        return (FT_ERR_INVALID_OPERATION);
+                    if (test_voxel_is_non_aquatic_vegetation(block_id)
+                        == FT_TRUE)
+                        overlap_count += 1;
+                    local_y += 1;
+                }
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    *overlap_count_out = overlap_count;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t test_voxel_measure_lake_enclosure(game_voxel_chunk &chunk,
+    int32_t *unsealed_count_out) noexcept
+{
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+    int32_t offset;
+    int32_t unsealed_count;
+    uint32_t block_id;
+    uint32_t above_block_id;
+    uint32_t roof_block_id;
+
+    unsealed_count = 0;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                if (chunk.read_block(local_x, local_y, local_z, &block_id)
+                    != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (block_id != VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    local_y += 1;
+                    continue ;
+                }
+                offset = -1;
+                while (offset <= 1)
+                {
+                    if (offset != 0)
+                    {
+                        if (chunk.read_block(local_x + offset, local_y,
+                                local_z, &block_id) != FT_ERR_SUCCESS
+                            || (block_id != VOXEL_GENERATOR_WATER_BLOCK
+                                && voxel_block_is_solid(block_id) == FT_FALSE))
+                            unsealed_count += 1;
+                        if (chunk.read_block(local_x, local_y,
+                                local_z + offset, &block_id) != FT_ERR_SUCCESS
+                            || (block_id != VOXEL_GENERATOR_WATER_BLOCK
+                                && voxel_block_is_solid(block_id) == FT_FALSE))
+                            unsealed_count += 1;
+                    }
+                    offset += 1;
+                }
+                if (local_y + 1 >= GAME_VOXEL_CHUNK_HEIGHT
+                    || chunk.read_block(local_x, local_y + 1, local_z,
+                        &above_block_id) != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                if (above_block_id != VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    if (above_block_id != VOXEL_GENERATOR_AIR_BLOCK
+                        || local_y + 2 >= GAME_VOXEL_CHUNK_HEIGHT
+                        || chunk.read_block(local_x, local_y + 2, local_z,
+                            &roof_block_id) != FT_ERR_SUCCESS
+                        || voxel_block_is_solid(roof_block_id) == FT_FALSE)
+                        unsealed_count += 1;
+                }
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    *unsealed_count_out = unsealed_count;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t test_voxel_chunk_block_hash(game_voxel_chunk &chunk,
+    uint64_t *hash_out) noexcept
+{
+    int32_t local_x;
+    int32_t local_y;
+    int32_t local_z;
+    uint32_t block_id;
+    uint64_t hash_value;
+
+    hash_value = UINT64_C(1469598103934665603);
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                if (chunk.read_block(local_x, local_y, local_z, &block_id)
+                    != FT_ERR_SUCCESS)
+                    return (FT_ERR_INVALID_OPERATION);
+                hash_value ^= static_cast<uint64_t>(block_id);
+                hash_value *= UINT64_C(1099511628211);
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    *hash_out = hash_value;
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_voxel_generate_chunk_generates_default_surface_chunk)
 {
     game_voxel_chunk chunk;
     int32_t surface_height;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk,
         "terrain-test-seed"));
-    surface_height = test_terrain_surface_height(chunk, 0, 0);
+    surface_height = test_voxel_surface_height(chunk, 0, 0);
     FT_ASSERT_NEQ(-1, surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height, 0,
         &block_id));
-    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
+    FT_ASSERT_EQ(FT_TRUE, test_voxel_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, surface_height + 1, 0,
         &block_id));
     FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
     FT_ASSERT_EQ(FT_TRUE,
-        test_terrain_height_is_within_builtin_envelope(surface_height));
+        test_voxel_height_is_within_builtin_envelope(surface_height));
     FT_ASSERT_EQ(FT_FALSE, chunk.is_dirty());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_get_biome_changes_across_zone_boundaries)
+FT_TEST(test_voxel_get_biome_changes_across_zone_boundaries)
 {
-    terrain_biome left_biome;
-    terrain_biome right_biome;
+    voxel_biome left_biome;
+    voxel_biome right_biome;
 
-    left_biome = terrain_get_biome(0, 0, "terrain-test-seed");
-    right_biome = terrain_get_biome(TERRAIN_BIOME_ZONE_WIDTH, 0,
+    left_biome = voxel_get_biome(0, 0, "terrain-test-seed");
+    right_biome = voxel_get_biome(VOXEL_BIOME_ZONE_WIDTH, 0,
         "terrain-test-seed");
     FT_ASSERT_NEQ(left_biome, right_biome);
     return (1);
 }
 
-FT_TEST(test_terrain_surface_helpers_match_biome_rules)
+FT_TEST(test_voxel_surface_helpers_match_biome_rules)
 {
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_GRASS_BLOCK,
-        terrain_surface_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_GRASS_BLOCK,
-        terrain_surface_block_for_biome(TERRAIN_BIOME_HILLS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_SAND_BLOCK,
-        terrain_surface_block_for_biome(TERRAIN_BIOME_DESERT));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_SNOW_BLOCK,
-        terrain_surface_block_for_biome(TERRAIN_BIOME_SNOW));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_SLATE_BLOCK,
-        terrain_surface_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_DIRT_BLOCK,
-        terrain_subsurface_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_DIRT_BLOCK,
-        terrain_subsurface_block_for_biome(TERRAIN_BIOME_HILLS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CANYON_ROCK_BLOCK,
-        terrain_subsurface_block_for_biome(TERRAIN_BIOME_DESERT));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PERMAFROST_BLOCK,
-        terrain_subsurface_block_for_biome(TERRAIN_BIOME_SNOW));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_ANDESITE_BLOCK,
-        terrain_subsurface_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_STONE_BLOCK,
-        terrain_deep_block_for_biome(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_BASALT_BLOCK,
-        terrain_deep_block_for_biome(TERRAIN_BIOME_MOUNTAINS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_shrubs(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_shrubs(TERRAIN_BIOME_HILLS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_shrubs(TERRAIN_BIOME_DESERT));
-    FT_ASSERT_EQ(FT_FALSE, terrain_biome_has_shrubs(TERRAIN_BIOME_SNOW));
-    FT_ASSERT_EQ(FT_FALSE, terrain_biome_has_shrubs(TERRAIN_BIOME_MOUNTAINS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_trees(TERRAIN_BIOME_PLAINS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_trees(TERRAIN_BIOME_HILLS));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_trees(TERRAIN_BIOME_DESERT));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_trees(TERRAIN_BIOME_SNOW));
-    FT_ASSERT_EQ(FT_TRUE, terrain_biome_has_trees(TERRAIN_BIOME_MOUNTAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_GRASS_BLOCK,
+        voxel_surface_block_for_biome(VOXEL_BIOME_PLAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_GRASS_BLOCK,
+        voxel_surface_block_for_biome(VOXEL_BIOME_HILLS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_SAND_BLOCK,
+        voxel_surface_block_for_biome(VOXEL_BIOME_DESERT));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_SNOW_BLOCK,
+        voxel_surface_block_for_biome(VOXEL_BIOME_SNOW));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_SLATE_BLOCK,
+        voxel_surface_block_for_biome(VOXEL_BIOME_MOUNTAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_DIRT_BLOCK,
+        voxel_subsurface_block_for_biome(VOXEL_BIOME_PLAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_DIRT_BLOCK,
+        voxel_subsurface_block_for_biome(VOXEL_BIOME_HILLS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CANYON_ROCK_BLOCK,
+        voxel_subsurface_block_for_biome(VOXEL_BIOME_DESERT));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PERMAFROST_BLOCK,
+        voxel_subsurface_block_for_biome(VOXEL_BIOME_SNOW));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_ANDESITE_BLOCK,
+        voxel_subsurface_block_for_biome(VOXEL_BIOME_MOUNTAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK,
+        voxel_deep_block_for_biome(VOXEL_BIOME_PLAINS));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_BASALT_BLOCK,
+        voxel_deep_block_for_biome(VOXEL_BIOME_MOUNTAINS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_shrubs(VOXEL_BIOME_PLAINS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_shrubs(VOXEL_BIOME_HILLS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_shrubs(VOXEL_BIOME_DESERT));
+    FT_ASSERT_EQ(FT_FALSE, voxel_biome_has_shrubs(VOXEL_BIOME_SNOW));
+    FT_ASSERT_EQ(FT_FALSE, voxel_biome_has_shrubs(VOXEL_BIOME_MOUNTAINS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_trees(VOXEL_BIOME_PLAINS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_trees(VOXEL_BIOME_HILLS));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_trees(VOXEL_BIOME_DESERT));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_trees(VOXEL_BIOME_SNOW));
+    FT_ASSERT_EQ(FT_TRUE, voxel_biome_has_trees(VOXEL_BIOME_MOUNTAINS));
     return (1);
 }
 
-FT_TEST(test_terrain_tree_templates_expose_expected_blocks)
+FT_TEST(test_voxel_tree_templates_expose_expected_blocks)
 {
-    const terrain_tree_template &oak_tree_template =
-        terrain_small_oak_tree_template();
-    const terrain_tree_template &oak_tree_template_variant =
-        terrain_small_oak_tree_template_variant(1U);
-    const terrain_tree_template &pine_tree_template =
-        terrain_small_pine_tree_template();
-    const terrain_tree_template &pine_tree_template_variant =
-        terrain_small_pine_tree_template_variant(2U);
-    const terrain_tree_template &cactus_tree_template =
-        terrain_small_cactus_tree_template();
-    const terrain_tree_template &cactus_tree_template_variant =
-        terrain_small_cactus_tree_template_variant(1U);
-    const terrain_tree_template &large_oak_tree_template =
-        terrain_large_oak_tree_template();
-    const terrain_tree_template &large_oak_tree_template_variant =
-        terrain_large_oak_tree_template_variant(1U);
-    const terrain_tree_template &large_pine_tree_template =
-        terrain_large_pine_tree_template();
-    const terrain_tree_template &large_pine_tree_template_variant =
-        terrain_large_pine_tree_template_variant(1U);
+    const voxel_tree_template &oak_tree_template =
+        voxel_small_oak_tree_template();
+    const voxel_tree_template &oak_tree_template_variant =
+        voxel_small_oak_tree_template_variant(1U);
+    const voxel_tree_template &pine_tree_template =
+        voxel_small_pine_tree_template();
+    const voxel_tree_template &pine_tree_template_variant =
+        voxel_small_pine_tree_template_variant(2U);
+    const voxel_tree_template &cactus_tree_template =
+        voxel_small_cactus_tree_template();
+    const voxel_tree_template &cactus_tree_template_variant =
+        voxel_small_cactus_tree_template_variant(1U);
+    const voxel_tree_template &large_oak_tree_template =
+        voxel_large_oak_tree_template();
+    const voxel_tree_template &large_oak_tree_template_variant =
+        voxel_large_oak_tree_template_variant(1U);
+    const voxel_tree_template &large_pine_tree_template =
+        voxel_large_pine_tree_template();
+    const voxel_tree_template &large_pine_tree_template_variant =
+        voxel_large_pine_tree_template_variant(1U);
 
     FT_ASSERT_NEQ(0U, oak_tree_template.block_count);
     FT_ASSERT_NEQ(oak_tree_template.block_count,
@@ -168,119 +654,151 @@ FT_TEST(test_terrain_tree_templates_expose_expected_blocks)
         large_oak_tree_template_variant.block_count);
     FT_ASSERT_NEQ(large_pine_tree_template.block_count,
         large_pine_tree_template_variant.block_count);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK,
         cactus_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK,
         cactus_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK,
         large_oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK,
         large_pine_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK,
         large_oak_tree_template_variant.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK,
         large_pine_tree_template_variant.blocks[0].block_id);
     return (1);
 }
 
-FT_TEST(test_terrain_place_tree_template_writes_small_oak_tree)
+FT_TEST(test_voxel_default_config_owns_tree_templates_in_saved_order)
+{
+    const voxel_tree_template *expected[] = {
+        &voxel_small_oak_tree_template_variant(0U),
+        &voxel_small_oak_tree_template_variant(1U),
+        &voxel_small_oak_tree_template_variant(2U),
+        &voxel_small_pine_tree_template_variant(0U),
+        &voxel_small_pine_tree_template_variant(1U),
+        &voxel_small_pine_tree_template_variant(2U),
+        &voxel_small_cactus_tree_template_variant(0U),
+        &voxel_small_cactus_tree_template_variant(1U),
+        &voxel_small_cactus_tree_template_variant(2U),
+        &voxel_large_oak_tree_template_variant(0U),
+        &voxel_large_oak_tree_template_variant(1U),
+        &voxel_large_pine_tree_template_variant(0U),
+        &voxel_large_pine_tree_template_variant(1U)
+    };
+    voxel_generation_config config;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(sizeof(expected) / sizeof(expected[0]), config.tree_template_count);
+    uint32_t index = 0U;
+    while (index < config.tree_template_count)
+    {
+        const voxel_tree_template &owned = config.tree_templates[index];
+        FT_ASSERT_EQ(&config.tree_template_blocks[index][0], owned.blocks);
+        FT_ASSERT_NEQ(expected[index]->blocks, owned.blocks);
+        FT_ASSERT_EQ(FT_TRUE, voxel_tree_templates_equal(*expected[index], owned));
+        ++index;
+    }
+    return (1);
+}
+
+FT_TEST(test_voxel_place_tree_template_writes_small_oak_tree)
 {
     game_voxel_chunk chunk;
-    const terrain_tree_template &oak_tree_template =
-        terrain_small_oak_tree_template();
+    const voxel_tree_template &oak_tree_template =
+        voxel_small_oak_tree_template();
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_place_tree_template(chunk, 8, 12, 8,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_place_tree_template(chunk, 8, 12, 8,
         oak_tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 12, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 16, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LEAVES_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_place_tree_template_writes_small_pine_tree)
+FT_TEST(test_voxel_place_tree_template_writes_small_pine_tree)
 {
     game_voxel_chunk chunk;
-    const terrain_tree_template &pine_tree_template =
-        terrain_small_pine_tree_template();
+    const voxel_tree_template &pine_tree_template =
+        voxel_small_pine_tree_template();
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_place_tree_template(chunk, 8, 12, 8,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_place_tree_template(chunk, 8, 12, 8,
         pine_tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 12, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 18, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LEAVES_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_place_tree_template_writes_small_cactus)
+FT_TEST(test_voxel_place_tree_template_writes_small_cactus)
 {
     game_voxel_chunk chunk;
-    const terrain_tree_template &cactus_tree_template =
-        terrain_small_cactus_tree_template();
+    const voxel_tree_template &cactus_tree_template =
+        voxel_small_cactus_tree_template();
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_place_tree_template(chunk, 8, 12, 8,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_place_tree_template(chunk, 8, 12, 8,
         cactus_tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 12, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(8, 15, 8, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_can_place_tree_template_rejects_occupied_space)
+FT_TEST(test_voxel_can_place_tree_template_rejects_occupied_space)
 {
     game_voxel_chunk chunk;
-    const terrain_tree_template &oak_tree_template =
-        terrain_small_oak_tree_template();
+    const voxel_tree_template &oak_tree_template =
+        voxel_small_oak_tree_template();
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(8, 12, 8,
-        TERRAIN_GENERATOR_STONE_BLOCK));
-    FT_ASSERT_EQ(FT_FALSE, terrain_can_place_tree_template(chunk, 8, 12, 8,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_FALSE, voxel_can_place_tree_template(chunk, 8, 12, 8,
         oak_tree_template));
-    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, terrain_place_tree_template(chunk,
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, voxel_place_tree_template(chunk,
         8, 12, 8, oak_tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_tree_template_for_biome_uses_seed_selected_large_variants)
+FT_TEST(test_voxel_tree_template_for_biome_uses_seed_selected_large_variants)
 {
-    const terrain_tree_template &oak_tree_template =
-        terrain_tree_template_for_biome(TERRAIN_BIOME_HILLS, 3U);
-    const terrain_tree_template &pine_tree_template =
-        terrain_tree_template_for_biome(TERRAIN_BIOME_SNOW, 4U);
+    const voxel_tree_template &oak_tree_template =
+        voxel_tree_template_for_biome(VOXEL_BIOME_HILLS, 3U);
+    const voxel_tree_template &pine_tree_template =
+        voxel_tree_template_for_biome(VOXEL_BIOME_SNOW, 4U);
 
-    FT_ASSERT_EQ(terrain_large_oak_tree_template().block_count,
+    FT_ASSERT_EQ(voxel_large_oak_tree_template().block_count,
         oak_tree_template.block_count);
-    FT_ASSERT_EQ(terrain_large_pine_tree_template(1U).block_count,
+    FT_ASSERT_EQ(voxel_large_pine_tree_template(1U).block_count,
         pine_tree_template.block_count);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LOG_BLOCK,
         oak_tree_template.blocks[0].block_id);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_PINE_LOG_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_PINE_LOG_BLOCK,
         pine_tree_template.blocks[0].block_id);
     return (1);
 }
 
-FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
+FT_TEST(test_voxel_generate_chunk_uses_biome_profile)
 {
     game_voxel_chunk left_chunk;
     game_voxel_chunk right_chunk;
@@ -289,30 +807,30 @@ FT_TEST(test_terrain_generate_chunk_uses_biome_profile)
     uint32_t block_id;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(left_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(left_chunk, 0, 0,
         "terrain-test-seed"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(right_chunk,
-        TERRAIN_BIOME_ZONE_WIDTH, 0, "terrain-test-seed"));
-    left_surface_height = test_terrain_surface_height(left_chunk, 0, 0);
-    right_surface_height = test_terrain_surface_height(right_chunk, 0, 0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(right_chunk,
+        VOXEL_BIOME_ZONE_WIDTH, 0, "terrain-test-seed"));
+    left_surface_height = test_voxel_surface_height(left_chunk, 0, 0);
+    right_surface_height = test_voxel_surface_height(right_chunk, 0, 0);
     FT_ASSERT_NEQ(-1, left_surface_height);
     FT_ASSERT_NEQ(-1, right_surface_height);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(0, left_surface_height,
         0, &block_id));
-    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
+    FT_ASSERT_EQ(FT_TRUE, test_voxel_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
         right_surface_height, 0, &block_id));
-    FT_ASSERT_EQ(FT_TRUE, test_terrain_is_builtin_surface_block(block_id));
+    FT_ASSERT_EQ(FT_TRUE, test_voxel_is_builtin_surface_block(block_id));
     FT_ASSERT_EQ(FT_TRUE,
-        test_terrain_height_is_within_builtin_envelope(left_surface_height));
+        test_voxel_height_is_within_builtin_envelope(left_surface_height));
     FT_ASSERT_EQ(FT_TRUE,
-        test_terrain_height_is_within_builtin_envelope(right_surface_height));
+        test_voxel_height_is_within_builtin_envelope(right_surface_height));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generate_chunk_height_varies_with_world_position)
+FT_TEST(test_voxel_generate_chunk_height_varies_with_world_position)
 {
     game_voxel_chunk left_chunk;
     game_voxel_chunk right_chunk;
@@ -321,12 +839,12 @@ FT_TEST(test_terrain_generate_chunk_height_varies_with_world_position)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(left_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(left_chunk, 0, 0,
         "terrain-test-seed"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(right_chunk, 32, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(right_chunk, 32, 0,
         "terrain-test-seed"));
-    left_surface_height = test_terrain_surface_height(left_chunk, 0, 0);
-    right_surface_height = test_terrain_surface_height(right_chunk, 0, 0);
+    left_surface_height = test_voxel_surface_height(left_chunk, 0, 0);
+    right_surface_height = test_voxel_surface_height(right_chunk, 0, 0);
     FT_ASSERT_NEQ(-1, left_surface_height);
     FT_ASSERT_NEQ(-1, right_surface_height);
     FT_ASSERT_NEQ(left_surface_height, right_surface_height);
@@ -335,7 +853,7 @@ FT_TEST(test_terrain_generate_chunk_height_varies_with_world_position)
     return (1);
 }
 
-FT_TEST(test_terrain_generate_chunk_is_deterministic_for_same_seed_and_origin)
+FT_TEST(test_voxel_generate_chunk_is_deterministic_for_same_seed_and_origin)
 {
     game_voxel_chunk first_chunk;
     game_voxel_chunk second_chunk;
@@ -347,9 +865,9 @@ FT_TEST(test_terrain_generate_chunk_is_deterministic_for_same_seed_and_origin)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(first_chunk, 128, 256,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(first_chunk, 128, 256,
         "terrain-test-seed"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(second_chunk, 128, 256,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(second_chunk, 128, 256,
         "terrain-test-seed"));
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
@@ -376,41 +894,41 @@ FT_TEST(test_terrain_generate_chunk_is_deterministic_for_same_seed_and_origin)
     return (1);
 }
 
-FT_TEST(test_terrain_generate_chunk_accepts_random_seed_placeholder)
+FT_TEST(test_voxel_generate_chunk_accepts_random_seed_placeholder)
 {
     game_voxel_chunk chunk;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generation_metadata_identifies_cached_chunk)
+FT_TEST(test_voxel_generation_metadata_identifies_cached_chunk)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint64_t seed_value;
     uint32_t configuration_signature;
     const game_voxel_generation_metadata *metadata;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
     FT_ASSERT_EQ(FT_FALSE, chunk.has_generation_metadata());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 32, 64,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 32, 64,
         "metadata-seed", config));
     metadata = &chunk.get_generation_metadata();
     seed_value = metadata->seed_value;
-    configuration_signature = terrain_generation_config_signature(config);
+    configuration_signature = voxel_generation_config_signature(config);
     FT_ASSERT_EQ(FT_TRUE, chunk.has_generation_metadata());
     FT_ASSERT_EQ(seed_value, metadata->seed_value);
     FT_ASSERT_EQ(32, metadata->world_block_origin_x);
     FT_ASSERT_EQ(64, metadata->world_block_origin_z);
     FT_ASSERT_EQ(configuration_signature, metadata->configuration_signature);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_VERSION, metadata->generator_version);
-    FT_ASSERT_EQ(TERRAIN_STAGE_BASE_TERRAIN | TERRAIN_STAGE_CAVES
-        | TERRAIN_STAGE_FLUIDS | TERRAIN_STAGE_DECORATION
-        | TERRAIN_STAGE_STRUCTURES | TERRAIN_STAGE_ORES,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_VERSION, metadata->generator_version);
+    FT_ASSERT_EQ(VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION
+        | VOXEL_STAGE_STRUCTURES | VOXEL_STAGE_ORES,
         metadata->completed_stage_mask);
     FT_ASSERT_EQ(FT_TRUE, chunk.generation_metadata_matches(seed_value, 32,
         64, configuration_signature));
@@ -423,10 +941,36 @@ FT_TEST(test_terrain_generation_metadata_identifies_cached_chunk)
     return (1);
 }
 
-FT_TEST(test_terrain_big_world_coordinate_keeps_generation_local)
+FT_TEST(test_voxel_world_coordinate_hash_tracks_assign_copy_and_move)
 {
-    terrain_world_chunk_coordinate coordinate;
-    terrain_generation_config config;
+    voxel_world_chunk_coordinate coordinate;
+    voxel_world_chunk_coordinate copied;
+    voxel_world_chunk_coordinate moved;
+    FT_ASSERT_EQ(0U, coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.initialize());
+    FT_ASSERT_EQ(UINT64_C(2197017663671160128), coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.set_chunk_coordinates(
+        "00092233720368547758081234567890", "-184467440737095516161234567890"));
+    FT_ASSERT_EQ(UINT64_C(8268974657026001941), coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, coordinate.set_chunk_coordinates("invalid", "0"));
+    FT_ASSERT_EQ(UINT64_C(8268974657026001941), coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, coordinate.set_chunk_coordinates("42", "-"));
+    FT_ASSERT_EQ(UINT64_C(3549039385781445368), coordinate.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copied.initialize(coordinate));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.move(copied));
+    FT_ASSERT_EQ(UINT64_C(3549039385781445368), moved.hash());
+    FT_ASSERT_EQ(0U, copied.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.destroy());
+    FT_ASSERT_EQ(0U, moved.hash());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved.initialize());
+    FT_ASSERT_EQ(UINT64_C(2197017663671160128), moved.hash());
+    return (1);
+}
+
+FT_TEST(test_voxel_big_world_coordinate_keeps_generation_local)
+{
+    voxel_world_chunk_coordinate coordinate;
+    voxel_generation_config config;
     game_voxel_chunk first_chunk;
     game_voxel_chunk second_chunk;
     uint32_t first_block_id;
@@ -436,12 +980,12 @@ FT_TEST(test_terrain_big_world_coordinate_keeps_generation_local)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, coordinate.set_chunk_coordinates(
         "92233720368547758081234567890", "-184467440737095516161234567890"));
     FT_ASSERT_NEQ(0U, coordinate.hash());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, second_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_at_world_coordinate(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_at_world_coordinate(
         first_chunk, coordinate, "big-coordinate-test", config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_at_world_coordinate(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_at_world_coordinate(
         second_chunk, coordinate, "big-coordinate-test", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first_chunk.read_block(7, 80, 9,
         &first_block_id));
@@ -455,18 +999,18 @@ FT_TEST(test_terrain_big_world_coordinate_keeps_generation_local)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_metadata_survives_chunk_serialization)
+FT_TEST(test_voxel_generation_metadata_survives_chunk_serialization)
 {
     game_voxel_chunk source_chunk;
     game_voxel_chunk restored_chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     ft_byte_buffer buffer;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(source_chunk, 48, 80,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(source_chunk, 48, 80,
         "metadata-serialization", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_chunk.serialize(buffer));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.deserialize(buffer));
@@ -483,62 +1027,62 @@ FT_TEST(test_terrain_generation_metadata_survives_chunk_serialization)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_preserves_player_protected_chunk)
+FT_TEST(test_voxel_generation_preserves_player_protected_chunk)
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
     game_voxel_chunk chunk;
     game_voxel_chunk restored_chunk;
     ft_byte_buffer buffer;
     uint32_t block_id;
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "protected-chunk", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_block(0, 0, 0,
-        TERRAIN_GENERATOR_BEDROCK_BLOCK));
+        VOXEL_GENERATOR_BEDROCK_BLOCK));
     FT_ASSERT_EQ(FT_TRUE, chunk.is_generation_protected());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.serialize(buffer));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.deserialize(buffer));
     FT_ASSERT_EQ(FT_TRUE, restored_chunk.is_generation_protected());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(restored_chunk, 1000,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(restored_chunk, 1000,
         1000,
         "different-world", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.read_block(0, 0, 0,
         &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_BEDROCK_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_BEDROCK_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restored_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_templates_are_owned_and_signature_is_content_based)
+FT_TEST(test_voxel_templates_are_owned_and_signature_is_content_based)
 {
-    terrain_generation_config first_config;
-    terrain_generation_config *loaded_config;
+    voxel_generation_config first_config;
+    voxel_generation_config *loaded_config;
     ft_byte_buffer buffer;
     uint32_t first_signature;
-    terrain_tree_template_block first_blocks[2];
-    terrain_tree_template first_template;
+    voxel_tree_template_block first_blocks[2];
+    voxel_tree_template first_template;
 
-    first_blocks[0] = {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK};
-    first_blocks[1] = {0, 1, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK};
+    first_blocks[0] = {-2, 3, -4, VOXEL_GENERATOR_OAK_LOG_BLOCK};
+    first_blocks[1] = {0, 1, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK};
     first_template.blocks = first_blocks;
     first_template.block_count = 2U;
-    loaded_config = new terrain_generation_config();
+    loaded_config = new voxel_generation_config();
     FT_ASSERT_NEQ(ft_nullptr, loaded_config);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(
         first_config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, first_config
         .set_biome_tree_template_override(0U, &first_template));
-    first_signature = terrain_generation_config_signature(first_config);
+    first_signature = voxel_generation_config_signature(first_config);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_serialize(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(
         first_config, buffer));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_deserialize(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(
         *loaded_config, buffer));
     FT_ASSERT_EQ(first_config.tree_template_count,
         loaded_config->tree_template_count);
@@ -546,20 +1090,23 @@ FT_TEST(test_terrain_templates_are_owned_and_signature_is_content_based)
         loaded_config->biomes[0].tree_template->block_count);
     FT_ASSERT_EQ(first_config.biomes[0].tree_template->blocks[0].block_id,
         loaded_config->biomes[0].tree_template->blocks[0].block_id);
+    FT_ASSERT_EQ(-2, loaded_config->biomes[0].tree_template->blocks[0].offset_x);
+    FT_ASSERT_EQ(3, loaded_config->biomes[0].tree_template->blocks[0].offset_y);
+    FT_ASSERT_EQ(-4, loaded_config->biomes[0].tree_template->blocks[0].offset_z);
     FT_ASSERT_EQ(first_signature,
-        terrain_generation_config_signature(*loaded_config));
+        voxel_generation_config_signature(*loaded_config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.destroy());
     delete loaded_config;
     return (1);
 }
 
-FT_TEST(test_terrain_generation_routes_edge_features_into_neighbor_chunks)
+FT_TEST(test_voxel_generation_routes_edge_features_into_neighbor_chunks)
 {
     game_voxel_region region;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
-    const terrain_tree_template &tree_template =
-        terrain_small_oak_tree_template();
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
+    const voxel_tree_template &tree_template =
+        voxel_small_oak_tree_template();
     game_voxel_chunk *generated_chunk;
     uint32_t block_id;
 
@@ -570,13 +1117,13 @@ FT_TEST(test_terrain_generation_routes_edge_features_into_neighbor_chunks)
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_TRUE, 6U, 100U);
     config.set_biome_tree_template_override(0U, &tree_template);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.initialize(0, 0, "."));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_in_region(region,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_in_region(region,
         GAME_VOXEL_CHUNK_WIDTH, GAME_VOXEL_CHUNK_DEPTH, "edge-feature",
         config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.read_block(
         GAME_VOXEL_CHUNK_WIDTH - 1, 43,
         GAME_VOXEL_CHUNK_DEPTH - 1, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_OAK_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LEAVES_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, region.load_chunk(0, 0,
         &generated_chunk));
     FT_ASSERT(!generated_chunk->is_block_player_modified(
@@ -594,21 +1141,21 @@ static uint32_t test_custom_biome_selector(uint64_t, int32_t, int32_t,
 static uint32_t test_edge_biome_selector(uint64_t, int32_t world_block_x,
     int32_t, uint32_t biome_count, void *) noexcept
 {
-    if (biome_count < 2U || world_block_x < TERRAIN_BIOME_ZONE_WIDTH)
+    if (biome_count < 2U || world_block_x < VOXEL_BIOME_ZONE_WIDTH)
         return (0U);
     return (1U);
 }
 
-FT_TEST(test_terrain_generation_blends_biome_edge_materials)
+FT_TEST(test_voxel_generation_blends_biome_edge_materials)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
+    voxel_generation_config config;
     uint32_t block_id;
     int32_t local_x;
     int32_t first_biome_surface_count;
     int32_t second_biome_surface_count;
 
-    terrain_default_generation_config(config);
+    voxel_default_generation_config(config);
     config.set_biome_count(2U);
     config.set_biome_selector(&test_edge_biome_selector, ft_nullptr);
     config.set_noise_scales(1, 1, 0);
@@ -619,15 +1166,15 @@ FT_TEST(test_terrain_generation_blends_biome_edge_materials)
     config.layers.set_enabled(FT_FALSE, FT_FALSE);
     config.set_biome_height_profile(0U, 40, 0, 2);
     config.set_biome_height_profile(1U, 40, 0, 2);
-    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_GRASS_BLOCK,
-        TERRAIN_GENERATOR_DIRT_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
-    config.set_biome_block_palette(1U, TERRAIN_GENERATOR_SAND_BLOCK,
-        TERRAIN_GENERATOR_CANYON_ROCK_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(0U, VOXEL_GENERATOR_GRASS_BLOCK,
+        VOXEL_GENERATOR_DIRT_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(1U, VOXEL_GENERATOR_SAND_BLOCK,
+        VOXEL_GENERATOR_CANYON_ROCK_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 0U, 0U);
     config.set_biome_decoration_policy(1U, FT_FALSE, FT_FALSE, 0U, 0U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_transition_settings(8, 35U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 112, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 112, 0,
         "biome-edge-materials", config));
     first_biome_surface_count = 0;
     second_biome_surface_count = 0;
@@ -636,9 +1183,9 @@ FT_TEST(test_terrain_generation_blends_biome_edge_materials)
     {
         FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(local_x, 40, 0,
             &block_id));
-        if (block_id == TERRAIN_GENERATOR_GRASS_BLOCK)
+        if (block_id == VOXEL_GENERATOR_GRASS_BLOCK)
             first_biome_surface_count += 1;
-        if (block_id == TERRAIN_GENERATOR_SAND_BLOCK)
+        if (block_id == VOXEL_GENERATOR_SAND_BLOCK)
             second_biome_surface_count += 1;
         local_x += 1;
     }
@@ -648,11 +1195,11 @@ FT_TEST(test_terrain_generation_blends_biome_edge_materials)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_controls_custom_flat_biome_and_water)
+FT_TEST(test_voxel_generation_config_controls_custom_flat_biome_and_water)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
@@ -660,27 +1207,27 @@ FT_TEST(test_terrain_generation_config_controls_custom_flat_biome_and_water)
     config.set_sea_level(20);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 40, 0, 0);
-    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_SAND_BLOCK,
-        TERRAIN_GENERATOR_SAND_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(0U, VOXEL_GENERATOR_SAND_BLOCK,
+        VOXEL_GENERATOR_SAND_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "custom-config", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 40, 0, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_SAND_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_SAND_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 41, 0, &block_id));
     FT_ASSERT_EQ(GAME_VOXEL_AIR_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_accepts_custom_feature_rule)
+FT_TEST(test_voxel_generation_config_accepts_custom_feature_rule)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
-    const terrain_tree_template &cactus = terrain_small_cactus_tree_template();
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
+    const voxel_tree_template &cactus = voxel_small_cactus_tree_template();
     uint32_t block_id;
     int32_t cactus_count = 0;
     int32_t x;
@@ -695,7 +1242,7 @@ FT_TEST(test_terrain_generation_config_accepts_custom_feature_rule)
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "feature-config", config));
     z = 0;
     while (z < GAME_VOXEL_CHUNK_DEPTH)
@@ -707,7 +1254,7 @@ FT_TEST(test_terrain_generation_config_accepts_custom_feature_rule)
             while (x < GAME_VOXEL_CHUNK_WIDTH)
             {
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z, &block_id));
-                if (block_id == TERRAIN_GENERATOR_CACTUS_BLOCK)
+                if (block_id == VOXEL_GENERATOR_CACTUS_BLOCK)
                     cactus_count += 1;
                 x += 1;
             }
@@ -720,37 +1267,106 @@ FT_TEST(test_terrain_generation_config_accepts_custom_feature_rule)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_can_select_custom_biome_slot)
+struct voxel_template_writer_trace
+{
+    const game_voxel_chunk *chunk;
+    int32_t call_count;
+};
+
+static int32_t test_voxel_template_writer(int32_t world_x, int32_t world_y,
+    int32_t world_z, uint32_t block_id, void *user_data) noexcept
+{
+    auto *trace = static_cast<voxel_template_writer_trace *>(user_data);
+    const int32_t local_z = trace->call_count * 4;
+    uint32_t before_callback;
+    uint32_t after_callback;
+    if (world_x != -17 || world_y != 91 || world_z != 16 + local_z
+        || block_id != VOXEL_GENERATOR_OAK_LOG_BLOCK
+        || trace->chunk->read_block(0, world_y, local_z, &before_callback) != FT_ERR_SUCCESS
+        || trace->chunk->read_block(1, world_y, local_z, &after_callback) != FT_ERR_SUCCESS
+        || before_callback != VOXEL_GENERATOR_CACTUS_BLOCK
+        || after_callback != VOXEL_GENERATOR_AIR_BLOCK)
+        return (FT_ERR_INVALID_OPERATION);
+    trace->call_count += 1;
+    return (FT_ERR_SUCCESS);
+}
+
+FT_TEST(test_voxel_structure_batch_preflights_and_preserves_cross_chunk_write_order)
+{
+    const voxel_tree_template_block blocks[] = {
+        {0, 0, 0, VOXEL_GENERATOR_CACTUS_BLOCK},
+        {-1, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK},
+        {1, 0, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK}
+    };
+    const voxel_tree_template structure = {blocks, 3U};
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    voxel_template_writer_trace trace = {&chunk, 0};
+    uint32_t block_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 90, 0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_features_enabled(FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_writer(test_voxel_template_writer, &trace));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.features[0].set_template(&structure));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.features[0].set_biome_range(-1, 0, GAME_VOXEL_CHUNK_HEIGHT));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.features[0].set_chance(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk,
+        -16, 16, "template-order", config, VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.write_generated_block(5, 91, 4, VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk,
+        -16, 16, "template-order", config, VOXEL_STAGE_STRUCTURES));
+    FT_ASSERT_EQ(4, trace.call_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(1, 91, 0, &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_OAK_LEAVES_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(4, 91, 0, &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(4, 91, 4, &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_AIR_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(3, 91, 4, &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_AIR_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(5, 91, 4, &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_STONE_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_can_select_custom_biome_slot)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(6U));
     config.set_biome_selector(&test_custom_biome_selector, ft_nullptr);
     config.set_biome_height_profile(5U, 50, 0, 0);
-    config.set_biome_block_palette(5U, TERRAIN_GENERATOR_CANYON_ROCK_BLOCK,
-        TERRAIN_GENERATOR_CANYON_ROCK_BLOCK, TERRAIN_GENERATOR_SLATE_BLOCK);
+    config.set_biome_block_palette(5U, VOXEL_GENERATOR_CANYON_ROCK_BLOCK,
+        VOXEL_GENERATOR_CANYON_ROCK_BLOCK, VOXEL_GENERATOR_SLATE_BLOCK);
     config.set_biome_decoration_policy(5U, FT_FALSE, FT_FALSE, 6U, 18U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
-    FT_ASSERT_EQ(5U, terrain_get_biome_index(config, 0, 0, "custom-biome"));
+    FT_ASSERT_EQ(5U, voxel_get_biome_index(config, 0, 0, "custom-biome"));
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "custom-biome", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 50, 0, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CANYON_ROCK_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CANYON_ROCK_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_snow_caps_follow_height_not_biome_identity)
+FT_TEST(test_voxel_snow_caps_follow_height_not_biome_identity)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint32_t block_id;
     int32_t local_y;
     ft_bool found_snow_cap;
@@ -759,13 +1375,15 @@ FT_TEST(test_terrain_snow_caps_follow_height_not_biome_identity)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 90, 0, 0);
-    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_STONE_BLOCK,
-        TERRAIN_GENERATOR_STONE_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(0U, VOXEL_GENERATOR_STONE_BLOCK,
+        VOXEL_GENERATOR_STONE_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_snow_caps_enabled(
+        0U, FT_TRUE));
     config.layers.set_enabled(FT_TRUE, FT_TRUE);
     config.layers.set_snowline(84);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "high-plains-snow", config));
     found_snow_cap = FT_FALSE;
     local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
@@ -786,11 +1404,37 @@ FT_TEST(test_terrain_snow_caps_follow_height_not_biome_identity)
     return (1);
 }
 
-FT_TEST(test_terrain_snow_caps_are_biome_configurable)
+FT_TEST(test_voxel_snow_cap_depth_stops_at_chunk_floor)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    uint32_t block_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 90, 0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_snow_caps_enabled(0U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_enabled(FT_FALSE, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_depths(0U, 0U, UINT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk,
+        0, 0, "wide-snow-cap", config, VOXEL_STAGE_BASE_TERRAIN
+        | VOXEL_STAGE_CAVES | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 0, 0, &block_id));
+    FT_ASSERT_EQ(config.layers.snow_cap_block_id, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(2, 0, 2, &block_id));
+    FT_ASSERT_EQ(config.layers.snow_cap_block_id, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_snow_caps_are_biome_configurable)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint32_t block_id;
     int32_t local_y;
 
@@ -798,14 +1442,14 @@ FT_TEST(test_terrain_snow_caps_are_biome_configurable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 90, 0, 0);
-    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_STONE_BLOCK,
-        TERRAIN_GENERATOR_STONE_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(0U, VOXEL_GENERATOR_STONE_BLOCK,
+        VOXEL_GENERATOR_STONE_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
     config.set_biome_snow_caps_enabled(0U, FT_FALSE);
     config.layers.set_enabled(FT_TRUE, FT_TRUE);
     config.layers.set_snowline(84);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "no-biome-snow", config));
     local_y = GAME_VOXEL_CHUNK_HEIGHT - 1;
     while (local_y >= 0)
@@ -816,47 +1460,47 @@ FT_TEST(test_terrain_snow_caps_are_biome_configurable)
             break ;
         local_y -= 1;
     }
-    FT_ASSERT_NEQ(TERRAIN_GENERATOR_SNOW_BLOCK, block_id);
+    FT_ASSERT_NEQ(VOXEL_GENERATOR_SNOW_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generation_accepts_custom_biome_without_tree_template)
+FT_TEST(test_voxel_generation_accepts_custom_biome_without_tree_template)
 {
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(6U));
     config.biomes[5].set_decoration_policy(FT_FALSE, FT_TRUE, 6U, 18U);
     config.set_biome_tree_template_override(5U, ft_nullptr);
-    FT_ASSERT_EQ(FT_TRUE, terrain_generation_config_is_valid(config));
+    FT_ASSERT_EQ(FT_TRUE, voxel_generation_config_is_valid(config));
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_deserializes_standalone_override_owned)
+FT_TEST(test_voxel_generation_config_deserializes_standalone_override_owned)
 {
-    terrain_generation_config source_config;
-    terrain_generation_config loaded_config;
-    terrain_tree_template_block template_blocks[2];
-    terrain_tree_template tree_template;
+    voxel_generation_config source_config;
+    voxel_generation_config loaded_config;
+    voxel_tree_template_block template_blocks[2];
+    voxel_tree_template tree_template;
     ft_byte_buffer buffer;
     uint32_t index;
 
-    terrain_default_generation_config(source_config);
-    terrain_default_generation_config(loaded_config);
-    template_blocks[0] = {0, 0, 0, TERRAIN_GENERATOR_OAK_LOG_BLOCK};
-    template_blocks[1] = {0, 1, 0, TERRAIN_GENERATOR_OAK_LEAVES_BLOCK};
+    voxel_default_generation_config(source_config);
+    voxel_default_generation_config(loaded_config);
+    template_blocks[0] = {0, 0, 0, VOXEL_GENERATOR_OAK_LOG_BLOCK};
+    template_blocks[1] = {0, 1, 0, VOXEL_GENERATOR_OAK_LEAVES_BLOCK};
     tree_template.blocks = template_blocks;
     tree_template.block_count = 2U;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_config
         .set_biome_tree_template_override(0U, &tree_template));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_serialize(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(
         source_config, buffer));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_deserialize(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(
         loaded_config, buffer));
-    template_blocks[0].block_id = TERRAIN_GENERATOR_CACTUS_BLOCK;
-    template_blocks[1].block_id = TERRAIN_GENERATOR_CACTUS_BLOCK;
+    template_blocks[0].block_id = VOXEL_GENERATOR_CACTUS_BLOCK;
+    template_blocks[1].block_id = VOXEL_GENERATOR_CACTUS_BLOCK;
     FT_ASSERT_EQ(&loaded_config.tree_templates[loaded_config.tree_template_count
         - 1U], loaded_config.biomes[0].tree_template);
     index = 0U;
@@ -871,51 +1515,94 @@ FT_TEST(test_terrain_generation_config_deserializes_standalone_override_owned)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_template_removal_repairs_features)
+FT_TEST(test_voxel_generation_config_template_removal_repairs_features)
 {
-    terrain_generation_config config;
-    terrain_tree_template first_template;
-    terrain_tree_template second_template;
+    voxel_generation_config config;
+    voxel_tree_template first_template;
+    voxel_tree_template second_template;
     uint32_t first_index;
     uint32_t second_index;
 
-    terrain_default_generation_config(config);
-    first_template = terrain_small_oak_tree_template();
-    second_template = terrain_small_cactus_tree_template();
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_add_tree_template(
+    voxel_default_generation_config(config);
+    first_template = voxel_small_oak_tree_template();
+    second_template = voxel_small_cactus_tree_template();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_add_tree_template(
         config, first_template, &first_index));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_add_tree_template(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_add_tree_template(
         config, second_template, &second_index));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.features[0].set_template(
         &config.tree_templates[second_index]));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature_count(1U));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_remove_tree_template(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_remove_tree_template(
         config, first_index));
     FT_ASSERT_EQ(&config.tree_templates[first_index],
         config.features[0].template_data);
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_CACTUS_BLOCK,
+    FT_ASSERT_EQ(VOXEL_GENERATOR_CACTUS_BLOCK,
         config.features[0].template_data->blocks[0].block_id);
     FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION,
-        terrain_generation_config_remove_tree_template(config, first_index));
-    terrain_feature_rule cleared_feature;
+        voxel_generation_config_remove_tree_template(config, first_index));
+    voxel_feature_rule cleared_feature;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, cleared_feature.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U, cleared_feature));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_clear_tree_templates(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_clear_tree_templates(
         config));
     FT_ASSERT_EQ(ft_nullptr, config.features[0].template_data);
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
+FT_TEST(test_voxel_remove_first_template_preserves_full_table_references)
 {
-    terrain_generation_config config;
-    terrain_tree_template tree_template;
-    terrain_feature_rule feature;
+    voxel_generation_config config;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    const voxel_tree_template_block blocks[] = {{-7, 15, 23, VOXEL_GENERATOR_CACTUS_BLOCK}};
+    const voxel_tree_template external = {blocks, 1U};
+    uint32_t index = 0U;
+    while (config.tree_template_count < VOXEL_MAX_TREE_TEMPLATES)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS,
+            voxel_generation_config_add_tree_template(config, external, &index));
+    }
+    const uint32_t last = VOXEL_MAX_TREE_TEMPLATES - 1U;
+    FT_ASSERT_EQ(last, index);
+    config.biomes[0].tree_template = &config.tree_templates[0];
+    config.biomes[1].tree_template = &config.tree_templates[last];
+    config.biomes[2].tree_template = &external;
+    config.biomes[1].tree_template_count = 3U;
+    config.biomes[1].tree_template_indices[0] = last;
+    config.biomes[1].tree_template_indices[1] = 0U;
+    config.biomes[1].tree_template_indices[2] = 1U;
+    config.features[0].template_data = &config.tree_templates[last];
+    config.features[1].template_data = &external;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_remove_tree_template(config, 0U));
+    FT_ASSERT_EQ(last, config.tree_template_count);
+    FT_ASSERT_EQ(ft_nullptr, config.biomes[0].tree_template);
+    FT_ASSERT_EQ(&config.tree_templates[last - 1U], config.biomes[1].tree_template);
+    FT_ASSERT_EQ(&config.tree_templates[last - 1U], config.features[0].template_data);
+    FT_ASSERT_EQ(&external, config.biomes[2].tree_template);
+    FT_ASSERT_EQ(&external, config.features[1].template_data);
+    FT_ASSERT_EQ(2U, config.biomes[1].tree_template_count);
+    FT_ASSERT_EQ(last - 1U, config.biomes[1].tree_template_indices[0]);
+    FT_ASSERT_EQ(0U, config.biomes[1].tree_template_indices[1]);
+    FT_ASSERT_EQ(&config.tree_template_blocks[last - 1U][0],
+        config.tree_templates[last - 1U].blocks);
+    FT_ASSERT_EQ(FT_TRUE, voxel_tree_templates_equal(
+        external, config.tree_templates[last - 1U]));
+    FT_ASSERT_EQ(ft_nullptr, config.tree_templates[last].blocks);
+    FT_ASSERT_EQ(0U, config.tree_templates[last].block_count);
+    FT_ASSERT_EQ(0, config.tree_template_blocks[last][0].offset_x);
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_template_setters_reuse_owned_slots)
+{
+    voxel_generation_config config;
+    voxel_tree_template tree_template;
+    voxel_feature_rule feature;
     uint32_t initial_template_count;
     uint32_t index;
 
-    terrain_default_generation_config(config);
-    tree_template = terrain_small_cactus_tree_template();
+    voxel_default_generation_config(config);
+    tree_template = voxel_small_cactus_tree_template();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
         0U, &tree_template));
     initial_template_count = config.tree_template_count;
@@ -938,7 +1625,7 @@ FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
     index = 0U;
     while (index < 65U)
     {
-        terrain_feature_rule cleared_feature;
+        voxel_feature_rule cleared_feature;
 
         FT_ASSERT_EQ(FT_ERR_SUCCESS, cleared_feature.initialize());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature(0U,
@@ -952,15 +1639,15 @@ FT_TEST(test_terrain_generation_config_template_setters_reuse_owned_slots)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_clearing_shared_templates_detaches_only)
+FT_TEST(test_voxel_generation_config_clearing_shared_templates_detaches_only)
 {
-    terrain_generation_config config;
-    terrain_tree_template tree_template;
-    terrain_feature_rule cleared_feature;
+    voxel_generation_config config;
+    voxel_tree_template tree_template;
+    voxel_feature_rule cleared_feature;
     uint32_t initial_template_count;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.initialize());
-    tree_template = terrain_small_cactus_tree_template();
+    tree_template = voxel_small_cactus_tree_template();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(
         0U, &tree_template));
     config.biomes[1].tree_template = config.biomes[0].tree_template;
@@ -988,13 +1675,13 @@ FT_TEST(test_terrain_generation_config_clearing_shared_templates_detaches_only)
     return (1);
 }
 
-FT_TEST(test_terrain_generate_chunk_clears_previous_voxel_data)
+FT_TEST(test_voxel_generate_chunk_clears_previous_voxel_data)
 {
     game_voxel_chunk regenerated_chunk;
     game_voxel_chunk fresh_chunk;
-    terrain_generation_config high_config;
-    terrain_generation_config low_config;
-    terrain_default_generation_config(high_config);
+    voxel_generation_config high_config;
+    voxel_generation_config low_config;
+    voxel_default_generation_config(high_config);
     low_config.initialize(high_config);
     uint32_t regenerated_block_id;
     uint32_t fresh_block_id;
@@ -1012,11 +1699,11 @@ FT_TEST(test_terrain_generate_chunk_clears_previous_voxel_data)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, regenerated_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, fresh_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(regenerated_chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(regenerated_chunk,
         0, 0, "regeneration-test", high_config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(regenerated_chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(regenerated_chunk,
         0, 0, "regeneration-test", low_config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(fresh_chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(fresh_chunk,
         0, 0, "regeneration-test", low_config));
     local_z = 0;
     while (local_z < GAME_VOXEL_CHUNK_DEPTH)
@@ -1043,11 +1730,11 @@ FT_TEST(test_terrain_generate_chunk_clears_previous_voxel_data)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_can_make_plains_uneven)
+FT_TEST(test_voxel_generation_config_can_make_plains_uneven)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     int32_t x;
     int32_t z;
     int32_t surface_height;
@@ -1060,7 +1747,7 @@ FT_TEST(test_terrain_generation_config_can_make_plains_uneven)
     config.set_biome_height_profile(0U, 40, 12, 0);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "uneven-plains", config));
     z = 0;
     while (z < GAME_VOXEL_CHUNK_DEPTH)
@@ -1068,7 +1755,7 @@ FT_TEST(test_terrain_generation_config_can_make_plains_uneven)
         x = 0;
         while (x < GAME_VOXEL_CHUNK_WIDTH)
         {
-            surface_height = test_terrain_surface_height(chunk, x, z);
+            surface_height = test_voxel_surface_height(chunk, x, z);
             FT_ASSERT_NEQ(-1, surface_height);
             if (surface_height < minimum_height)
                 minimum_height = surface_height;
@@ -1083,28 +1770,28 @@ FT_TEST(test_terrain_generation_config_can_make_plains_uneven)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_rejects_invalid_ranges)
+FT_TEST(test_voxel_generation_config_rejects_invalid_ranges)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
 
     config.biome_count = 0U;
-    FT_ASSERT_EQ(FT_FALSE, terrain_generation_config_is_valid(config));
+    FT_ASSERT_EQ(FT_FALSE, voxel_generation_config_is_valid(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generate_chunk(chunk, 0, 0,
         "invalid-config", config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_lifecycle_and_mutator_methods)
+FT_TEST(test_voxel_generation_config_lifecycle_and_mutator_methods)
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
 
     FT_ASSERT_EQ(FT_FALSE, config.is_initialised());
     FT_ASSERT_EQ(FT_ERR_NOT_INITIALISED, config.set_sea_level(68));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     FT_ASSERT_EQ(FT_TRUE, config.is_initialised());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(68));
     FT_ASSERT_EQ(68, config.sea_level);
@@ -1116,15 +1803,15 @@ FT_TEST(test_terrain_generation_config_lifecycle_and_mutator_methods)
     return (1);
 }
 
-FT_TEST(test_terrain_nested_config_classes_have_lifecycle_contracts)
+FT_TEST(test_voxel_nested_config_classes_have_lifecycle_contracts)
 {
-    terrain_biome_definition biome;
-    terrain_feature_rule feature;
-    terrain_ore_rule ore;
-    terrain_underground_structure_config underground;
-    terrain_fluid_config fluids;
-    terrain_layer_config layers;
-    terrain_biome_profile profile;
+    voxel_biome_definition biome;
+    voxel_feature_rule feature;
+    voxel_ore_rule ore;
+    voxel_underground_structure_config underground;
+    voxel_fluid_config fluids;
+    voxel_layer_config layers;
+    voxel_biome_profile profile;
 
     profile.surface_height = 80;
     profile.height_variation = 4;
@@ -1170,9 +1857,9 @@ FT_TEST(test_terrain_nested_config_classes_have_lifecycle_contracts)
     return (1);
 }
 
-FT_TEST(test_terrain_caves_are_rounded_and_can_reach_surface)
+FT_TEST(test_voxel_caves_are_rounded_and_can_reach_surface)
 {
-    terrain_generation_config config;
+    voxel_generation_config config;
     game_voxel_chunk chunk;
     uint32_t block_id;
     uint32_t interior_air_count;
@@ -1181,13 +1868,13 @@ FT_TEST(test_terrain_caves_are_rounded_and_can_reach_surface)
     int32_t local_y;
     int32_t local_z;
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(
         0U, 80, 0, 0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_block_palette(0U,
-        TERRAIN_GENERATOR_STONE_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK,
-        TERRAIN_GENERATOR_STONE_BLOCK));
+        VOXEL_GENERATOR_STONE_BLOCK, VOXEL_GENERATOR_STONE_BLOCK,
+        VOXEL_GENERATOR_STONE_BLOCK));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
         FT_FALSE, FT_FALSE, 0U, 0U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.layers.set_enabled(FT_FALSE,
@@ -1207,7 +1894,7 @@ FT_TEST(test_terrain_caves_are_rounded_and_can_reach_surface)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         config.underground_structures.set_cavern_rooms(FT_TRUE, 100U, 5U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
         "rounded-caves", config));
 
     interior_air_count = 0U;
@@ -1246,43 +1933,556 @@ FT_TEST(test_terrain_caves_are_rounded_and_can_reach_surface)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_context_freezes_world_policy)
+FT_TEST(test_voxel_wide_cave_rooms_preserve_seeded_cell_boundaries)
+{
+    constexpr uint32_t BLOCK_COUNT = GAME_VOXEL_CHUNK_WIDTH
+        * GAME_VOXEL_CHUNK_HEIGHT * GAME_VOXEL_CHUNK_DEPTH;
+    constexpr uint32_t STAGES = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES;
+    const int32_t origins[][2] = {{-13, -25}, {-1, 11}, {23, 5}};
+    const uint64_t expected_checksums[] = {
+        UINT64_C(18248982849578639360), UINT64_C(18248982849578639360),
+        UINT64_C(8530103735322649227)
+    };
+    voxel_generation_config config;
+    game_voxel_chunk chunk;
+    uint32_t blocks[BLOCK_COUNT];
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 255, 0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_mountain_ridges_enabled(FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_erosion_enabled(FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(FT_FALSE, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_chances(0U, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_height_range(-16, 240));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_cavern_rooms(FT_TRUE, 100U, 32U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_cave_entrances(100U, 8U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    uint32_t origin_index = 0U;
+    while (origin_index < sizeof(expected_checksums) / sizeof(expected_checksums[0]))
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk,
+            origins[origin_index][0], origins[origin_index][1],
+            "wide-cave-cell-window", config, STAGES));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.copy_blocks(blocks, BLOCK_COUNT));
+        uint32_t block_index = 0U;
+        uint64_t checksum = 0U;
+        while (block_index < BLOCK_COUNT)
+        {
+            checksum = checksum * 31U + blocks[block_index];
+            block_index += 1U;
+        }
+        FT_ASSERT_EQ(expected_checksums[origin_index], checksum);
+        origin_index += 1U;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+static int32_t test_voxel_unused_region_writer(int32_t, int32_t, int32_t,
+    uint32_t, void *) noexcept
+{
+    return (FT_ERR_INVALID_OPERATION);
+}
+
+FT_TEST(test_voxel_context_signatures_match_direct_hashes_for_each_policy)
+{
+    voxel_generation_config config;
+    voxel_generation_context context;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    const voxel_tree_template_block blocks[] = {
+        {-2, 4, -9, VOXEL_GENERATOR_CACTUS_BLOCK}
+    };
+    const voxel_tree_template tree_template = {blocks, 1U};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_tree_template_override(0U, &tree_template));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_features_enabled(FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_writer(
+        test_voxel_unused_region_writer, ft_nullptr));
+    const uint32_t region_signature = voxel_generation_config_signature(config);
+    uint32_t policy = 0U;
+    while (policy < 4U)
+    {
+        voxel_cross_chunk_block_writer writer = ft_nullptr;
+        if ((policy & 2U) != 0U)
+            writer = test_voxel_unused_region_writer;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_features_enabled(
+            static_cast<ft_bool>(policy & 1U)));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_writer(writer, ft_nullptr));
+        const uint32_t direct_signature = voxel_generation_config_signature(config);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, context.initialize(config));
+        FT_ASSERT_EQ(direct_signature, context.configuration_signature());
+        FT_ASSERT_EQ(region_signature, context.region_configuration_signature());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, context.destroy());
+        ++policy;
+    }
+    return (1);
+}
+
+FT_TEST(test_voxel_region_context_preserves_generated_chunk_signature)
+{
+    game_voxel_region region;
+    voxel_generation_config config;
+    voxel_generation_context context;
+    game_voxel_chunk *chunk;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_features_enabled(FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_writer(
+        test_voxel_unused_region_writer, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_context_initialize(context, config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_cross_chunk_features_enabled(FT_TRUE));
+    const uint32_t expected_signature = voxel_generation_config_signature(config);
+    FT_ASSERT_NEQ(expected_signature, context.configuration_signature());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, region.initialize(0, 0, "."));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_in_region_with_context(region,
+        GAME_VOXEL_CHUNK_WIDTH, GAME_VOXEL_CHUNK_DEPTH, "region-context", context));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, region.load_chunk(1, 1, &chunk));
+    FT_ASSERT_EQ(expected_signature, chunk->get_generation_metadata().configuration_signature);
+    FT_ASSERT_EQ(FT_FALSE, context.config().allow_cross_chunk_features);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, region.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_context_freezes_world_policy)
 {
     game_voxel_chunk chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
-    terrain_generation_context context;
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
+    voxel_generation_context context;
     uint32_t block_id;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(0));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 90, 0, 0);
-    config.set_biome_block_palette(0U, TERRAIN_GENERATOR_STONE_BLOCK,
-        TERRAIN_GENERATOR_STONE_BLOCK, TERRAIN_GENERATOR_STONE_BLOCK);
+    config.set_biome_block_palette(0U, VOXEL_GENERATOR_STONE_BLOCK,
+        VOXEL_GENERATOR_STONE_BLOCK, VOXEL_GENERATOR_STONE_BLOCK);
     config.set_biome_decoration_policy(0U, FT_FALSE, FT_FALSE, 6U, 18U);
+    config.set_biome_snow_caps_enabled(0U, FT_TRUE);
     config.layers.enable_snow_caps = FT_TRUE;
     config.layers.snow_cap_minimum_height = 84;
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_context_initialize(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_context_initialize(
         context, config));
     config.set_biome_height_profile(0U, 20, 0, 0);
     config.layers.set_enabled(FT_TRUE, FT_FALSE);
-    FT_ASSERT_EQ(FT_TRUE, terrain_generation_context_is_initialised(context));
+    FT_ASSERT_EQ(FT_TRUE, voxel_generation_context_is_initialised(context));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk_with_context(chunk,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_context(chunk,
         0, 0, "frozen-policy", context));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(0, 90, 0, &block_id));
-    FT_ASSERT_EQ(TERRAIN_GENERATOR_SNOW_BLOCK, block_id);
+    FT_ASSERT_EQ(VOXEL_GENERATOR_SNOW_BLOCK, block_id);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_file_round_trip)
+FT_TEST(test_voxel_generation_config_truncated_file_keeps_existing_config)
 {
-    const char *file_path = "terrain_generation_config_test.bin";
-    terrain_generation_config source_config;
-    terrain_generation_config loaded_config;
-    terrain_default_generation_config(source_config);
+    const char *path = "voxel_truncated_generation_config_test.bin";
+    voxel_generation_config config;
+    ft_byte_buffer bytes;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bytes.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(config, bytes));
+    FT_ASSERT(bytes.size() > 1U);
+    const ft_size_t length = bytes.size() - 1U;
+    FILE *file = std::fopen(path, "wb");
+    FT_ASSERT(file != ft_nullptr);
+    const ft_size_t written = std::fwrite(bytes.data(), 1U,
+        FT_UINT64_TO_NATIVE_SIZE_CAST(length), file);
+    const int32_t closed = std::fclose(file);
+    FT_ASSERT_EQ(length, written);
+    FT_ASSERT_EQ(0, closed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(64));
+    const uint32_t signature = voxel_generation_config_signature(config);
+    const int32_t result = voxel_generation_config_load_file(path, config);
+    (void)std::remove(path);
+    FT_ASSERT_NEQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(signature, voxel_generation_config_signature(config));
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_biome_limit_fields_on_short_buffers)
+{
+    constexpr ft_size_t SECOND_LIMIT_START = 42U;
+    constexpr ft_size_t LIMIT_RECORD_SIZE = 9U;
+    voxel_generation_config source;
+    voxel_generation_config destination;
+    ft_byte_buffer encoded;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(destination));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.set_sea_level(41));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(source, encoded));
+
+    ft_size_t partial = 0U;
+    while (partial < LIMIT_RECORD_SIZE)
+    {
+        const ft_size_t capacity = SECOND_LIMIT_START + partial;
+        const ft_size_t complete_fields = SECOND_LIMIT_START + (partial / 4U) * 4U;
+        ft_byte_buffer fixed;
+        ft_byte_buffer truncated;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, fixed.initialize(capacity, FT_TRUE));
+        FT_ASSERT_EQ(FT_ERR_FULL, voxel_generation_config_serialize(source, fixed));
+        FT_ASSERT_EQ(complete_fields, fixed.size());
+        FT_ASSERT_EQ(0, ft_memcmp(encoded.data(), fixed.data(), complete_fields));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded.data(), capacity));
+        FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, voxel_generation_config_deserialize(destination, truncated));
+        FT_ASSERT_EQ(complete_fields, truncated.read_position());
+        FT_ASSERT_EQ(41, destination.sea_level);
+        ++partial;
+    }
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_short_block_name_keeps_length_field)
+{
+    constexpr ft_size_t FIRST_NAME_START = 201U;
+    voxel_generation_config config;
+    ft_byte_buffer complete;
+    ft_byte_buffer fixed;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, complete.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(config, complete));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, fixed.initialize(FIRST_NAME_START + 2U, FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_FULL, voxel_generation_config_serialize(config, fixed));
+    FT_ASSERT_EQ(FIRST_NAME_START, fixed.size());
+    FT_ASSERT_EQ(0, ft_memcmp(complete.data(), fixed.data(), FIRST_NAME_START));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, voxel_generation_config_deserialize(config, fixed));
+    FT_ASSERT_EQ(FIRST_NAME_START, fixed.read_position());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_short_biome_fields_preserve_cursor)
+{
+    constexpr ft_size_t PROFILE_START = 185U;
+    constexpr ft_size_t PROFILE_SIZE = 12U;
+    voxel_generation_config config;
+    ft_byte_buffer encoded;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(config, encoded));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.set_read_position(PROFILE_START + PROFILE_SIZE));
+    uint32_t name_index = 0U;
+    while (name_index < 3U)
+    {
+        uint32_t length;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.read_u32_le(&length));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(length));
+        ++name_index;
+    }
+    const ft_size_t decoration_start = encoded.read_position();
+    constexpr ft_size_t TERRAIN_TAIL_SIZE = 17U;
+    const ft_size_t starts[] = {PROFILE_START, decoration_start, encoded.size() - TERRAIN_TAIL_SIZE};
+    const ft_size_t partial[] = {7U, 6U, 15U};
+    const ft_size_t complete_widths[] = {4U, 4U, 12U};
+    uint32_t group = 0U;
+    while (group < 3U)
+    {
+        const ft_size_t capacity = starts[group] + partial[group];
+        const ft_size_t complete = starts[group] + complete_widths[group];
+        ft_byte_buffer fixed;
+        ft_byte_buffer truncated;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, fixed.initialize(capacity, FT_TRUE));
+        FT_ASSERT_EQ(FT_ERR_FULL, voxel_generation_config_serialize(config, fixed));
+        FT_ASSERT_EQ(complete, fixed.size());
+        FT_ASSERT_EQ(0, ft_memcmp(encoded.data(), fixed.data(), complete));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded.data(), capacity));
+        FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, voxel_generation_config_deserialize(config, truncated));
+        FT_ASSERT_EQ(complete, truncated.read_position());
+        ++group;
+    }
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_loads_legacy_ore_records)
+{
+    constexpr ft_size_t ORE_BASE_SIZE = 18U;
+    constexpr ft_size_t ORE_RANGE_SIZE = 24U;
+    constexpr ft_size_t BEFORE_OPTIONAL_FLUIDS = 73U;
+    constexpr ft_size_t OPTIONAL_FLUIDS_SIZE = 33U;
+    voxel_generation_config source;
+    voxel_generation_config restored;
+    ft_byte_buffer current;
+    ft_byte_buffer legacy;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(source));
+    const uint32_t default_river_depth = source.fluids.surface_river_depth;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.fluids.set_surface_water_depths(5U, 6U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.fluids.set_underground_lake_settings(9U, 12, 84, 4U, 2U, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.ores[0].set_range(4, 30));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.ores[0].set_depth_range(10, 20));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, current.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(source, current));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, current));
+    FT_ASSERT_EQ(10, restored.ores[0].minimum_depth);
+    FT_ASSERT_EQ(20, restored.ores[0].maximum_depth);
+    FT_ASSERT_EQ(5U, restored.fluids.surface_river_depth);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, current.reset_read_position());
+
+    const char *first_name = voxel_get_block_name(source.ores[0].block_id);
+    FT_ASSERT(first_name != ft_nullptr);
+    const ft_size_t name_offset = current.find(first_name, ft_strlen(first_name));
+    FT_ASSERT(name_offset >= 8U && name_offset < current.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, current.set_read_position(name_offset - 8U));
+    uint32_t ore_count;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, current.read_u32_le(&ore_count));
+    FT_ASSERT_EQ(source.ore_rule_count, ore_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data(), current.read_position()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.overwrite_u32_le(4U, 9U));
+    uint32_t index = 0U;
+    while (index < VOXEL_MAX_ORE_RULES)
+    {
+        const ft_size_t start = current.read_position();
+        uint32_t length;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, current.read_u32_le(&length));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, current.skip(length + ORE_BASE_SIZE));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data() + start,
+            current.read_position() - start));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, current.skip(ORE_RANGE_SIZE));
+        ++index;
+    }
+    FT_ASSERT(current.remaining() > BEFORE_OPTIONAL_FLUIDS + OPTIONAL_FLUIDS_SIZE);
+    const ft_size_t surface_depths_start = current.read_position() + BEFORE_OPTIONAL_FLUIDS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data() + current.read_position(),
+        BEFORE_OPTIONAL_FLUIDS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, current.skip(BEFORE_OPTIONAL_FLUIDS + OPTIONAL_FLUIDS_SIZE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data() + current.read_position(),
+        current.remaining()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, legacy));
+    FT_ASSERT_EQ(legacy.size(), legacy.read_position());
+    FT_ASSERT_EQ(4, restored.ores[0].minimum_height);
+    FT_ASSERT_EQ(30, restored.ores[0].maximum_height);
+    FT_ASSERT_EQ(4, restored.ores[0].minimum_depth);
+    FT_ASSERT_EQ(30, restored.ores[0].maximum_depth);
+    FT_ASSERT_EQ(source.layers.snow_cap_block_id, restored.layers.snow_cap_block_id);
+
+    // v7 and v8 predate the per-biome size overrides in the v9 fixture.
+    constexpr ft_size_t AFTER_NOISE = 24U;
+    constexpr ft_size_t AFTER_SIZE_DEFAULTS = 32U;
+    constexpr ft_size_t AFTER_SIZE_OVERRIDES = 177U;
+    uint32_t version = 7U;
+    while (version < 9U)
+    {
+        ft_byte_buffer older;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, older.initialize());
+        ft_size_t prefix = AFTER_NOISE;
+        if (version == 8U)
+            prefix = AFTER_SIZE_DEFAULTS;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, older.append(legacy.data(), prefix));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, older.overwrite_u32_le(4U, version));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, older.append(legacy.data() + AFTER_SIZE_OVERRIDES,
+            legacy.size() - AFTER_SIZE_OVERRIDES));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, older));
+        FT_ASSERT_EQ(older.size(), older.read_position());
+        FT_ASSERT_EQ(source.large_noise_scale, restored.large_noise_scale);
+        FT_ASSERT_EQ(version == 8U, restored.enable_biome_size_control);
+        ++version;
+    }
+
+    constexpr ft_size_t SURFACE_DEPTHS_SIZE = 8U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.clear());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data(), surface_depths_start));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.overwrite_u32_le(4U, 11U));
+    const ft_size_t underground_lakes_start = surface_depths_start + SURFACE_DEPTHS_SIZE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data() + underground_lakes_start,
+        current.size() - underground_lakes_start));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, legacy));
+    FT_ASSERT_EQ(legacy.size(), legacy.read_position());
+    FT_ASSERT_EQ(10, restored.ores[0].minimum_depth);
+    FT_ASSERT_EQ(default_river_depth, restored.fluids.surface_river_depth);
+    FT_ASSERT_EQ(4U, restored.fluids.underground_lake_depth);
+    FT_ASSERT_EQ(3U, restored.fluids.underground_lake_roof_thickness);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.clear());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, legacy.append(current.data(), underground_lakes_start + 3U));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, voxel_generation_config_deserialize(restored, legacy));
+    FT_ASSERT_EQ(underground_lakes_start + 1U, legacy.read_position());
+    FT_ASSERT_EQ(default_river_depth, restored.fluids.surface_river_depth);
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_feature_rules_keep_optional_templates)
+{
+    voxel_generation_config source;
+    voxel_generation_config restored;
+    ft_byte_buffer encoded;
+    const voxel_tree_template &tree = voxel_small_cactus_tree_template();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.set_feature_count(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[0].set_biome_range(-1, -3, 91));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[0].set_chance(37U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[0].set_requires_dry_land(FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[0].set_template(ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[1].set_biome_range(0, 13, 57));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[1].set_chance(63U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[1].set_template(&tree));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(source, encoded));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, encoded));
+    FT_ASSERT_EQ(2U, restored.feature_count);
+    FT_ASSERT_EQ(-1, restored.features[0].biome_index);
+    FT_ASSERT_EQ(-3, restored.features[0].minimum_height);
+    FT_ASSERT_EQ(91, restored.features[0].maximum_height);
+    FT_ASSERT_EQ(37U, restored.features[0].chance_percent);
+    FT_ASSERT_EQ(FT_TRUE, restored.features[0].requires_dry_land);
+    FT_ASSERT(restored.features[0].template_data == ft_nullptr);
+    FT_ASSERT_EQ(0, restored.features[1].biome_index);
+    FT_ASSERT_EQ(63U, restored.features[1].chance_percent);
+    FT_ASSERT(restored.features[1].template_data != ft_nullptr);
+    uint32_t matching_index = 0U;
+    while (matching_index < restored.tree_template_count
+        && restored.features[1].template_data != &restored.tree_templates[matching_index])
+        ++matching_index;
+    FT_ASSERT(matching_index < restored.tree_template_count);
+    FT_ASSERT_EQ(tree.block_count, restored.features[1].template_data->block_count);
+    FT_ASSERT_EQ(tree.blocks[0].block_id, restored.features[1].template_data->blocks[0].block_id);
+    FT_ASSERT_EQ(source.ore_rule_count, restored.ore_rule_count);
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_reuses_saved_feature_templates)
+{
+    constexpr voxel_tree_template_block SHARED_BLOCKS[] = {{-3, 2, 5, VOXEL_GENERATOR_CACTUS_BLOCK}};
+    const voxel_tree_template SHARED_TREE = {SHARED_BLOCKS, 1U};
+    const voxel_tree_template &replacement = voxel_small_oak_tree_template();
+    voxel_generation_config source;
+    voxel_generation_config restored;
+    ft_byte_buffer encoded;
+    uint32_t template_index;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_add_tree_template(source, SHARED_TREE, &template_index));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.set_feature_count(2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[0].set_template(&source.tree_templates[template_index]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.features[1].set_template(&source.tree_templates[template_index]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.biomes[0].set_tree_template_override(&source.tree_templates[template_index]));
+    while (source.tree_template_count < VOXEL_MAX_TREE_TEMPLATES)
+    {
+        uint32_t filler_index;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_add_tree_template(source, replacement, &filler_index));
+    }
+    const uint32_t signature = voxel_generation_config_signature(source);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(source, encoded));
+    const ft_size_t encoded_size = encoded.size();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, encoded));
+    FT_ASSERT_EQ(VOXEL_MAX_TREE_TEMPLATES, restored.tree_template_count);
+    FT_ASSERT_EQ(signature, voxel_generation_config_signature(restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(restored, encoded));
+    FT_ASSERT_EQ(encoded_size, encoded.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_deserialize(restored, encoded));
+    FT_ASSERT_EQ(signature, voxel_generation_config_signature(restored));
+    FT_ASSERT(restored.features[1].template_data == restored.biomes[0].tree_template);
+    FT_ASSERT(restored.features[0].template_data == restored.features[1].template_data);
+
+    voxel_feature_rule changed;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, changed.initialize(restored.features[0]));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, changed.set_template(&replacement));
+    FT_ASSERT_EQ(FT_ERR_FULL, restored.set_feature(0U, changed));
+    FT_ASSERT_EQ(signature, voxel_generation_config_signature(restored));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_remove_tree_template(restored, VOXEL_MAX_TREE_TEMPLATES - 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.set_feature(0U, changed));
+    FT_ASSERT_EQ(replacement.block_count, restored.features[0].template_data->block_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_remove_tree_template(restored, VOXEL_MAX_TREE_TEMPLATES - 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, restored.set_biome_tree_template_override(0U, &replacement));
+    FT_ASSERT_EQ(replacement.block_count, restored.biomes[0].tree_template->block_count);
+    FT_ASSERT_EQ(1U, restored.features[1].template_data->block_count);
+    FT_ASSERT_EQ(-3, restored.features[1].template_data->blocks[0].offset_x);
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_invalid_header_keeps_destination)
+{
+    voxel_generation_config config;
+    ft_byte_buffer encoded;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_size_range_for_biome(0U, 32, 128));
+    const uint64_t signature = voxel_generation_config_signature(config);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.append_u32_le(0U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_deserialize(config, encoded));
+    FT_ASSERT_EQ(sizeof(uint32_t), encoded.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.overwrite_u32_le(0U, UINT32_C(0x54434F4E)));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_deserialize(config, encoded));
+    FT_ASSERT_EQ(sizeof(uint32_t), encoded.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.append_u32_le(UINT32_MAX));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_deserialize(config, encoded));
+    FT_ASSERT_EQ(2U * sizeof(uint32_t), encoded.read_position());
+    FT_ASSERT_EQ(signature, voxel_generation_config_signature(config));
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_template_index_errors_keep_field_cursor)
+{
+    voxel_generation_config config;
+    ft_byte_buffer encoded;
+    ft_byte_buffer truncated;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT(config.tree_template_count >= 3U);
+    config.biomes[0].tree_template_count = 3U;
+    config.biomes[0].tree_template_indices[0] = 2U;
+    config.biomes[0].tree_template_indices[1] = 0U;
+    config.biomes[0].tree_template_indices[2] = 1U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_serialize(config, encoded));
+    constexpr ft_size_t FIRST_BIOME = 185U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.set_read_position(FIRST_BIOME));
+    uint32_t index = 0U;
+    while (index < VOXEL_MAX_CUSTOM_BIOMES)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(12U));
+        uint32_t palette_index = 0U;
+        while (palette_index < 3U)
+        {
+            uint32_t length;
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.read_u32_le(&length));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(length));
+            ++palette_index;
+        }
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(12U));
+        ++index;
+    }
+    uint32_t templates;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.read_u32_le(&templates));
+    FT_ASSERT_EQ(config.tree_template_count, templates);
+    index = 0U;
+    while (index < templates)
+    {
+        uint32_t blocks;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.read_u32_le(&blocks));
+        uint32_t block = 0U;
+        while (block < blocks)
+        {
+            uint32_t length;
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(12U));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.read_u32_le(&length));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.skip(length));
+            ++block;
+        }
+        ++index;
+    }
+    const ft_size_t first_index = encoded.read_position() + sizeof(uint32_t);
+    const ft_size_t first_index_end = first_index + sizeof(uint32_t);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, truncated.append(encoded.data(), first_index_end + 2U));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_deserialize(config, truncated));
+    FT_ASSERT_EQ(first_index_end, truncated.read_position());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, encoded.overwrite_u32_le(first_index, templates));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_deserialize(config, encoded));
+    FT_ASSERT_EQ(first_index_end, encoded.read_position());
+    FT_ASSERT_EQ(2U, config.biomes[0].tree_template_indices[0]);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    config.biomes[1].tree_template_count = VOXEL_MAX_BIOME_TREE_TEMPLATES + 1U;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, voxel_generation_config_serialize(config, encoded));
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_config_file_round_trip)
+{
+    const char *file_path = "voxel_generation_config_test.bin";
+    voxel_generation_config source_config;
+    voxel_generation_config loaded_config;
+    voxel_default_generation_config(source_config);
 
     source_config.set_sea_level(64);
     source_config.set_noise_scales(48, source_config.detail_noise_scale,
@@ -1296,11 +2496,13 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         source_config.underground_structures.set_cavern_rooms(FT_TRUE,
             7U, 5U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_config.fluids
+        .set_surface_water_depths(3U, 4U));
     source_config.fluids.enable_lakes = FT_FALSE;
     source_config.ores[0].set_enabled(FT_TRUE);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_save_file(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_save_file(
         file_path, source_config));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generation_config_load_file(
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generation_config_load_file(
         file_path, loaded_config));
     FT_ASSERT_EQ(source_config.sea_level, loaded_config.sea_level);
     FT_ASSERT_EQ(source_config.large_noise_scale,
@@ -1334,6 +2536,10 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
         loaded_config.underground_structures.cavern_room_radius);
     FT_ASSERT_EQ(source_config.fluids.enable_lakes,
         loaded_config.fluids.enable_lakes);
+    FT_ASSERT_EQ(source_config.fluids.surface_river_depth,
+        loaded_config.fluids.surface_river_depth);
+    FT_ASSERT_EQ(source_config.fluids.surface_lake_depth,
+        loaded_config.fluids.surface_lake_depth);
     FT_ASSERT_EQ(source_config.ores[0].enabled,
         loaded_config.ores[0].enabled);
     FT_ASSERT_EQ(source_config.biome_count, loaded_config.biome_count);
@@ -1343,59 +2549,105 @@ FT_TEST(test_terrain_generation_config_file_round_trip)
     return (1);
 }
 
-FT_TEST(test_terrain_config_json_serialization_and_file_modes)
+FT_TEST(test_voxel_config_json_serialization_and_file_modes)
 {
-    const char *file_path = "terrain_config_test.jsonl";
-    terrain_generation_config generation;
+    const char *file_path = "voxel_config_test.jsonl";
+    const char *replace_new_path = "voxel_config_replace_new_test.jsonl";
+    voxel_generation_config generation;
     ft_string output;
+    ft_string longer_output;
+    ft_string shorter_output;
     ft_string file_contents;
     int32_t invalid_mode_value = 2;
 
-    terrain_default_generation_config(generation);
+    voxel_default_generation_config(generation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.biomes[0].serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_biome_definition"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_biome_definition"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.features[0].serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_feature_rule"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_feature_rule"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.ores[0].serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_ore_rule"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_ore_rule"));
     FT_ASSERT(ft_strstr(output.c_str(), "veins_per_chunk_min"));
     FT_ASSERT(ft_strstr(output.c_str(), "minimum_depth"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
         generation.underground_structures.serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_underground_structures"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_underground_structures"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.fluids.serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_fluids"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_fluids"));
+    FT_ASSERT(ft_strstr(output.c_str(), "surface_river_depth"));
+    FT_ASSERT(ft_strstr(output.c_str(), "surface_lake_depth"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.layers.serialize_json(output));
-    FT_ASSERT(ft_strstr(output.c_str(), "terrain_layers"));
+    FT_ASSERT(ft_strstr(output.c_str(), "voxel_layers"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(output));
     FT_ASSERT(ft_strstr(output.c_str(), "biome_size_min"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
     (void)file_delete(file_path);
     int32_t directory_error = generation.save_json_file(".",
-        TERRAIN_JSON_FILE_CREATE_ONLY);
+        VOXEL_JSON_FILE_CREATE_ONLY);
     FT_ASSERT(directory_error != FT_ERR_SUCCESS);
-    FT_ASSERT(generation.save_json_file(
-        "terrain_json_missing_parent_7f2e/config.json",
-        TERRAIN_JSON_FILE_CREATE_ONLY) != FT_ERR_ALREADY_EXISTS);
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, generation.save_json_file(
+        "voxel_json_missing_parent_7f2e/config.json",
+        VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_CREATE_ONLY));
+        VOXEL_JSON_FILE_CREATE_ONLY));
+    (void)file_delete(replace_new_path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(replace_new_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(replace_new_path,
+        file_contents));
+    FT_ASSERT_EQ(output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(output.c_str(), file_contents.c_str(),
+        output.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(replace_new_path));
     FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_CREATE_ONLY));
+        VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
-    FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config"));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "voxel_generation_config"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_REPLACE));
+        VOXEL_JSON_FILE_REPLACE));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
     FT_ASSERT_EQ(output.size(), file_contents.size());
+    generation.biome_count = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(longer_output));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
+    generation.biome_count = 0U;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(shorter_output));
+    FT_ASSERT(shorter_output.size() < longer_output.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(shorter_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(shorter_output.c_str(), file_contents.c_str(),
+        shorter_output.size()));
+    generation.biome_count = UINT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, generation.save_json_file(
+        ft_nullptr, VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, generation.save_json_file(file_path,
-        static_cast<terrain_json_file_mode>(invalid_mode_value)));
+        static_cast<voxel_json_file_mode>(invalid_mode_value)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(longer_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(longer_output.c_str(), file_contents.c_str(),
+        longer_output.size()));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shorter_output.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, longer_output.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_json_unsigned_boundaries_and_transaction)
+FT_TEST(test_voxel_json_unsigned_boundaries_and_transaction)
 {
-    terrain_generation_config generation;
+    voxel_generation_config generation;
     ft_string output;
     uint32_t values[6] = {0U, 1U, 2147483647U, 2147483648U,
         4294967294U, 4294967295U};
@@ -1404,7 +2656,7 @@ FT_TEST(test_terrain_json_unsigned_boundaries_and_transaction)
     uint32_t index;
     int32_t error_code;
 
-    terrain_default_generation_config(generation);
+    voxel_default_generation_config(generation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize("sentinel"));
     index = 0U;
     while (index < 6U)
@@ -1418,6 +2670,17 @@ FT_TEST(test_terrain_json_unsigned_boundaries_and_transaction)
             == ft_nullptr);
         index += 1U;
     }
+    generation.biomes[0].profile.surface_height = INT32_MIN;
+    generation.biomes[0].profile.height_variation = INT32_MAX;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.biomes[0].serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "\"surface_height\":-2147483648,") != ft_nullptr);
+    FT_ASSERT(ft_strstr(output.c_str(), "\"height_variation\":2147483647,") != ft_nullptr);
+    generation.biome_size_min_by_biome[0] = INT32_MIN;
+    generation.biome_size_override_enabled[0] = FT_TRUE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(output));
+    FT_ASSERT(ft_strstr(output.c_str(), "\"biome_size_min_by_biome_0\":-2147483648,") != ft_nullptr);
+    FT_ASSERT(ft_strstr(output.c_str(), "\"biome_size_override_enabled_0\":true") != ft_nullptr);
+
     FT_ASSERT_EQ(FT_ERR_SUCCESS, output.assign("sentinel", 8U));
     cma_set_alloc_limit(1U);
     error_code = generation.biomes[0].serialize_json(output);
@@ -1465,55 +2728,112 @@ FT_TEST(test_terrain_json_unsigned_boundaries_and_transaction)
     return (1);
 }
 
-FT_TEST(test_terrain_json_file_failure_hooks_are_transactional)
+FT_TEST(test_voxel_json_file_failure_hooks_are_transactional)
 {
-    const char *file_path = "terrain_config_file_failure_hooks.jsonl";
-    terrain_generation_config generation;
+    const char *file_path = "voxel_config_file_failure_hooks.jsonl";
+    voxel_generation_config generation;
     ft_string file_contents;
+    ft_string original_contents;
+    ft_string expected_output;
+    int32_t open_errors[9] = {EACCES, EPERM, EROFS, EINVAL, ENAMETOOLONG,
+        EMFILE, ENFILE, ENOMEM, EIO};
+    uint32_t open_error_index = 0U;
+    int32_t system_error;
     int32_t error_code;
 
-    terrain_default_generation_config(generation);
+    voxel_default_generation_config(generation);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.serialize_json(expected_output));
     (void)file_delete(file_path);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_CREATE_ONLY));
+        VOXEL_JSON_FILE_CREATE_ONLY));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
-        TERRAIN_JSON_TEST_FILE_OPEN_CREATE_ONLY, FT_ERR_PERMISSION_DENIED, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original_contents.initialize(file_contents));
+    system_error = EACCES;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+        VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY, system_error, 0U));
     error_code = generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_CREATE_ONLY);
-    FT_ASSERT_EQ(FT_ERR_PERMISSION_DENIED, error_code);
+        VOXEL_JSON_FILE_CREATE_ONLY);
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
-    FT_ASSERT(ft_strstr(file_contents.c_str(), "terrain_generation_config")
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "voxel_generation_config")
         != ft_nullptr);
+    while (open_error_index < 9U)
+    {
+        system_error = open_errors[open_error_index];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+            VOXEL_JSON_TEST_FILE_OPEN_CREATE_ONLY, system_error, 0U));
+        error_code = generation.save_json_file(file_path,
+            VOXEL_JSON_FILE_CREATE_ONLY);
+        FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+        FT_ASSERT_EQ(original_contents.size(), file_contents.size());
+        FT_ASSERT_EQ(0, ft_memcmp(original_contents.c_str(),
+            file_contents.c_str(), original_contents.size()));
+        open_error_index = open_error_index + 1U;
+    }
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
-        TERRAIN_JSON_TEST_FILE_FIRST_WRITE, FT_ERR_DISK_FULL, 0U));
-    FT_ASSERT_EQ(FT_ERR_DISK_FULL, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_REPLACE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
-        TERRAIN_JSON_TEST_FILE_PARTIAL_WRITE, FT_ERR_IO, 4U));
-    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_REPLACE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
-        TERRAIN_JSON_TEST_FILE_INTERRUPTED_WRITE, FT_ERR_INVALID_STATE, 0U));
-    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_REPLACE));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_json_test_fail_file_operation(
-        TERRAIN_JSON_TEST_FILE_CLOSE, FT_ERR_IO, 0U));
-    FT_ASSERT_EQ(FT_ERR_IO, generation.save_json_file(file_path,
-        TERRAIN_JSON_FILE_REPLACE));
-    terrain_json_test_clear_file_failure();
+    open_error_index = 0U;
+    while (open_error_index < 9U)
+    {
+        system_error = open_errors[open_error_index];
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+            VOXEL_JSON_TEST_FILE_OPEN_REPLACE, system_error, 0U));
+        error_code = generation.save_json_file(file_path,
+            VOXEL_JSON_FILE_REPLACE);
+        FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error), error_code);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+        FT_ASSERT_EQ(original_contents.size(), file_contents.size());
+        FT_ASSERT_EQ(0, ft_memcmp(original_contents.c_str(),
+            file_contents.c_str(), original_contents.size()));
+        open_error_index = open_error_index + 1U;
+    }
+
+    system_error = ENOSPC;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+        VOXEL_JSON_TEST_FILE_FIRST_WRITE, system_error, 0U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(0U, file_contents.size());
+    system_error = EIO;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+        VOXEL_JSON_TEST_FILE_PARTIAL_WRITE, system_error, 4U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(4U, file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(file_contents.c_str(), expected_output.c_str(),
+        file_contents.size()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+        VOXEL_JSON_TEST_FILE_INTERRUPTED_WRITE, EINTR, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, generation.save_json_file(file_path,
+        VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT(ft_strstr(file_contents.c_str(), "voxel_generation_config")
+        != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_json_test_fail_file_operation(
+        VOXEL_JSON_TEST_FILE_CLOSE, system_error, 0U));
+    FT_ASSERT_EQ(cmp_map_system_error_to_ft(system_error),
+        generation.save_json_file(file_path, VOXEL_JSON_FILE_REPLACE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_read_all(file_path, file_contents));
+    FT_ASSERT_EQ(expected_output.size(), file_contents.size());
+    FT_ASSERT_EQ(0, ft_memcmp(expected_output.c_str(), file_contents.c_str(),
+        expected_output.size()));
+    voxel_json_test_clear_file_failure();
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, original_contents.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_contents.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, expected_output.destroy());
     return (1);
 }
 
-FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
+FT_TEST(test_voxel_ore_rules_are_enabled_by_default_and_configurable)
 {
     game_voxel_chunk disabled_chunk;
     game_voxel_chunk enabled_chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
     uint32_t block_id;
     int32_t coal_count;
     int32_t coal_surface_count;
@@ -1549,10 +2869,10 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, disabled_chunk.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.initialize());
     config.ores[0].set_enabled(FT_FALSE);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(disabled_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(disabled_chunk, 0, 0,
         "ore-config", config));
     config.ores[0].set_enabled(FT_TRUE);
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(enabled_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(enabled_chunk, 0, 0,
         "ore-config", config));
     coal_count = 0;
     coal_surface_count = 0;
@@ -1567,7 +2887,7 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
             {
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, enabled_chunk.read_block(x, y, z,
                     &block_id));
-                if (block_id == TERRAIN_GENERATOR_COAL_ORE_BLOCK)
+                if (block_id == VOXEL_GENERATOR_COAL_ORE_BLOCK)
                 {
                     coal_count += 1;
                     if (y >= 94)
@@ -1586,15 +2906,16 @@ FT_TEST(test_terrain_ore_rules_are_enabled_by_default_and_configurable)
     return (1);
 }
 
-FT_TEST(test_terrain_generation_config_controls_tree_and_water_density)
+FT_TEST(test_voxel_generation_config_controls_tree_and_water_density)
 {
     game_voxel_chunk dry_chunk;
     game_voxel_chunk wet_chunk;
-    terrain_generation_config config;
-    terrain_default_generation_config(config);
-    const terrain_tree_template &oak = terrain_small_oak_tree_template();
+    voxel_generation_config config;
+    voxel_default_generation_config(config);
+    const voxel_tree_template &oak = voxel_small_oak_tree_template();
     uint32_t block_id;
     int32_t tree_count = 0;
+    int32_t shrub_count = 0;
     int32_t dense_tree_count = 0;
     int32_t water_count = 0;
     int32_t x;
@@ -1605,15 +2926,17 @@ FT_TEST(test_terrain_generation_config_controls_tree_and_water_density)
     config.set_sea_level(50);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
     config.set_biome_height_profile(0U, 40, 0, 0);
-    config.set_biome_decoration_policy(0U, FT_FALSE, FT_TRUE, 6U, 0U);
+    config.set_biome_decoration_policy(0U, FT_TRUE, FT_TRUE, 100U, 0U);
     config.set_biome_tree_template_override(0U, &oak);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(dry_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(dry_chunk, 0, 0,
         "density-config", config));
     config.set_water_chance_percent(100U);
-    config.set_biome_decoration_policy(0U, FT_FALSE, FT_TRUE, 6U, 100U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        16U, 16U));
+    config.set_biome_decoration_policy(0U, FT_TRUE, FT_TRUE, 100U, 100U);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.initialize());
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, terrain_generate_chunk(wet_chunk, 0, 0,
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(wet_chunk, 0, 0,
         "density-config", config));
     z = 0;
     while (z < GAME_VOXEL_CHUNK_DEPTH)
@@ -1626,13 +2949,15 @@ FT_TEST(test_terrain_generation_config_controls_tree_and_water_density)
             {
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.read_block(x, y, z,
                     &block_id));
-                if (block_id == TERRAIN_GENERATOR_OAK_LOG_BLOCK)
+                if (block_id == VOXEL_GENERATOR_OAK_LOG_BLOCK)
                     tree_count += 1;
                 FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.read_block(x, y, z,
                     &block_id));
-                if (block_id == TERRAIN_GENERATOR_OAK_LOG_BLOCK)
+                if (block_id == VOXEL_GENERATOR_OAK_LOG_BLOCK)
                     dense_tree_count += 1;
-                if (block_id == TERRAIN_GENERATOR_WATER_BLOCK)
+                if (block_id == VOXEL_GENERATOR_SHRUB_BLOCK)
+                    shrub_count += 1;
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
                     water_count += 1;
                 x += 1;
             }
@@ -1641,10 +2966,833 @@ FT_TEST(test_terrain_generation_config_controls_tree_and_water_density)
         z += 1;
     }
     FT_ASSERT_EQ(0, tree_count);
-    FT_ASSERT_NEQ(0, dense_tree_count);
+    /* A fully flooded column must not receive ordinary vegetation. */
+    FT_ASSERT_EQ(0, dense_tree_count);
+    FT_ASSERT_EQ(0, shrub_count);
     FT_ASSERT_NEQ(0, water_count);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, wet_chunk.destroy());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, dry_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_columns_are_connected)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    ft_bool water_columns[GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH];
+    uint32_t block_id;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    int32_t water_column_count;
+    int32_t connected_column_count;
+    int32_t index;
+    ft_bool connected;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(25U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        16U, 16U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+        "connected-water", config));
+    x = 0;
+    while (x < GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH)
+    {
+        water_columns[x] = FT_FALSE;
+        x += 1;
+    }
+    water_column_count = 0;
+    z = 0;
+    while (z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 0;
+        while (x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            ft_bool has_water_column = FT_FALSE;
+
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z,
+                    &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    FT_ASSERT(y > 0);
+                    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y - 1,
+                        z, &block_id));
+					if (block_id == VOXEL_GENERATOR_SEAGRASS_BLOCK)
+					{
+						FT_ASSERT(y > 1);
+						FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y - 2,
+							z, &block_id));
+						FT_ASSERT(voxel_block_is_solid(block_id) == FT_TRUE);
+					}
+					else if (block_id != VOXEL_GENERATOR_WATER_BLOCK
+						&& voxel_block_is_solid(block_id) == FT_FALSE)
+					{
+						FT_ASSERT(block_id == VOXEL_GENERATOR_WATER_BLOCK
+							|| voxel_block_is_solid(block_id) == FT_TRUE);
+					}
+                    water_columns[z * GAME_VOXEL_CHUNK_WIDTH + x] = FT_TRUE;
+                    has_water_column = FT_TRUE;
+                }
+                y += 1;
+            }
+            if (has_water_column == FT_TRUE)
+                water_column_count += 1;
+            x += 1;
+        }
+        z += 1;
+    }
+    connected_column_count = 0;
+    z = 1;
+    while (z + 1 < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 1;
+        while (x + 1 < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            index = z * GAME_VOXEL_CHUNK_WIDTH + x;
+            if (water_columns[index] == FT_TRUE)
+            {
+						connected = water_columns[index - 1]
+							|| water_columns[index + 1]
+							|| water_columns[index - GAME_VOXEL_CHUNK_WIDTH]
+							|| water_columns[index + GAME_VOXEL_CHUNK_WIDTH];
+						FT_ASSERT(connected == FT_TRUE);
+                connected_column_count += 1;
+            }
+            x += 1;
+        }
+        z += 1;
+    }
+    FT_ASSERT_NEQ(0, water_column_count);
+    FT_ASSERT_NEQ(0, connected_column_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_columns_reach_configured_level)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    uint32_t block_id;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+    ft_bool found_water;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        16U, 16U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+        "water-level", config));
+    z = 0;
+    while (z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 0;
+        while (x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            found_water = FT_FALSE;
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z,
+                    &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    found_water = FT_TRUE;
+                    FT_ASSERT(y <= config.sea_level);
+                }
+                y += 1;
+            }
+            FT_ASSERT_EQ(FT_TRUE, found_water);
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x,
+                config.sea_level, z, &block_id));
+            FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, block_id);
+            x += 1;
+        }
+        z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_continues_across_chunk_border)
+{
+    game_voxel_chunk left_chunk;
+    game_voxel_chunk right_chunk;
+    voxel_generation_config config;
+    uint32_t left_block_id;
+    uint32_t right_block_id;
+    int32_t local_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        16U, 16U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 40, 0,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(left_chunk, 0, 0,
+        "border-water", config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(right_chunk,
+        GAME_VOXEL_CHUNK_WIDTH, 0, "border-water", config));
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.read_block(
+            GAME_VOXEL_CHUNK_WIDTH - 1, config.sea_level, local_z,
+            &left_block_id));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.read_block(0,
+            config.sea_level, local_z, &right_block_id));
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, left_block_id);
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, right_block_id);
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, right_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, left_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_surface_water_depth_contract)
+{
+    game_voxel_chunk shallow_chunk;
+    game_voxel_chunk deep_chunk;
+    voxel_generation_config config;
+    uint32_t block_id;
+    int32_t water_count;
+    int32_t shrub_count;
+    int32_t tree_count;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(1U, config.fluids.surface_river_depth);
+    FT_ASSERT_EQ(1U, config.fluids.surface_lake_depth);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 48,
+        0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_TRUE, FT_TRUE, 100U, 100U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(
+        FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lakes_enabled(
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature_count(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shallow_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(shallow_chunk, 0, 0,
+        "surface-depth-limit", config));
+    water_count = 0;
+    x = 0;
+    while (x < GAME_VOXEL_CHUNK_WIDTH)
+    {
+        z = 0;
+        while (z < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, shallow_chunk.read_block(x, y,
+                    z, &block_id));
+                FT_ASSERT(block_id != VOXEL_GENERATOR_WATER_BLOCK);
+                y += 1;
+            }
+            z += 1;
+        }
+        x += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shallow_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        2U, 2U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, deep_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(deep_chunk, 0, 0,
+        "surface-depth-limit", config));
+    water_count = 0;
+    shrub_count = 0;
+    tree_count = 0;
+    z = 0;
+    while (z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        x = 0;
+        while (x < GAME_VOXEL_CHUNK_WIDTH)
+        {
+            y = 0;
+            while (y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, deep_chunk.read_block(x, y, z,
+                    &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    water_count += 1;
+                    FT_ASSERT(y == 49 || y == 50);
+                    FT_ASSERT_EQ(FT_ERR_SUCCESS, deep_chunk.read_block(x,
+                        48, z, &block_id));
+                    FT_ASSERT_EQ(VOXEL_GENERATOR_GRASS_BLOCK, block_id);
+                }
+                if (block_id == VOXEL_GENERATOR_SHRUB_BLOCK)
+                    shrub_count += 1;
+                if (block_id == VOXEL_GENERATOR_OAK_LOG_BLOCK)
+                    tree_count += 1;
+                y += 1;
+            }
+            x += 1;
+        }
+        z += 1;
+    }
+    FT_ASSERT_EQ(2 * GAME_VOXEL_CHUNK_WIDTH * GAME_VOXEL_CHUNK_DEPTH,
+        water_count);
+    FT_ASSERT_EQ(0, shrub_count);
+    FT_ASSERT_EQ(0, tree_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, deep_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_surface_water_column_is_atomic)
+{
+    game_voxel_chunk obstructed_chunk;
+    game_voxel_chunk reference_chunk;
+    voxel_generation_config config;
+    uint32_t stage_mask;
+    uint32_t block_id;
+    int32_t local_x;
+    int32_t local_z;
+    int32_t local_y;
+    int32_t obstructed_x;
+    int32_t obstructed_z;
+    int32_t obstructed_y;
+    ft_bool found_water_column;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_prepare_surface_water_config(
+        config, FT_TRUE, FT_TRUE, 46, 0, 3U, 3U));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        obstructed_chunk, 0, 0, "surface-water-atomic", config,
+        VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        reference_chunk, 0, 0, "surface-water-atomic", config, stage_mask));
+    found_water_column = FT_FALSE;
+    obstructed_x = 0;
+    obstructed_z = 0;
+    obstructed_y = 0;
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH
+        && found_water_column == FT_FALSE)
+    {
+        local_x = 0;
+        while (local_x < GAME_VOXEL_CHUNK_WIDTH
+            && found_water_column == FT_FALSE)
+        {
+            local_y = 0;
+            while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+            {
+                FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.read_block(
+                    local_x, local_y, local_z, &block_id));
+                if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                {
+                    found_water_column = FT_TRUE;
+                    obstructed_x = local_x;
+                    obstructed_z = local_z;
+                    obstructed_y = local_y;
+                    break ;
+                }
+                local_y += 1;
+            }
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_TRUE, found_water_column);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.write_generated_block(
+        obstructed_x, obstructed_y, obstructed_z,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        obstructed_chunk, 0, 0, "surface-water-atomic", config,
+        VOXEL_STAGE_FLUIDS));
+    local_y = 0;
+    while (local_y < GAME_VOXEL_CHUNK_HEIGHT)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.read_block(
+            obstructed_x, local_y, obstructed_z, &block_id));
+        FT_ASSERT(block_id != VOXEL_GENERATOR_WATER_BLOCK);
+        local_y += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reference_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, obstructed_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_desert_river_is_supported)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    const char *seed_values[4] = {"desert-river-0", "desert-river-1",
+        "desert-river-2", "desert-river-3"};
+    uint32_t block_id;
+    int32_t seed_index;
+    int32_t water_count;
+    ft_bool found_water;
+    int32_t x;
+    int32_t y;
+    int32_t z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_selector(
+        &test_custom_biome_selector, ft_nullptr));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(2U, 48,
+        0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_block_palette(2U,
+        VOXEL_GENERATOR_SAND_BLOCK, VOXEL_GENERATOR_SAND_BLOCK,
+        VOXEL_GENERATOR_STONE_BLOCK));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(2U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_sea_level(50));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_TRUE,
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_river_settings(96,
+        100));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_surface_water_depths(
+        1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lakes_enabled(
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(
+        FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    found_water = FT_FALSE;
+    seed_index = 0;
+    while (seed_index < 4 && found_water == FT_FALSE)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk(chunk, 0, 0,
+            seed_values[seed_index], config));
+        water_count = 0;
+        z = 0;
+        while (z < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            x = 0;
+            while (x < GAME_VOXEL_CHUNK_WIDTH)
+            {
+                y = 0;
+                while (y < GAME_VOXEL_CHUNK_HEIGHT)
+                {
+                    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x, y, z,
+                        &block_id));
+                    if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                    {
+                        water_count += 1;
+                        FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.read_block(x,
+                            y - 1, z, &block_id));
+                        FT_ASSERT_EQ(VOXEL_GENERATOR_SAND_BLOCK, block_id);
+                    }
+                    y += 1;
+                }
+                x += 1;
+            }
+            z += 1;
+        }
+        if (water_count > 0)
+            found_water = FT_TRUE;
+        seed_index += 1;
+    }
+    FT_ASSERT_EQ(FT_TRUE, found_water);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_underground_water_contract)
+{
+    game_voxel_chunk valid_chunk;
+    game_voxel_chunk rejected_chunk;
+    voxel_generation_config config;
+    uint32_t block_id;
+    uint32_t stage_mask;
+    int32_t x;
+    int32_t z;
+    int32_t water_count;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 100,
+        0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE,
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lakes_enabled(
+        FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lake_settings(
+        100U, 8, 64, 2U, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(
+        FT_FALSE, FT_FALSE));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        valid_chunk, 0, 0, "underground-contract", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION,
+        voxel_generate_chunk_with_stage_mask(valid_chunk, 0, 0,
+            "underground-contract", config, VOXEL_STAGE_DECORATION));
+    x = -1;
+    while (x <= 1)
+    {
+        z = -1;
+        while (z <= 1)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + x, 22, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + x, 23, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + x, 24, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            z += 1;
+        }
+        x += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        valid_chunk, 0, 0, "underground-contract", config,
+        VOXEL_STAGE_FLUIDS));
+    water_count = 0;
+    x = 0;
+    while (x < GAME_VOXEL_CHUNK_WIDTH)
+    {
+        z = 0;
+        while (z < GAME_VOXEL_CHUNK_DEPTH)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(x, 22, z,
+                &block_id));
+            if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                water_count += 1;
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(x, 23, z,
+                &block_id));
+            if (block_id == VOXEL_GENERATOR_WATER_BLOCK)
+                water_count += 1;
+            z += 1;
+        }
+        x += 1;
+    }
+    FT_ASSERT_EQ(18, water_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(8, 21, 8,
+        &block_id));
+    FT_ASSERT_EQ(FT_TRUE, voxel_block_is_solid(block_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(8, 24, 8,
+        &block_id));
+    FT_ASSERT_EQ(VOXEL_GENERATOR_AIR_BLOCK, block_id);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(8, 25, 8,
+        &block_id));
+    FT_ASSERT_EQ(FT_TRUE, voxel_block_is_solid(block_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.read_block(6, 22, 8,
+        &block_id));
+    FT_ASSERT_EQ(FT_TRUE, voxel_block_is_solid(block_id));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.destroy());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lake_settings(
+        100U, 8, 22, 2U, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        rejected_chunk, 0, 0, "underground-contract-rejected", config,
+        stage_mask));
+    x = -1;
+    while (x <= 1)
+    {
+        z = -1;
+        while (z <= 1)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.write_generated_block(
+                8 + x, 22, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.write_generated_block(
+                8 + x, 23, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.write_generated_block(
+                8 + x, 24, 8 + z, VOXEL_GENERATOR_AIR_BLOCK));
+            z += 1;
+        }
+        x += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        rejected_chunk, 0, 0, "underground-contract-rejected", config,
+        VOXEL_STAGE_FLUIDS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.read_block(8, 22, 8,
+        &block_id));
+    FT_ASSERT(block_id != VOXEL_GENERATOR_WATER_BLOCK);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rejected_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_surface_water_depth_limits_are_kind_specific)
+{
+    game_voxel_chunk river_chunk;
+    game_voxel_chunk lake_chunk;
+    voxel_generation_config config;
+    const char *lake_seeds[8] = {
+        "surface-lake-depth-0", "surface-lake-depth-1",
+        "surface-lake-depth-2", "surface-lake-depth-3",
+        "surface-lake-depth-4", "surface-lake-depth-5",
+        "surface-lake-depth-6", "surface-lake-depth-7"};
+    uint32_t stage_mask;
+    int32_t water_count;
+    int32_t maximum_depth;
+    int32_t unsupported_count;
+    int32_t seed_index;
+    ft_bool found_lake;
+
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_prepare_surface_water_config(
+        config, FT_TRUE, FT_FALSE, 46, 0, 3U, 3U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, river_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        river_chunk, 0, 0, "surface-river-depth", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_measure_water_columns(river_chunk,
+        &water_count, &maximum_depth, &unsupported_count));
+    FT_ASSERT_NEQ(0, water_count);
+    FT_ASSERT_EQ(3, maximum_depth);
+    FT_ASSERT_EQ(0, unsupported_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, river_chunk.destroy());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE,
+        FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 47, 4,
+        0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, lake_chunk.initialize());
+    found_lake = FT_FALSE;
+    seed_index = 0;
+    while (seed_index < 8 && found_lake == FT_FALSE)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+            lake_chunk, 0, 0, lake_seeds[seed_index], config, stage_mask));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_measure_water_columns(
+            lake_chunk, &water_count, &maximum_depth, &unsupported_count));
+        if (water_count > 0)
+        {
+            found_lake = FT_TRUE;
+            FT_ASSERT(maximum_depth <= 3);
+            FT_ASSERT_EQ(0, unsupported_count);
+        }
+        seed_index += 1;
+    }
+    FT_ASSERT_EQ(FT_TRUE, found_lake);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, lake_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_underground_lakes_have_enclosed_perimeters)
+{
+    game_voxel_chunk valid_chunk;
+    game_voxel_chunk open_roof_chunk;
+    voxel_generation_config config;
+    uint32_t stage_mask;
+    int32_t local_x;
+    int32_t local_z;
+    int32_t water_count;
+    int32_t maximum_depth;
+    int32_t unsupported_count;
+    int32_t unsealed_count = -1;
+    uint32_t block_id;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_default_generation_config(config));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_count(1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_height_profile(0U, 100,
+        0, 0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_FALSE, FT_FALSE, 0U, 0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_water_chance_percent(0U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_enabled(FT_FALSE,
+        FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lakes_enabled(
+        FT_TRUE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.fluids.set_underground_lake_settings(
+        100U, 8, 64, 2U, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.underground_structures.set_enabled(
+        FT_FALSE, FT_FALSE));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_feature_count(0U));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        valid_chunk, 0, 0, "enclosed-underground-lake", config, stage_mask));
+    local_z = -1;
+    while (local_z <= 1)
+    {
+        local_x = -1;
+        while (local_x <= 1)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + local_x, 22, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + local_x, 23, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.write_generated_block(
+                8 + local_x, 24, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        valid_chunk, 0, 0, "enclosed-underground-lake", config,
+        VOXEL_STAGE_FLUIDS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_measure_water_columns(valid_chunk,
+        &water_count, &maximum_depth, &unsupported_count));
+    FT_ASSERT_EQ(18, water_count);
+    FT_ASSERT_EQ(2, maximum_depth);
+    FT_ASSERT_EQ(0, unsupported_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_measure_lake_enclosure(valid_chunk,
+        &unsealed_count));
+    FT_ASSERT_EQ(0, unsealed_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, valid_chunk.destroy());
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        open_roof_chunk, 0, 0, "open-roof-underground-lake", config,
+        stage_mask));
+    local_z = -1;
+    while (local_z <= 1)
+    {
+        local_x = -1;
+        while (local_x <= 1)
+        {
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.write_generated_block(
+                8 + local_x, 22, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.write_generated_block(
+                8 + local_x, 23, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.write_generated_block(
+                8 + local_x, 24, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.write_generated_block(
+                8 + local_x, 25, 8 + local_z,
+                VOXEL_GENERATOR_AIR_BLOCK));
+            local_x += 1;
+        }
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        open_roof_chunk, 0, 0, "open-roof-underground-lake", config,
+        VOXEL_STAGE_FLUIDS));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.read_block(8, 22, 8,
+        &block_id));
+    FT_ASSERT(block_id != VOXEL_GENERATOR_WATER_BLOCK);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, open_roof_chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_does_not_overlap_vegetation)
+{
+    game_voxel_chunk chunk;
+    voxel_generation_config config;
+    int32_t water_count;
+    int32_t maximum_depth;
+    int32_t unsupported_count;
+    int32_t overlap_count = -1;
+    uint32_t stage_mask;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_prepare_surface_water_config(
+        config, FT_TRUE, FT_FALSE, 48, 0, 1U, 1U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, config.set_biome_decoration_policy(0U,
+        FT_TRUE, FT_TRUE, 100U, 100U));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS | VOXEL_STAGE_DECORATION;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(chunk,
+        0, 0, "water-vegetation-overlap", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_measure_water_columns(chunk,
+        &water_count, &maximum_depth, &unsupported_count));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        test_voxel_measure_water_vegetation_overlap(chunk, &overlap_count));
+    FT_ASSERT_NEQ(0, water_count);
+    FT_ASSERT_EQ(1, maximum_depth);
+    FT_ASSERT_EQ(0, unsupported_count);
+    FT_ASSERT_EQ(0, overlap_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, chunk.destroy());
+    return (1);
+}
+
+FT_TEST(test_voxel_generation_water_border_is_order_independent)
+{
+    game_voxel_chunk first_left_chunk;
+    game_voxel_chunk first_right_chunk;
+    game_voxel_chunk second_left_chunk;
+    game_voxel_chunk second_right_chunk;
+    voxel_generation_config config;
+    uint64_t first_left_hash;
+    uint64_t first_right_hash;
+    uint64_t second_left_hash;
+    uint64_t second_right_hash;
+    uint32_t block_id;
+    uint32_t stage_mask;
+    int32_t local_z;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_prepare_surface_water_config(
+        config, FT_TRUE, FT_FALSE, 46, 0, 3U, 3U));
+    stage_mask = VOXEL_STAGE_BASE_TERRAIN | VOXEL_STAGE_CAVES
+        | VOXEL_STAGE_FLUIDS;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_left_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_right_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_left_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_right_chunk.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        first_left_chunk, 0, 0, "water-border-order", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        first_right_chunk, GAME_VOXEL_CHUNK_WIDTH, 0,
+        "water-border-order", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        second_right_chunk, GAME_VOXEL_CHUNK_WIDTH, 0,
+        "water-border-order", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, voxel_generate_chunk_with_stage_mask(
+        second_left_chunk, 0, 0, "water-border-order", config, stage_mask));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_chunk_block_hash(first_left_chunk,
+        &first_left_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_chunk_block_hash(first_right_chunk,
+        &first_right_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_chunk_block_hash(second_left_chunk,
+        &second_left_hash));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, test_voxel_chunk_block_hash(second_right_chunk,
+        &second_right_hash));
+    FT_ASSERT_EQ(first_left_hash, second_left_hash);
+    FT_ASSERT_EQ(first_right_hash, second_right_hash);
+    local_z = 0;
+    while (local_z < GAME_VOXEL_CHUNK_DEPTH)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, first_left_chunk.read_block(
+            GAME_VOXEL_CHUNK_WIDTH - 1, 49, local_z, &block_id));
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, block_id);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, first_right_chunk.read_block(0, 49,
+            local_z, &block_id));
+        FT_ASSERT_EQ(VOXEL_GENERATOR_WATER_BLOCK, block_id);
+        local_z += 1;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_right_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second_left_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_right_chunk.destroy());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first_left_chunk.destroy());
     return (1);
 }
 

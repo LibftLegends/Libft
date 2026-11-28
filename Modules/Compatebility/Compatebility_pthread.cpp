@@ -9,12 +9,8 @@
 #include "../PThread/recursive_mutex.hpp"
 #if defined(_WIN32) || defined(_WIN64)
 # include <windows.h>
-# include <condition_variable>
 # include <chrono>
-# include <mutex>
 
-static std::mutex g_windows_wait_mutex;
-static std::condition_variable g_windows_wait_condition;
 
 static int32_t cmp_thread_map_windows_error(DWORD error_code)
 {
@@ -49,23 +45,110 @@ int32_t cmp_thread_sleep(uint32_t milliseconds)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t cmp_thread_wait_uint32(std::atomic<uint32_t> *address, uint32_t expected_value)
+using cmp_windows_wait_function = BOOL (WINAPI *)(volatile VOID *, PVOID, SIZE_T, DWORD);
+using cmp_windows_wake_function = VOID (WINAPI *)(PVOID);
+
+struct cmp_windows_address_wait_api
 {
+    cmp_windows_wait_function wait;
+    cmp_windows_wake_function wake_one;
+    cmp_windows_wake_function wake_all;
+};
+
+static const cmp_windows_address_wait_api &cmp_get_address_wait_api()
+{
+    static const cmp_windows_address_wait_api api = []()
+    {
+        // Resolve at run time so older Windows versions can still use polling.
+        const HMODULE module = LoadLibraryExW(L"api-ms-win-core-synch-l1-2-0.dll",
+                ft_nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        cmp_windows_address_wait_api functions{};
+        if (module == ft_nullptr)
+            return (functions);
+        functions.wait = reinterpret_cast<cmp_windows_wait_function>(
+                reinterpret_cast<void *>(GetProcAddress(module, "WaitOnAddress")));
+        functions.wake_one = reinterpret_cast<cmp_windows_wake_function>(
+                reinterpret_cast<void *>(GetProcAddress(module, "WakeByAddressSingle")));
+        functions.wake_all = reinterpret_cast<cmp_windows_wake_function>(
+                reinterpret_cast<void *>(GetProcAddress(module, "WakeByAddressAll")));
+        if (functions.wait == ft_nullptr || functions.wake_one == ft_nullptr
+            || functions.wake_all == ft_nullptr)
+        {
+            FreeLibrary(module);
+            return (cmp_windows_address_wait_api{});
+        }
+        return (functions);
+    }();
+    return (api);
+}
+
+static int32_t cmp_wait_for_uint32(std::atomic<uint32_t> *address,
+    uint32_t expected_value, ft_bool timed, uint64_t timeout_ms)
+{
+    static_assert(std::atomic<uint32_t>::is_always_lock_free
+        && sizeof(std::atomic<uint32_t>) == sizeof(uint32_t),
+        "The Windows address wait requires a lock-free four-byte atomic");
+    using clock = std::chrono::steady_clock;
     if (address == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    while (1)
+    if (address->load() != expected_value)
+        return (FT_ERR_SUCCESS);
+    if (timed == FT_TRUE && timeout_ms == 0U)
+        return (FT_ERR_TIMEOUT);
+    const cmp_windows_address_wait_api &api = cmp_get_address_wait_api();
+    clock::time_point started;
+    if (timed == FT_TRUE)
+        started = clock::now();
+    while (address->load() == expected_value)
     {
-        if (address->load() != expected_value)
-            return (FT_ERR_SUCCESS);
-        Sleep(1);
+        DWORD interval = INFINITE;
+        bool final_wait = false;
+        if (timed == FT_TRUE)
+        {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    clock::now() - started).count();
+            const uint64_t elapsed_ms = static_cast<uint64_t>(elapsed);
+            if (elapsed_ms >= timeout_ms)
+                return (FT_ERR_TIMEOUT);
+            const uint64_t remaining = timeout_ms - elapsed_ms;
+            final_wait = (remaining < INFINITE);
+            interval = INFINITE - 1U;
+            if (final_wait)
+                interval = static_cast<DWORD>(remaining);
+        }
+        if (api.wait == ft_nullptr)
+        {
+            Sleep(1U);
+            continue ;
+        }
+        if (!api.wait(address, &expected_value, sizeof(expected_value), interval))
+        {
+            const DWORD error = GetLastError();
+            if (error != ERROR_TIMEOUT)
+                return (cmp_thread_map_windows_error(error));
+            if (final_wait)
+            {
+                if (address->load() == expected_value)
+                    return (FT_ERR_TIMEOUT);
+                return (FT_ERR_SUCCESS);
+            }
+        }
     }
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_thread_wait_uint32(std::atomic<uint32_t> *address, uint32_t expected_value)
+{
+    return (cmp_wait_for_uint32(address, expected_value, FT_FALSE, 0U));
 }
 
 int32_t cmp_thread_wake_one_uint32(std::atomic<uint32_t> *address)
 {
     if (address == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    g_windows_wait_condition.notify_one();
+    const cmp_windows_address_wait_api &api = cmp_get_address_wait_api();
+    if (api.wake_one != ft_nullptr)
+        api.wake_one(address);
     return (FT_ERR_SUCCESS);
 }
 
@@ -73,31 +156,18 @@ int32_t cmp_thread_wake_all_uint32(std::atomic<uint32_t> *address)
 {
     if (address == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    g_windows_wait_condition.notify_all();
+    const cmp_windows_address_wait_api &api = cmp_get_address_wait_api();
+    if (api.wake_all != ft_nullptr)
+        api.wake_all(address);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t cmp_thread_wait_uint32_timed(std::atomic<uint32_t> *address,
     uint32_t expected_value, uint64_t timeout_ms)
 {
-    std::unique_lock<std::mutex> lock(g_windows_wait_mutex);
-    std::chrono::milliseconds wait_duration;
-
-    if (address == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (address->load() != expected_value)
-        return (FT_ERR_SUCCESS);
-    wait_duration = std::chrono::milliseconds(timeout_ms);
-    if (g_windows_wait_condition.wait_for(lock, wait_duration,
-            [address, expected_value]()
-            {
-                return (address->load() != expected_value);
-            }))
-        return (FT_ERR_SUCCESS);
-    if (address->load() == expected_value)
-        return (FT_ERR_TIMEOUT);
-    return (FT_ERR_SUCCESS);
+    return (cmp_wait_for_uint32(address, expected_value, FT_TRUE, timeout_ms));
 }
+
 #else
 # include <sched.h>
 # include <unistd.h>

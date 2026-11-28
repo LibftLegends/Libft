@@ -1,33 +1,18 @@
 #include "crypto_x25519.hpp"
+#include "crypto_primitives.hpp"
 #include "../Errno/errno.hpp"
 
 namespace
 {
-    static const uint32_t CRYPTO_FIELD_LIMB_COUNT = 16U;
-    static const uint32_t CRYPTO_FIELD_BASE = 65536U;
-    static const uint32_t CRYPTO_FIELD_MODULUS[16] = {
+    constexpr uint32_t CRYPTO_FIELD_LIMB_COUNT = 16U;
+    constexpr uint32_t CRYPTO_FIELD_MODULUS[16] = {
         65517U, 65535U, 65535U, 65535U, 65535U, 65535U, 65535U, 65535U,
         65535U, 65535U, 65535U, 65535U, 65535U, 65535U, 65535U, 32767U
-    };
-    static const uint8_t CRYPTO_X25519_INVERSE_EXPONENT[32] = {
-        0xebU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
-        0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
-        0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
-        0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0x7fU
     };
 
     static void wipe(void *data, ft_size_t length) noexcept
     {
-        volatile uint8_t *bytes;
-        ft_size_t index;
-
-        bytes = static_cast<volatile uint8_t *>(data);
-        index = 0U;
-        while (index < length)
-        {
-            bytes[index] = 0U;
-            index += 1U;
-        }
+        (void)crypto_secure_wipe(data, length);
         return ;
     }
 
@@ -59,39 +44,38 @@ namespace
         uint64_t carry;
 
         pass = 0U;
-        while (pass < 4U)
+        // Fold each carry at bit 255 using 2^255 = 19 mod p. Input limbs are
+        // below 2^42, so the first fold contributes less than 2^33. A second
+        // pass can fold at most 19, and if it does, the third cannot overflow.
+        while (pass < 3U)
         {
             carry = 0U;
             index = 0U;
-            while (index < CRYPTO_FIELD_LIMB_COUNT)
+            while (index + 1U < CRYPTO_FIELD_LIMB_COUNT)
             {
                 value[index] += carry;
                 carry = value[index] >> 16U;
                 value[index] &= 0xffffU;
                 index += 1U;
             }
-            value[0] += carry * 38U;
+            value[index] += carry;
+            carry = value[index] >> 15U;
+            value[index] &= 0x7fffU;
+            value[0] += carry * 19U;
             pass += 1U;
         }
         return ;
     }
 
-    static void field_normalize(uint32_t value[16]) noexcept
+    static void field_canonicalize(uint32_t output[16], const uint64_t wide[16]) noexcept
     {
-        uint64_t wide[16];
         uint32_t index;
         uint32_t borrow;
         uint64_t difference;
         uint32_t mask;
-        uint64_t candidate[16];
+        uint32_t candidate[16];
 
-        index = 0U;
-        while (index < CRYPTO_FIELD_LIMB_COUNT)
-        {
-            wide[index] = value[index];
-            index += 1U;
-        }
-        field_reduce(wide);
+        // The input is below 2^255, so subtracting p once is sufficient.
         borrow = 0U;
         index = 0U;
         while (index < CRYPTO_FIELD_LIMB_COUNT)
@@ -99,18 +83,24 @@ namespace
             difference = wide[index] - CRYPTO_FIELD_MODULUS[index]
                 - borrow;
             borrow = static_cast<uint32_t>(difference >> 63U);
-            difference += static_cast<uint64_t>(borrow) * CRYPTO_FIELD_BASE;
-            candidate[index] = difference & 0xffffU;
+            candidate[index] = static_cast<uint32_t>(difference & 0xffffU);
             index += 1U;
         }
         mask = 0U - (1U - borrow);
         index = 0U;
         while (index < CRYPTO_FIELD_LIMB_COUNT)
         {
-            value[index] = static_cast<uint32_t>((candidate[index] & mask)
+            output[index] = static_cast<uint32_t>((candidate[index] & mask)
                 | (wide[index] & ~static_cast<uint64_t>(mask)));
             index += 1U;
         }
+        return ;
+    }
+
+    static void field_store_reduced(uint32_t output[16], uint64_t wide[16]) noexcept
+    {
+        field_reduce(wide);
+        field_canonicalize(output, wide);
         return ;
     }
 
@@ -126,14 +116,8 @@ namespace
             wide[index] = static_cast<uint64_t>(left[index]) + right[index];
             index += 1U;
         }
-        field_reduce(wide);
-        index = 0U;
-        while (index < CRYPTO_FIELD_LIMB_COUNT)
-        {
-            output[index] = static_cast<uint32_t>(wide[index]);
-            index += 1U;
-        }
-        field_normalize(output);
+        field_store_reduced(output, wide);
+        wipe(wide, sizeof(wide));
         return ;
     }
 
@@ -144,7 +128,6 @@ namespace
         uint32_t borrow;
         uint32_t mask;
         uint32_t index;
-        uint64_t wide[16];
 
         borrow = 0U;
         index = 0U;
@@ -153,8 +136,7 @@ namespace
             value = static_cast<uint64_t>(left[index]) - right[index]
                 - borrow;
             borrow = static_cast<uint32_t>(value >> 63U);
-            value += static_cast<uint64_t>(borrow) * CRYPTO_FIELD_BASE;
-            wide[index] = value & 0xffffU;
+            output[index] = static_cast<uint32_t>(value & 0xffffU);
             index += 1U;
         }
         mask = 0U - borrow;
@@ -162,14 +144,26 @@ namespace
         borrow = 0U;
         while (index < CRYPTO_FIELD_LIMB_COUNT)
         {
-            value = wide[index]
+            value = output[index]
                 + (static_cast<uint64_t>(CRYPTO_FIELD_MODULUS[index]) & mask)
                 + borrow;
             borrow = static_cast<uint32_t>(value >> 16U);
             output[index] = static_cast<uint32_t>(value & 0xffffU);
             index += 1U;
         }
-        field_normalize(output);
+        return ;
+    }
+
+    static void field_finish_product(uint32_t output[16], uint64_t product[31]) noexcept
+    {
+        // In radix 2^16, the high half folds by 2^256 = 38 modulo 2^255 - 19.
+        uint32_t index = CRYPTO_FIELD_LIMB_COUNT;
+        while (index < 2U * CRYPTO_FIELD_LIMB_COUNT - 1U)
+        {
+            product[index - CRYPTO_FIELD_LIMB_COUNT] += product[index] * 38U;
+            index += 1U;
+        }
+        field_store_reduced(output, product);
         return ;
     }
 
@@ -177,10 +171,8 @@ namespace
         const uint32_t right[16]) noexcept
     {
         uint64_t product[31];
-        uint64_t wide[16];
         uint32_t left_index;
         uint32_t right_index;
-        uint32_t index;
 
         ft_memset(product, 0, sizeof(product));
         left_index = 0U;
@@ -196,72 +188,77 @@ namespace
             }
             left_index += 1U;
         }
-        index = 30U;
-        while (index >= CRYPTO_FIELD_LIMB_COUNT)
-        {
-            product[index - CRYPTO_FIELD_LIMB_COUNT]
-                += product[index] * 38U;
-            if (index == CRYPTO_FIELD_LIMB_COUNT)
-                break ;
-            index -= 1U;
-        }
-        index = 0U;
-        while (index < CRYPTO_FIELD_LIMB_COUNT)
-        {
-            wide[index] = product[index];
-            index += 1U;
-        }
-        field_reduce(wide);
-        index = 0U;
-        while (index < CRYPTO_FIELD_LIMB_COUNT)
-        {
-            output[index] = static_cast<uint32_t>(wide[index]);
-            index += 1U;
-        }
-        field_normalize(output);
+        field_finish_product(output, product);
         wipe(product, sizeof(product));
-        wipe(wide, sizeof(wide));
         return ;
     }
 
     static void field_square(uint32_t output[16], const uint32_t value[16]) noexcept
     {
-        field_multiply(output, value, value);
+        uint64_t product[31] = {};
+        uint32_t left_index = 0U;
+        while (left_index < CRYPTO_FIELD_LIMB_COUNT)
+        {
+            const uint64_t limb = value[left_index];
+            product[2U * left_index] += limb * limb;
+            const uint64_t doubled_limb = 2U * limb;
+            uint32_t right_index = left_index + 1U;
+            while (right_index < CRYPTO_FIELD_LIMB_COUNT)
+            {
+                product[left_index + right_index] += doubled_limb * value[right_index];
+                right_index += 1U;
+            }
+            left_index += 1U;
+        }
+        field_finish_product(output, product);
+        wipe(product, sizeof(product));
+        return ;
+    }
+
+    static void field_multiply_ladder_constant(uint32_t output[16],
+        const uint32_t value[16]) noexcept
+    {
+        constexpr uint64_t LADDER_CONSTANT = 121665U;
+        uint64_t wide[16];
+        uint32_t index = 0U;
+        while (index < CRYPTO_FIELD_LIMB_COUNT)
+        {
+            wide[index] = value[index] * LADDER_CONSTANT;
+            index += 1U;
+        }
+        field_store_reduced(output, wide);
+        wipe(wide, sizeof(wide));
         return ;
     }
 
     static void field_decode(uint32_t output[16], const uint8_t input[32]) noexcept
     {
+        uint64_t wide[16];
         uint32_t index;
 
         index = 0U;
         while (index < CRYPTO_FIELD_LIMB_COUNT)
         {
-            output[index] = static_cast<uint32_t>(input[index * 2U])
+            wide[index] = static_cast<uint32_t>(input[index * 2U])
                 | (static_cast<uint32_t>(input[index * 2U + 1U]) << 8U);
             index += 1U;
         }
-        output[15] &= 0x7fffU;
-        field_normalize(output);
+        wide[15] &= 0x7fffU;
+        field_canonicalize(output, wide);
         return ;
     }
 
     static void field_encode(uint8_t output[32], const uint32_t input[16]) noexcept
     {
-        uint32_t value[16];
         uint32_t index;
 
-        field_copy(value, input);
-        field_normalize(value);
         index = 0U;
         while (index < CRYPTO_FIELD_LIMB_COUNT)
         {
-            output[index * 2U] = static_cast<uint8_t>(value[index]);
-            output[index * 2U + 1U] = static_cast<uint8_t>(value[index] >> 8U);
+            output[index * 2U] = static_cast<uint8_t>(input[index]);
+            output[index * 2U + 1U] = static_cast<uint8_t>(input[index] >> 8U);
             index += 1U;
         }
-        output[31] &= 0x7fU;
-        wipe(value, sizeof(value));
         return ;
     }
 
@@ -284,37 +281,58 @@ namespace
         return ;
     }
 
+    static void field_square_repeated(uint32_t output[16], const uint32_t input[16],
+        uint32_t count) noexcept
+    {
+        field_square(output, input);
+        while (count > 1U)
+        {
+            field_square(output, output);
+            count -= 1U;
+        }
+        return ;
+    }
+
     static void field_inverse(uint32_t output[16], const uint32_t input[16]) noexcept
     {
-        uint32_t result[16];
-        uint32_t base[16];
+        uint32_t power_eleven[16];
+        uint32_t power_five_bits[16];
+        uint32_t power_ten_bits[16];
+        uint32_t power_fifty_bits[16];
+        uint32_t intermediate[16];
         uint32_t squared[16];
-        int32_t bit_index;
-        uint32_t byte_index;
-        uint32_t bit_offset;
-        uint32_t bit;
 
-        field_one(result);
-        field_copy(base, input);
-        bit_index = 254;
-        while (bit_index >= 0)
-        {
-            field_square(squared, result);
-            field_copy(result, squared);
-            byte_index = static_cast<uint32_t>(bit_index) / 8U;
-            bit_offset = static_cast<uint32_t>(bit_index) % 8U;
-            bit = (CRYPTO_X25519_INVERSE_EXPONENT[byte_index]
-                >> bit_offset) & 1U;
-            if (bit != 0U)
-            {
-                field_multiply(squared, result, base);
-                field_copy(result, squared);
-            }
-            bit_index -= 1;
-        }
-        field_copy(output, result);
-        wipe(result, sizeof(result));
-        wipe(base, sizeof(base));
+        field_square(intermediate, input);                         // z^2
+        field_square_repeated(power_five_bits, intermediate, 2U);   // z^8
+        field_multiply(power_five_bits, power_five_bits, input);    // z^9
+        field_multiply(power_eleven, power_five_bits, intermediate);
+        field_square(intermediate, power_eleven);                  // z^22
+        field_multiply(power_five_bits, intermediate, power_five_bits);
+
+        // Extend z^(2^n - 1) with blocks of n one-bits.
+        field_square_repeated(power_ten_bits, power_five_bits, 5U);
+        field_multiply(power_ten_bits, power_ten_bits, power_five_bits);
+        field_square_repeated(intermediate, power_ten_bits, 10U);
+        field_multiply(intermediate, intermediate, power_ten_bits); // 20 bits
+        field_square_repeated(power_fifty_bits, intermediate, 20U);
+        field_multiply(power_fifty_bits, power_fifty_bits, intermediate); // 40 bits
+        field_square_repeated(power_fifty_bits, power_fifty_bits, 10U);
+        field_multiply(power_fifty_bits, power_fifty_bits, power_ten_bits);
+        field_square_repeated(intermediate, power_fifty_bits, 50U);
+        field_multiply(intermediate, intermediate, power_fifty_bits); // 100 bits
+        field_square_repeated(squared, intermediate, 100U);
+        field_multiply(intermediate, squared, intermediate);        // 200 bits
+        field_square_repeated(squared, intermediate, 50U);
+        field_multiply(intermediate, squared, power_fifty_bits);    // 250 bits
+        field_square_repeated(squared, intermediate, 5U);
+        // (2^250 - 1) * 2^5 + 11 = 2^255 - 21 = p - 2.
+        field_multiply(output, squared, power_eleven);
+
+        wipe(power_eleven, sizeof(power_eleven));
+        wipe(power_five_bits, sizeof(power_five_bits));
+        wipe(power_ten_bits, sizeof(power_ten_bits));
+        wipe(power_fifty_bits, sizeof(power_fifty_bits));
+        wipe(intermediate, sizeof(intermediate));
         wipe(squared, sizeof(squared));
         return ;
     }
@@ -339,7 +357,6 @@ namespace
         uint32_t cb[16];
         uint32_t temp0[16];
         uint32_t temp1[16];
-        uint32_t a24[16];
         uint32_t inverse[16];
         uint32_t swap;
         uint32_t bit;
@@ -348,7 +365,11 @@ namespace
 
         if (scalar_input == ft_nullptr || public_input == ft_nullptr
             || output == ft_nullptr)
+        {
+            if (output != ft_nullptr)
+                wipe(output, 32U);
             return (FT_ERR_INVALID_ARGUMENT);
+        }
         ft_memcpy(scalar, scalar_input, sizeof(scalar));
         scalar[0] &= 248U;
         scalar[31] &= 127U;
@@ -359,8 +380,6 @@ namespace
         field_copy(x3, x1);
         field_one(z3);
         swap = 0U;
-        field_zero(a24);
-        a24[0] = 121665U;
         bit_index = 254;
         while (bit_index >= 0)
         {
@@ -385,7 +404,7 @@ namespace
             field_square(temp1, temp0);
             field_multiply(z3, x1, temp1);
             field_multiply(x2, aa, bb);
-            field_multiply(temp0, a24, e);
+            field_multiply_ladder_constant(temp0, e);
             field_add(temp0, aa, temp0);
             field_multiply(z2, e, temp0);
             bit_index -= 1;
@@ -419,7 +438,6 @@ namespace
         wipe(cb, sizeof(cb));
         wipe(temp0, sizeof(temp0));
         wipe(temp1, sizeof(temp1));
-        wipe(a24, sizeof(a24));
         wipe(inverse, sizeof(inverse));
         if (bit == 0U)
             return (FT_ERR_PERMISSION_DENIED);
@@ -433,10 +451,20 @@ int32_t crypto_x25519_public_key(const uint8_t private_key[32],
     uint8_t basepoint[32];
 
     if (private_key == ft_nullptr || public_key == ft_nullptr)
+    {
+        if (public_key != ft_nullptr)
+            wipe(public_key, 32U);
         return (FT_ERR_INVALID_ARGUMENT);
+    }
     ft_memset(basepoint, 0, sizeof(basepoint));
     basepoint[0] = 9U;
-    return (scalar_multiply(private_key, basepoint, public_key));
+    {
+        int32_t result;
+
+        result = scalar_multiply(private_key, basepoint, public_key);
+        wipe(basepoint, sizeof(basepoint));
+        return (result);
+    }
 }
 
 int32_t crypto_x25519_shared_secret(const uint8_t private_key[32],
@@ -444,3 +472,13 @@ int32_t crypto_x25519_shared_secret(const uint8_t private_key[32],
 {
     return (scalar_multiply(private_key, peer_public_key, shared_secret));
 }
+
+#ifdef LIBFT_TEST_BUILD
+void crypto_x25519_test_reduce_limbs(uint32_t output[16], const uint64_t limbs[16]) noexcept
+{
+    uint64_t wide[16];
+    ft_memcpy_fixed<sizeof(wide)>(wide, limbs);
+    field_store_reduced(output, wide);
+    return ;
+}
+#endif

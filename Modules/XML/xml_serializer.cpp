@@ -1,37 +1,11 @@
 #include "xml.hpp"
-#include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
-#include "../Basic/basic.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-
-static int32_t xml_serializer_store_string(
-    ft_string &output, const char *serialized_content) noexcept
-{
-    int32_t operation_error;
-
-    if (serialized_content == ft_nullptr)
-        return (FT_ERR_INVALID_STATE);
-    if (output.is_initialised() == FT_FALSE)
-    {
-        operation_error = output.initialize();
-        if (operation_error != FT_ERR_SUCCESS)
-            return (operation_error);
-    }
-    operation_error = output.assign(serialized_content,
-            static_cast<ft_size_t>(ft_strlen(serialized_content)));
-    if (operation_error != FT_ERR_SUCCESS)
-        return (operation_error);
-    return (FT_ERR_SUCCESS);
-}
 
 int32_t xml_serialize_to_string(xml_serialize_callback serialize_callback,
     void *user_data, ft_string &output) noexcept
 {
     xml_document document;
-    char *serialized_content;
     int32_t operation_error;
 
     if (serialize_callback == ft_nullptr)
@@ -42,17 +16,7 @@ int32_t xml_serialize_to_string(xml_serialize_callback serialize_callback,
     operation_error = serialize_callback(document, user_data);
     if (operation_error != FT_ERR_SUCCESS)
         return (operation_error);
-    serialized_content = document.write_to_string();
-    if (serialized_content == ft_nullptr)
-    {
-        operation_error = document.get_error();
-        if (operation_error == FT_ERR_SUCCESS)
-            operation_error = FT_ERR_INVALID_STATE;
-        return (operation_error);
-    }
-    operation_error = xml_serializer_store_string(output, serialized_content);
-    cma_free(serialized_content);
-    return (operation_error);
+    return (document.write_to_string(output));
 }
 
 int32_t xml_serialize_to_backend(xml_serialize_callback serialize_callback,

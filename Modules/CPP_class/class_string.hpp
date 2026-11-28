@@ -27,11 +27,14 @@ class ft_string
 
         int32_t set_error(int32_t error_code) const noexcept;
         friend class ft_string_proxy;
+        friend int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer,
+            ft_size_t length, char **previous_buffer) noexcept;
 
 
         int32_t     resize(ft_size_t new_capacity) noexcept;
         static void sleep_backoff() noexcept;
         int32_t     resize_buffer(ft_size_t new_capacity) noexcept;
+        int32_t     reserve_for_length(ft_size_t length, ft_size_t initial_capacity) noexcept;
         int32_t     append_char_buffer(char character) noexcept;
         int32_t     append_buffer(const char *string, ft_size_t length) noexcept;
         int32_t     clear_buffer() noexcept;
@@ -82,6 +85,7 @@ class ft_string
         int32_t      assign(ft_size_t count, char character) noexcept;
         int32_t      clear() noexcept;
         int32_t      assign(const char *string, ft_size_t length) noexcept;
+        int32_t      assign(const ft_string &other) noexcept;
         const char    *at(ft_size_t index) const noexcept;
         const char    *c_str() const noexcept;
         char        *data() noexcept;
@@ -100,14 +104,23 @@ class ft_string
         ft_string   *substr(ft_size_t index, ft_size_t count = npos) const noexcept;
         static ft_string *from_error(int32_t error_code) noexcept;
 
-        static const ft_size_t npos = static_cast<ft_size_t>(-1);
+        static constexpr ft_size_t npos = static_cast<ft_size_t>(-1);
         int32_t get_error() const noexcept;
         const char  *get_error_str() const noexcept;
 
 };
 
+// Internal. Transfer a CMA buffer with length bytes followed by a terminator.
+// The caller retains ownership if the function fails.
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length) noexcept;
+// On success, writes the displaced buffer to previous_buffer for the caller to free.
+int32_t ft_string_take_owned_buffer(ft_string &output, char *buffer, ft_size_t length,
+    char **previous_buffer) noexcept;
+
 class ft_string_proxy
 {
+    friend class ft_string;
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else
@@ -137,6 +150,7 @@ class ft_string_proxy
         ft_string_proxy() noexcept;
         explicit ft_string_proxy(int32_t error_code) noexcept;
         ft_string_proxy(const ft_string &value, int32_t error_code) noexcept;
+        ft_string_proxy(ft_string &&value, int32_t error_code) noexcept;
         ft_string_proxy(const ft_string_proxy &other) noexcept;
         ft_string_proxy(ft_string_proxy &&other) noexcept;
         ~ft_string_proxy();

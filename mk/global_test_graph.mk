@@ -27,6 +27,11 @@ LIBFT_GLOBAL_TEST_CXX_FLAGS := $(COMPILE_FLAGS) -Wno-missing-declarations \
 	-DLIBFT_TEST_BUILD \
 	-DTEST_MODULE=\"Libft\" -DGAME_USE_VOXEL_REGION_BACKEND=1 -pthread
 LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS := $(LIBFT_GLOBAL_TEST_CXX_FLAGS) -DDEBUG=1
+LIBFT_TEST_SODIUM_CFLAGS := $(shell pkg-config --cflags libsodium 2>/dev/null)
+LIBFT_TEST_SODIUM_LIBS := $(shell pkg-config --libs libsodium 2>/dev/null)
+ifneq ($(strip $(LIBFT_TEST_SODIUM_LIBS)),)
+LIBFT_GLOBAL_TEST_CXX_FLAGS += -DLIBFT_TEST_HAVE_SODIUM=1 $(LIBFT_TEST_SODIUM_CFLAGS)
+endif
 
 include mk/test/dependencies.mk
 
@@ -41,6 +46,7 @@ LIBFT_GLOBAL_TEST_SOURCE_FILES := $(filter-out \
 	Test/Test/test_encryption_hash_algorithms.cpp, \
 	$(LIBFT_GLOBAL_TEST_SOURCE_FILES))
 endif
+LIBFT_GLOBAL_TEST_LINK_FLAGS += $(LIBFT_TEST_SODIUM_LIBS)
 
 LIBFT_GLOBAL_TEST_EXCLUDED_OBJECTS := $(patsubst %.cpp,$(LIBFT_GLOBAL_TEST_OBJECT_ROOT)/%.o,\
 	$(filter-out $(LIBFT_GLOBAL_TEST_SOURCE_FILES),$(LIBFT_GLOBAL_TEST_DISCOVERED_SOURCE_FILES)))
@@ -86,6 +92,7 @@ define LIBFT_GLOBAL_DEFINE_TEST_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|Test|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/normalize_make_depfile.sh "$$(@:.o=.d)"
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,Test)
 endef
 
@@ -93,6 +100,7 @@ define LIBFT_GLOBAL_DEFINE_TEST_DEBUG_OBJECT
 $(1): $(2) $(LIBFT_GLOBAL_TEST_CONFIG_INPUTS) | $(patsubst %/,%,$(dir $(1)))
 	@if [ "$$(BUILD_PLAN_MODE)" = "1" ]; then printf '%s\n' "__BUILD_PLAN__|compile|libft|TestDebug|$$<"; fi
 	@$$(CXX) $$(LIBFT_GLOBAL_TEST_DEBUG_CXX_FLAGS) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
+	@sh $(LIBFT_GLOBAL_GRAPH_PREFIX)mk/normalize_make_depfile.sh "$$(@:.o=.d)"
 $(call LIBFT_GLOBAL_COMPILE_PROGRESS_RECIPE,TestDebug)
 endef
 

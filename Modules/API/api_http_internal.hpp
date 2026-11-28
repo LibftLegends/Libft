@@ -59,21 +59,6 @@ ft_bool api_http_execute_plain_http2_streaming(
     const api_streaming_handler *streaming_handler, ft_bool &used_http2,
     int32_t &error_code);
 #endif
-char *api_https_execute_http2(api_connection_pool_handle &connection_handle,
-    const char *method, const char *path, const char *host_header,
-    json_group *payload, const char *headers, int32_t *status, int32_t timeout,
-    const char *ca_certificate, ft_bool verify_peer, const char *host,
-    uint16_t port, const char *security_identity,
-    const api_retry_policy *retry_policy, ft_bool &used_http2,
-    int32_t &error_code);
-ft_bool api_https_execute_http2_streaming(
-    api_connection_pool_handle &connection_handle, const char *method,
-    const char *path, const char *host_header, json_group *payload,
-    const char *headers, int32_t timeout, const char *ca_certificate,
-    ft_bool verify_peer, const char *host, uint16_t port,
-    const char *security_identity, const api_retry_policy *retry_policy,
-    const api_streaming_handler *streaming_handler, ft_bool &used_http2,
-    int32_t &error_code);
 ft_bool api_https_execute_streaming(api_connection_pool_handle &connection_handle,
     const char *method, const char *path, const char *host_header,
     json_group *payload, const char *headers, int32_t timeout,

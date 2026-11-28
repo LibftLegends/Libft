@@ -110,8 +110,6 @@ int32_t ft_fd_istream::destroy() noexcept
 
 int32_t ft_fd_istream::move(ft_fd_istream &other) noexcept
 {
-    int32_t base_move_error;
-
     if (&other == this)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
@@ -132,27 +130,34 @@ int32_t ft_fd_istream::move(ft_fd_istream &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (FT_ERR_SUCCESS);
     }
-    base_move_error = ft_istream::move(other);
-    if (base_move_error != FT_ERR_SUCCESS)
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    pt_recursive_mutex *descriptor_mutex = other._mutex;
+    pt_recursive_mutex *base_mutex = ft_nullptr;
+    if (descriptor_mutex != ft_nullptr)
+        base_mutex = other.ft_istream::_mutex;
+    // Match read's lock order. The base move can reacquire its recursive mutex.
+    const int32_t base_lock_error = pt_recursive_mutex_lock_if_not_null(base_mutex);
+    if (base_lock_error != FT_ERR_SUCCESS)
+        return (base_lock_error);
+    const int32_t descriptor_lock_error = pt_recursive_mutex_lock_if_not_null(descriptor_mutex);
+    if (descriptor_lock_error != FT_ERR_SUCCESS)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (base_move_error);
+        (void)pt_recursive_mutex_unlock_if_not_null(base_mutex);
+        return (descriptor_lock_error);
     }
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->_file_descriptor = other._file_descriptor;
-    other._file_descriptor = -1;
-    if (other._mutex != ft_nullptr)
+    const int32_t base_move_error = ft_istream::move(other);
+    if (base_move_error == FT_ERR_SUCCESS)
     {
-        int32_t thread_safety_error = this->enable_thread_safety();
-        if (thread_safety_error != FT_ERR_SUCCESS)
-        {
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (thread_safety_error);
-        }
-        (void)other.disable_thread_safety();
+        this->_file_descriptor = other._file_descriptor;
+        this->_mutex = descriptor_mutex;
+        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+        other._file_descriptor = -1;
+        other._mutex = ft_nullptr;
+        other._initialised_state = FT_CLASS_STATE_DESTROYED;
     }
-    other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    (void)pt_recursive_mutex_unlock_if_not_null(descriptor_mutex);
+    (void)pt_recursive_mutex_unlock_if_not_null(base_mutex);
+    return (base_move_error);
 }
 
 void ft_fd_istream::set_file_descriptor(int32_t file_descriptor) noexcept
@@ -182,15 +187,10 @@ int32_t ft_fd_istream::get_file_descriptor() const noexcept
 ssize_t ft_fd_istream::do_read(char *buffer, ft_size_t count)
 {
     int32_t file_descriptor;
-    ssize_t result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_fd_istream::do_read");
     if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return (-1);
     file_descriptor = this->_file_descriptor;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    result = su_read(file_descriptor, buffer, count);
-    if (result < 0)
-        return (-1);
-    return (result);
+    return (static_cast<ssize_t>(su_read(file_descriptor, buffer, count)));
 }

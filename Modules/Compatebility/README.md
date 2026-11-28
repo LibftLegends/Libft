@@ -30,6 +30,10 @@ The `Compatebility` module contains platform-specific adapters used by higher-le
 - `cmp_retrieve_handle(...)` - Returns the platform handle tracked for a descriptor on Windows.
 - `cmp_lseek(...)` - Platform-specific descriptor seek helper used by `System_utils`.
 
+## Secure Randomness
+
+- `cmp_rng_secure_bytes(...)` - Uses the platform cryptographic random source. Windows uses the system-preferred CNG generator and falls back to CryptoAPI if CNG is unavailable or fails. Test builds provide one-shot failure hooks for CryptoAPI acquisition, generation, and release.
+
 ## Stack Trace and Optional SQLite
 
 - `CMP_STACK_TRACE_MAX_FRAMES` - Maximum platform stack frames captured by the compatibility helper.

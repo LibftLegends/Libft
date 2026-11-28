@@ -5,6 +5,7 @@
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
+#include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "constructor.hpp"
@@ -46,9 +47,12 @@ class ft_unordered_map
         void    release_storage_unlocked();
         int32_t prepare_empty_storage_unlocked(ft_size_t capacity);
 
-        ft_size_t  hash_key(const Key& key) const;
+        ft_size_t  probe_slot_unlocked(const Key &key, ft_size_t start_index) const;
         ft_size_t  find_index_unlocked(const Key& key) const;
+        void erase_index_unlocked(ft_size_t index);
         int32_t insert_internal_unlocked(const Key& key, const MappedType& value);
+        int32_t insert_new_unlocked(const Key &key, const MappedType &value,
+            ft_size_t hash, ft_size_t &index);
         int32_t resize_unlocked(ft_size_t new_capacity);
 
         int32_t lock_internal(ft_bool *lock_acquired) const;
@@ -183,6 +187,9 @@ class ft_unordered_map
         iterator        find(const Key& key);
         const_iterator  find(const Key& key) const;
         void            erase(const Key& key);
+        // Copy and erase under one lookup. Output must be independent of the map.
+        // A missing key leaves output intact.
+        int32_t         erase_and_copy(const Key &key, MappedType &output);
         ft_bool            empty() const;
         void            clear();
         ft_size_t          size() const;
@@ -286,6 +293,8 @@ int32_t ft_unordered_map<Key, MappedType>::prepare_empty_storage_unlocked(ft_siz
 
     if (capacity == 0)
         capacity = 1;
+    if (capacity > FT_SYSTEM_SIZE_MAX / sizeof(ft_pair<Key, MappedType>))
+        return (FT_ERR_NO_MEMORY);
     raw_data = cma_malloc(sizeof(ft_pair<Key, MappedType>) * capacity);
     if (raw_data == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
@@ -309,37 +318,29 @@ int32_t ft_unordered_map<Key, MappedType>::prepare_empty_storage_unlocked(ft_siz
 }
 
 template <typename Key, typename MappedType>
-ft_size_t ft_unordered_map<Key, MappedType>::hash_key(const Key& key) const
+ft_size_t ft_unordered_map<Key, MappedType>::probe_slot_unlocked(
+    const Key &key, ft_size_t start_index) const
 {
-    std::hash<Key> hasher;
-
-    if (this->_capacity == 0)
-        return (0);
-    return (hasher(key) % this->_capacity);
+    ft_size_t index = start_index;
+    while (this->_occupied[index] && !(this->_data[index].first == key))
+    {
+        if (++index == this->_capacity)
+            index = 0U;
+        if (index == start_index)
+            return (this->_capacity);
+    }
+    return (index);
 }
 
 template <typename Key, typename MappedType>
 ft_size_t ft_unordered_map<Key, MappedType>::find_index_unlocked(const Key& key) const
 {
-    ft_size_t  start_index;
-    ft_size_t  current_index;
-
-    if (!this->has_storage_unlocked())
+    if (!this->has_storage_unlocked() || this->_size == 0U)
         return (this->_capacity);
-    if (this->_size == 0)
-        return (this->_capacity);
-    start_index = this->hash_key(key);
-    current_index = start_index;
-    while (FT_TRUE)
-    {
-        if (!this->_occupied[current_index])
-            return (this->_capacity);
-        if (this->_data[current_index].first == key)
-            return (current_index);
-        current_index = (current_index + 1) % this->_capacity;
-        if (current_index == start_index)
-            return (this->_capacity);
-    }
+    const ft_size_t hash = std::hash<Key>{}(key);
+    const ft_size_t index = this->probe_slot_unlocked(key, hash % this->_capacity);
+    if (index != this->_capacity && this->_occupied[index])
+        return (index);
     return (this->_capacity);
 }
 
@@ -357,7 +358,7 @@ int32_t ft_unordered_map<Key, MappedType>::resize_unlocked(ft_size_t new_capacit
     ft_size_t                    old_index;
     ft_size_t                    inserted_count;
 
-    if (new_capacity == 0)
+    if (new_capacity == 0 || new_capacity > FT_SYSTEM_SIZE_MAX / sizeof(ft_pair<Key, MappedType>))
         return (FT_ERR_NO_MEMORY);
     raw_data = cma_malloc(sizeof(ft_pair<Key, MappedType>) * new_capacity);
     if (raw_data == ft_nullptr)
@@ -393,8 +394,11 @@ int32_t ft_unordered_map<Key, MappedType>::resize_unlocked(ft_size_t new_capacit
 
             destination_index = hasher(old_data[old_index].first) % new_capacity;
             while (new_occupied[destination_index])
-                destination_index = (destination_index + 1) % new_capacity;
-            construct_at(&new_data[destination_index], ft_move(old_data[old_index]));
+            {
+                if (++destination_index == new_capacity)
+                    destination_index = 0U;
+            }
+            ::construct_at(&new_data[destination_index], ft_move(old_data[old_index]));
             new_occupied[destination_index] = FT_TRUE;
             ::destroy_at(&old_data[old_index]);
             inserted_count += 1;
@@ -416,49 +420,45 @@ template <typename Key, typename MappedType>
 int32_t ft_unordered_map<Key, MappedType>::insert_internal_unlocked(
     const Key& key, const MappedType& value)
 {
-    ft_size_t key_index;
-    ft_size_t start_index;
-    ft_size_t current_index;
-
     if (!this->has_storage_unlocked())
         return (FT_ERR_INVALID_STATE);
-
-    key_index = this->find_index_unlocked(key);
-    if (key_index != this->_capacity)
+    const ft_size_t hash = std::hash<Key>{}(key);
+    ft_size_t index = this->probe_slot_unlocked(key, hash % this->_capacity);
+    if (index != this->_capacity && this->_occupied[index])
     {
-        this->_data[key_index].second = value;
+        this->_data[index].second = value;
         return (FT_ERR_SUCCESS);
     }
+    return (this->insert_new_unlocked(key, value, hash, index));
+}
 
-    if ((this->_size * 2) >= this->_capacity)
+template <typename Key, typename MappedType>
+int32_t ft_unordered_map<Key, MappedType>::insert_new_unlocked(const Key &key,
+    const MappedType &value, ft_size_t hash, ft_size_t &index)
+{
+    if (this->_size >= this->_capacity / 2U + this->_capacity % 2U)
     {
-        ft_size_t new_capacity;
-        int32_t resize_error;
-
-        new_capacity = this->_capacity * 2;
-        if (new_capacity == 0)
-            new_capacity = 1;
-        resize_error = this->resize_unlocked(new_capacity);
+        if (this->_capacity > FT_SYSTEM_SIZE_MAX / 2U)
+            return (FT_ERR_NO_MEMORY);
+        // The value may refer to an entry in the old storage.
+        ft_pair<Key, MappedType> entry(key, value);
+        const int32_t resize_error = this->resize_unlocked(this->_capacity * 2U);
         if (resize_error != FT_ERR_SUCCESS)
             return (resize_error);
-    }
-
-    start_index = this->hash_key(key);
-    current_index = start_index;
-    while (FT_TRUE)
-    {
-        if (!this->_occupied[current_index])
-        {
-            construct_at(&this->_data[current_index], ft_pair<Key, MappedType>(key, value));
-            this->_occupied[current_index] = FT_TRUE;
-            this->_size += 1;
-            return (FT_ERR_SUCCESS);
-        }
-        current_index = (current_index + 1) % this->_capacity;
-        if (current_index == start_index)
+        index = this->probe_slot_unlocked(entry.first, hash % this->_capacity);
+        if (index == this->_capacity)
             return (FT_ERR_INTERNAL);
+        ::construct_at(&this->_data[index], ft_move(entry));
     }
-    return (FT_ERR_INTERNAL);
+    else
+    {
+        if (index == this->_capacity)
+            return (FT_ERR_INTERNAL);
+        ::construct_at(&this->_data[index], key, value);
+    }
+    this->_occupied[index] = FT_TRUE;
+    ++this->_size;
+    return (FT_ERR_SUCCESS);
 }
 
 template <typename Key, typename MappedType>
@@ -860,7 +860,6 @@ void ft_unordered_map<Key, MappedType>::erase(const Key& key)
     ft_bool lock_acquired;
     int32_t lock_error;
     ft_size_t  index;
-    ft_size_t  next_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_unordered_map::erase");
 
@@ -873,42 +872,68 @@ void ft_unordered_map<Key, MappedType>::erase(const Key& key)
     }
 
     index = this->find_index_unlocked(key);
-    if (index == this->_capacity)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
-        return ;
-    }
+    if (index != this->_capacity)
+        this->erase_index_unlocked(index);
+    (void)this->unlock_internal(lock_acquired);
+    ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
+    return ;
+}
 
+template <typename Key, typename MappedType>
+int32_t ft_unordered_map<Key, MappedType>::erase_and_copy(const Key &key, MappedType &output)
+{
+    static_assert(std::is_nothrow_copy_assignable_v<MappedType>);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_unordered_map::erase_and_copy");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (set_error(result));
+    const ft_size_t index = this->find_index_unlocked(key);
+    if (index == this->_capacity)
+        result = FT_ERR_NOT_FOUND;
+    else
+    {
+        output = this->_data[index].second;
+        this->erase_index_unlocked(index);
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (set_error(result));
+}
+
+template <typename Key, typename MappedType>
+void ft_unordered_map<Key, MappedType>::erase_index_unlocked(ft_size_t index)
+{
     ::destroy_at(&this->_data[index]);
     this->_occupied[index] = FT_FALSE;
     if (this->_size > 0)
         this->_size -= 1;
 
-    next_index = (index + 1) % this->_capacity;
-    while (this->_occupied[next_index])
+    const ft_size_t capacity = this->_capacity;
+    ft_size_t next_index = index;
+    const auto probe_distance = [capacity](ft_size_t home, ft_size_t slot)
     {
-        ft_pair<Key, MappedType> moving_pair;
-        int32_t reinsert_error;
-
-        moving_pair = this->_data[next_index];
-        ::destroy_at(&this->_data[next_index]);
-        this->_occupied[next_index] = FT_FALSE;
-        if (this->_size > 0)
-            this->_size -= 1;
-
-        reinsert_error = this->insert_internal_unlocked(moving_pair.first, moving_pair.second);
-        if (reinsert_error != FT_ERR_SUCCESS)
+        if (slot >= home)
+            return (slot - home);
+        return (capacity - home + slot);
+    };
+    while (FT_TRUE)
+    {
+        if (++next_index == capacity)
+            next_index = 0U;
+        if (!this->_occupied[next_index])
+            break ;
+        const ft_size_t home = std::hash<Key>{}(this->_data[next_index].first) % capacity;
+        // Move an entry only if it would probe through the hole when looked up.
+        if (probe_distance(home, index) < probe_distance(home, next_index))
         {
-            (void)this->unlock_internal(lock_acquired);
-            ft_unordered_map<Key, MappedType>::set_error(reinsert_error);
-            return ;
+            ::construct_at(&this->_data[index], ft_move(this->_data[next_index]));
+            ::destroy_at(&this->_data[next_index]);
+            this->_occupied[index] = FT_TRUE;
+            this->_occupied[next_index] = FT_FALSE;
+            index = next_index;
         }
-        next_index = (next_index + 1) % this->_capacity;
     }
 
-    (void)this->unlock_internal(lock_acquired);
-    ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
     return ;
 }
 
@@ -1276,8 +1301,6 @@ ft_unordered_map<Key, MappedType>::operator[](const Key& key)
 {
     ft_bool lock_acquired;
     int32_t lock_error;
-    ft_size_t  key_index;
-    int32_t insert_error;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_unordered_map::operator[]");
 
@@ -1289,17 +1312,24 @@ ft_unordered_map<Key, MappedType>::operator[](const Key& key)
         return (mapped_proxy(this, ft_nullptr, lock_error, 0));
     }
 
-    key_index = this->find_index_unlocked(key);
-    if (key_index == this->_capacity)
+    if (!this->has_storage_unlocked())
     {
-        insert_error = this->insert_internal_unlocked(key, MappedType());
+        (void)this->unlock_internal(lock_acquired);
+        this->set_error(FT_ERR_INVALID_STATE);
+        return (mapped_proxy(this, ft_nullptr, FT_ERR_INVALID_STATE, 0));
+    }
+    const ft_size_t hash = std::hash<Key>{}(key);
+    ft_size_t key_index = this->probe_slot_unlocked(key, hash % this->_capacity);
+    if (key_index == this->_capacity || !this->_occupied[key_index])
+    {
+        const int32_t insert_error = this->insert_new_unlocked(key, MappedType(),
+            hash, key_index);
         if (insert_error != FT_ERR_SUCCESS)
         {
             (void)this->unlock_internal(lock_acquired);
             ft_unordered_map<Key, MappedType>::set_error(insert_error);
             return (mapped_proxy(this, ft_nullptr, insert_error, 0));
         }
-        key_index = this->find_index_unlocked(key);
     }
 
     (void)this->unlock_internal(lock_acquired);

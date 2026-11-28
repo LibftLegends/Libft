@@ -1,10 +1,8 @@
 #include "udp_socket.hpp"
-#include "networking.hpp"
-#include "../Basic/basic.hpp"
+#include "networking_numeric_address_internal.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstdio>
-#include <cstring>
 #include <cerrno>
 #include <new>
 
@@ -85,9 +83,9 @@ static int32_t set_timeout_send(int32_t file_descriptor, int32_t timeout_millise
 #endif
 
 udp_socket::udp_socket() noexcept
-    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _address(), _socket_fd(-1), _mutex(ft_nullptr)
+    : _initialised_state(FT_CLASS_STATE_UNINITIALISED), _address(),
+      _socket_fd(-1), _connected(FT_FALSE), _mutex(ft_nullptr)
 {
-    ft_bzero(&this->_address, sizeof(this->_address));
     return ;
 }
 
@@ -152,6 +150,7 @@ int32_t udp_socket::initialize() noexcept
             "udp_socket::initialize", "initialize called on initialised instance");
     ft_bzero(&this->_address, sizeof(this->_address));
     this->_socket_fd = -1;
+    this->_connected = FT_FALSE;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (FT_ERR_SUCCESS);
 }
@@ -174,6 +173,7 @@ int32_t udp_socket::initialize(const udp_socket &other) noexcept
         return (FT_ERR_INITIALIZATION_FAILED);
     this->_address = other._address;
     this->_socket_fd = -1;
+    this->_connected = other._connected;
     return (FT_ERR_SUCCESS);
 }
 
@@ -222,24 +222,42 @@ int32_t udp_socket::set_timeouts(const SocketConfig &config)
 
 int32_t udp_socket::configure_address(const SocketConfig &config)
 {
-    struct addrinfo hints;
-    struct addrinfo *address_info;
+    struct addrinfo hints{};
+    struct addrinfo *address_info = ft_nullptr;
     char port_string[16];
-    const char *host_value;
+    const char *host_value = config._ip;
 
-    ft_memset(&hints, 0, sizeof(hints));
+    if (host_value[0] == '\0' && config._type != SocketType::SERVER)
+    {
+        if (config._address_family == AF_INET)
+            host_value = "127.0.0.1";
+        else if (config._address_family == AF_INET6)
+            host_value = "::1";
+    }
+    if ((config._protocol == IPPROTO_UDP || config._protocol == 0)
+        && networking_configure_numeric_address(this->_address, config._address_family,
+            host_value, config._port))
+        return (FT_ERR_SUCCESS);
+
     hints.ai_family = config._address_family;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = config._protocol;
     if (config._type == SocketType::SERVER)
         hints.ai_flags = AI_PASSIVE;
     std::snprintf(port_string, sizeof(port_string), "%u", config._port);
-    if (config._ip[0] == '\0')
+    host_value = config._ip;
+    if (host_value[0] == '\0')
         host_value = ft_nullptr;
-    else
-        host_value = config._ip;
     if (getaddrinfo(host_value, port_string, &hints, &address_info) != 0)
         return (FT_ERR_SOCKET_RESOLVE_FAILED);
+    if (address_info == ft_nullptr)
+        return (FT_ERR_SOCKET_RESOLVE_FAILED);
+    if (address_info->ai_addr == ft_nullptr || address_info->ai_addrlen > sizeof(this->_address))
+    {
+        freeaddrinfo(address_info);
+        return (FT_ERR_SOCKET_RESOLVE_FAILED);
+    }
+    ft_bzero(&this->_address, sizeof(this->_address));
     ft_memcpy(&this->_address, address_info->ai_addr,
         static_cast<ft_size_t>(address_info->ai_addrlen));
     freeaddrinfo(address_info);
@@ -311,6 +329,9 @@ int32_t udp_socket::initialize(const SocketConfig &config)
         step_error = this->bind_socket(config);
     if (step_error == FT_ERR_SUCCESS)
         step_error = this->connect_socket(config);
+    if (step_error == FT_ERR_SUCCESS
+        && config._type == SocketType::CLIENT)
+        this->_connected = FT_TRUE;
     if (step_error != FT_ERR_SUCCESS)
     {
         if (this->_socket_fd >= 0)
@@ -318,6 +339,7 @@ int32_t udp_socket::initialize(const SocketConfig &config)
             (void)nw_close(this->_socket_fd);
             this->_socket_fd = -1;
         }
+        this->_connected = FT_FALSE;
     }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (step_error);
@@ -338,6 +360,7 @@ int32_t udp_socket::destroy() noexcept
             (void)nw_close(this->_socket_fd);
             this->_socket_fd = -1;
         }
+        this->_connected = FT_FALSE;
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     }
     (void)this->disable_thread_safety();
@@ -361,6 +384,11 @@ ssize_t udp_socket::send_to(const void *data, ft_size_t size, int32_t flags,
         return (-1);
     }
     if (destination_address == ft_nullptr && address_length != 0)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (-1);
+    }
+    if (destination_address == ft_nullptr && this->_connected == FT_FALSE)
     {
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (-1);

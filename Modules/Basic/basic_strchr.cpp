@@ -6,14 +6,6 @@ char    *ft_strchr(const char *string, int32_t char_to_find)
     if (!string)
         return (ft_nullptr);
 
-    char target_char = static_cast<char>(char_to_find);
-    while (*string)
-    {
-        if (*string == target_char)
-            return (const_cast<char *>(string));
-        ++string;
-    }
-    if (target_char == '\0')
-        return (const_cast<char *>(string));
-    return (ft_nullptr);
+    const char *match = std::strchr(string, char_to_find);
+    return (const_cast<char *>(match));
 }

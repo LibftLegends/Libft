@@ -27,6 +27,7 @@ class game_world_registry
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        ft_bool has_active_lock() const noexcept;
 
     public:
         game_world_registry() noexcept;
@@ -39,6 +40,7 @@ class game_world_registry
         int32_t initialize() noexcept;
         int32_t initialize(const game_world_registry &other) noexcept;
         int32_t initialize(game_world_registry &&other) noexcept;
+        // Moving requires exclusive access to both registries and their maps.
         int32_t move(game_world_registry &other) noexcept;
         int32_t destroy() noexcept;
         int32_t enable_thread_safety() noexcept;
@@ -53,6 +55,7 @@ class game_world_registry
         int32_t fetch_region(int32_t region_id, game_region_definition &out_region) const noexcept;
         int32_t fetch_world(int32_t world_id, game_world_region &out_world) const noexcept;
 
+        // Callers must synchronize direct access through these map references.
         ft_map<int32_t, game_region_definition> &get_regions() noexcept;
         const ft_map<int32_t, game_region_definition> &get_regions() const noexcept;
         void set_regions(const ft_map<int32_t, game_region_definition> &regions) noexcept;

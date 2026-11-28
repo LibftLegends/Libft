@@ -1,205 +1,161 @@
 #include "networking.hpp"
 #include "../CMA/CMA.hpp"
-#include "../Compatebility/compatebility_internal.hpp"
-#include "../Errno/errno.hpp"
+#include "../Basic/limits.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <unistd.h>
 #include <sys/event.h>
 #include <sys/time.h>
-#include <cerrno>
 
-int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
-            int32_t *write_file_descriptors, int32_t write_count,
-            int32_t timeout_milliseconds)
+static int32_t nw_kqueue_count_active(const int32_t *descriptors, int32_t count)
 {
-    int32_t kqueue_descriptor;
-    struct kevent change_event;
-    struct kevent *event_list;
-    int32_t index;
-    int32_t maximum_events;
-    int32_t ready_descriptors;
-    int32_t ready_index;
-    int32_t descriptor;
-    int32_t search_index;
-    int32_t counted_index;
-    int32_t unique_ready_count;
-    ft_bool already_counted;
+    int32_t active = 0;
+    int32_t index = 0;
+    while (descriptors && index < count)
+    {
+        if (descriptors[index] >= 0)
+            ++active;
+        ++index;
+    }
+    return (active);
+}
+
+static void nw_kqueue_collect(struct kevent *events, int32_t &count,
+    const int32_t *descriptors, int32_t descriptor_count, int32_t filter)
+{
+    int32_t index = 0;
+    while (descriptors && index < descriptor_count)
+    {
+        if (descriptors[index] >= 0)
+        {
+            events[count] = {};
+            EV_SET(&events[count], descriptors[index], filter, EV_ADD, 0, 0, nullptr);
+            ++count;
+        }
+        ++index;
+    }
+    return ;
+}
+
+static ft_bool nw_kqueue_event_order(const struct kevent &left, const struct kevent &right)
+{
+    if (left.ident != right.ident)
+        return (left.ident < right.ident);
+    return (left.filter < right.filter);
+}
+
+static int32_t nw_kqueue_ready_count(struct kevent *events, int32_t event_count)
+{
+    int32_t index = 0;
+    while (index < event_count)
+    {
+        if ((events[index].flags & EV_ERROR) != 0)
+        {
+            errno = static_cast<int32_t>(events[index].data);
+            if (errno == 0)
+                errno = EIO;
+            return (-1);
+        }
+        ++index;
+    }
+    std::sort(events, events + event_count, nw_kqueue_event_order);
+    int32_t unique_count = 1;
+    index = 1;
+    while (index < event_count)
+    {
+        if (events[index - 1].ident != events[index].ident)
+            ++unique_count;
+        ++index;
+    }
+    return (unique_count);
+}
+
+static void nw_kqueue_filter_ready(int32_t *descriptors, int32_t count, int32_t filter,
+    const struct kevent *events, int32_t event_count)
+{
+    int32_t index = 0;
+    while (descriptors && index < count)
+    {
+        int32_t &descriptor = descriptors[index++];
+        if (descriptor < 0)
+            continue ;
+        struct kevent target{};
+        EV_SET(&target, descriptor, filter, 0, 0, 0, nullptr);
+        const struct kevent *ready = std::lower_bound(events, events + event_count,
+            target, nw_kqueue_event_order);
+        if (ready == events + event_count || ready->ident != target.ident
+            || ready->filter != target.filter)
+            descriptor = -1;
+    }
+    return ;
+}
+
+static int32_t nw_kqueue_wait(struct kevent *events, int32_t count, int32_t timeout_milliseconds)
+{
+    const int32_t queue = kqueue();
+    if (queue < 0)
+        return (-1);
     timespec timeout;
-    timespec *timeout_pointer;
-
-    kqueue_descriptor = kqueue();
-    if (kqueue_descriptor == -1)
-    {
-        (void)(cmp_map_system_error_to_ft(errno));
-        return (-1);
-    }
-    index = 0;
-    while (read_file_descriptors && index < read_count)
-    {
-        if (read_file_descriptors[index] < 0)
-        {
-            index++;
-            continue ;
-        }
-        EV_SET(&change_event, read_file_descriptors[index], EVFILT_READ, EV_ADD, 0, 0, NULL);
-        if (kevent(kqueue_descriptor, &change_event, 1, NULL, 0, NULL) == -1)
-        {
-            int32_t last_error;
-
-            last_error = errno;
-            close(kqueue_descriptor);
-            (void)(cmp_map_system_error_to_ft(last_error));
-            return (-1);
-        }
-        index++;
-    }
-    index = 0;
-    while (write_file_descriptors && index < write_count)
-    {
-        if (write_file_descriptors[index] < 0)
-        {
-            index++;
-            continue ;
-        }
-        EV_SET(&change_event, write_file_descriptors[index], EVFILT_WRITE, EV_ADD, 0, 0, NULL);
-        if (kevent(kqueue_descriptor, &change_event, 1, NULL, 0, NULL) == -1)
-        {
-            int32_t last_error;
-
-            last_error = errno;
-            close(kqueue_descriptor);
-            (void)(cmp_map_system_error_to_ft(last_error));
-            return (-1);
-        }
-        index++;
-    }
-    maximum_events = 0;
-    index = 0;
-    while (read_file_descriptors && index < read_count)
-    {
-        if (read_file_descriptors[index] >= 0)
-            maximum_events++;
-        index++;
-    }
-    index = 0;
-    while (write_file_descriptors && index < write_count)
-    {
-        if (write_file_descriptors[index] >= 0)
-            maximum_events++;
-        index++;
-    }
-    if (maximum_events == 0)
-    {
-        close(kqueue_descriptor);
-        (void)(FT_ERR_SUCCESS);
-        return (0);
-    }
-    event_list = static_cast<struct kevent *>(cma_malloc(sizeof(struct kevent) * maximum_events));
-    if (!event_list)
-    {
-        close(kqueue_descriptor);
-        (void)(FT_ERR_NO_MEMORY);
-        return (-1);
-    }
-    timeout_pointer = NULL;
+    timespec *timeout_pointer = nullptr;
     if (timeout_milliseconds >= 0)
     {
         timeout.tv_sec = timeout_milliseconds / 1000;
         timeout.tv_nsec = (timeout_milliseconds % 1000) * 1000000;
         timeout_pointer = &timeout;
     }
-    ready_descriptors = kevent(kqueue_descriptor, NULL, 0, event_list, maximum_events, timeout_pointer);
-    if (ready_descriptors <= 0)
-    {
-        int32_t wait_error;
+    const int32_t ready = kevent(queue, events, count, events, count, timeout_pointer);
+    const int32_t saved_error = errno;
+    close(queue);
+    if (ready < 0)
+        errno = saved_error;
+    return (ready);
+}
 
-        wait_error = errno;
-        cma_free(event_list);
-        close(kqueue_descriptor);
-        if (ready_descriptors == 0)
-            (void)(FT_ERR_SUCCESS);
-        else
-            (void)(cmp_map_system_error_to_ft(wait_error));
-        return (ready_descriptors);
-    }
-    ready_index = 0;
-    unique_ready_count = 0;
-    while (ready_index < ready_descriptors)
+int32_t nw_poll(int32_t *read_file_descriptors, int32_t read_count,
+    int32_t *write_file_descriptors, int32_t write_count, int32_t timeout_milliseconds)
+{
+    constexpr int32_t STACK_EVENTS = 32;
+    struct kevent stack_events[STACK_EVENTS];
+    const int64_t active = static_cast<int64_t>(
+        nw_kqueue_count_active(read_file_descriptors, read_count))
+        + nw_kqueue_count_active(write_file_descriptors, write_count);
+    if (active > FT_INT32_MAX)
     {
-        descriptor = static_cast<int32_t>(event_list[ready_index].ident);
-        already_counted = FT_FALSE;
-        counted_index = 0;
-        while (counted_index < ready_index)
-        {
-            if (static_cast<int32_t>(event_list[counted_index].ident)
-                == descriptor)
-            {
-                already_counted = FT_TRUE;
-                break ;
-            }
-            counted_index++;
-        }
-        if (already_counted == FT_FALSE)
-            unique_ready_count++;
-        search_index = 0;
-        while (read_file_descriptors && search_index < read_count)
-        {
-            if (read_file_descriptors[search_index] == descriptor)
-                break ;
-            search_index++;
-        }
-        if (read_file_descriptors && search_index < read_count)
-            read_file_descriptors[search_index] = descriptor;
-        search_index = 0;
-        while (write_file_descriptors && search_index < write_count)
-        {
-            if (write_file_descriptors[search_index] == descriptor)
-                break ;
-            search_index++;
-        }
-        if (write_file_descriptors && search_index < write_count)
-            write_file_descriptors[search_index] = descriptor;
-        ready_index++;
+        errno = EINVAL;
+        return (-1);
     }
-    index = 0;
-    while (read_file_descriptors && index < read_count)
+    if (active == 0)
+        return (0);
+
+    struct kevent *events = stack_events;
+    if (active > STACK_EVENTS)
     {
-        if (read_file_descriptors[index] >= 0)
+        events = static_cast<struct kevent *>(cma_malloc(
+                sizeof(struct kevent) * static_cast<ft_size_t>(active)));
+        if (!events)
         {
-            ready_index = 0;
-            while (ready_index < ready_descriptors)
-            {
-                if (static_cast<int32_t>(event_list[ready_index].ident)
-                    == read_file_descriptors[index]
-                    && event_list[ready_index].filter == EVFILT_READ)
-                    break ;
-                ready_index++;
-            }
-            if (ready_index == ready_descriptors)
-                read_file_descriptors[index] = -1;
+            errno = ENOMEM;
+            return (-1);
         }
-        index++;
     }
-    index = 0;
-    while (write_file_descriptors && index < write_count)
+    int32_t count = 0;
+    nw_kqueue_collect(events, count, read_file_descriptors, read_count, EVFILT_READ);
+    nw_kqueue_collect(events, count, write_file_descriptors, write_count, EVFILT_WRITE);
+    const int32_t ready = nw_kqueue_wait(events, count, timeout_milliseconds);
+    int32_t result = ready;
+    if (ready > 0)
     {
-        if (write_file_descriptors[index] >= 0)
+        result = nw_kqueue_ready_count(events, ready);
+        if (result > 0)
         {
-            ready_index = 0;
-            while (ready_index < ready_descriptors)
-            {
-                if (static_cast<int32_t>(event_list[ready_index].ident)
-                    == write_file_descriptors[index]
-                    && event_list[ready_index].filter == EVFILT_WRITE)
-                    break ;
-                ready_index++;
-            }
-            if (ready_index == ready_descriptors)
-                write_file_descriptors[index] = -1;
+            nw_kqueue_filter_ready(read_file_descriptors, read_count, EVFILT_READ, events, ready);
+            nw_kqueue_filter_ready(write_file_descriptors, write_count, EVFILT_WRITE, events, ready);
         }
-        index++;
     }
-    cma_free(event_list);
-    close(kqueue_descriptor);
-    (void)(FT_ERR_SUCCESS);
-    return (unique_ready_count);
+    const int32_t saved_error = errno;
+    if (events != stack_events)
+        cma_free(events);
+    if (result < 0)
+        errno = saved_error;
+    return (result);
 }

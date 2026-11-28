@@ -3,7 +3,6 @@
 static ft_bool g_mouse_captured = FT_TRUE;
 static ft_bool g_dumb_control_down[FT_DUMB_CONTROL_COUNT];
 static ft_bool g_dumb_control_pressed[FT_DUMB_CONTROL_COUNT];
-static ft_bool g_dumb_control_previous_down[FT_DUMB_CONTROL_COUNT];
 static ft_dumb_mouse_delta g_dumb_mouse_delta;
 static ft_dumb_keyboard_layout g_dumb_keyboard_layout =
     FT_DUMB_KEYBOARD_LAYOUT_QWERTY;
@@ -69,14 +68,9 @@ void ft_dumb_controls_poll(void)
         current_down = ft_dumb_platform_control_is_down(
             static_cast<ft_dumb_control>(index_control));
 #endif
+        g_dumb_control_pressed[index_control] = current_down == FT_TRUE
+            && g_dumb_control_down[index_control] == FT_FALSE;
         g_dumb_control_down[index_control] = current_down;
-        g_dumb_control_pressed[index_control] = FT_FALSE;
-        if (current_down == FT_TRUE
-            && g_dumb_control_previous_down[index_control] == FT_FALSE)
-        {
-            g_dumb_control_pressed[index_control] = FT_TRUE;
-        }
-        g_dumb_control_previous_down[index_control] = current_down;
         index_control = index_control + 1U;
     }
 #ifdef LIBFT_TEST_BUILD

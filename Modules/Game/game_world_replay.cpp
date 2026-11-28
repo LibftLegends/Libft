@@ -239,13 +239,6 @@ int32_t game_world_replay_session::move(game_world_replay_session &other) noexce
     initialize_error = this->initialize();
     if (initialize_error != FT_ERR_SUCCESS)
         return (this->set_error(initialize_error));
-    this->_snapshot_payload = other._snapshot_payload;
-    if (this->_snapshot_payload.get_error() != FT_ERR_SUCCESS)
-    {
-        (void)this->destroy();
-        return (this->set_error(this->_snapshot_payload.get_error()));
-    }
-    this->_event_callbacks.clear();
     ft_size_t callback_index;
     ft_size_t callback_count;
 
@@ -254,17 +247,21 @@ int32_t game_world_replay_session::move(game_world_replay_session &other) noexce
     while (callback_index < callback_count)
     {
         this->_event_callbacks.push_back(other._event_callbacks[callback_index]);
-        if (this->_event_callbacks.get_error() != FT_ERR_SUCCESS)
+        const int32_t callback_error = this->_event_callbacks.get_error();
+        if (callback_error != FT_ERR_SUCCESS)
         {
             (void)this->destroy();
-            return (this->set_error(this->_event_callbacks.get_error()));
+            return (this->set_error(callback_error));
         }
         callback_index++;
     }
-    other._snapshot_payload.clear();
-    other._event_callbacks.clear();
-    other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t payload_error = this->_snapshot_payload.move(other._snapshot_payload);
+    if (payload_error != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(payload_error));
+    }
+    return (this->set_error(other.destroy()));
 }
 
 int32_t game_world_replay_session::destroy() noexcept
@@ -306,9 +303,9 @@ int32_t game_world_replay_session::capture_snapshot(game_world &world,
     callback_result = world_replay_collect_callbacks(world, callback_snapshot);
     if (callback_result != FT_ERR_SUCCESS)
         return (this->set_error(callback_result));
-    this->_snapshot_payload = snapshot_buffer;
-    if (this->_snapshot_payload.get_error() != FT_ERR_SUCCESS)
-        return (this->set_error(this->_snapshot_payload.get_error()));
+    result = this->_snapshot_payload.move(snapshot_buffer);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
     this->_event_callbacks.clear();
     callback_index = 0;
     callback_count = callback_snapshot.size();

@@ -39,6 +39,29 @@
 
 static int g_script_callback_invocations = 0;
 static int g_script_last_score = 0;
+static int64_t g_custom_script_result = 0;
+
+static int game_script_custom_add(game_script_context &context,
+    const ft_vector<ft_string> &arguments) noexcept
+{
+    int64_t first_value;
+    int64_t second_value;
+    char *end_pointer;
+
+    if (arguments.size() != 2U)
+        return (FT_ERR_INVALID_ARGUMENT);
+    end_pointer = ft_nullptr;
+    if (ft_parse_int64(arguments[0].c_str(), &end_pointer, &first_value)
+        != FT_ERR_SUCCESS || end_pointer == ft_nullptr || *end_pointer != '\0')
+        return (FT_ERR_INVALID_ARGUMENT);
+    end_pointer = ft_nullptr;
+    if (ft_parse_int64(arguments[1].c_str(), &end_pointer, &second_value)
+        != FT_ERR_SUCCESS || end_pointer == ft_nullptr || *end_pointer != '\0')
+        return (FT_ERR_INVALID_ARGUMENT);
+    context.set_result_integer(first_value + second_value);
+    g_custom_script_result = first_value + second_value;
+    return (context.get_error());
+}
 
 static int game_script_adjust_score(game_script_context &context, const ft_vector<ft_string> &arguments) noexcept
 {
@@ -147,7 +170,9 @@ FT_TEST(test_game_script_bridge_executes_callbacks)
     g_script_callback_invocations = 0;
     g_script_last_score = 0;
 
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize("set score 10\ncall adjust_score 5\ncall adjust_score 3\n"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize(
+        " \tSeT\tscore 10   \r\n  # comment\n\nCaLL adjust_score\t5\r"
+        " \tcall adjust_score 3 \t\n"));
 
     execute_result = bridge.execute(script, state);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, execute_result);
@@ -155,6 +180,67 @@ FT_TEST(test_game_script_bridge_executes_callbacks)
     FT_ASSERT_EQ(2, g_script_callback_invocations);
     FT_ASSERT_EQ(18, g_script_last_score);
 
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.enable_thread_safety());
+    g_script_callback_invocations = 0;
+    g_script_last_score = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(script, state));
+    FT_ASSERT_EQ(2, g_script_callback_invocations);
+    FT_ASSERT_EQ(18, g_script_last_score);
+
+    return (1);
+}
+
+FT_TEST(test_game_script_bridge_passes_only_legacy_callback_arguments_in_order)
+{
+    game_script_bridge bridge;
+    game_state state;
+    ft_string script;
+    ft_string callback_name;
+    uint32_t calls = 0;
+    ft_function<int32_t(game_script_context &, const ft_vector<ft_string> &)> callback(
+        [&calls](game_script_context &, const ft_vector<ft_string> &arguments) noexcept
+        {
+            ++calls;
+            if (calls == 1U && arguments.empty())
+                return (FT_ERR_SUCCESS);
+            if (calls == 2U && arguments.size() == 6U && arguments[0] == "one"
+                && arguments[1] == "two" && arguments[2] == "three"
+                && arguments[3] == "four" && arguments[4] == "five"
+                && arguments[5] == "six")
+                return (FT_ERR_SUCCESS);
+            return (FT_ERR_INVALID_ARGUMENT);
+        });
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, callback_name.initialize("inspect"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_function(callback_name, callback));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize("call inspect\nCALL inspect one two three four five six\n"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(script, state));
+    FT_ASSERT_EQ(2U, calls);
+    return (1);
+}
+
+FT_TEST(test_game_script_bridge_executes_custom_vm_callbacks)
+{
+    ft_sharedptr<game_world> world_pointer(new game_world());
+    game_state state;
+    game_script_bridge bridge;
+    ft_function<int(game_script_context &, const ft_vector<ft_string> &)>
+        add_function(game_script_custom_add);
+    ft_string function_name;
+    ft_string script;
+
+    FT_ASSERT(world_pointer.get() != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize(world_pointer, "CUSTOM"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, function_name.initialize("add"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.register_function(function_name,
+        add_function));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, script.initialize("add(7, 5)"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.execute(script, state));
+    FT_ASSERT_EQ(static_cast<int64_t>(12), g_custom_script_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.destroy());
     return (1);
 }
 

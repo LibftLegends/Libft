@@ -1,99 +1,31 @@
-#include "roll.hpp"
 #include "math_internal.hpp"
-#include "../Printf/printf.hpp"
-#include "../RNG/rng.hpp"
-#include <climits>
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
+#include "../RNG/rng_internal.hpp"
 
-static int32_t math_handle_dice_roll(char *string, int32_t *index, int32_t *next_number_index, int32_t *error)
+int32_t math_roll_execute_dice(char *expression, int32_t &length)
 {
-    int32_t first_number;
-    int32_t second_number;
-
-    if (DEBUG == 1)
-        pf_printf("The value of x = %d\n", *next_number_index);
-    if (string[*index] >= '0' && string[*index] <= '9')
-        first_number = math_roll_convert_previous(string, index, error);
-    else
-        first_number = 1;
-    second_number = math_roll_convert_next(string, *next_number_index, error);
-    if (*error)
-        return (1);
-    if (first_number <= 0)
+    int32_t index = 0;
+    while (index < length && expression[index] != ')')
     {
-        if (DEBUG == 1)
+        if (expression[index] != 'd')
         {
-            pf_printf_fd(2, "178-Error: The number of dice must be greater than 0. Current value: %d\n", first_number);
+            index += 1;
+            continue ;
         }
-        return (1);
-    }
-    if (second_number <= 0)
-    {
-        if (DEBUG == 1)
+        int32_t count = 1;
+        int32_t error = 0;
+        int32_t start = index;
+        if (index > 0 && expression[index - 1] >= '0' && expression[index - 1] <= '9')
         {
-            pf_printf_fd(2, "179-Error: The number of faces on a die must be greater than 0. Current value: %d, "
-                          "the result can't be higher than %d\n", second_number, INT_MAX);
+            start -= 1;
+            count = math_roll_convert_previous(expression, &start, &error);
         }
-        return (1);
+        const int32_t faces = math_roll_convert_next(expression, index + 1, &error);
+        int32_t value;
+        if (error || count < 1 || faces < 1
+            || rng_dice_roll_checked(count, faces, value) != FT_ERR_SUCCESS
+            || math_roll_replace_number(expression, length, start, index + 1, value))
+            return (1);
+        index = start;
     }
-    return (ft_dice_roll(first_number, second_number));
-}
-
-static int32_t math_handle_result_replacement(char *string, int32_t *index, int32_t read_index, int32_t result)
-{
-    if (math_roll_itoa(result, index, string))
-        return (1);
-    if (DEBUG == 1)
-        pf_printf("1 The value of i = %d and x = %d\n", *index, read_index);
-    if (string[read_index] == '-' || string[read_index] == '+')
-        read_index++;
-    while (string[read_index] >= '0' && string[read_index] <= '9')
-        read_index++;
-    if (DEBUG == 1)
-        pf_printf("2 The value of i = %d and x = %d\n", *index, read_index);
-    while (string[read_index])
-    {
-        string[*index] = string[read_index];
-        (*index)++;
-        read_index++;
-    }
-    string[*index] = '\0';
-    *index = 0;
-    return (0);
-}
-
-int32_t math_roll_excecute_droll(char *string, int32_t *index, int32_t string_boundary)
-{
-    int32_t result;
-    int32_t next_number_index;
-    int32_t error = 0;
-
-    while (*index < string_boundary)
-    {
-        if (!string[*index] || string[*index] == ')')
-            break ;
-        if (string[*index] == 'd')
-        {
-            next_number_index = *index;
-            if (*index > 0)
-                (*index)--;
-            next_number_index++;
-            result = math_handle_dice_roll(string, index, &next_number_index, &error);
-            if (result == -1 || error)
-                return (1);
-
-            if (math_handle_result_replacement(string, index, next_number_index, result))
-                return (1);
-            math_calculate_j(string, &string_boundary);
-            *index = 0;
-        }
-        else
-            (*index)++;
-    }
-    math_calculate_j(string, &string_boundary);
-    if (DEBUG == 1)
-        pf_printf_fd(2, "After dice rolling result is %s\n", string);
     return (0);
 }

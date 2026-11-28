@@ -1,88 +1,33 @@
 #include "dom.hpp"
+#include "../Basic/basic.hpp"
 #include "../Basic/class_nullptr.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
 int32_t ft_dom_find_path(const ft_dom_node *root, const ft_string &path, const ft_dom_node **out_node) noexcept
 {
-
     if (!root || !out_node)
         return (FT_ERR_INVALID_ARGUMENT);
     *out_node = ft_nullptr;
-    const char *raw_path;
-
-    raw_path = path.c_str();
-    if (!raw_path)
+    const char *segment = path.c_str();
+    if (!segment)
         return (FT_ERR_INVALID_ARGUMENT);
-    ft_size_t path_length;
-
-    path_length = path.size();
-    if (path_length == 0)
+    const char *end = segment + path.size();
+    const ft_dom_node *current = root;
+    while (segment < end)
     {
-        *out_node = root;
-        return (FT_ERR_SUCCESS);
+        const char *separator = static_cast<const char *>(ft_memchr(segment, '/', static_cast<ft_size_t>(end - segment)));
+        const char *segment_end = end;
+        if (separator)
+            segment_end = separator;
+        const ft_size_t length = static_cast<ft_size_t>(segment_end - segment);
+        if (length == 0)
+            return (FT_ERR_INVALID_ARGUMENT);
+        current = current->find_child(segment, length);
+        if (!current)
+            return (FT_ERR_NOT_FOUND);
+        if (!separator)
+            break ;
+        segment = separator + 1;
     }
-    const ft_dom_node *current_node;
-    ft_size_t start_index;
-    int32_t status;
-    int32_t error_code;
-
-    current_node = root;
-    start_index = 0;
-    status = 0;
-    error_code = FT_ERR_SUCCESS;
-    while (start_index < path_length && status == 0)
-    {
-        ft_size_t end_index;
-        ft_size_t segment_length;
-
-        end_index = start_index;
-        while (end_index < path_length && raw_path[end_index] != '/')
-            end_index += 1;
-        segment_length = end_index - start_index;
-        if (segment_length == 0)
-        {
-            status = -1;
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        }
-        else
-        {
-            ft_string segment;
-            int32_t segment_initialize_error;
-
-            segment_initialize_error = segment.initialize();
-            if (segment_initialize_error != FT_ERR_SUCCESS)
-                return (segment_initialize_error);
-            segment.assign(raw_path + start_index, segment_length);
-            if (segment.get_error() != FT_ERR_SUCCESS)
-            {
-                status = -1;
-                error_code = segment.get_error();
-            }
-            else
-            {
-                ft_dom_node *child_node;
-
-                child_node = current_node->find_child(segment);
-                if (!child_node)
-                {
-                    status = -1;
-                    error_code = FT_ERR_NOT_FOUND;
-                }
-                else
-                {
-                    current_node = child_node;
-                    if (end_index >= path_length)
-                        start_index = path_length;
-                    else
-                        start_index = end_index + 1;
-                }
-            }
-        }
-    }
-    if (status != 0)
-        return (error_code);
-    *out_node = current_node;
+    *out_node = current;
     return (FT_ERR_SUCCESS);
 }

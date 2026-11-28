@@ -29,6 +29,10 @@ class game_dialogue_table
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        static int32_t clone_line(const game_dialogue_line &line,
+            game_dialogue_line *&clone) noexcept;
+        int32_t insert_line_snapshot(int32_t line_id,
+            ft_sharedptr<game_dialogue_line> &stored, game_dialogue_line *cached) noexcept;
 
     public:
         game_dialogue_table() noexcept;

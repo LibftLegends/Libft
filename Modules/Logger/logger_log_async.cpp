@@ -1,6 +1,7 @@
 #include "logger_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Sink/sink.hpp"
+#include "../System_utils/system_utils.hpp"
 #include "../Template/queue.hpp"
 #include "../PThread/pthread.hpp"
 #include "../PThread/condition.hpp"
@@ -14,12 +15,19 @@
 #include "../Template/vector.hpp"
 #include "../Errno/errno.hpp"
 
-ft_bool g_async_running = FT_FALSE;
+std::atomic<ft_bool> g_async_running{FT_FALSE};
+static thread_local ft_bool g_is_log_worker = FT_FALSE;
 static ft_size_t g_async_queue_limit = 1024;
 static ft_size_t g_async_pending_messages = 0;
 static ft_size_t g_async_peak_pending = 0;
 static ft_size_t g_async_dropped_messages = 0;
-static ft_queue<ft_string *> g_log_queue;
+struct s_queued_log_message
+{
+    ft_string text;
+    ft_bool structured = FT_FALSE;
+};
+
+static ft_queue<s_queued_log_message *> g_log_queue;
 static int32_t log_queue_initialize(void);
 static int32_t g_log_queue_initializer_result = log_queue_initialize();
 static int32_t log_queue_initialize(void)
@@ -28,139 +36,176 @@ static int32_t log_queue_initialize(void)
 }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wzero-as-null-pointer-constant"
+static pthread_mutex_t g_worker_control_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_condition_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_retired_sink_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_retired_sink_condition = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t g_queue_condition = PTHREAD_COND_INITIALIZER;
 #pragma GCC diagnostic pop
 static pthread_t g_log_thread;
+static ft_bool g_log_thread_joinable = FT_FALSE;
 
-static void ft_log_delete_message(ft_string *message) noexcept
+static void ft_log_delete_message(s_queued_log_message *message) noexcept
 {
-    if (message == ft_nullptr)
-        return ;
-    (void)message->destroy();
     delete message;
+    return ;
+}
+
+static pthread_once_t g_delivery_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t g_delivery_mutex;
+static int32_t g_delivery_error = FT_ERR_INTERNAL;
+static thread_local ft_bool g_in_sink_callback = FT_FALSE;
+
+static void logger_initialize_delivery_mutex()
+{
+    pthread_mutexattr_t attributes;
+    g_delivery_error = pthread_mutexattr_init(&attributes);
+    if (g_delivery_error != 0)
+        return ;
+    g_delivery_error = pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    if (g_delivery_error == 0)
+        g_delivery_error = pthread_mutex_init(&g_delivery_mutex, &attributes);
+    (void)pthread_mutexattr_destroy(&attributes);
+    return ;
+}
+
+void logger_wait_for_sink_callback(s_log_sink_registration &registration)
+{
+    if (g_in_sink_callback != FT_FALSE
+        || registration.state.load(std::memory_order_acquire) != LOG_SINK_RETIRED_RUNNING)
+        return ;
+    if (pthread_mutex_lock(&g_retired_sink_mutex) != 0)
+        return ;
+    while (registration.state.load(std::memory_order_acquire) == LOG_SINK_RETIRED_RUNNING)
+    {
+        if (pt_cond_wait(&g_retired_sink_condition, &g_retired_sink_mutex) != 0)
+            break ;
+    }
+    (void)pthread_mutex_unlock(&g_retired_sink_mutex);
+    return ;
+}
+
+static void logger_finish_sink_callback(s_log_sink_registration &registration)
+{
+    t_log_sink_registration_state state = LOG_SINK_RUNNING;
+    if (registration.state.compare_exchange_strong(state, LOG_SINK_READY,
+            std::memory_order_release))
+        return ;
+    if (pthread_mutex_lock(&g_retired_sink_mutex) != 0)
+        return ;
+    registration.state.store(LOG_SINK_RETIRED, std::memory_order_release);
+    (void)pt_cond_broadcast(&g_retired_sink_condition);
+    (void)pthread_mutex_unlock(&g_retired_sink_mutex);
+    return ;
+}
+
+static int32_t logger_call_sink(const s_log_sink &entry, const char *message,
+    ft_bool structured)
+{
+    if (entry.function == ft_json_sink)
+        return (logger_write_json_sink(message, entry.user_data, structured));
+    if (entry.function != ft_file_sink)
+        return (entry.function(message, entry.user_data));
+    return (logger_write_rotating_file(static_cast<s_file_sink *>(entry.user_data), message));
+}
+
+int32_t logger_deliver_to_sinks(const ft_string &message, ft_bool stop_on_error,
+    ft_bool &has_sinks, ft_bool structured)
+{
+    if (pthread_once(&g_delivery_once, logger_initialize_delivery_mutex) != 0
+        || g_delivery_error != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    int32_t error = pthread_mutex_lock(&g_delivery_mutex);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    error = logger_lock_sinks();
+    if (error != FT_ERR_SUCCESS)
+    {
+        (void)pthread_mutex_unlock(&g_delivery_mutex);
+        return (error);
+    }
+    constexpr ft_size_t INLINE_SINK_COUNT = 8U;
+    s_log_sink inline_entries[INLINE_SINK_COUNT];
+    const ft_size_t count = g_sinks.size();
+    has_sinks = count != 0U;
+    s_log_sink *entries = inline_entries;
+    if (count > INLINE_SINK_COUNT)
+        entries = new (std::nothrow) s_log_sink[count];
+    if (entries == ft_nullptr)
+    {
+        (void)logger_unlock_sinks();
+        (void)pthread_mutex_unlock(&g_delivery_mutex);
+        return (FT_ERR_NO_MEMORY);
+    }
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        entries[index] = g_sinks[index];
+        entries[index].registration->references.fetch_add(1U, std::memory_order_relaxed);
+        index += 1U;
+    }
+    (void)logger_unlock_sinks();
+    const ft_bool previous_callback = g_in_sink_callback;
+    g_in_sink_callback = FT_TRUE;
+    const char *text = message.c_str();
+    index = 0U;
+    int32_t first_error = FT_ERR_SUCCESS;
+    while (index < count)
+    {
+        const s_log_sink &entry = entries[index];
+        t_log_sink_registration_state state = LOG_SINK_READY;
+        if (entry.registration->state.compare_exchange_strong(state, LOG_SINK_RUNNING,
+                std::memory_order_acq_rel))
+        {
+            error = logger_call_sink(entry, text, structured);
+            logger_finish_sink_callback(*entry.registration);
+            if (error != FT_ERR_SUCCESS)
+            {
+                if (first_error == FT_ERR_SUCCESS)
+                    first_error = error;
+                logger_report_sink_error(error);
+                if (stop_on_error != FT_FALSE)
+                    break ;
+            }
+        }
+        index += 1U;
+    }
+    g_in_sink_callback = previous_callback;
+    index = 0U;
+    while (index < count)
+    {
+        logger_release_sink(entries[index]);
+        index += 1U;
+    }
+    if (entries != inline_entries)
+        delete[] entries;
+    (void)pthread_mutex_unlock(&g_delivery_mutex);
+    return (first_error);
+}
+
+static void logger_process_message(const ft_string &message, ft_bool structured)
+{
+    ft_bool has_sinks = FT_FALSE;
+    if (logger_deliver_to_sinks(message, FT_TRUE, has_sinks, structured) == FT_ERR_SUCCESS
+        && has_sinks == FT_FALSE)
+        (void)su_write(1, message.c_str(), message.size());
     return ;
 }
 
 void ft_log_process_message(const ft_string &message)
 {
-    ft_size_t sink_count;
-    ft_vector<s_log_sink> sinks_snapshot;
-    int32_t    lock_error;
-    int32_t    snapshot_initialize_error;
-
-    snapshot_initialize_error = sinks_snapshot.initialize();
-    if (snapshot_initialize_error != FT_ERR_SUCCESS)
-        return ;
-    lock_error = logger_lock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    sink_count = g_sinks.size();
-    if (g_sinks.get_error() != FT_ERR_SUCCESS)
-    {
-        logger_unlock_sinks();
-        return ;
-    }
-    if (sink_count == 0)
-    {
-        logger_unlock_sinks();
-        ssize_t write_result;
-#if defined(_WIN32) || defined(_WIN64)
-        write_result = write(1, message.c_str(),
-                static_cast<unsigned int>(message.size()));
-#else
-        write_result = write(1, message.c_str(), message.size());
-#endif
-        (void)write_result;
-        return ;
-    }
-    ft_size_t entry_index;
-    entry_index = 0;
-    while (entry_index < sink_count)
-    {
-        s_log_sink entry;
-        entry = g_sinks[entry_index];
-        if (g_sinks.get_error() != FT_ERR_SUCCESS)
-        {
-            logger_unlock_sinks();
-            return ;
-        }
-        sinks_snapshot.push_back(entry);
-        if (sinks_snapshot.get_error() != FT_ERR_SUCCESS)
-        {
-            logger_unlock_sinks();
-            return ;
-        }
-        entry_index++;
-    }
-    logger_unlock_sinks();
-    entry_index = 0;
-    while (entry_index < sink_count)
-    {
-        s_log_sink entry;
-
-        entry = sinks_snapshot[entry_index];
-        if (sinks_snapshot.get_error() != FT_ERR_SUCCESS)
-            return ;
-        ft_bool sink_lock_acquired;
-        int32_t  sink_error;
-        int32_t  sink_lock_error;
-
-        sink_lock_acquired = FT_FALSE;
-        sink_lock_error = log_sink_lock(&entry, &sink_lock_acquired);
-        sink_error = sink_lock_error;
-        if (sink_error == FT_ERR_SUCCESS)
-        {
-            ft_bool        rotate_for_size_pre;
-            ft_bool        rotate_for_age_pre;
-            s_file_sink *file_sink;
-
-            rotate_for_size_pre = FT_FALSE;
-            rotate_for_age_pre = FT_FALSE;
-            file_sink = ft_nullptr;
-            if (entry.function == ft_file_sink)
-            {
-                file_sink = static_cast<s_file_sink *>(entry.user_data);
-                if (logger_prepare_rotation(file_sink, &rotate_for_size_pre, &rotate_for_age_pre) != 0)
-                    sink_error = FT_ERR_INVALID_OPERATION;
-            }
-            if (sink_error == FT_ERR_SUCCESS)
-            {
-                sink_error = entry.function(message.c_str(), entry.user_data);
-                if (sink_error != FT_ERR_SUCCESS && g_logger != ft_nullptr)
-                    g_logger->set_error(sink_error);
-            }
-            if (sink_error == FT_ERR_SUCCESS && entry.function == ft_file_sink)
-            {
-                ft_bool rotate_for_size_post;
-                ft_bool rotate_for_age_post;
-
-                rotate_for_size_post = FT_FALSE;
-                rotate_for_age_post = FT_FALSE;
-                if (logger_prepare_rotation(file_sink, &rotate_for_size_post, &rotate_for_age_post) != 0)
-                    sink_error = FT_ERR_INVALID_OPERATION;
-                else if (rotate_for_size_pre || rotate_for_age_pre || rotate_for_size_post || rotate_for_age_post)
-                {
-                    logger_execute_rotation(file_sink);
-                }
-            }
-        }
-        if (sink_lock_acquired)
-            log_sink_unlock(&entry, sink_lock_acquired);
-        if (sink_error != FT_ERR_SUCCESS)
-            return ;
-        entry_index++;
-    }
+    logger_process_message(message, FT_FALSE);
     return ;
 }
 
 static void *ft_log_worker(void *argument)
 {
     ft_bool queue_is_empty;
-    ft_string *message;
+    s_queued_log_message *message;
     int32_t queue_error;
 
     (void)argument;
+    g_is_log_worker = FT_TRUE;
     if (pthread_mutex_lock(&g_condition_mutex) != 0)
         return (ft_nullptr);
     while (1)
@@ -168,7 +213,7 @@ static void *ft_log_worker(void *argument)
         queue_is_empty = g_log_queue.empty();
         if (g_log_queue.get_error() != FT_ERR_SUCCESS)
             break ;
-        if (!g_async_running && queue_is_empty)
+        if (g_async_running.load(std::memory_order_relaxed) == FT_FALSE && queue_is_empty)
             break ;
         if (queue_is_empty)
         {
@@ -187,212 +232,170 @@ static void *ft_log_worker(void *argument)
             pthread_mutex_unlock(&g_condition_mutex);
             if (queue_error == FT_ERR_SUCCESS)
             {
-                ft_log_process_message(*message);
+                logger_process_message(message->text, message->structured);
                 ft_log_delete_message(message);
             }
             if (pthread_mutex_lock(&g_condition_mutex) != 0)
                 return (ft_nullptr);
         }
     }
+    g_async_running.store(FT_FALSE, std::memory_order_relaxed);
     pthread_mutex_unlock(&g_condition_mutex);
     return (ft_nullptr);
 }
 
-void ft_log_enable_async(ft_bool enable)
+static void logger_request_worker_stop()
 {
     if (pthread_mutex_lock(&g_condition_mutex) != 0)
-    {
         return ;
-    }
-    if (enable)
+    g_async_running.store(FT_FALSE, std::memory_order_relaxed);
+    (void)pt_cond_broadcast(&g_queue_condition);
+    (void)pthread_mutex_unlock(&g_condition_mutex);
+    return ;
+}
+
+static void logger_update_worker(ft_bool enable)
+{
+    if (enable != FT_FALSE
+        && g_async_running.load(std::memory_order_relaxed) != FT_FALSE)
+        return ;
+    if (g_log_thread_joinable != FT_FALSE)
     {
-        if (g_async_running)
-        {
-            pthread_mutex_unlock(&g_condition_mutex);
-            return ;
-        }
-        g_async_running = FT_TRUE;
-        g_async_pending_messages = 0;
-        g_async_peak_pending = 0;
-        g_async_dropped_messages = 0;
-        pthread_mutex_unlock(&g_condition_mutex);
-        if (pt_thread_create(&g_log_thread, ft_nullptr, ft_log_worker, ft_nullptr) != 0)
-        {
-            if (pthread_mutex_lock(&g_condition_mutex) != 0)
-            {
-                return ;
-            }
-            g_async_running = FT_FALSE;
-            g_async_pending_messages = 0;
-            pthread_mutex_unlock(&g_condition_mutex);
-        }
-    }
-    else
-    {
-        if (!g_async_running)
-        {
-            pthread_mutex_unlock(&g_condition_mutex);
-            return ;
-        }
-        g_async_running = FT_FALSE;
-        pthread_mutex_unlock(&g_condition_mutex);
-        if (pt_cond_broadcast(&g_queue_condition) != 0)
-            return ;
+        logger_request_worker_stop();
         if (pt_thread_join(g_log_thread, ft_nullptr) != 0)
             return ;
-        if (pthread_mutex_lock(&g_condition_mutex) == 0)
-        {
-            g_async_pending_messages = 0;
-            pthread_mutex_unlock(&g_condition_mutex);
-        }
+        g_log_thread_joinable = FT_FALSE;
     }
+    if (enable == FT_FALSE || pthread_mutex_lock(&g_condition_mutex) != 0)
+        return ;
+    if (pt_thread_create(&g_log_thread, ft_nullptr, ft_log_worker, ft_nullptr) == 0)
+    {
+        g_log_thread_joinable = FT_TRUE;
+        g_async_peak_pending = g_async_pending_messages;
+        g_async_dropped_messages = 0U;
+        g_async_running.store(FT_TRUE, std::memory_order_relaxed);
+    }
+    (void)pthread_mutex_unlock(&g_condition_mutex);
     return ;
+}
+
+ft_bool logger_in_delivery_callback()
+{
+    return (g_is_log_worker != FT_FALSE || g_in_sink_callback != FT_FALSE);
+}
+
+void ft_log_enable_async(ft_bool enable)
+{
+    const ft_bool closing = logger_runtime_closing();
+    if (enable != FT_FALSE && closing != FT_FALSE)
+        return ;
+    if (logger_in_delivery_callback() != FT_FALSE
+        || (closing != FT_FALSE && logger_in_health_worker() != FT_FALSE))
+    {
+        if (enable == FT_FALSE)
+            logger_request_worker_stop();
+        return ;
+    }
+    if (pthread_mutex_lock(&g_worker_control_mutex) != 0)
+        return ;
+    if (enable == FT_FALSE || logger_runtime_closing() == FT_FALSE)
+        logger_update_worker(enable);
+    (void)pthread_mutex_unlock(&g_worker_control_mutex);
+    return ;
+}
+
+static int32_t logger_enqueue_formatted(t_log_level level, const char *format_string,
+    va_list argument_list, ft_bool require_worker)
+{
+    if (format_string == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (level < g_level.load(std::memory_order_relaxed))
+        return (FT_ERR_SUCCESS);
+    char message_buffer[1024];
+    va_list args_copy;
+    va_copy(args_copy, argument_list);
+    const int32_t formatted_length = pf_vsnprintf(message_buffer, sizeof(message_buffer),
+        format_string, args_copy);
+    va_end(args_copy);
+    if (formatted_length < 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_string text;
+    const int32_t error = text.initialize(message_buffer);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    return (logger_enqueue_text(level, text, require_worker));
 }
 
 void ft_log_enqueue(t_log_level level, const char *format_string, va_list argument_list)
 {
-    ft_vector<s_redaction_rule> redaction_snapshot;
-    ft_string message_text;
-    ft_string context_fragment;
-    ft_string final_message;
-    int32_t queue_error;
-    int32_t signal_result;
-    int32_t unlock_status;
-    ft_string *queued_message;
-    int32_t format_error;
-    char message_buffer[1024];
-    va_list args_copy;
-    int32_t lock_error;
-    int32_t redaction_error;
-    int32_t redaction_snapshot_initialize_error;
-    int32_t context_fragment_initialize_error;
-    int32_t final_message_initialize_error;
+    (void)logger_enqueue_formatted(level, format_string, argument_list, FT_FALSE);
+    return ;
+}
 
-    if (!format_string)
-    {
-        return ;
-    }
-    if (level < g_level)
-    {
-        return ;
-    }
-    va_copy(args_copy, argument_list);
-    int32_t formatted_length = pf_vsnprintf(message_buffer, sizeof(message_buffer), format_string, args_copy);
-    va_end(args_copy);
-    format_error = FT_ERR_SUCCESS;
-    if (formatted_length < 0)
-    {
-        if (format_error != FT_ERR_SUCCESS)
-        return ;
-    }
-    if (message_text.initialize(message_buffer) != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    context_fragment_initialize_error = context_fragment.initialize();
-    if (context_fragment_initialize_error != FT_ERR_SUCCESS)
-        return ;
-    final_message_initialize_error = final_message.initialize();
-    if (final_message_initialize_error != FT_ERR_SUCCESS)
-        return ;
-    redaction_snapshot_initialize_error = redaction_snapshot.initialize();
-    if (redaction_snapshot_initialize_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    lock_error = logger_lock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    redaction_error = logger_copy_redaction_rules(redaction_snapshot);
-    if (redaction_error != FT_ERR_SUCCESS)
-    {
-        lock_error = logger_unlock_sinks();
-        if (lock_error != FT_ERR_SUCCESS)
-        {
-            return ;
-        }
-        return ;
-    }
-    lock_error = logger_unlock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    redaction_error = logger_apply_redactions(message_text, redaction_snapshot);
-    if (redaction_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    if (logger_context_format_flat(context_fragment) != 0)
-        return ;
-    if (context_fragment.get_error() != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    if (context_fragment.size() > 0)
-    {
-        if (logger_apply_redactions(context_fragment, redaction_snapshot) != 0)
-            return ;
-    }
-    if (logger_build_standard_message(level, message_text, context_fragment, final_message) != 0)
-        return ;
-    if (final_message.get_error() != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    (void)sink_record_message(static_cast<int32_t>(level), final_message.c_str());
+int32_t logger_enqueue_running(t_log_level level, const char *format_string,
+    va_list argument_list)
+{
+    return (logger_enqueue_formatted(level, format_string, argument_list, FT_TRUE));
+}
+
+int32_t logger_enqueue_text(t_log_level level, ft_string &text, ft_bool require_worker)
+{
+    ft_string final_message;
+    const int32_t error = logger_prepare_message(level, text, final_message);
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    return (logger_enqueue_prepared(level, final_message, require_worker, FT_FALSE));
+}
+
+int32_t logger_enqueue_prepared(t_log_level level, ft_string &final_message,
+    ft_bool require_worker, ft_bool structured)
+{
+    int32_t queue_error;
+    s_queued_log_message *queued_message;
+    (void)sink_record_message(static_cast<int32_t>(level), final_message.c_str(), final_message.size());
     if (pthread_mutex_lock(&g_condition_mutex) != 0)
+        return (FT_ERR_INTERNAL);
+    if (require_worker == FT_TRUE
+        && g_async_running.load(std::memory_order_relaxed) == FT_FALSE)
     {
-        return ;
+        (void)pthread_mutex_unlock(&g_condition_mutex);
+        return (logger_deliver_sync(level, final_message, structured));
     }
     if (g_async_queue_limit > 0 && g_async_pending_messages >= g_async_queue_limit)
     {
         g_async_dropped_messages += 1;
-        if (pthread_mutex_unlock(&g_condition_mutex) != 0)
-        {
-            return ;
-        }
-        return ;
+        (void)pthread_mutex_unlock(&g_condition_mutex);
+        return (FT_ERR_FULL);
     }
-    queued_message = new (std::nothrow) ft_string();
+    queued_message = new (std::nothrow) s_queued_log_message();
     if (queued_message == ft_nullptr)
     {
         (void)pthread_mutex_unlock(&g_condition_mutex);
-        return ;
+        return (FT_ERR_NO_MEMORY);
     }
-    if (queued_message->initialize(final_message) != FT_ERR_SUCCESS)
+    queued_message->structured = structured;
+    queue_error = queued_message->text.move(final_message);
+    if (queue_error != FT_ERR_SUCCESS)
     {
         ft_log_delete_message(queued_message);
         (void)pthread_mutex_unlock(&g_condition_mutex);
-        return ;
+        return (queue_error);
     }
     g_log_queue.enqueue(queued_message);
     queue_error = g_log_queue.get_error();
     if (queue_error != FT_ERR_SUCCESS)
+    {
+        (void)pthread_mutex_unlock(&g_condition_mutex);
         ft_log_delete_message(queued_message);
-    if (queue_error == FT_ERR_SUCCESS)
-    {
-        g_async_pending_messages += 1;
-        if (g_async_pending_messages > g_async_peak_pending)
-            g_async_peak_pending = g_async_pending_messages;
+        return (queue_error);
     }
-    signal_result = 0;
-    if (queue_error == FT_ERR_SUCCESS)
-        signal_result = pt_cond_signal(&g_queue_condition);
-    unlock_status = pthread_mutex_unlock(&g_condition_mutex);
-    if (unlock_status != 0)
-    {
-        return ;
-    }
-    if (queue_error != FT_ERR_SUCCESS)
-    {
-        return ;
-    }
-    if (signal_result != 0)
-        return ;
-    return ;
+    g_async_pending_messages += 1U;
+    if (g_async_pending_messages > g_async_peak_pending)
+        g_async_peak_pending = g_async_pending_messages;
+    if (g_async_pending_messages == 1U)
+        (void)pt_cond_signal(&g_queue_condition);
+    (void)pthread_mutex_unlock(&g_condition_mutex);
+    return (FT_ERR_SUCCESS);
 }
 
 void ft_log_set_async_queue_limit(ft_size_t limit)
@@ -409,7 +412,7 @@ void ft_log_set_async_queue_limit(ft_size_t limit)
         needs_trim = g_async_pending_messages > g_async_queue_limit;
         while (needs_trim)
         {
-            ft_string *dropped_message;
+            s_queued_log_message *dropped_message;
             int32_t drop_error;
 
             dropped_message = g_log_queue.dequeue();
@@ -454,30 +457,21 @@ ft_size_t ft_log_get_async_queue_limit()
 
 int32_t ft_log_get_async_metrics(s_log_async_metrics *metrics)
 {
-    ft_bool metrics_lock_acquired;
-
-    if (!metrics)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    metrics_lock_acquired = FT_FALSE;
+    ft_bool metrics_lock_acquired = FT_FALSE;
     if (log_async_metrics_lock(metrics, &metrics_lock_acquired) != 0)
-    {
         return (FT_ERR_INTERNAL);
-    }
     if (pthread_mutex_lock(&g_condition_mutex) != 0)
     {
         log_async_metrics_unlock(metrics, metrics_lock_acquired);
         return (FT_ERR_INTERNAL);
     }
-    metrics->pending_messages = g_async_pending_messages;
-    metrics->peak_pending_messages = g_async_peak_pending;
-    metrics->dropped_messages = g_async_dropped_messages;
-    if (pthread_mutex_unlock(&g_condition_mutex) != 0)
-    {
-        log_async_metrics_unlock(metrics, metrics_lock_acquired);
-        return (FT_ERR_INTERNAL);
-    }
+    const ft_size_t pending_messages = g_async_pending_messages;
+    const ft_size_t peak_pending_messages = g_async_peak_pending;
+    const ft_size_t dropped_messages = g_async_dropped_messages;
+    (void)pthread_mutex_unlock(&g_condition_mutex);
+    metrics->pending_messages = pending_messages;
+    metrics->peak_pending_messages = peak_pending_messages;
+    metrics->dropped_messages = dropped_messages;
     log_async_metrics_unlock(metrics, metrics_lock_acquired);
     return (FT_ERR_SUCCESS);
 }

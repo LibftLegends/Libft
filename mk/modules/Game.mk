@@ -8,6 +8,7 @@ Game_SOURCES := game_map3d.cpp \
         game_character_misc.cpp \
         game_character_metrics.cpp \
         game_character_save_load.cpp \
+        game_character_snapshot.cpp \
 	game_quest.cpp \
 	game_achievement.cpp \
 	game_reputation.cpp \
@@ -34,6 +35,7 @@ Game_SOURCES := game_map3d.cpp \
         game_resistance.cpp \
         game_pathfinding.cpp \
         game_crafting.cpp \
+        game_recipe_book.cpp \
         game_data_catalog.cpp \
         game_dialogue_line.cpp \
         game_dialogue_script.cpp \
@@ -53,7 +55,6 @@ Game_SOURCES := game_map3d.cpp \
         game_hooks.cpp \
         game_state.cpp \
         game_behavior_tree.cpp \
-        game_lua_runtime.cpp \
         game_scripting_bridge.cpp
 
 Game_HEADERS := game_map3d.hpp \
@@ -83,6 +84,7 @@ Game_HEADERS := game_map3d.hpp \
         game_resistance.hpp \
         game_pathfinding.hpp \
         game_crafting.hpp \
+        game_recipe_book.hpp \
         game_data_catalog.hpp \
         game_dialogue_line.hpp \
         game_dialogue_script.hpp \

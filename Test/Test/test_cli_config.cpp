@@ -81,3 +81,34 @@ FT_TEST(test_cli_merge_config_file_applies_nested_values)
     }
     return (1);
 }
+
+FT_TEST(test_cli_merge_config_text_matches_exact_keys_and_preserves_string_value)
+{
+    cli_option options[2];
+    cli_command subcommands[2];
+    cli_command command;
+
+    reset_option(options + 0, "p", '\0', CLI_OPTION_BOOL);
+    reset_option(options + 1, "port-number", '\0', CLI_OPTION_STRING);
+    reset_command(subcommands + 0, "s", ft_nullptr, 0);
+    reset_command(subcommands + 1, "serve-long", options, 2);
+    reset_command(&command, "tool", ft_nullptr, 0);
+    command.subcommands = subcommands;
+    command.subcommand_count = 2;
+
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, cli_merge_config_text(&command, "serve.port-number=1"));
+    FT_ASSERT_EQ(FT_ERR_NOT_FOUND, cli_merge_config_text(&command, "serve-long.port=1"));
+    const int32_t merge_status = cli_merge_config_text(&command,
+        "serve-long.port-number = v1.part=tail\r\nserve-long.p\n");
+    const char *value = options[1].value_string;
+    const ft_bool exact_value = value != ft_nullptr && std::strcmp(value, "v1.part=tail") == 0;
+    if (options[1].value_string_storage != ft_nullptr)
+    {
+        (void)options[1].value_string_storage->destroy();
+        delete options[1].value_string_storage;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, merge_status);
+    FT_ASSERT_EQ(FT_TRUE, exact_value);
+    FT_ASSERT_EQ(FT_TRUE, options[0].value_bool);
+    return (1);
+}

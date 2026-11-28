@@ -1,187 +1,142 @@
 #include "logger_internal.hpp"
 #include "../Compatebility/compatebility_internal.hpp"
-#include <cerrno>
-#include <unistd.h>
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/vector.hpp"
-#include "../Errno/errno.hpp"
+#include "../Networking/networking.hpp"
 
-static void log_close_report(void)
+static std::atomic<uint32_t> g_runtime_closures{0U};
+
+ft_bool logger_runtime_closing()
 {
+    return (g_runtime_closures.load(std::memory_order_acquire) != 0U);
+}
+
+int32_t logger_begin_runtime_close(uint64_t &last_sink_identity)
+{
+    const int32_t error = logger_lock_sinks();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    g_runtime_closures.fetch_add(1U, std::memory_order_release);
+    const ft_size_t count = g_sinks.size();
+    last_sink_identity = 0U;
+    // The registry assigns increasing identities under the same lock used for insertion.
+    if (count != 0U)
+        last_sink_identity = g_sinks[count - 1U].registration->identity;
+    (void)logger_unlock_sinks();
+    return (FT_ERR_SUCCESS);
+}
+
+void logger_close_sink_output(const s_log_sink &entry)
+{
+    if (entry.function == ft_file_sink)
+    {
+        auto *sink = static_cast<s_file_sink *>(entry.user_data);
+        if (sink != ft_nullptr)
+        {
+            (void)cmp_close(sink->file_descriptor);
+            file_sink_teardown_thread_safety(sink);
+            delete sink;
+        }
+    }
+    else if (entry.function == ft_network_sink)
+    {
+        auto *sink = static_cast<s_network_sink *>(entry.user_data);
+        if (sink != ft_nullptr)
+        {
+            if (sink->socket_fd >= 0)
+                (void)nw_close(sink->socket_fd);
+            network_sink_teardown_thread_safety(sink);
+            delete sink;
+        }
+    }
+    else if (entry.function == ft_syslog_sink)
+        logger_close_syslog_output(entry.registration->identity);
+    return ;
+}
+
+static void logger_retire_sinks_with_new_registrations(uint64_t last_sink_identity)
+{
+    while (logger_lock_sinks() == FT_ERR_SUCCESS)
+    {
+        if (g_sinks.empty() != FT_FALSE || g_sinks[0].registration->identity > last_sink_identity)
+        {
+            (void)logger_unlock_sinks();
+            break ;
+        }
+        s_log_sink entry = g_sinks[0];
+        g_sinks.erase(g_sinks.begin());
+        const int32_t error = g_sinks.get_error();
+        if (error == FT_ERR_SUCCESS)
+        {
+            entry.registration->close_output = FT_TRUE;
+            logger_unlist_sink(entry);
+        }
+        (void)logger_unlock_sinks();
+        if (error != FT_ERR_SUCCESS)
+            break ;
+        logger_retire_sink(entry);
+    }
+    return ;
+}
+
+static void logger_retire_runtime_sinks(uint64_t last_sink_identity)
+{
+    if (last_sink_identity == 0U)
+        return ;
+    if (logger_lock_sinks() != FT_ERR_SUCCESS)
+        return ;
+    const ft_size_t count = g_sinks.size();
+    if (count == 0U)
+    {
+        (void)logger_unlock_sinks();
+        return ;
+    }
+    if (g_sinks[count - 1U].registration->identity > last_sink_identity)
+    {
+        (void)logger_unlock_sinks();
+        logger_retire_sinks_with_new_registrations(last_sink_identity);
+        return ;
+    }
+    ft_vector<s_log_sink> sinks;
+    const int32_t error = sinks.move(g_sinks);
+    if (error == FT_ERR_SUCCESS)
+    {
+        ft_size_t index = 0U;
+        while (index < count)
+        {
+            s_log_sink &entry = sinks[index];
+            entry.registration->close_output = FT_TRUE;
+            logger_unlist_sink(entry);
+            index += 1U;
+        }
+    }
+    (void)logger_unlock_sinks();
+    if (error != FT_ERR_SUCCESS)
+        return ;
+    ft_size_t index = 0U;
+    while (index < count)
+    {
+        logger_retire_sink(sinks[index]);
+        index += 1U;
+    }
+    return ;
+}
+
+void logger_finish_runtime_close(uint64_t last_sink_identity)
+{
+    ft_log_clear_redactions();
+    logger_context_clear();
+    g_level.store(LOG_LEVEL_INFO, std::memory_order_relaxed);
+    g_use_color.store(FT_TRUE, std::memory_order_relaxed);
+    ft_log_enable_async(FT_FALSE);
+    ft_log_enable_remote_health(FT_FALSE);
+    logger_retire_runtime_sinks(last_sink_identity);
+    g_runtime_closures.fetch_sub(1U, std::memory_order_release);
     return ;
 }
 
 void ft_log_close()
 {
-    ft_log_enable_async(FT_FALSE);
-    ft_log_enable_remote_health(FT_FALSE);
-    ft_log_clear_redactions();
-    logger_context_clear();
-    g_level = LOG_LEVEL_INFO;
-    g_use_color = FT_TRUE;
-    ft_size_t entry_index;
-    ft_vector<s_log_sink> sinks_snapshot;
-    ft_size_t sink_count;
-    int32_t    clear_error;
-    int32_t    lock_error;
-
-    lock_error = logger_lock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        log_close_report();
-        return ;
-    }
-    if (sinks_snapshot.initialize() != FT_ERR_SUCCESS)
-    {
-        lock_error = logger_unlock_sinks();
-        if (lock_error != FT_ERR_SUCCESS)
-        {
-            log_close_report();
-            return ;
-        }
-        log_close_report();
-        return ;
-    }
-    sink_count = g_sinks.size();
-    if (g_sinks.get_error() != FT_ERR_SUCCESS)
-    {
-        lock_error = logger_unlock_sinks();
-        if (lock_error != FT_ERR_SUCCESS)
-        {
-            log_close_report();
-            return ;
-        }
-        log_close_report();
-        return ;
-    }
-    entry_index = 0;
-    while (entry_index < sink_count)
-    {
-        s_log_sink entry;
-
-        entry = g_sinks[entry_index];
-        if (g_sinks.get_error() != FT_ERR_SUCCESS)
-        {
-            lock_error = logger_unlock_sinks();
-            if (lock_error != FT_ERR_SUCCESS)
-            {
-                log_close_report();
-                return ;
-            }
-            log_close_report();
-            return ;
-        }
-        sinks_snapshot.push_back(entry);
-        if (sinks_snapshot.get_error() != FT_ERR_SUCCESS)
-        {
-            lock_error = logger_unlock_sinks();
-            if (lock_error != FT_ERR_SUCCESS)
-            {
-                log_close_report();
-                return ;
-            }
-            log_close_report();
-            return ;
-        }
-        entry_index++;
-    }
-    g_sinks.clear();
-    clear_error = g_sinks.get_error();
-    lock_error = logger_unlock_sinks();
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        log_close_report();
-        return ;
-    }
-    if (clear_error != FT_ERR_SUCCESS)
-    {
-        log_close_report();
-        return ;
-    }
-    ft_size_t snapshot_count;
-
-    snapshot_count = sinks_snapshot.size();
-    if (sinks_snapshot.get_error() != FT_ERR_SUCCESS)
-    {
-        log_close_report();
-        return ;
-    }
-    entry_index = 0;
-    while (entry_index < snapshot_count)
-    {
-        s_log_sink entry;
-
-        entry = sinks_snapshot[entry_index];
-        if (sinks_snapshot.get_error() != FT_ERR_SUCCESS)
-        {
-            log_close_report();
-            return ;
-        }
-        ft_bool sink_lock_acquired;
-        int32_t  sink_error;
-        int32_t  sink_lock_error;
-
-        sink_lock_acquired = FT_FALSE;
-        sink_error = FT_ERR_SUCCESS;
-        sink_lock_error = log_sink_lock(&entry, &sink_lock_acquired);
-        if (sink_lock_error != FT_ERR_SUCCESS)
-            sink_error = sink_lock_error;
-        else if (entry.function == ft_file_sink)
-        {
-            s_file_sink *sink;
-            ft_bool         file_sink_lock_acquired;
-            int32_t          file_lock_error;
-
-            sink = static_cast<s_file_sink *>(entry.user_data);
-            if (sink)
-            {
-                file_sink_lock_acquired = FT_FALSE;
-                file_lock_error = file_sink_lock(sink, &file_sink_lock_acquired);
-                if (file_lock_error != FT_ERR_SUCCESS)
-                    file_sink_lock_acquired = FT_FALSE;
-                (void)cmp_close(sink->file_descriptor);
-                sink->file_descriptor = -1;
-                if (file_sink_lock_acquired)
-                    file_sink_unlock(sink, file_sink_lock_acquired);
-                file_sink_teardown_thread_safety(sink);
-                delete sink;
-            }
-        }
-        else if (entry.function == ft_syslog_sink)
-            cmp_syslog_close();
-        else if (entry.function == ft_network_sink)
-        {
-            s_network_sink *sink;
-            ft_bool            network_lock_acquired;
-            int32_t             network_lock_error;
-
-            sink = static_cast<s_network_sink *>(entry.user_data);
-            if (sink)
-            {
-                network_lock_acquired = FT_FALSE;
-                network_lock_error = network_sink_lock(sink, &network_lock_acquired);
-                if (network_lock_error != FT_ERR_SUCCESS)
-                    network_lock_acquired = FT_FALSE;
-                cmp_close(sink->socket_fd);
-                sink->socket_fd = -1;
-                if (network_lock_acquired)
-                    network_sink_unlock(sink, network_lock_acquired);
-                network_sink_teardown_thread_safety(sink);
-                delete sink;
-            }
-        }
-        if (sink_lock_acquired)
-            log_sink_unlock(&entry, sink_lock_acquired);
-        log_sink_teardown_thread_safety(&entry);
-        if (sink_error != FT_ERR_SUCCESS)
-        {
-            log_close_report();
-            return ;
-        }
-        entry_index++;
-    }
-    log_close_report();
+    uint64_t last_sink_identity;
+    if (logger_begin_runtime_close(last_sink_identity) == FT_ERR_SUCCESS)
+        logger_finish_runtime_close(last_sink_identity);
     return ;
 }

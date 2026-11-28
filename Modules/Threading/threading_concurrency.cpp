@@ -146,7 +146,7 @@ int32_t ft_countdown_latch::wait_for(uint32_t timeout_milliseconds) noexcept
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_NOT_INITIALISED);
-    if (this->_condition.wait_for(lock, timeout, [this]()
+    if (this->_count != 0U && this->_condition.wait_for(lock, timeout, [this]()
             { return (this->_count == 0
                     || this->_initialised_state != FT_CLASS_STATE_INITIALISED); }) == false)
         return (FT_ERR_TIMEOUT);
@@ -157,6 +157,8 @@ int32_t ft_countdown_latch::wait_for(uint32_t timeout_milliseconds) noexcept
 
 int32_t ft_countdown_latch::wait(const ft_cancellation_token &token) noexcept
 {
+    if (token.is_valid() == FT_FALSE)
+        return (this->wait());
     std::unique_lock<std::mutex> lock(this->_mutex);
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
@@ -245,6 +247,8 @@ int32_t ft_barrier::arrive_and_wait() noexcept
 
 int32_t ft_barrier::arrive_and_wait(const ft_cancellation_token &token) noexcept
 {
+    if (token.is_valid() == FT_FALSE)
+        return (this->arrive_and_wait());
     std::unique_lock<std::mutex> lock(this->_mutex);
     uint32_t generation;
 

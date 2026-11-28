@@ -3,80 +3,10 @@
 #include "../PThread/pthread.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../Errno/errno_internal.hpp"
-#include <functional>
+#include "geometry_pair_lock.hpp"
 #include <new>
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
-
-uint32_t circle::lock_pair(const circle &other, const circle *&lower,
-    const circle *&upper) const
-{
-    const circle *ordered_first;
-    const circle *ordered_second;
-    uint32_t lower_error;
-    uint32_t upper_error;
-    std::less<const circle *> pointer_order;
-    std::less<const pt_recursive_mutex *> mutex_order;
-
-    ordered_first = this;
-    ordered_second = &other;
-    if (ordered_first == ordered_second)
-    {
-        lower = this;
-        upper = this;
-        return (pt_recursive_mutex_lock_if_not_null(this->_mutex));
-    }
-    if (ordered_first->_mutex == ft_nullptr
-        && ordered_second->_mutex != ft_nullptr)
-    {
-        ordered_first = &other;
-        ordered_second = this;
-    }
-    else if (ordered_first->_mutex != ft_nullptr
-        && ordered_second->_mutex != ft_nullptr
-        && mutex_order(ordered_second->_mutex, ordered_first->_mutex))
-    {
-        ordered_first = &other;
-        ordered_second = this;
-    }
-    else if (ordered_first->_mutex == ft_nullptr
-        && ordered_second->_mutex == ft_nullptr
-        && pointer_order(ordered_second, ordered_first))
-    {
-        ordered_first = &other;
-        ordered_second = this;
-    }
-    lower = ordered_first;
-    upper = ordered_second;
-    upper_error = FT_ERR_MUTEX_ALREADY_LOCKED;
-    while (true)
-    {
-        lower_error = pt_recursive_mutex_lock_if_not_null(lower->_mutex);
-        if (lower_error != FT_ERR_SUCCESS)
-        {
-            if (lower_error != FT_ERR_MUTEX_ALREADY_LOCKED)
-                return (lower_error);
-            (void)pt_thread_yield();
-            continue ;
-        }
-        upper_error = pt_recursive_mutex_lock_if_not_null(upper->_mutex);
-        if (upper_error == FT_ERR_SUCCESS)
-            return (FT_ERR_SUCCESS);
-        (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
-        if (upper_error != FT_ERR_MUTEX_ALREADY_LOCKED)
-            return (upper_error);
-        (void)pt_thread_yield();
-    }
-}
-
-void circle::unlock_pair(const circle *lower, const circle *upper)
-{
-    if (upper != ft_nullptr)
-        (void)pt_recursive_mutex_unlock_if_not_null(upper->_mutex);
-    if (lower != ft_nullptr && lower != upper)
-        (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
-    return ;
-}
 
 circle::circle() noexcept
     : _center_x(0.0)
@@ -94,6 +24,12 @@ int32_t circle::initialize() noexcept
     {
         errno_abort_lifecycle(this->_initialised_state, "circle::initialize", "called while object is already initialised");
         return (FT_ERR_INVALID_STATE);
+    }
+    if (this->_mutex != ft_nullptr)
+    {
+        uint32_t cleanup_error = this->release_mutex();
+        if (cleanup_error != FT_ERR_SUCCESS)
+            return (cleanup_error);
     }
     this->_center_x = 0.0;
     this->_center_y = 0.0;
@@ -129,7 +65,8 @@ int32_t circle::initialize(const circle &other) noexcept
     }
     if (this == &other)
         return (FT_ERR_SUCCESS);
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        || this->_mutex != ft_nullptr)
     {
         destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
@@ -159,9 +96,8 @@ int32_t circle::initialize(const circle &other) noexcept
 
 uint32_t circle::move(circle &other) noexcept
 {
-    const circle *lower;
-    const circle *upper;
-    ft_bool source_uninitialised;
+    const pt_recursive_mutex *lower;
+    const pt_recursive_mutex *upper;
     uint32_t lock_error;
 
     if (this == &other)
@@ -174,18 +110,17 @@ uint32_t circle::move(circle &other) noexcept
         }
         return (FT_ERR_SUCCESS);
     }
-    lock_error = this->lock_pair(other, lower, upper);
+    lower = this->_mutex;
+    upper = other._mutex;
+    lock_error = geometry_lock_pair(lower, upper);
     if (lock_error != FT_ERR_SUCCESS)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (lock_error);
     }
-    source_uninitialised = FT_FALSE;
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-        source_uninitialised = FT_TRUE;
-    if (source_uninitialised != FT_FALSE)
     {
-        this->unlock_pair(lower, upper);
+        geometry_unlock_pair(lower, upper);
         errno_abort_lifecycle(other._initialised_state, "circle::move source",
             "called with uninitialised source object");
         return (FT_ERR_INVALID_STATE);
@@ -193,7 +128,7 @@ uint32_t circle::move(circle &other) noexcept
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->unlock_pair(lower, upper);
+        geometry_unlock_pair(lower, upper);
         return (FT_ERR_SUCCESS);
     }
     this->_center_x = other._center_x;
@@ -202,8 +137,9 @@ uint32_t circle::move(circle &other) noexcept
     other._center_x = 0.0;
     other._center_y = 0.0;
     other._radius = 0.0;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->unlock_pair(lower, upper);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    geometry_unlock_pair(lower, upper);
     return (FT_ERR_SUCCESS);
 }
 
@@ -219,11 +155,8 @@ uint32_t circle::destroy() noexcept
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return (FT_ERR_SUCCESS);
     if (this->_initialised_state == FT_CLASS_STATE_DESTROYED)
-        return (FT_ERR_SUCCESS);
+        return (this->release_mutex());
     disable_error = this->disable_thread_safety();
-    if (disable_error != FT_ERR_SUCCESS
-        && this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     this->_center_x = 0.0;
     this->_center_y = 0.0;
     this->_radius = 0.0;
@@ -235,8 +168,7 @@ uint32_t circle::destroy() noexcept
 
 circle::~circle() noexcept
 {
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)this->destroy();
+    (void)this->destroy();
     return ;
 }
 
@@ -358,10 +290,15 @@ uint32_t circle::enable_thread_safety() noexcept
 
 uint32_t circle::disable_thread_safety() noexcept
 {
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "circle::disable_thread_safety");
+    return (this->release_mutex());
+}
+
+uint32_t circle::release_mutex() noexcept
+{
     uint32_t mutex_error;
     pt_recursive_mutex *mutex_pointer;
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "circle::disable_thread_safety");
     mutex_pointer = this->_mutex;
     this->_mutex = ft_nullptr;
     if (mutex_pointer == ft_nullptr)

@@ -18,24 +18,13 @@ struct cma_metadata_chunk
 
 static cma_metadata_chunk    *g_cma_metadata_chunks = nullptr;
 static Block    *g_cma_metadata_free_list = nullptr;
-static ft_size_t    g_cma_metadata_stride = 0;
 static ft_size_t    g_cma_metadata_page_size = 0;
+static constexpr ft_size_t CMA_METADATA_STRIDE = align16(sizeof(Block));
 
 static ft_bool cma_metadata_add_chunk(void);
 #if CMA_ENABLE_METADATA_PROTECTION
 static int32_t cma_metadata_apply_protection(ft_bool make_inaccessible);
 #endif
-
-static ft_size_t cma_metadata_compute_stride(void)
-{
-    ft_size_t    stride;
-
-    if (g_cma_metadata_stride != 0)
-        return (g_cma_metadata_stride);
-    stride = align16(sizeof(Block));
-    g_cma_metadata_stride = stride;
-    return (stride);
-}
 
 static ft_size_t cma_metadata_compute_page_size(void)
 {
@@ -51,22 +40,18 @@ static ft_size_t cma_metadata_compute_page_size(void)
 
 static ft_bool cma_metadata_add_chunk(void)
 {
-    ft_size_t    stride;
     ft_size_t    page_size;
     ft_size_t    chunk_stride_count;
     ft_size_t    chunk_size;
     cma_metadata_chunk    *chunk;
 
-    stride = cma_metadata_compute_stride();
-    if (stride == 0)
-        return (FT_FALSE);
     page_size = cma_metadata_compute_page_size();
     if (page_size == 0)
         return (FT_FALSE);
-    chunk_stride_count = page_size / stride;
+    chunk_stride_count = page_size / CMA_METADATA_STRIDE;
     if (chunk_stride_count == 0)
         chunk_stride_count = 1;
-    chunk_size = chunk_stride_count * stride;
+    chunk_size = chunk_stride_count * CMA_METADATA_STRIDE;
     chunk = static_cast<cma_metadata_chunk *>(std::malloc(sizeof(cma_metadata_chunk)));
     if (chunk == nullptr)
         return (FT_FALSE);
@@ -228,7 +213,6 @@ Block    *cma_metadata_allocate_block(void)
 {
     cma_metadata_chunk    *chunk;
     Block                *block;
-    ft_size_t            stride;
 
     if (cma_metadata_make_writable() != FT_ERR_SUCCESS)
         return (nullptr);
@@ -239,36 +223,19 @@ Block    *cma_metadata_allocate_block(void)
         std::memset(block, 0, sizeof(Block));
         return (block);
     }
-    if (g_cma_metadata_chunks == nullptr)
+    chunk = g_cma_metadata_chunks;
+    /* A new chunk is prepended only after the current head fills.
+     * Slots returned from older chunks are already on the free list. */
+    if (chunk == nullptr || chunk->size - chunk->used < CMA_METADATA_STRIDE)
     {
         if (!cma_metadata_add_chunk())
-        {
             return (nullptr);
-        }
+        chunk = g_cma_metadata_chunks;
     }
-    stride = cma_metadata_compute_stride();
-    chunk = g_cma_metadata_chunks;
-    while (chunk)
-    {
-        if (chunk->used + stride <= chunk->size)
-        {
-            block = reinterpret_cast<Block *>(chunk->memory + chunk->used);
-            chunk->used += stride;
-            std::memset(block, 0, sizeof(Block));
-            return (block);
-        }
-        if (chunk->next == nullptr)
-        {
-            if (!cma_metadata_add_chunk())
-            {
-                return (nullptr);
-            }
-            chunk = g_cma_metadata_chunks;
-            continue ;
-        }
-        chunk = chunk->next;
-    }
-    return (nullptr);
+    block = reinterpret_cast<Block *>(chunk->memory + chunk->used);
+    chunk->used += CMA_METADATA_STRIDE;
+    std::memset(block, 0, sizeof(Block));
+    return (block);
 }
 
 void    cma_metadata_release_block(Block *block)
@@ -319,7 +286,6 @@ void    cma_metadata_reset(void)
     }
     g_cma_metadata_chunks = nullptr;
     g_cma_metadata_free_list = nullptr;
-    g_cma_metadata_stride = 0;
     g_cma_metadata_page_size = 0;
     cma_free_list_reset();
     return ;

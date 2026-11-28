@@ -8,9 +8,13 @@
 #include <mutex>
 #include <pthread.h>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 
 #include "../PThread/mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+#endif
 
 static const uint64_t CMA_OPERATION_STATE_TRANSITION =
     static_cast<uint64_t>(1U);
@@ -25,6 +29,7 @@ static std::atomic<pt_recursive_mutex *> g_cma_allocator_mutex(nullptr);
 static std::atomic<uint64_t> g_cma_operation_state(CMA_OPERATION_STATE_ENABLED);
 static std::atomic<uint32_t> g_cma_operation_epoch(0U);
 static thread_local ft_size_t g_cma_operation_depth = 0;
+static thread_local ft_size_t g_cma_metadata_guard_depth = 0;
 static thread_local ft_bool g_cma_operation_exit_cleanup_armed = FT_FALSE;
 static thread_local pt_recursive_mutex *g_cma_operation_mutex = nullptr;
 static thread_local ft_bool g_cma_operation_mutex_locked = FT_FALSE;
@@ -214,12 +219,26 @@ static int32_t cma_destroy_allocator_mutex(void)
 
 static void cma_finish_operation(void)
 {
-    g_cma_operation_state.fetch_sub(CMA_OPERATION_STATE_ACTIVE_INCREMENT,
-        std::memory_order_release);
-    g_cma_operation_epoch.fetch_add(1U, std::memory_order_release);
-    (void)pt_thread_wake_one_uint32(&g_cma_operation_epoch);
+    const uint64_t previous_state = g_cma_operation_state.fetch_sub(
+        CMA_OPERATION_STATE_ACTIVE_INCREMENT, std::memory_order_release);
+    if (cma_transition_is_set(previous_state) == FT_TRUE
+        && cma_active_operation_count(previous_state) == 1U)
+    {
+        /* The transition and arriving operations share the epoch. Wake
+         * every waiter so an arriving allocation cannot consume the signal. */
+        g_cma_operation_epoch.fetch_add(1U, std::memory_order_release);
+        (void)pt_thread_wake_all_uint32(&g_cma_operation_epoch);
+    }
     return ;
 }
+
+#ifdef LIBFT_TEST_BUILD
+ft_bool cma_allocator_transition_pending_for_test(void)
+{
+    return (cma_transition_is_set(
+        g_cma_operation_state.load(std::memory_order_acquire)));
+}
+#endif
 
 static int32_t cma_begin_transition(ft_bool enable, uint64_t timeout_ms)
 {
@@ -227,6 +246,7 @@ static int32_t cma_begin_transition(ft_bool enable, uint64_t timeout_ms)
     uint64_t transitioned_state;
     int32_t result;
     int32_t wait_result;
+    uint32_t operation_epoch;
     uint64_t remaining_timeout_ms;
     std::chrono::steady_clock::time_point transition_deadline;
     std::chrono::milliseconds remaining_duration;
@@ -246,6 +266,12 @@ static int32_t cma_begin_transition(ft_bool enable, uint64_t timeout_ms)
         + std::chrono::milliseconds(timeout_ms);
     while (cma_active_operation_count(transitioned_state) != 0)
     {
+        /* Read the epoch before rechecking the condition to cover a finish
+         * that occurs between announcing the transition and parking. */
+        operation_epoch = g_cma_operation_epoch.load(std::memory_order_acquire);
+        transitioned_state = g_cma_operation_state.load(std::memory_order_acquire);
+        if (cma_active_operation_count(transitioned_state) == 0)
+            break ;
         remaining_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             transition_deadline - std::chrono::steady_clock::now());
         if (remaining_duration.count() <= 0)
@@ -255,25 +281,16 @@ static int32_t cma_begin_transition(ft_bool enable, uint64_t timeout_ms)
         }
         remaining_timeout_ms = static_cast<uint64_t>(remaining_duration.count());
         wait_result = pt_thread_wait_uint32_timed(&g_cma_operation_epoch,
-            g_cma_operation_epoch.load(std::memory_order_acquire),
-            remaining_timeout_ms);
-        if (wait_result == FT_ERR_TIMEOUT)
-        {
-            cma_cancel_transition();
-            return (FT_ERR_TIMEOUT);
-        }
+            operation_epoch, remaining_timeout_ms);
+        transitioned_state = g_cma_operation_state.load(std::memory_order_acquire);
+        if (wait_result == FT_ERR_TIMEOUT
+            && cma_active_operation_count(transitioned_state) == 0)
+            break ;
         if (wait_result != FT_ERR_SUCCESS)
         {
             cma_cancel_transition();
             return (wait_result);
         }
-        transitioned_state = g_cma_operation_state.load(
-                std::memory_order_acquire);
-    }
-    if (cma_active_operation_count(transitioned_state) != 0)
-    {
-        cma_cancel_transition();
-        return (FT_ERR_INVALID_STATE);
     }
     if (enable == FT_TRUE)
     {
@@ -350,7 +367,26 @@ ft_bool cma_is_thread_safe_enabled(void)
     return (FT_FALSE);
 }
 
-int32_t cma_lock_allocator(ft_bool *lock_acquired)
+static int32_t cma_begin_metadata_guard(ft_size_t depth)
+{
+    if (g_cma_metadata_guard_depth != 0U)
+        return (FT_ERR_SUCCESS);
+    if (cma_metadata_make_writable() != FT_ERR_SUCCESS
+        || cma_metadata_guard_increment() == FT_FALSE)
+        return (FT_ERR_INVALID_STATE);
+    g_cma_metadata_guard_depth = depth;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cma_require_metadata_locked(void)
+{
+    if (g_cma_operation_depth == 0U)
+        return (FT_ERR_INVALID_STATE);
+    return (cma_begin_metadata_guard(g_cma_operation_depth));
+}
+
+static int32_t cma_lock_allocator_uninstrumented(ft_bool *lock_acquired,
+        ft_bool require_metadata)
 {
     pt_recursive_mutex *mutex_pointer;
     ft_bool thread_safety_enabled;
@@ -365,9 +401,8 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
     *lock_acquired = FT_FALSE;
     if (g_cma_operation_depth != 0)
     {
-        if (cma_metadata_make_writable() != FT_ERR_SUCCESS)
-            return (FT_ERR_INVALID_STATE);
-        if (cma_metadata_guard_increment() == FT_FALSE)
+        if (require_metadata == FT_TRUE
+            && cma_begin_metadata_guard(g_cma_operation_depth + 1U) != FT_ERR_SUCCESS)
             return (FT_ERR_INVALID_STATE);
         g_cma_operation_depth++;
         *lock_acquired = FT_TRUE;
@@ -396,21 +431,21 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
                 std::memory_order_acquire, std::memory_order_relaxed))
             break ;
     }
-    thread_safety_enabled = FT_FALSE;
+    thread_safety_enabled = cma_thread_safety_is_enabled(next_state);
     mutex_pointer = nullptr;
-    if ((next_state & CMA_OPERATION_STATE_ENABLED) != 0)
-    {
-        thread_safety_enabled = FT_TRUE;
-        prepare_result = cma_prepare_allocator_mutex();
-        if (prepare_result != FT_ERR_SUCCESS)
-        {
-            cma_finish_operation();
-            return (prepare_result);
-        }
-        mutex_pointer = g_cma_allocator_mutex.load(std::memory_order_acquire);
-    }
     if (thread_safety_enabled == FT_TRUE)
     {
+        mutex_pointer = g_cma_allocator_mutex.load(std::memory_order_acquire);
+        if (mutex_pointer == nullptr)
+        {
+            prepare_result = cma_prepare_allocator_mutex();
+            if (prepare_result != FT_ERR_SUCCESS)
+            {
+                cma_finish_operation();
+                return (prepare_result);
+            }
+            mutex_pointer = g_cma_allocator_mutex.load(std::memory_order_acquire);
+        }
         mutex_error = pt_recursive_mutex_lock_if_not_null(mutex_pointer);
         if (mutex_error != FT_ERR_SUCCESS)
         {
@@ -418,14 +453,8 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
             return (FT_ERR_INVALID_STATE);
         }
     }
-    if (cma_metadata_make_writable() != FT_ERR_SUCCESS)
-    {
-        if (thread_safety_enabled == FT_TRUE)
-            (void)pt_recursive_mutex_unlock_if_not_null(mutex_pointer);
-        cma_finish_operation();
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (cma_metadata_guard_increment() == FT_FALSE)
+    if (require_metadata == FT_TRUE
+        && cma_begin_metadata_guard(1U) != FT_ERR_SUCCESS)
     {
         if (thread_safety_enabled == FT_TRUE)
             (void)pt_recursive_mutex_unlock_if_not_null(mutex_pointer);
@@ -439,22 +468,27 @@ int32_t cma_lock_allocator(ft_bool *lock_acquired)
     return (FT_ERR_SUCCESS);
 }
 
-int32_t cma_unlock_allocator(ft_bool lock_acquired)
+static int32_t cma_unlock_allocator_uninstrumented(ft_bool lock_acquired)
 {
     ft_bool guard_decremented;
     int32_t mutex_error;
 
     if (lock_acquired == FT_FALSE)
         return (FT_ERR_SUCCESS);
-    if (g_cma_operation_depth > 1)
+    guard_decremented = FT_TRUE;
+    if (g_cma_metadata_guard_depth != 0U
+        && g_cma_metadata_guard_depth == g_cma_operation_depth)
     {
         guard_decremented = cma_metadata_guard_decrement();
+        g_cma_metadata_guard_depth = 0U;
+    }
+    if (g_cma_operation_depth > 1)
+    {
         g_cma_operation_depth--;
         if (guard_decremented == FT_FALSE)
             return (FT_ERR_INVALID_STATE);
         return (FT_ERR_SUCCESS);
     }
-    guard_decremented = cma_metadata_guard_decrement();
     mutex_error = FT_ERR_SUCCESS;
     if (g_cma_operation_mutex_locked == FT_TRUE)
         mutex_error = pt_recursive_mutex_unlock_if_not_null(
@@ -468,4 +502,60 @@ int32_t cma_unlock_allocator(ft_bool lock_acquired)
     if (guard_decremented == FT_FALSE)
         return (FT_ERR_INVALID_STATE);
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t cma_lock_allocator_instrumented(ft_bool *lock_acquired,
+        ft_bool require_metadata)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_lock_allocator_uninstrumented(lock_acquired, require_metadata));
+    result = cma_lock_allocator_uninstrumented(lock_acquired, require_metadata);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr, "[LIBFT][Analytics] cma_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_lock_allocator_uninstrumented(lock_acquired, require_metadata));
+#endif
+}
+
+int32_t cma_lock_allocator(ft_bool *lock_acquired)
+{
+    return (cma_lock_allocator_instrumented(lock_acquired, FT_TRUE));
+}
+
+int32_t cma_lock_allocator_arena(ft_bool *lock_acquired)
+{
+    return (cma_lock_allocator_instrumented(lock_acquired, FT_FALSE));
+}
+
+int32_t cma_unlock_allocator(ft_bool lock_acquired)
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int32_t analytics_error;
+    int32_t result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::CMA_UNLOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (cma_unlock_allocator_uninstrumented(lock_acquired));
+    result = cma_unlock_allocator_uninstrumented(lock_acquired);
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] cma_unlock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (cma_unlock_allocator_uninstrumented(lock_acquired));
+#endif
 }

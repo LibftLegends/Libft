@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <cstring>
 #include <cstdlib>
 #include <exception>
@@ -61,7 +62,7 @@ static void append_test_failure_log(const char *message)
     if (message == NULL)
         return ;
     g_test_failure_log_mutex.lock();
-    failure_log = std::fopen("test_failures.log", "a");
+    failure_log = std::fopen("build_logs/test_failures.log", "a");
     if (failure_log != NULL)
     {
         std::fprintf(failure_log, "%s\n", message);
@@ -174,10 +175,10 @@ class test_timeout_watchdog
 
         void begin_test(const s_test_case *test) noexcept
         {
-            uint32_t timeout;
-
-            timeout = test_timeout_seconds();
-            if (timeout == 0U || !this->_thread.joinable())
+            if (!this->_thread.joinable())
+                return ;
+            const uint32_t timeout = test_timeout_seconds();
+            if (timeout == 0U)
                 return ;
             {
                 std::lock_guard<std::mutex> lock(this->_mutex);
@@ -217,7 +218,7 @@ static void write_test_trace(int32_t test_number, const s_test_case *test)
 
     if (std::getenv("FT_TEST_TRACE_CURRENT_TEST") == NULL || test == NULL)
         return ;
-    trace_file = std::fopen("test_current.log", "w");
+    trace_file = std::fopen("build_logs/test_current.log", "w");
     if (trace_file == NULL)
         return ;
     std::fprintf(trace_file, "started %d %s/%s\n", test_number,
@@ -657,7 +658,9 @@ static int32_t execute_test_function(const s_test_case *test,
     (void)pthread_sigmask(SIG_UNBLOCK, &unblocked_signals, nullptr);
 #endif
     su_service_clear_signal_handlers();
+#ifdef LIBFT_TEST_BUILD
     su_service_force_no_fork(FT_FALSE);
+#endif
 
     preserve_output = diagnostic_output_enabled();
     if (preserve_output == 0 && dup2(null_descriptor, STDOUT_FILENO) < 0)
@@ -810,6 +813,25 @@ void ft_test_fail_values(const char *expression, const char *file, int32_t line,
     return ;
 }
 
+ft_bool ft_test_assert_condition(ft_bool condition, const char *expression,
+    const char *file, int32_t line)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail(expression, file, line);
+    return (FT_FALSE);
+}
+
+ft_bool ft_test_assert_values_condition(ft_bool condition,
+    const char *expression, const char *file, int32_t line,
+    const char *expected_value, const char *actual_value)
+{
+    if (condition != FT_FALSE)
+        return (FT_TRUE);
+    ft_test_fail_values(expression, file, line, expected_value, actual_value);
+    return (FT_FALSE);
+}
+
 int32_t ft_run_registered_tests(void)
 {
     FILE *log_file;
@@ -828,11 +850,18 @@ int32_t ft_run_registered_tests(void)
     int32_t selected_tests;
     int32_t hide_successful_tests;
     int32_t terminal_width;
-    int32_t show_running_line;
 #ifdef LIBFT_TEST_BUILD
     test_timeout_watchdog timeout_watchdog;
 #endif
-    log_file = fopen("test_failures.log", "w");
+    std::error_code directory_error;
+    std::filesystem::create_directories("build_logs", directory_error);
+    if (directory_error)
+    {
+        std::fprintf(stderr, "Test runner: cannot create build_logs: %s\n",
+            directory_error.message().c_str());
+        return (1);
+    }
+    log_file = fopen("build_logs/test_failures.log", "w");
     if (log_file)
         fclose(log_file);
     sort_tests();
@@ -884,7 +913,11 @@ int32_t ft_run_registered_tests(void)
 #endif
     selected_tests = 0;
     hide_successful_tests = hide_successful_tests_enabled();
-    terminal_width = get_stdout_terminal_width();
+    const ft_bool show_running_line = hide_successful_tests == 0
+        || stdout_is_terminal() != 0;
+    terminal_width = 0;
+    if (show_running_line)
+        terminal_width = get_stdout_terminal_width();
     index = 0;
     passed = 0;
     while (index < total_tests)
@@ -897,9 +930,6 @@ int32_t ft_run_registered_tests(void)
         }
         selected_tests++;
         current_test = tests[index];
-        show_running_line = 1;
-        if (hide_successful_tests != 0 && stdout_is_terminal() == 0)
-            show_running_line = 0;
         if (show_running_line != 0)
         {
             print_running_test_line(selected_tests, current_test.description,
@@ -917,10 +947,7 @@ int32_t ft_run_registered_tests(void)
                 if (show_running_line != 0)
                     printf("\r\033[2K");
                 if (selected_tests % TEST_PROGRESS_INTERVAL == 0)
-                {
                     printf("[LIBFT][Test] %d tests completed\n", selected_tests);
-                    fflush(stdout);
-                }
             }
             else
                 printf("\r\033[2K\033[32mSUCCESS\033[0m %d %s\n",

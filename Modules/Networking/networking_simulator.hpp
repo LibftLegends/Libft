@@ -76,6 +76,7 @@ class networking_simulated_datagram_io : public networking_datagram_io
         ft_deque<pending_datagram *> _pending;
         ft_vector<networking_simulator_script_entry> _script;
         uint64_t _now;
+        uint64_t _next_delivery_time;
         uint64_t _random_state;
         uint64_t _send_ordinal;
         uint64_t _bandwidth_window_start;
@@ -84,6 +85,7 @@ class networking_simulated_datagram_io : public networking_datagram_io
         uint32_t next_random() noexcept;
         ft_bool should_drop() noexcept;
         uint64_t calculate_delivery_time() noexcept;
+        int32_t queue_datagram(pending_datagram *datagram) noexcept;
         int32_t flush_ready_datagrams() noexcept;
 
     public:

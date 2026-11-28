@@ -1,257 +1,314 @@
 #include "json_schema_evolution.hpp"
 #include "document.hpp"
 #include "../Errno/errno.hpp"
-#include "../Template/map.hpp"
-#include "../Template/vector.hpp"
-#include "../Template/move.hpp"
-#include "../PThread/mutex.hpp"
-#include "../Basic/limits.hpp"
+#include "../PThread/pthread_internal.hpp"
 #include "../PThread/recursive_mutex.hpp"
-#include "../Template/pair.hpp"
+#include "../Template/vector.hpp"
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <new>
+#include <string_view>
+
+using json_migration_callback = ft_function<int32_t(json_document &)>;
 
 struct json_schema_migration_step
 {
     int32_t from_version;
     int32_t to_version;
-    ft_function<int32_t(json_document &)> callback;
+    json_migration_callback callback;
 };
 
-static ft_map<ft_string, ft_vector<json_schema_migration_step> > &json_schema_registry()
+struct json_schema_migrations
 {
-    static ft_map<ft_string, ft_vector<json_schema_migration_step> > registry;
+    ft_string name;
+    ft_vector<json_schema_migration_step *> steps;
+    int32_t latest_version = 0;
+
+    ~json_schema_migrations()
+    {
+        if (this->steps.is_initialised() == FT_CLASS_STATE_INITIALISED)
+        {
+            auto entry = this->steps.begin();
+            const auto end = this->steps.end();
+            while (entry != end)
+                delete *entry++;
+        }
+        return ;
+    }
+};
+
+struct json_schema_registry
+{
+    ft_vector<json_schema_migrations *> schemas;
+    std::atomic<pt_recursive_mutex *> mutex{nullptr};
+
+    ~json_schema_registry()
+    {
+        if (this->schemas.is_initialised() == FT_CLASS_STATE_INITIALISED)
+        {
+            auto entry = this->schemas.begin();
+            const auto end = this->schemas.end();
+            while (entry != end)
+                delete *entry++;
+        }
+        delete this->mutex.load(std::memory_order_relaxed);
+        return ;
+    }
+};
+
+struct json_planned_migration
+{
+    const json_migration_callback *source;
+    json_migration_callback callback;
+};
+
+static json_schema_registry &json_schema_get_registry()
+{
+    static json_schema_registry registry;
     return (registry);
 }
 
-static pt_mutex &json_schema_registry_mutex()
+static int32_t json_schema_registry_lock(json_schema_registry &registry,
+    pt_recursive_mutex *&mutex) noexcept
 {
-    static pt_mutex mutex;
-    return (mutex);
+    mutex = registry.mutex.load(std::memory_order_acquire);
+    if (mutex == ft_nullptr)
+    {
+        pt_recursive_mutex *candidate = new (std::nothrow) pt_recursive_mutex();
+        if (candidate == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        const int32_t error = candidate->initialize();
+        if (error != FT_ERR_SUCCESS)
+        {
+            delete candidate;
+            return (error);
+        }
+        if (registry.mutex.compare_exchange_strong(mutex, candidate,
+                std::memory_order_acq_rel, std::memory_order_acquire))
+            mutex = candidate;
+        else
+            delete candidate;
+    }
+    return (pt_recursive_mutex_lock_if_not_null(mutex));
 }
 
-static int32_t json_schema_registry_lock(pt_mutex &mutex, ft_bool *lock_acquired) noexcept
+static int32_t json_schema_get_identifier(const ft_string &schema_name,
+    std::string_view &name) noexcept
 {
-    if (lock_acquired)
-        *lock_acquired = FT_FALSE;
-    static ft_bool mutex_initialised = FT_FALSE;
-    if (!mutex_initialised)
+    const ft_size_t length = schema_name.size();
+    const char *characters = schema_name.data();
+    if (length == 0U || characters == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    ft_size_t index = 0U;
+    while (index < length)
     {
-        int32_t initialize_error = mutex.initialize();
-        if (initialize_error != FT_ERR_SUCCESS)
-            return (initialize_error);
-        mutex_initialised = FT_TRUE;
+        const char character = characters[index];
+        if (!((character >= 'a' && character <= 'z')
+                || (character >= 'A' && character <= 'Z')
+                || (character >= '0' && character <= '9')
+                || character == '_' || character == '-' || character == '.'))
+            return (FT_ERR_INVALID_ARGUMENT);
+        ++index;
     }
-    int32_t lock_error = mutex.lock();
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    if (lock_acquired)
-        *lock_acquired = FT_TRUE;
+    name = std::string_view(characters, length);
     return (FT_ERR_SUCCESS);
 }
 
-static int32_t json_schema_registry_unlock(pt_mutex &mutex, ft_bool lock_acquired) noexcept
+static json_schema_migrations **json_schema_find_name(json_schema_registry &registry,
+    std::string_view name)
 {
-    if (!lock_acquired)
-        return (FT_ERR_SUCCESS);
-    return (mutex.unlock());
+    return (std::lower_bound(registry.schemas.begin(), registry.schemas.end(), name,
+        [](const json_schema_migrations *entry, std::string_view match)
+        {
+            return (std::string_view(entry->name.c_str(), entry->name.size()) < match);
+        }));
 }
 
-static int32_t json_schema_validate_identifier(const ft_string &schema_name) noexcept
+static json_schema_migrations *json_schema_find_registered(json_schema_registry &registry,
+    std::string_view name)
 {
-    if (schema_name.size() == FT_ERR_SUCCESS)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    ft_size_t index;
-    ft_size_t length;
-    const char *characters;
+    if (registry.schemas.is_initialised() != FT_CLASS_STATE_INITIALISED)
+        return (ft_nullptr);
+    auto entry = json_schema_find_name(registry, name);
+    if (entry == registry.schemas.end() || (*entry)->name != name.data())
+        return (ft_nullptr);
+    return (*entry);
+}
 
-    index = 0;
-    length = schema_name.size();
-    characters = schema_name.data();
-    if (!characters)
-        return (FT_ERR_INVALID_ARGUMENT);
-    while (index < length)
-    {
-        char current_character = characters[index];
-        if ((current_character >= 'a' && current_character <= 'z')
-            || (current_character >= 'A' && current_character <= 'Z')
-            || (current_character >= '0' && current_character <= '9')
-            || current_character == '_' || current_character == '-' || current_character == '.')
+static json_schema_migration_step **json_schema_find_version(json_schema_migrations &schema,
+    int32_t version)
+{
+    return (std::lower_bound(schema.steps.begin(), schema.steps.end(), version,
+        [](const json_schema_migration_step *step, int32_t match)
         {
-            index++;
-            continue ;
-        }
-        return (FT_ERR_INVALID_ARGUMENT);
+            return (step->from_version < match);
+        }));
+}
+
+static int32_t json_schema_register_locked(json_schema_registry &registry, std::string_view name,
+    std::unique_ptr<json_schema_migration_step> &step)
+{
+    if (registry.schemas.is_initialised() != FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t error = registry.schemas.initialize();
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    auto entry = json_schema_find_name(registry, name);
+    json_schema_migrations *schema;
+    std::unique_ptr<json_schema_migrations> new_schema;
+    if (entry != registry.schemas.end() && (*entry)->name == name.data())
+        schema = *entry;
+    else
+    {
+        new_schema.reset(new (std::nothrow) json_schema_migrations());
+        if (!new_schema)
+            return (FT_ERR_NO_MEMORY);
+        schema = new_schema.get();
+        int32_t error = schema->name.initialize(name.data());
+        if (error == FT_ERR_SUCCESS)
+            error = schema->steps.initialize();
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+    }
+    auto insertion = json_schema_find_version(*schema, step->from_version);
+    if (insertion != schema->steps.end() && (*insertion)->from_version == step->from_version)
+        return (FT_ERR_ALREADY_EXISTS);
+    if (insertion == schema->steps.end())
+        schema->steps.push_back(step.get());
+    else
+        schema->steps.insert(insertion, step.get());
+    const int32_t error = schema->steps.get_error();
+    if (error != FT_ERR_SUCCESS)
+        return (error);
+    if (schema->latest_version < step->to_version)
+        schema->latest_version = step->to_version;
+    step.release();
+    if (new_schema)
+    {
+        if (entry == registry.schemas.end())
+            registry.schemas.push_back(schema);
+        else
+            registry.schemas.insert(entry, schema);
+        const int32_t insert_error = registry.schemas.get_error();
+        if (insert_error != FT_ERR_SUCCESS)
+            return (insert_error);
+        new_schema.release();
     }
     return (FT_ERR_SUCCESS);
 }
 
 int32_t json_register_schema_migration(const ft_string &schema_name,
-    int32_t from_version,
-    int32_t to_version,
-    const ft_function<int32_t(json_document &)> &callback) noexcept
+    int32_t from_version, int32_t to_version, const json_migration_callback &callback) noexcept
 {
-    int32_t validate_error = json_schema_validate_identifier(schema_name);
+    std::string_view name;
+    const int32_t validate_error = json_schema_get_identifier(schema_name, name);
     if (validate_error != FT_ERR_SUCCESS)
         return (validate_error);
-    if (from_version < 0 || to_version <= from_version)
+    if (from_version < 0 || to_version <= from_version || !callback)
         return (FT_ERR_INVALID_ARGUMENT);
-    if (!callback)
-        return (FT_ERR_INVALID_ARGUMENT);
-    pt_mutex &mutex = json_schema_registry_mutex();
-    ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = json_schema_registry_lock(mutex, &lock_acquired);
+    std::unique_ptr<json_schema_migration_step> step(new (std::nothrow)
+        json_schema_migration_step{from_version, to_version, callback});
+    if (!step || !step->callback)
+        return (FT_ERR_NO_MEMORY);
+    json_schema_registry &registry = json_schema_get_registry();
+    pt_recursive_mutex *mutex;
+    const int32_t lock_error = json_schema_registry_lock(registry, mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    ft_map<ft_string, ft_vector<json_schema_migration_step> > &registry = json_schema_registry();
-    Pair<ft_string, ft_vector<json_schema_migration_step> > *entry = registry.find(schema_name);
-    json_schema_migration_step step;
+    const int32_t error = json_schema_register_locked(registry, name, step);
+    (void)pt_recursive_mutex_unlock_if_not_null(mutex);
+    return (error);
+}
 
-    step.from_version = from_version;
-    step.to_version = to_version;
-    step.callback = callback;
-    if (!entry)
+static int32_t json_schema_plan_locked(json_schema_registry &registry, std::string_view name,
+    int32_t version, int32_t target, ft_vector<json_planned_migration> &plan)
+{
+    json_schema_migrations *schema = json_schema_find_registered(registry, name);
+    if (schema == ft_nullptr || target > schema->latest_version)
+        return (FT_ERR_NOT_FOUND);
+    while (version < target)
     {
-        ft_vector<json_schema_migration_step> steps;
-
-        steps.push_back(step);
-        int32_t vector_error = steps.get_error();
-        if (vector_error != FT_ERR_SUCCESS)
-        {
-            (void)json_schema_registry_unlock(mutex, lock_acquired);
-            return (vector_error);
-        }
-        registry.insert(schema_name, ft_move(steps));
-        Pair<ft_string, ft_vector<json_schema_migration_step> > *inserted_entry = registry.find(schema_name);
-        (void)json_schema_registry_unlock(mutex, lock_acquired);
-        if (!inserted_entry)
-        {
-            return (FT_ERR_NO_MEMORY);
-        }
-        return (FT_ERR_SUCCESS);
+        auto step = json_schema_find_version(*schema, version);
+        if (step == schema->steps.end() || (*step)->from_version != version
+            || (*step)->to_version > target)
+            return (FT_ERR_NOT_FOUND);
+        const int32_t error = plan.push_back(json_planned_migration{&(*step)->callback, {}});
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        version = (*step)->to_version;
     }
-    ft_vector<json_schema_migration_step> &steps = entry->value;
-    ft_size_t steps_count = steps.size();
-    ft_size_t index = 0;
-    while (index < steps_count)
-    {
-        json_schema_migration_step &existing_step = steps[index];
-        if (existing_step.from_version == from_version)
-        {
-            (void)json_schema_registry_unlock(mutex, lock_acquired);
-            return (FT_ERR_ALREADY_EXISTS);
-        }
-        index++;
-    }
-    steps.push_back(step);
-    int32_t vector_error = steps.get_error();
-    (void)json_schema_registry_unlock(mutex, lock_acquired);
-    if (vector_error != FT_ERR_SUCCESS)
-        return (vector_error);
     return (FT_ERR_SUCCESS);
 }
 
-int32_t json_apply_schema_migrations(json_document &document,
-    const ft_string &schema_name,
-    int32_t current_version,
-    int32_t target_version) noexcept
+int32_t json_apply_schema_migrations(json_document &document, const ft_string &schema_name,
+    int32_t current_version, int32_t target_version) noexcept
 {
-    int32_t validate_error = json_schema_validate_identifier(schema_name);
+    std::string_view name;
+    const int32_t validate_error = json_schema_get_identifier(schema_name, name);
     if (validate_error != FT_ERR_SUCCESS)
         return (validate_error);
     if (current_version < 0 || target_version < current_version)
         return (FT_ERR_INVALID_ARGUMENT);
     if (current_version == target_version)
         return (FT_ERR_SUCCESS);
-    int32_t working_version = current_version;
-    while (working_version < target_version)
+    ft_vector<json_planned_migration> plan;
+    const int32_t initialize_error = plan.initialize();
+    if (initialize_error != FT_ERR_SUCCESS)
+        return (initialize_error);
+    json_schema_registry &registry = json_schema_get_registry();
+    pt_recursive_mutex *mutex;
+    const int32_t lock_error = json_schema_registry_lock(registry, mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t plan_error = json_schema_plan_locked(registry, name, current_version,
+        target_version, plan);
+    (void)pt_recursive_mutex_unlock_if_not_null(mutex);
+    if (plan_error != FT_ERR_SUCCESS)
+        return (plan_error);
+
+    // Registrations never erase steps. Copy callables outside the registry lock.
+    auto entry = plan.begin();
+    const auto end = plan.end();
+    while (entry != end)
     {
-        pt_mutex &mutex = json_schema_registry_mutex();
-        ft_bool lock_acquired = FT_FALSE;
-        int32_t lock_error = json_schema_registry_lock(mutex, &lock_acquired);
-        if (lock_error != FT_ERR_SUCCESS)
-            return (lock_error);
-        ft_map<ft_string, ft_vector<json_schema_migration_step> > &registry = json_schema_registry();
-        Pair<ft_string, ft_vector<json_schema_migration_step> > *entry = registry.find(schema_name);
-        if (!entry)
-        {
-            (void)json_schema_registry_unlock(mutex, lock_acquired);
-            return (FT_ERR_NOT_FOUND);
-        }
-        ft_vector<json_schema_migration_step> &steps = entry->value;
-        ft_size_t steps_count = steps.size();
-        ft_size_t index = 0;
-        ft_bool found = FT_FALSE;
-        json_schema_migration_step selected_step;
-        while (index < steps_count)
-        {
-            json_schema_migration_step &candidate = steps[index];
-            if (candidate.from_version == working_version)
-            {
-                if (!found || candidate.to_version < selected_step.to_version)
-                {
-                    selected_step = candidate;
-                    found = FT_TRUE;
-                }
-            }
-            index++;
-        }
-        if (!found)
-        {
-            (void)json_schema_registry_unlock(mutex, lock_acquired);
-            return (FT_ERR_NOT_FOUND);
-        }
-        int32_t next_version = selected_step.to_version;
-        ft_function<int32_t(json_document &)> callback = selected_step.callback;
-        (void)json_schema_registry_unlock(mutex, lock_acquired);
-        if (!callback)
-            return (FT_ERR_INVALID_STATE);
-        int32_t callback_result = callback(document);
-        if (callback_result != FT_ERR_SUCCESS)
-            return (callback_result);
-        working_version = next_version;
+        entry->callback = *entry->source;
+        if (!entry->callback)
+            return (FT_ERR_NO_MEMORY);
+        ++entry;
+    }
+    entry = plan.begin();
+    while (entry != end)
+    {
+        const int32_t error = entry->callback(document);
+        if (error != FT_ERR_SUCCESS)
+            return (error);
+        ++entry;
     }
     return (FT_ERR_SUCCESS);
 }
 
-int32_t json_get_latest_schema_version(const ft_string &schema_name,
-    int32_t *out_version) noexcept
+int32_t json_get_latest_schema_version(const ft_string &schema_name, int32_t *out_version) noexcept
 {
-    if (!out_version)
+    if (out_version == ft_nullptr)
         return (FT_ERR_INVALID_POINTER);
-    int32_t validate_error = json_schema_validate_identifier(schema_name);
+    std::string_view name;
+    const int32_t validate_error = json_schema_get_identifier(schema_name, name);
     if (validate_error != FT_ERR_SUCCESS)
         return (validate_error);
-    pt_mutex &mutex = json_schema_registry_mutex();
-    ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = json_schema_registry_lock(mutex, &lock_acquired);
+    json_schema_registry &registry = json_schema_get_registry();
+    pt_recursive_mutex *mutex;
+    const int32_t lock_error = json_schema_registry_lock(registry, mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);
-    ft_map<ft_string, ft_vector<json_schema_migration_step> > &registry = json_schema_registry();
-    Pair<ft_string, ft_vector<json_schema_migration_step> > *entry = registry.find(schema_name);
-    if (!entry)
+    const json_schema_migrations *schema = json_schema_find_registered(registry, name);
+    int32_t error = FT_ERR_NOT_FOUND;
+    if (schema != ft_nullptr)
     {
-        (void)json_schema_registry_unlock(mutex, lock_acquired);
-        return (FT_ERR_NOT_FOUND);
+        *out_version = schema->latest_version;
+        error = FT_ERR_SUCCESS;
     }
-    ft_vector<json_schema_migration_step> &steps = entry->value;
-    ft_size_t steps_count = steps.size();
-    ft_size_t index = 0;
-    ft_bool found = FT_FALSE;
-    int32_t latest_version = 0;
-    while (index < steps_count)
-    {
-        json_schema_migration_step &candidate = steps[index];
-        if (!found || candidate.to_version > latest_version)
-        {
-            latest_version = candidate.to_version;
-            found = FT_TRUE;
-        }
-        index++;
-    }
-    (void)json_schema_registry_unlock(mutex, lock_acquired);
-    if (!found)
-        return (FT_ERR_NOT_FOUND);
-    *out_version = latest_version;
-    return (FT_ERR_SUCCESS);
+    (void)pt_recursive_mutex_unlock_if_not_null(mutex);
+    return (error);
 }

@@ -21,6 +21,7 @@ class game_resistance
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        friend class game_character;
 
     public:
         game_resistance() noexcept;
@@ -30,6 +31,7 @@ class game_resistance
         int32_t initialize() noexcept;
         int32_t initialize(const game_resistance &other) noexcept;
         int32_t initialize(game_resistance &&other) noexcept;
+        // Moving requires exclusive access to both records.
         int32_t move(game_resistance &other) noexcept;
         int32_t destroy() noexcept;
         game_resistance &operator=(const game_resistance &other) noexcept = delete;
@@ -38,6 +40,7 @@ class game_resistance
         int32_t set_values(int32_t percent_value, int32_t flat_value) noexcept;
         int32_t set_percent(int32_t percent_value) noexcept;
         int32_t set_flat(int32_t flat_value) noexcept;
+        int32_t get_values(int32_t &percent_value, int32_t &flat_value) const noexcept;
         int32_t get_percent() const noexcept;
         int32_t get_flat() const noexcept;
         int32_t reset() noexcept;

@@ -1,7 +1,6 @@
 #include "../PThread/pthread_internal.hpp"
 #include "game_skill.hpp"
-#include "../Printf/printf.hpp"
-#include "../System_utils/system_utils.hpp"
+#include <new>
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -45,18 +44,16 @@ game_skill::~game_skill() noexcept
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED)
         return ;
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        const int32_t previous_error = game_skill::_last_error;
         (void)this->destroy();
+        this->set_error(previous_error);
+    }
     return ;
 }
 
-int32_t game_skill::initialize() noexcept
+inline void game_skill::reset_fields() noexcept
 {
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        errno_abort_lifecycle(this->_initialised_state, "game_skill::initialize", "called while object is already initialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
     this->_id = 0;
     this->_level = 0;
     this->_cooldown = 0;
@@ -64,42 +61,11 @@ int32_t game_skill::initialize() noexcept
     this->_modifier2 = 0;
     this->_modifier3 = 0;
     this->_modifier4 = 0;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
-int32_t game_skill::initialize(const game_skill &other) noexcept
+inline void game_skill::copy_fields_from(const game_skill &other) noexcept
 {
-    int32_t destroy_error;
-
-    if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state, "game_skill::initialize(copy)",
-            "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
-        return (FT_ERR_SUCCESS);
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-            return (destroy_error);
-    }
     this->_id = other._id;
     this->_level = other._level;
     this->_cooldown = other._cooldown;
@@ -108,7 +74,62 @@ int32_t game_skill::initialize(const game_skill &other) noexcept
     this->_modifier3 = other._modifier3;
     this->_modifier4 = other._modifier4;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(other.get_error());
+    return ;
+}
+
+int32_t game_skill::initialize() noexcept
+{
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    {
+        errno_abort_lifecycle(this->_initialised_state, "game_skill::initialize",
+            "called while object is already initialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    this->reset_fields();
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    return (this->set_error(FT_ERR_SUCCESS));
+}
+
+int32_t game_skill::initialize(const game_skill &other) noexcept
+{
+    if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    {
+        errno_abort_lifecycle(other._initialised_state, "game_skill::initialize(copy)",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    }
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        && other._initialised_state == FT_CLASS_STATE_INITIALISED && other._mutex == ft_nullptr)
+    {
+        // Both instances already share the caller's thread-local error.
+        this->copy_fields_from(other);
+        return (FT_ERR_SUCCESS);
+    }
+    return (this->copy_with_lifecycle(other));
+}
+
+int32_t game_skill::copy_with_lifecycle(const game_skill &other) noexcept
+{
+    const int32_t source_error = other.get_error();
+    const int32_t destroy_error = this->destroy();
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+
+    ft_bool source_locked = FT_FALSE;
+    const int32_t lock_error = other.lock_internal(&source_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    this->copy_fields_from(other);
+    (void)other.unlock_internal(source_locked);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -119,66 +140,44 @@ int32_t game_skill::initialize(game_skill &&other) noexcept
 
 int32_t game_skill::move(game_skill &other) noexcept
 {
-    int32_t destroy_error;
-
     if (&other == this)
-        return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_skill::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (this->copy_with_lifecycle(other));
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        destroy_error = this->destroy();
+        const int32_t destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
             return (destroy_error);
     }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(other.get_error());
-        return (FT_ERR_SUCCESS);
-    }
-    this->_id = other._id;
-    this->_level = other._level;
-    this->_cooldown = other._cooldown;
-    this->_modifier1 = other._modifier1;
-    this->_modifier2 = other._modifier2;
-    this->_modifier3 = other._modifier3;
-    this->_modifier4 = other._modifier4;
-    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    this->set_error(other.get_error());
-    other._id = 0;
-    other._level = 0;
-    other._cooldown = 0;
-    other._modifier1 = 0;
-    other._modifier2 = 0;
-    other._modifier3 = 0;
-    other._modifier4 = 0;
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+
+    ft_bool source_locked = FT_FALSE;
+    const int32_t lock_error = other.lock_internal(&source_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (this->set_error(lock_error));
+    this->copy_fields_from(other);
+    other.reset_fields();
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    other.set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    (void)other.unlock_internal(source_locked);
+    this->_mutex = other._mutex;
+    other._mutex = ft_nullptr;
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_skill::destroy() noexcept
 {
-    int32_t disable_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (this->set_error(FT_ERR_SUCCESS));
-    disable_error = this->disable_thread_safety();
-    this->_id = 0;
-    this->_level = 0;
-    this->_cooldown = 0;
-    this->_modifier1 = 0;
-    this->_modifier2 = 0;
-    this->_modifier3 = 0;
-    this->_modifier4 = 0;
+    const int32_t disable_error = this->disable_thread_safety();
+    this->reset_fields();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
     return (disable_error);
 }
 
@@ -240,13 +239,9 @@ int32_t game_skill::lock_internal(ft_bool *lock_acquired) const noexcept
         *lock_acquired = FT_FALSE;
     lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
         return (lock_error);
-    }
-    if (lock_acquired != ft_nullptr)
+    if (lock_acquired != ft_nullptr && this->_mutex != ft_nullptr)
         *lock_acquired = FT_TRUE;
-    this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
 
@@ -255,298 +250,275 @@ int32_t game_skill::unlock_internal(ft_bool lock_acquired) const noexcept
     if (lock_acquired == FT_FALSE)
         return (FT_ERR_SUCCESS);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_skill::lock(ft_bool *lock_acquired) const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::lock");
-    return (this->lock_internal(lock_acquired));
+    const int32_t lock_error = this->lock_internal(lock_acquired);
+    if (lock_error == FT_ERR_SUCCESS && lock_acquired != ft_nullptr)
+        *lock_acquired = FT_TRUE;
+    return (this->set_error(lock_error));
 }
 
 void game_skill::unlock(ft_bool lock_acquired) const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::unlock");
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(FT_ERR_SUCCESS);
     return ;
 }
 
 int32_t game_skill::get_id() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t identifier;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_id");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    identifier = this->_id;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (identifier);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_id");
+    return (this->read_field(this->_id, FT_TRUE));
 }
 
 void game_skill::set_id(int32_t id) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_id");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    this->_id = id;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_id");
+    this->write_field(this->_id, id, FT_FALSE);
     return ;
 }
 
 int32_t game_skill::get_level() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t level_value;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_level");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    level_value = this->_level;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (level_value);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_level");
+    return (this->read_field(this->_level, FT_TRUE));
 }
 
 void game_skill::set_level(int32_t level) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_level");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    this->_level = level;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_level");
+    this->write_field(this->_level, level, FT_FALSE);
     return ;
 }
 
 int32_t game_skill::get_cooldown() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t cooldown_value;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_cooldown");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (lock_error);
-    }
-    cooldown_value = this->_cooldown;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
-    return (cooldown_value);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_cooldown");
+    return (this->read_field(this->_cooldown, FT_TRUE));
 }
 
 void game_skill::set_cooldown(int32_t cooldown) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_cooldown");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    this->_cooldown = cooldown;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_cooldown");
+    this->write_field(this->_cooldown, cooldown, FT_FALSE);
     return ;
 }
 
 void game_skill::add_cooldown(int32_t cooldown) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_cooldown");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    this->_cooldown += cooldown;
-    (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_cooldown");
+    this->write_field(this->_cooldown, cooldown, FT_TRUE);
     return ;
 }
 
 void game_skill::sub_cooldown(int32_t cooldown) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_cooldown");
+    this->write_field(this->_cooldown, -static_cast<int64_t>(cooldown), FT_TRUE);
+    return ;
+}
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_cooldown");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+int32_t game_skill::capture_damage_modifiers(int32_t &bonus, int32_t &percent) const noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_INVALID_STATE);
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    bonus = 0;
+    percent = 0;
+    if (this->_cooldown == 0)
     {
-        this->set_error(lock_error);
-        return ;
+        bonus = this->_modifier1;
+        percent = this->_modifier2;
     }
-    this->_cooldown -= cooldown;
     (void)this->unlock_internal(lock_acquired);
-    this->set_error(FT_ERR_SUCCESS);
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t game_skill::capture_checkpoint_fields(checkpoint_fields &fields) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_skill::capture_checkpoint_fields");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        fields = {this->_id, this->_level, this->_cooldown, this->_modifier1,
+            this->_modifier2, this->_modifier3, this->_modifier4};
+        (void)this->unlock_internal(lock_acquired);
+    }
+    return (this->set_error(result));
+}
+
+inline int32_t game_skill::read_field(const int32_t &field, ft_bool return_lock_error) const noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    this->set_error(result);
+    if (result != FT_ERR_SUCCESS)
+    {
+        if (return_lock_error)
+            return (result);
+        return (0);
+    }
+    const int32_t value = field;
+    (void)this->unlock_internal(lock_acquired);
+    return (value);
+}
+
+inline void game_skill::write_field(int32_t &field, int64_t value, ft_bool relative) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        if (relative)
+            value += field;
+        if (value < INT32_MIN || value > INT32_MAX)
+            result = FT_ERR_OUT_OF_RANGE;
+        else
+            field = static_cast<int32_t>(value);
+        (void)this->unlock_internal(lock_acquired);
+    }
+    this->set_error(result);
     return ;
 }
 
 int32_t game_skill::get_modifier1() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier1");
-    this->set_error(FT_ERR_SUCCESS);
-    return (this->_modifier1);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier1");
+    return (this->read_field(this->_modifier1));
 }
 
 void game_skill::set_modifier1(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier1");
-    this->_modifier1 = mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier1");
+    this->write_field(this->_modifier1, mod, FT_FALSE);
     return ;
 }
 
 void game_skill::add_modifier1(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier1");
-    this->_modifier1 += mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier1");
+    this->write_field(this->_modifier1, mod, FT_TRUE);
     return ;
 }
 
 void game_skill::sub_modifier1(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier1");
-    this->_modifier1 -= mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier1");
+    this->write_field(this->_modifier1, -static_cast<int64_t>(mod), FT_TRUE);
     return ;
 }
 
 int32_t game_skill::get_modifier2() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier2");
-    this->set_error(FT_ERR_SUCCESS);
-    return (this->_modifier2);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier2");
+    return (this->read_field(this->_modifier2));
 }
 
 void game_skill::set_modifier2(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier2");
-    this->_modifier2 = mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier2");
+    this->write_field(this->_modifier2, mod, FT_FALSE);
     return ;
 }
 
 void game_skill::add_modifier2(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier2");
-    this->_modifier2 += mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier2");
+    this->write_field(this->_modifier2, mod, FT_TRUE);
     return ;
 }
 
 void game_skill::sub_modifier2(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier2");
-    this->_modifier2 -= mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier2");
+    this->write_field(this->_modifier2, -static_cast<int64_t>(mod), FT_TRUE);
     return ;
 }
 
 int32_t game_skill::get_modifier3() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier3");
-    this->set_error(FT_ERR_SUCCESS);
-    return (this->_modifier3);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier3");
+    return (this->read_field(this->_modifier3));
 }
 
 void game_skill::set_modifier3(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier3");
-    this->_modifier3 = mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier3");
+    this->write_field(this->_modifier3, mod, FT_FALSE);
     return ;
 }
 
 void game_skill::add_modifier3(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier3");
-    this->_modifier3 += mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier3");
+    this->write_field(this->_modifier3, mod, FT_TRUE);
     return ;
 }
 
 void game_skill::sub_modifier3(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier3");
-    this->_modifier3 -= mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier3");
+    this->write_field(this->_modifier3, -static_cast<int64_t>(mod), FT_TRUE);
     return ;
 }
 
 int32_t game_skill::get_modifier4() const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier4");
-    this->set_error(FT_ERR_SUCCESS);
-    return (this->_modifier4);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::get_modifier4");
+    return (this->read_field(this->_modifier4));
 }
 
 void game_skill::set_modifier4(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier4");
-    this->_modifier4 = mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::set_modifier4");
+    this->write_field(this->_modifier4, mod, FT_FALSE);
     return ;
 }
 
 void game_skill::add_modifier4(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier4");
-    this->_modifier4 += mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::add_modifier4");
+    this->write_field(this->_modifier4, mod, FT_TRUE);
     return ;
 }
 
 void game_skill::sub_modifier4(int32_t mod) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier4");
-    this->_modifier4 -= mod;
-    this->set_error(FT_ERR_SUCCESS);
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+        errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_skill::sub_modifier4");
+    this->write_field(this->_modifier4, -static_cast<int64_t>(mod), FT_TRUE);
     return ;
 }

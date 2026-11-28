@@ -215,11 +215,9 @@ void cmp_service_clear_signal_handlers(void)
     {
         SetConsoleCtrlHandler(cmp_service_console_handler, FALSE);
         g_cmp_service_console_handler_installed = FT_FALSE;
-    }
-    if (g_cmp_service_previous_sigint != SIG_ERR)
         std::signal(SIGINT, g_cmp_service_previous_sigint);
-    if (g_cmp_service_previous_sigterm != SIG_ERR)
         std::signal(SIGTERM, g_cmp_service_previous_sigterm);
+    }
     g_cmp_service_previous_sigint = SIG_DFL;
     g_cmp_service_previous_sigterm = SIG_DFL;
 #else

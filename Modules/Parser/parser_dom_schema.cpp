@@ -11,6 +11,7 @@
 #include "../Basic/limits.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
+#include "../Template/move.hpp"
 
 thread_local int32_t ft_dom_schema::_last_error = FT_ERR_SUCCESS;
 
@@ -180,152 +181,74 @@ int32_t ft_dom_schema::add_rule(const ft_string &path, ft_dom_node_type type, ft
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
         return (set_error(lock_error));
-    this->_rules.push_back(rule);
+    const int32_t status = this->_rules.push_back(ft_move(rule));
     (void)this->unlock_internal(lock_acquired);
-    if (this->_rules.get_error() != FT_ERR_SUCCESS)
-        return (set_error(this->_rules.get_error()));
-    return (set_error(FT_ERR_SUCCESS));
+    return (set_error(status));
 }
 
-static int32_t ft_dom_build_path(const ft_string &base, const ft_string &segment,
-    ft_string &output) noexcept
+static int32_t dom_record_validation_error(ft_dom_validation_report &report, const ft_string &path,
+    const char *text) noexcept
 {
-    int32_t string_error;
-
-    if (output.is_initialised() == FT_FALSE)
-        string_error = output.initialize();
-    else
-        string_error = output.clear();
-    if (string_error != FT_ERR_SUCCESS)
-        return (string_error);
-    output = base;
-    if (output.get_error() != FT_ERR_SUCCESS)
-        return (output.get_error());
-    if (output.size() != 0)
-    {
-        output += "/";
-        if (output.get_error() != FT_ERR_SUCCESS)
-            return (output.get_error());
-    }
-    output += segment;
-    if (output.get_error() != FT_ERR_SUCCESS)
-        return (output.get_error());
-    return (FT_ERR_SUCCESS);
+    report.mark_invalid();
+    const int32_t mark_error = report.get_error();
+    if (mark_error != FT_ERR_SUCCESS)
+        return (mark_error);
+    ft_string message;
+    const int32_t status = message.initialize(text);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    return (report.add_error(path, message));
 }
 
 int32_t ft_dom_schema::validate_rule(const ft_dom_schema_rule &rule, const ft_dom_node *node,
-    const ft_string &base_path, ft_dom_validation_report &report) const noexcept
+    ft_dom_validation_report &report) const noexcept
 {
-    ft_string full_path;
-    const ft_dom_node *target_node;
-    int32_t find_error;
-
-    errno_abort_if_uninitialised(this->_initialised_state, "ft_dom_schema::validate_rule");
-    find_error = ft_dom_build_path(base_path, rule.path, full_path);
-    if (find_error != FT_ERR_SUCCESS)
-        return (set_error(find_error));
-    target_node = ft_nullptr;
-    find_error = ft_dom_find_path(node, full_path, &target_node);
-    if (find_error != FT_ERR_SUCCESS)
+    const ft_dom_node *target = ft_nullptr;
+    const int32_t status = ft_dom_find_path(node, rule.path, &target);
+    if (status == FT_ERR_NOT_FOUND)
     {
         if (rule.required)
-        {
-            ft_string message;
-            if (message.initialize("Required node missing") != FT_ERR_SUCCESS)
-                return (message.get_error());
-
-            if (message.get_error() != FT_ERR_SUCCESS)
-                return (message.get_error());
-            report.add_error(full_path, message);
-            report.mark_invalid();
-        }
-        return (set_error(find_error));
+            return (dom_record_validation_error(report, rule.path, "Required node missing"));
+        return (FT_ERR_SUCCESS);
     }
-    if (!target_node)
-    {
-        if (rule.required)
-        {
-            ft_string message;
-            if (message.initialize("Required node missing") != FT_ERR_SUCCESS)
-                return (message.get_error());
-
-            if (message.get_error() != FT_ERR_SUCCESS)
-                return (message.get_error());
-            report.add_error(full_path, message);
-            report.mark_invalid();
-        }
-        return (set_error(FT_ERR_SUCCESS));
-    }
-    ft_dom_node_type node_type;
-
-    node_type = target_node->get_type();
-    if (node_type != rule.type)
-    {
-        ft_string message;
-        if (message.initialize("Node type mismatch") != FT_ERR_SUCCESS)
-            return (message.get_error());
-
-        if (message.get_error() != FT_ERR_SUCCESS)
-            return (message.get_error());
-        report.add_error(full_path, message);
-        report.mark_invalid();
-    }
-    return (set_error(FT_ERR_SUCCESS));
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    if (target->get_type() != rule.type)
+        return (dom_record_validation_error(report, rule.path, "Node type mismatch"));
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t ft_dom_schema::validate(const ft_dom_document &document, ft_dom_validation_report &report) const noexcept
 {
-    const ft_dom_node *root;
-    ft_size_t index;
-    ft_size_t count;
-    int32_t rule_error;
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised(this->_initialised_state, "ft_dom_schema::validate");
-    report.mark_valid();
-    root = document.get_root();
+    int32_t status = report.reset();
+    if (status != FT_ERR_SUCCESS)
+        return (set_error(status));
+    const ft_dom_node *root = document.get_root();
     if (!root)
     {
         report.mark_invalid();
         ft_string path;
-        if (path.initialize("<root>") != FT_ERR_SUCCESS)
-            return (set_error(path.get_error()));
-        ft_string message;
-        if (message.initialize("Document has no root node") != FT_ERR_SUCCESS)
-            return (set_error(message.get_error()));
-        report.add_error(path, message);
-        return (set_error(FT_ERR_SUCCESS));
+        status = path.initialize("<root>");
+        if (status == FT_ERR_SUCCESS)
+            status = dom_record_validation_error(report, path, "Document has no root node");
+        return (set_error(status));
     }
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (set_error(lock_error));
-    index = 0;
-    count = this->_rules.size();
-    while (index < count)
+
+    ft_bool lock_acquired = FT_FALSE;
+    status = this->lock_internal(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (set_error(status));
+    const ft_size_t count = this->_rules.size();
+    ft_size_t index = 0;
+    while (status == FT_ERR_SUCCESS && index < count)
     {
         const ft_dom_schema_rule &rule = this->_rules[index];
-
-        if (this->_rules.get_error() != FT_ERR_SUCCESS)
-        {
-            (void)this->unlock_internal(lock_acquired);
-            return (set_error(this->_rules.get_error()));
-        }
-        ft_string rule_path;
-        if (rule_path.initialize("") != FT_ERR_SUCCESS)
-        {
-            (void)this->unlock_internal(lock_acquired);
-            return (set_error(rule_path.get_error()));
-        }
-        rule_error = this->validate_rule(rule, root, rule_path, report);
-        if (rule_error != FT_ERR_SUCCESS && rule_error != FT_ERR_NOT_FOUND)
-        {
-            (void)this->unlock_internal(lock_acquired);
-            return (set_error(rule_error));
-        }
-        index += 1;
+        status = this->_rules.get_error();
+        if (status == FT_ERR_SUCCESS)
+            status = this->validate_rule(rule, root, report);
+        ++index;
     }
     (void)this->unlock_internal(lock_acquired);
-    return (set_error(FT_ERR_SUCCESS));
+    return (set_error(status));
 }

@@ -36,6 +36,47 @@ static void event_listener_add_to_atomic(int value)
     return ;
 }
 
+static void event_listener_record_one(uint32_t &order)
+{
+    order = order * 10U + 1U;
+    return ;
+}
+
+static void event_listener_record_two(uint32_t &order)
+{
+    order = order * 10U + 2U;
+    return ;
+}
+
+FT_TEST(test_ft_event_emitter_removal_preserves_order_after_growth)
+{
+    ft_event_emitter<uint32_t, uint32_t &> emitter;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, emitter.initialize());
+    emitter.on(42U, event_listener_record_one);
+    uint32_t event = 100U;
+    while (event < 256U)
+    {
+        emitter.on(event, event_listener_record_one);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, emitter.get_error());
+        ++event;
+    }
+    emitter.on(42U, event_listener_record_two);
+    emitter.on(42U, event_listener_record_one);
+    emitter.remove_listener(42U, event_listener_record_one);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, emitter.get_error());
+    uint32_t order = 0U;
+    emitter.emit(42U, order);
+    FT_ASSERT_EQ(21U, order);
+    return (1);
+}
+
+FT_TEST(test_ft_event_emitter_rejects_oversized_initial_capacity)
+{
+    ft_event_emitter<uint32_t> emitter(FT_SYSTEM_SIZE_MAX);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, emitter.initialize());
+    return (1);
+}
+
 static void emit_in_thread(ft_event_emitter<int, int>* emitter_instance, int event_identifier, int emit_count, int emit_value)
 {
     int emission_index;

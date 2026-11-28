@@ -125,19 +125,23 @@ void ft_dom_document::unlock(ft_bool lock_acquired) const noexcept
 
 void ft_dom_document::set_root(ft_dom_node *root) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
+    (void)this->replace_root(root);
+    return ;
+}
 
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_document::set_root");
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
+int32_t ft_dom_document::replace_root(ft_dom_node *root) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_document::replace_root");
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    if (this->_root != ft_nullptr)
-        delete this->_root;
+        return (lock_error);
+    ft_dom_node *previous_root = this->_root;
     this->_root = root;
     (void)this->unlock_internal(lock_acquired);
-    return ;
+    if (previous_root != root)
+        delete previous_root;
+    return (FT_ERR_SUCCESS);
 }
 
 ft_dom_node *ft_dom_document::get_root() const noexcept
@@ -158,19 +162,6 @@ ft_dom_node *ft_dom_document::get_root() const noexcept
 
 void ft_dom_document::clear() noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_dom_document::clear");
-    lock_acquired = false;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return ;
-    if (this->_root != ft_nullptr)
-    {
-        delete this->_root;
-        this->_root = ft_nullptr;
-    }
-    (void)this->unlock_internal(lock_acquired);
+    (void)this->replace_root(ft_nullptr);
     return ;
 }

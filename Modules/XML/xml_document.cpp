@@ -1,4 +1,7 @@
 #include "xml.hpp"
+#include "../Parser/dom.hpp"
+#include "../Advanced/advanced.hpp"
+#include "../Compatebility/compatebility_internal.hpp"
 #include "../CMA/CMA.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
@@ -51,30 +54,6 @@ static int32_t  is_xml_whitespace(char character)
     return (FT_ERR_SUCCESS);
 }
 
-static char *duplicate_range(const char *start, ft_size_t length)
-{
-    char *copy = static_cast<char *>(cma_malloc(length + 1));
-    if (!copy)
-        return (ft_nullptr);
-    ft_size_t index = 0;
-    while (index < length)
-    {
-        copy[index] = start[index];
-        index++;
-    }
-    copy[length] = '\0';
-    return (copy);
-}
-
-static int32_t translate_vector_error(int32_t error_code)
-{
-    if (error_code == FT_ERR_SUCCESS)
-        return (FT_ERR_SUCCESS);
-    if (error_code == FT_ERR_NO_MEMORY)
-        return (FT_ERR_NO_MEMORY);
-    return (error_code);
-}
-
 static const char *xml_skip_whitespace_range(const char *cursor, const char *end)
 {
     while (cursor && cursor < end && is_xml_whitespace(*cursor))
@@ -96,14 +75,14 @@ static int32_t xml_add_namespace_binding(xml_node *node, const char *prefix,
     entry->prefix = ft_nullptr;
     if (prefix && prefix_length > 0)
     {
-        entry->prefix = duplicate_range(prefix, prefix_length);
+        entry->prefix = ft_span_dup(prefix, prefix_length);
         if (!entry->prefix)
         {
             delete entry;
             return (FT_ERR_INTERNAL);
         }
     }
-    entry->uri = duplicate_range(uri, static_cast<ft_size_t>(ft_strlen(uri)));
+    entry->uri = ft_span_dup(uri, ft_strlen_size_t(uri));
     if (!entry->uri)
     {
         if (entry->prefix)
@@ -138,6 +117,162 @@ static const char *xml_resolve_namespace_uri(
     return (ft_nullptr);
 }
 
+static int32_t xml_clone_bindings(const xml_namespace_entry *source, xml_node &target,
+        const xml_namespace_entry *parent_scope) noexcept
+{
+    xml_namespace_entry *previous = ft_nullptr;
+    while (source)
+    {
+        xml_namespace_entry *entry = new (std::nothrow) xml_namespace_entry{};
+        if (entry == ft_nullptr)
+            return (FT_ERR_NO_MEMORY);
+        if (previous)
+        {
+            previous->next_local = entry;
+            previous->parent = entry;
+        }
+        else
+            target.namespace_bindings = entry;
+        if (source->prefix)
+        {
+            entry->prefix = adv_strdup(source->prefix);
+            if (!entry->prefix)
+                return (FT_ERR_NO_MEMORY);
+        }
+        entry->uri = adv_strdup(source->uri);
+        if (!entry->uri)
+            return (FT_ERR_NO_MEMORY);
+        previous = entry;
+        source = source->next_local;
+    }
+    if (previous)
+        previous->parent = parent_scope;
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t xml_clone_attributes(const xml_node &source, xml_node &target) noexcept
+{
+    auto attribute = source.attributes.begin();
+    const auto end = source.attributes.end();
+    while (attribute != end)
+    {
+        char *key = adv_strdup(attribute->first);
+        if (attribute->first && !key)
+            return (FT_ERR_NO_MEMORY);
+        char *value = adv_strdup(attribute->second);
+        int32_t status = FT_ERR_NO_MEMORY;
+        if (value || !attribute->second)
+        {
+            target.attributes.insert(key, value);
+            status = target.attributes.get_error();
+        }
+        if (status != FT_ERR_SUCCESS)
+        {
+            cma_free(key);
+            cma_free(value);
+            return (status);
+        }
+        ++attribute;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t xml_clone_node(const xml_node &source, xml_node *&target,
+        const xml_namespace_entry *source_scope,
+        const xml_namespace_entry *target_scope) noexcept;
+
+static int32_t xml_clone_node_content(const xml_node &source, xml_node &target,
+        const xml_namespace_entry *source_scope,
+        const xml_namespace_entry *target_scope) noexcept
+{
+    target.name = adv_strdup(source.name);
+    target.namespace_prefix = adv_strdup(source.namespace_prefix);
+    target.local_name = adv_strdup(source.local_name);
+    target.text = adv_strdup(source.text);
+    if ((source.name && !target.name) || (source.namespace_prefix && !target.namespace_prefix)
+        || (source.local_name && !target.local_name) || (source.text && !target.text))
+        return (FT_ERR_NO_MEMORY);
+
+    int32_t status = xml_clone_bindings(source.namespace_bindings, target, target_scope);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    if (source.namespace_bindings)
+    {
+        source_scope = source.namespace_bindings;
+        target_scope = target.namespace_bindings;
+    }
+    target.namespace_uri = source.namespace_uri;
+    if (source.namespace_uri)
+    {
+        // A parsed namespace URI borrows storage from this node or an ancestor.
+        const xml_namespace_entry *source_binding = source_scope;
+        const xml_namespace_entry *target_binding = target_scope;
+        while (source_binding && target_binding)
+        {
+            if (source_binding->uri == source.namespace_uri)
+            {
+                target.namespace_uri = target_binding->uri;
+                break ;
+            }
+            source_binding = source_binding->parent;
+            target_binding = target_binding->parent;
+        }
+    }
+
+    if (source.attributes.is_initialised() == FT_CLASS_STATE_INITIALISED)
+    {
+        status = xml_clone_attributes(source, target);
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+    }
+    if (source.children.is_initialised() != FT_CLASS_STATE_INITIALISED)
+        return (FT_ERR_SUCCESS);
+    const ft_size_t child_count = source.children.size();
+    if (child_count > target.children.capacity())
+    {
+        target.children.reserve(child_count);
+        status = target.children.get_error();
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+    }
+    ft_size_t child_index = 0;
+    while (child_index < child_count)
+    {
+        const xml_node *source_child = source.children[child_index];
+        status = target.children.push_back(ft_nullptr);
+        if (status == FT_ERR_SUCCESS && source_child)
+            status = xml_clone_node(*source_child, target.children[child_index], source_scope, target_scope);
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+        ++child_index;
+    }
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t xml_clone_node(const xml_node &source, xml_node *&target,
+        const xml_namespace_entry *source_scope,
+        const xml_namespace_entry *target_scope) noexcept
+{
+    target = new (std::nothrow) xml_node();
+    if (!target)
+        return (FT_ERR_NO_MEMORY);
+    int32_t status = target->children.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = target->attributes.initialize();
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+
+    ft_bool lock_acquired = FT_FALSE;
+    status = xml_node_lock(&source, &lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = xml_clone_node_content(source, *target, source_scope, target_scope);
+    xml_node_unlock(&source, lock_acquired);
+    if (status == FT_ERR_SUCCESS && lock_acquired)
+        status = xml_node_prepare_thread_safety(target);
+    return (status);
+}
+
 static int32_t xml_parse_attributes(xml_node *node, const char *start,
         const char *end, const xml_namespace_entry *scope_head,
         const xml_namespace_entry **out_scope, int32_t *error_code_out)
@@ -170,15 +305,13 @@ static int32_t xml_parse_attributes(xml_node *node, const char *start,
             && *cursor != '=' && *cursor != '/' && *cursor != '>')
             cursor++;
         name_end = cursor;
-        while (name_end > name_start && is_xml_whitespace(name_end[-1]))
-            name_end--;
         if (name_end <= name_start)
         {
             if (error_code_out)
                 *error_code_out = FT_ERR_INVALID_ARGUMENT;
             return (FT_ERR_INTERNAL);
         }
-        attribute_name = duplicate_range(name_start,
+        attribute_name = ft_span_dup(name_start,
                 static_cast<ft_size_t>(name_end - name_start));
         if (!attribute_name)
         {
@@ -211,21 +344,11 @@ static int32_t xml_parse_attributes(xml_node *node, const char *start,
                 cursor++;
             }
             value_start = cursor;
-            while (cursor < end)
-            {
-                if (quote_character != '\0')
-                {
-                    if (*cursor == quote_character)
-                        break ;
-                }
-                else if (is_xml_whitespace(*cursor) || *cursor == '/' || *cursor == '>')
-                    break ;
-                cursor++;
-            }
-            value_end = cursor;
             if (quote_character != '\0')
             {
-                if (!cursor || cursor >= end || *cursor != quote_character)
+                cursor = static_cast<const char *>(ft_memchr(cursor, quote_character,
+                    static_cast<ft_size_t>(end - cursor)));
+                if (cursor == ft_nullptr)
                 {
                     cma_free(attribute_name);
                     if (error_code_out)
@@ -233,7 +356,14 @@ static int32_t xml_parse_attributes(xml_node *node, const char *start,
                     return (FT_ERR_INTERNAL);
                 }
             }
-            attribute_value = duplicate_range(value_start,
+            else
+            {
+                while (cursor < end && !is_xml_whitespace(*cursor)
+                    && *cursor != '/' && *cursor != '>')
+                    ++cursor;
+            }
+            value_end = cursor;
+            attribute_value = ft_span_dup(value_start,
                     static_cast<ft_size_t>(value_end - value_start));
             if (!attribute_value)
             {
@@ -261,15 +391,9 @@ static int32_t xml_parse_attributes(xml_node *node, const char *start,
                 is_namespace = FT_TRUE;
             else if (attribute_name[5] == ':' && attribute_name[6] != '\0')
             {
-                const char *prefix_end;
-
                 is_namespace = FT_TRUE;
                 namespace_prefix_pointer = attribute_name + 6;
-                prefix_end = namespace_prefix_pointer;
-                while (*prefix_end)
-                    prefix_end++;
-                namespace_prefix_length = static_cast<ft_size_t>(prefix_end
-                        - namespace_prefix_pointer);
+                namespace_prefix_length = static_cast<ft_size_t>(name_end - name_start) - 6;
             }
             else if (attribute_name[5] == ':' && attribute_name[6] == '\0')
             {
@@ -383,6 +507,38 @@ xml_node::~xml_node() noexcept
     return ;
 }
 
+static int32_t xml_create_named_node(const char *name, ft_size_t name_length, xml_node *&node) noexcept
+{
+    node = new (std::nothrow) xml_node();
+    if (!node)
+        return (FT_ERR_NO_MEMORY);
+    int32_t status = node->children.initialize();
+    if (status == FT_ERR_SUCCESS)
+        status = node->attributes.initialize();
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+
+    node->name = ft_span_dup(name, name_length);
+    if (!node->name)
+        return (FT_ERR_NO_MEMORY);
+    const char *colon = static_cast<const char *>(ft_memchr(name, ':', name_length));
+    if (!colon)
+        node->local_name = ft_span_dup(name, name_length);
+    else
+    {
+        const ft_size_t prefix_length = static_cast<ft_size_t>(colon - name);
+        if (prefix_length == 0 || prefix_length + 1 == name_length)
+            return (FT_ERR_INVALID_ARGUMENT);
+        node->namespace_prefix = ft_span_dup(name, prefix_length);
+        if (!node->namespace_prefix)
+            return (FT_ERR_NO_MEMORY);
+        node->local_name = ft_span_dup(colon + 1, name_length - prefix_length - 1);
+    }
+    if (!node->local_name)
+        return (FT_ERR_NO_MEMORY);
+    return (FT_ERR_SUCCESS);
+}
+
 static const char *parse_node(const char *string, xml_node **out_node,
         const xml_namespace_entry *scope_head, int32_t *error_code_out)
 {
@@ -400,86 +556,14 @@ static const char *parse_node(const char *string, xml_node **out_node,
     while (*string && *string != '>' && *string != ' ' && *string != '/')
         string++;
     ft_size_t name_length = static_cast<ft_size_t>(string - name_start);
-    char *name = duplicate_range(name_start, name_length);
-    if (!name)
+    xml_node *node = ft_nullptr;
+    const int32_t create_status = xml_create_named_node(name_start, name_length, node);
+    if (create_status != FT_ERR_SUCCESS)
     {
+        delete node;
         if (error_code_out)
-            *error_code_out = FT_ERR_NO_MEMORY;
+            *error_code_out = create_status;
         return (ft_nullptr);
-    }
-    xml_node *node = new (std::nothrow) xml_node();
-    if (!node)
-    {
-        cma_free(name);
-        if (error_code_out)
-            *error_code_out = FT_ERR_NO_MEMORY;
-        return (ft_nullptr);
-    }
-    {
-        int32_t children_initialize_error;
-        int32_t attributes_initialize_error;
-
-        children_initialize_error = node->children.initialize();
-        if (children_initialize_error != FT_ERR_SUCCESS)
-        {
-            cma_free(name);
-            delete node;
-            if (error_code_out)
-                *error_code_out = children_initialize_error;
-            return (ft_nullptr);
-        }
-        attributes_initialize_error = node->attributes.initialize();
-        if (attributes_initialize_error != FT_ERR_SUCCESS)
-        {
-            cma_free(name);
-            delete node;
-            if (error_code_out)
-                *error_code_out = attributes_initialize_error;
-            return (ft_nullptr);
-        }
-    }
-    node->name = name;
-    const char *colon_position = ft_strchr(node->name, ':');
-    if (colon_position)
-    {
-        ft_size_t prefix_length = static_cast<ft_size_t>(colon_position - node->name);
-        if (prefix_length == 0 || colon_position[1] == '\0')
-        {
-            delete node;
-            if (error_code_out)
-                *error_code_out = FT_ERR_INVALID_ARGUMENT;
-            return (ft_nullptr);
-        }
-        node->namespace_prefix = duplicate_range(node->name, prefix_length);
-        if (!node->namespace_prefix)
-        {
-            delete node;
-            if (error_code_out)
-                *error_code_out = FT_ERR_NO_MEMORY;
-            return (ft_nullptr);
-        }
-        node->local_name = duplicate_range(colon_position + 1,
-                static_cast<ft_size_t>(ft_strlen(colon_position + 1)));
-        if (!node->local_name)
-        {
-            delete node;
-            if (error_code_out)
-                *error_code_out = FT_ERR_NO_MEMORY;
-            return (ft_nullptr);
-        }
-    }
-    else
-    {
-        node->namespace_prefix = ft_nullptr;
-        node->local_name = duplicate_range(node->name,
-                static_cast<ft_size_t>(ft_strlen(node->name)));
-        if (!node->local_name)
-        {
-            delete node;
-            if (error_code_out)
-                *error_code_out = FT_ERR_NO_MEMORY;
-            return (ft_nullptr);
-        }
     }
     int32_t prepare_result = xml_node_prepare_thread_safety(node);
     if (prepare_result != 0)
@@ -489,20 +573,16 @@ static const char *parse_node(const char *string, xml_node **out_node,
             *error_code_out = FT_ERR_INVALID_STATE;
         return (ft_nullptr);
     }
-    char quote_character = '\0';
-
-    while (*string)
+    while (*string && *string != '>')
     {
-        if (*string == '>' && quote_character == '\0')
-            break ;
         if (*string == '"' || *string == '\'')
         {
-            if (quote_character == '\0')
-                quote_character = *string;
-            else if (quote_character == *string)
-                quote_character = '\0';
+            const char *quote_end = ft_strchr(string + 1, *string);
+            if (quote_end == ft_nullptr)
+                break ;
+            string = quote_end;
         }
-        string++;
+        ++string;
     }
     if (*string != '>')
     {
@@ -600,14 +680,13 @@ static const char *parse_node(const char *string, xml_node **out_node,
                 }
                 return (ft_nullptr);
             }
-            node->children.push_back(child);
-            int32_t children_error_code = node->children.get_error();
+            const int32_t children_error_code = node->children.push_back(child);
             if (children_error_code != FT_ERR_SUCCESS)
             {
                 delete child;
                 delete node;
                 if (error_code_out)
-                    *error_code_out = translate_vector_error(children_error_code);
+                    *error_code_out = children_error_code;
                 return (ft_nullptr);
             }
             string = skip_whitespace(string);
@@ -617,10 +696,18 @@ static const char *parse_node(const char *string, xml_node **out_node,
     }
     else
     {
-        while (*string && !(*string == '<' && string[1] == '/'))
-            string++;
+        string = ft_strchr(string, '<');
+        while (string && string[1] != '/')
+            string = ft_strchr(string + 1, '<');
+        if (string == ft_nullptr)
+        {
+            delete node;
+            if (error_code_out)
+                *error_code_out = FT_ERR_INVALID_ARGUMENT;
+            return (ft_nullptr);
+        }
         ft_size_t text_length = static_cast<ft_size_t>(string - text_start);
-        node->text = duplicate_range(text_start, text_length);
+        node->text = ft_span_dup(text_start, text_length);
         if (!node->text && text_length > 0)
         {
             delete node;
@@ -641,26 +728,13 @@ static const char *parse_node(const char *string, xml_node **out_node,
     const char *closing_name_start = string;
     while (*string && *string != '>' && !is_xml_whitespace(*string))
         string++;
-    ft_size_t closing_name_length = static_cast<ft_size_t>(string - closing_name_start);
-    ft_size_t opening_name_length = ft_strlen(node->name);
-    if (closing_name_length != opening_name_length)
+    const ft_size_t closing_name_length = static_cast<ft_size_t>(string - closing_name_start);
+    if (closing_name_length != name_length || ft_memcmp(closing_name_start, name_start, name_length) != 0)
     {
         delete node;
         if (error_code_out)
             *error_code_out = FT_ERR_INVALID_ARGUMENT;
         return (ft_nullptr);
-    }
-    ft_size_t name_index = 0;
-    while (name_index < closing_name_length)
-    {
-        if (closing_name_start[name_index] != node->name[name_index])
-        {
-            delete node;
-            if (error_code_out)
-                *error_code_out = FT_ERR_INVALID_ARGUMENT;
-            return (ft_nullptr);
-        }
-        name_index++;
     }
     while (*string && *string != '>')
     {
@@ -687,6 +761,177 @@ static const char *parse_node(const char *string, xml_node **out_node,
     return (string);
 }
 
+
+static ft_bool xml_dom_name_is_valid(const char *name, ft_size_t length) noexcept
+{
+    if (!name || length == 0)
+        return (FT_FALSE);
+    ft_size_t index = 0;
+    while (index < length)
+    {
+        const char character = name[index];
+        if (character == '\0' || is_xml_whitespace(character) || character == '<'
+            || character == '>' || character == '/' || character == '='
+            || character == '"' || character == '\'')
+            return (FT_FALSE);
+        ++index;
+    }
+    return (FT_TRUE);
+}
+
+static int32_t xml_import_dom_attribute(xml_node &node, const ft_string &key,
+        const ft_string &value, const xml_namespace_entry **scope) noexcept
+{
+    const char *key_data = key.c_str();
+    const ft_size_t key_size = key.size();
+    const char *value_data = value.c_str();
+    const ft_size_t value_size = value.size();
+    if (!xml_dom_name_is_valid(key_data, key_size) || ft_memchr(value_data, '\0', value_size))
+        return (FT_ERR_INVALID_ARGUMENT);
+
+    if (key_size >= 5 && ft_memcmp(key_data, "xmlns", 5) == 0)
+    {
+        if (key_size == 5 || key_data[5] == ':')
+        {
+            if (key_size == 6)
+                return (FT_ERR_INVALID_ARGUMENT);
+            const char *prefix = ft_nullptr;
+            ft_size_t prefix_size = 0;
+            if (key_size > 5)
+            {
+                prefix = key_data + 6;
+                prefix_size = key_size - 6;
+            }
+            if (xml_add_namespace_binding(&node, prefix, prefix_size, value_data, scope) != FT_ERR_SUCCESS)
+                return (FT_ERR_NO_MEMORY);
+        }
+    }
+
+    char *owned_key = ft_span_dup(key_data, key_size);
+    char *owned_value = ft_span_dup(value_data, value_size);
+    int32_t status = FT_ERR_NO_MEMORY;
+    if (owned_key && owned_value)
+    {
+        node.attributes.insert(owned_key, owned_value);
+        status = node.attributes.get_error();
+    }
+    if (status != FT_ERR_SUCCESS)
+    {
+        cma_free(owned_key);
+        cma_free(owned_value);
+    }
+    return (status);
+}
+
+static int32_t xml_import_dom_node(const ft_dom_node &source, xml_node *&target,
+        const xml_namespace_entry *scope) noexcept;
+
+static int32_t xml_import_dom_node_locked(const ft_dom_node &source, xml_node *&target,
+        const xml_namespace_entry *scope) noexcept
+{
+    const ft_string &name = source.get_name();
+    if (!xml_dom_name_is_valid(name.c_str(), name.size()))
+        return (FT_ERR_INVALID_ARGUMENT);
+    int32_t status = xml_create_named_node(name.c_str(), name.size(), target);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+
+    const auto &keys = source.get_attribute_keys();
+    const auto &values = source.get_attribute_values();
+    const ft_size_t attribute_count = keys.size();
+    if (values.size() != attribute_count)
+        return (FT_ERR_INVALID_STATE);
+    ft_size_t index = 0;
+    while (index < attribute_count)
+    {
+        status = xml_import_dom_attribute(*target, keys[index], values[index], &scope);
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+        ++index;
+    }
+    target->namespace_uri = xml_resolve_namespace_uri(scope, target->namespace_prefix);
+    if (target->namespace_prefix && !target->namespace_uri)
+        return (FT_ERR_INVALID_ARGUMENT);
+
+    const ft_string &value = source.get_value();
+    const ft_size_t value_length = value.size();
+    if (value_length != 0)
+    {
+        const char *value_data = value.c_str();
+        if (ft_memchr(value_data, '\0', value_length))
+            return (FT_ERR_INVALID_ARGUMENT);
+        target->text = ft_span_dup(value_data, value_length);
+        if (!target->text)
+            return (FT_ERR_NO_MEMORY);
+    }
+
+    const auto &children = source.get_children();
+    const ft_size_t child_count = children.size();
+    if (child_count > target->children.capacity())
+    {
+        target->children.reserve(child_count);
+        status = target->children.get_error();
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+    }
+    index = 0;
+    while (index < child_count)
+    {
+        const ft_dom_node *child = children[index];
+        if (!child)
+            return (FT_ERR_INVALID_ARGUMENT);
+        status = target->children.push_back(ft_nullptr);
+        if (status == FT_ERR_SUCCESS)
+            status = xml_import_dom_node(*child, target->children[index], scope);
+        if (status != FT_ERR_SUCCESS)
+            return (status);
+        ++index;
+    }
+    return (xml_node_prepare_thread_safety(target));
+}
+
+static int32_t xml_import_dom_node(const ft_dom_node &source, xml_node *&target,
+        const xml_namespace_entry *scope) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    const int32_t lock_error = source.lock(&lock_acquired);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (lock_error);
+    const int32_t status = xml_import_dom_node_locked(source, target, scope);
+    source.unlock(lock_acquired);
+    return (status);
+}
+
+int32_t xml_document::replace_from_dom(const ft_dom_document &dom) noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "xml_document::replace_from_dom");
+    xml_node *new_root = ft_nullptr;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = dom.lock(&lock_acquired);
+    if (status == FT_ERR_SUCCESS)
+    {
+        const ft_dom_node *source = dom.get_root();
+        if (source)
+            status = xml_import_dom_node(*source, new_root, ft_nullptr);
+        else
+            status = FT_ERR_INVALID_ARGUMENT;
+        dom.unlock(lock_acquired);
+    }
+    if (status == FT_ERR_SUCCESS)
+    {
+        status = this->lock(&lock_acquired);
+        if (status == FT_ERR_SUCCESS)
+        {
+            xml_node *previous_root = this->_root;
+            this->_root = new_root;
+            new_root = previous_root;
+            this->unlock(lock_acquired);
+        }
+    }
+    delete new_root;
+    this->record_operation_error(status);
+    return (status);
+}
 
 xml_document::xml_document() noexcept
     : _root(ft_nullptr), _mutex(ft_nullptr),
@@ -715,29 +960,49 @@ int32_t xml_document::initialize() noexcept
 
 int32_t xml_document::initialize(const xml_document &other) noexcept
 {
-    char *serialized_content;
-    int32_t load_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "xml_document::initialize(copy)", "source is uninitialised");
+    const int32_t source_error = other.get_error();
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        if (this->destroy() != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
     }
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->record_operation_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    serialized_content = other.write_to_string();
-    if (serialized_content == ft_nullptr)
-        return (FT_ERR_INTERNAL);
-    load_error = this->load_from_string(serialized_content);
-    cma_free(serialized_content);
-    return (load_error);
+
+    xml_node *root_copy = ft_nullptr;
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t status = other.lock(&lock_acquired);
+    if (status == FT_ERR_SUCCESS)
+    {
+        if (other._root)
+            status = xml_clone_node(*other._root, root_copy, ft_nullptr, ft_nullptr);
+        other.unlock(lock_acquired);
+    }
+    if (status == FT_ERR_SUCCESS)
+    {
+        status = this->initialize();
+        if (status == FT_ERR_SUCCESS && lock_acquired)
+            status = this->enable_thread_safety();
+    }
+    if (status != FT_ERR_SUCCESS)
+    {
+        delete root_copy;
+        (void)this->destroy();
+        this->record_operation_error(status);
+        return (status);
+    }
+    this->_root = root_copy;
+    this->record_operation_error(source_error);
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t xml_document::initialize(xml_document &&other) noexcept
@@ -746,11 +1011,6 @@ int32_t xml_document::initialize(xml_document &&other) noexcept
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "xml_document::initialize(move)", "source is uninitialised");
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        if (this->destroy() != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
-    }
     return (this->move(other));
 }
 
@@ -760,16 +1020,19 @@ int32_t xml_document::move(xml_document &other) noexcept
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
         errno_abort_lifecycle(other._initialised_state, "xml_document::move", "source is uninitialised");
+    const int32_t source_error = other.get_error();
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        if (this->destroy() != FT_ERR_SUCCESS)
-            return (FT_ERR_INTERNAL);
+        const int32_t destroy_error = this->destroy();
+        if (destroy_error != FT_ERR_SUCCESS)
+            return (destroy_error);
     }
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         this->_root = ft_nullptr;
         this->_mutex = ft_nullptr;
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->record_operation_error(source_error);
         return (FT_ERR_SUCCESS);
     }
     this->_root = other._root;
@@ -778,36 +1041,25 @@ int32_t xml_document::move(xml_document &other) noexcept
     other._mutex = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    this->record_operation_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t xml_document::destroy() noexcept
 {
-    int32_t disable_error;
-    int32_t lock_error;
-    ft_bool lock_acquired;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
         return (FT_ERR_SUCCESS);
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock(&lock_acquired);
-    if (lock_error == FT_ERR_SUCCESS && this->_root != ft_nullptr)
-    {
-        delete this->_root;
-        this->_root = ft_nullptr;
-    }
-    if (lock_acquired)
-        this->unlock(FT_TRUE);
-    disable_error = this->disable_thread_safety();
-    if (disable_error != FT_ERR_SUCCESS)
-        return (disable_error);
+    const int32_t disable_error = this->disable_thread_safety();
+    delete this->_root;
+    this->_root = ft_nullptr;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    this->record_operation_error(disable_error);
+    return (disable_error);
 }
 
 void xml_document::record_operation_error(int32_t error_code) const noexcept
 {
-    (void)xml_document::set_error(static_cast<uint32_t>(error_code));
+    (void)xml_document::set_error(error_code);
     return ;
 }
 
@@ -864,69 +1116,64 @@ int32_t xml_document::load_from_string(const char *xml) noexcept
     return (FT_ERR_SUCCESS);
 }
 
+static int32_t xml_file_error() noexcept
+{
+    if (errno != 0)
+        return (cmp_map_system_error_to_ft(errno));
+    return (FT_ERR_INVALID_ARGUMENT);
+}
+
+static int32_t xml_read_stream_size(FILE *file, ft_size_t &size) noexcept
+{
+    if (cmp_file_stream_size(file, &size) == FT_ERR_SUCCESS)
+        return (FT_ERR_SUCCESS);
+
+    // Preserve support for seekable streams that cannot report metadata.
+    errno = 0;
+    if (std::fseek(file, 0, SEEK_END) != 0)
+        return (xml_file_error());
+    const int64_t stream_length = std::ftell(file);
+    if (stream_length <= 0)
+        return (FT_ERR_INVALID_ARGUMENT);
+    errno = 0;
+    if (std::fseek(file, 0, SEEK_SET) != 0)
+        return (xml_file_error());
+    size = static_cast<ft_size_t>(stream_length);
+    return (FT_ERR_SUCCESS);
+}
+
 static int32_t read_file_content(const char *file_path, char **out_content)
 {
+    if (file_path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
     errno = 0;
     FILE *file = std::fopen(file_path, "rb");
     if (!file)
-    {
-        int32_t error_code;
+        return (xml_file_error());
 
-        if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        return (error_code);
-    }
-    errno = 0;
-    if (std::fseek(file, 0, SEEK_END) != 0)
+    ft_size_t size = 0;
+    int32_t status = xml_read_stream_size(file, size);
+    if (status == FT_ERR_SUCCESS && (size == 0 || size >= SIZE_MAX))
+        status = FT_ERR_INVALID_ARGUMENT;
+    char *buffer = ft_nullptr;
+    if (status == FT_ERR_SUCCESS)
     {
-        int32_t error_code;
-
-        if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        std::fclose(file);
-        return (error_code);
+        buffer = static_cast<char *>(cma_malloc(size + 1));
+        if (buffer == ft_nullptr)
+            status = FT_ERR_NO_MEMORY;
     }
-    int64_t size = std::ftell(file);
-    if (size <= 0)
+    if (status == FT_ERR_SUCCESS)
     {
-        std::fclose(file);
-        return (FT_ERR_INVALID_ARGUMENT);
+        errno = 0;
+        const size_t native_size = FT_UINT64_TO_NATIVE_SIZE_CAST(size);
+        if (std::fread(buffer, 1, native_size, file) != native_size)
+            status = xml_file_error();
     }
-    errno = 0;
-    if (std::fseek(file, 0, SEEK_SET) != 0)
-    {
-        int32_t error_code;
-
-        if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        std::fclose(file);
-        return (error_code);
-    }
-    char *buffer = static_cast<char *>(cma_malloc(static_cast<ft_size_t>(size) + 1));
-    if (!buffer)
-    {
-        std::fclose(file);
-        return (FT_ERR_NO_MEMORY);
-    }
-    errno = 0;
-    ft_size_t read_size = std::fread(buffer, 1, static_cast<ft_size_t>(size), file);
     std::fclose(file);
-    if (read_size != static_cast<ft_size_t>(size))
+    if (status != FT_ERR_SUCCESS)
     {
         cma_free(buffer);
-        int32_t error_code;
-
-        if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        return (error_code);
+        return (status);
     }
     buffer[size] = '\0';
     *out_content = buffer;
@@ -974,237 +1221,168 @@ int32_t xml_document::load_from_backend(ft_document_source &source) noexcept
     return (this->load_from_string(content.c_str()));
 }
 
-static void append_string(ft_vector<char> &buffer, const char *string)
+static int32_t append_node_qualified_name(const xml_node *node, ft_string &buffer) noexcept
 {
-    if (!string)
-        return ;
-    ft_size_t index = 0;
-    ft_size_t length = ft_strlen(string);
-    while (index < length)
-    {
-        buffer.push_back(string[index]);
-        index++;
-    }
-    return ;
-}
-
-static void append_node_qualified_name(const xml_node *node, ft_vector<char> &buffer)
-{
-    const char *prefix;
-    const char *local_name;
-
-    if (!node)
-        return ;
-    prefix = node->namespace_prefix;
+    const char *prefix = node->namespace_prefix;
+    const char *local_name = node->local_name;
+    int32_t status = FT_ERR_SUCCESS;
     if (prefix && prefix[0] != '\0')
     {
-        append_string(buffer, prefix);
-        buffer.push_back(':');
+        status = buffer.append(prefix);
+        if (status == FT_ERR_SUCCESS)
+            status = buffer.append(':');
     }
-    local_name = node->local_name;
+    if (status != FT_ERR_SUCCESS)
+        return (status);
     if (!local_name || local_name[0] == '\0')
         local_name = node->name;
-    append_string(buffer, local_name);
-    return ;
+    if (local_name)
+        return (buffer.append(local_name));
+    return (FT_ERR_SUCCESS);
 }
 
-static int32_t write_node(const xml_node *node, ft_vector<char> &buffer)
+static int32_t write_node(const xml_node *node, ft_string &buffer) noexcept
 {
     if (!node)
         return (FT_ERR_INVALID_ARGUMENT);
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_status = xml_node_lock(node, &lock_acquired);
-
-    if (lock_status != FT_ERR_SUCCESS)
+    if (xml_node_lock(node, &lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_STATE);
-    buffer.push_back('<');
-    append_node_qualified_name(node, buffer);
-    buffer.push_back('>');
-    if (node->text)
-        append_string(buffer, node->text);
+    int32_t status = buffer.append('<');
+    if (status == FT_ERR_SUCCESS)
+        status = append_node_qualified_name(node, buffer);
+    if (status == FT_ERR_SUCCESS)
+        status = buffer.append('>');
+    if (status == FT_ERR_SUCCESS && node->text)
+        status = buffer.append(node->text);
     ft_size_t index = 0;
-    ft_size_t size = node->children.size();
-    while (index < size)
+    const ft_size_t child_count = node->children.size();
+    while (status == FT_ERR_SUCCESS && index < child_count)
     {
-        int32_t child_status = write_node(node->children[index], buffer);
-
-        if (child_status != FT_ERR_SUCCESS)
-        {
-            xml_node_unlock(node, lock_acquired);
-            return (child_status);
-        }
-        index++;
+        status = write_node(node->children[index], buffer);
+        ++index;
     }
-    buffer.push_back('<');
-    buffer.push_back('/');
-    append_node_qualified_name(node, buffer);
-    buffer.push_back('>');
+    if (status == FT_ERR_SUCCESS)
+        status = buffer.append("</", 2);
+    if (status == FT_ERR_SUCCESS)
+        status = append_node_qualified_name(node, buffer);
+    if (status == FT_ERR_SUCCESS)
+        status = buffer.append('>');
     xml_node_unlock(node, lock_acquired);
-    return (FT_ERR_SUCCESS);
+    return (status);
+}
+
+int32_t xml_document::serialize(ft_string &buffer) const noexcept
+{
+    int32_t status = buffer.initialize();
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    ft_bool lock_acquired = FT_FALSE;
+    status = this->lock(&lock_acquired);
+    if (status != FT_ERR_SUCCESS)
+        return (status);
+    status = write_node(this->_root, buffer);
+    this->unlock(lock_acquired);
+    if (status == FT_ERR_SUCCESS)
+        status = buffer.append('\n');
+    return (status);
 }
 
 char *xml_document::write_to_string() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "xml_document::write_to_string");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_string content;
+    const int32_t status = this->serialize(content);
+    if (status != FT_ERR_SUCCESS)
     {
-        this->record_operation_error(lock_error);
+        this->record_operation_error(status);
         return (ft_nullptr);
     }
-    if (!this->_root)
+    const ft_size_t length = content.size() + 1;
+    char *result = static_cast<char *>(cma_malloc(length));
+    if (result == ft_nullptr)
     {
-        this->unlock(lock_acquired);
-        this->record_operation_error(FT_ERR_INVALID_ARGUMENT);
+        this->record_operation_error(FT_ERR_NO_MEMORY);
         return (ft_nullptr);
     }
-    char *result = ft_nullptr;
-    int32_t error_code = FT_ERR_SUCCESS;
-    {
-        ft_vector<char> buffer;
-        int32_t initialize_status;
-        int32_t write_status;
-        int32_t buffer_error;
-
-        initialize_status = buffer.initialize();
-        if (initialize_status != FT_ERR_SUCCESS)
-            error_code = initialize_status;
-        if (error_code == FT_ERR_SUCCESS)
-            write_status = write_node(this->_root, buffer);
-        else
-            write_status = FT_ERR_SUCCESS;
-        if (write_status != FT_ERR_SUCCESS)
-            error_code = write_status;
-        if (error_code == FT_ERR_SUCCESS)
-        {
-            buffer_error = buffer.get_error();
-            if (buffer_error != FT_ERR_SUCCESS)
-                error_code = translate_vector_error(buffer_error);
-        }
-        if (error_code == FT_ERR_SUCCESS)
-        {
-            buffer.push_back('\n');
-            buffer_error = buffer.get_error();
-            if (buffer_error != FT_ERR_SUCCESS)
-                error_code = translate_vector_error(buffer_error);
-        }
-        if (error_code == FT_ERR_SUCCESS)
-        {
-            buffer.push_back('\0');
-            buffer_error = buffer.get_error();
-            if (buffer_error != FT_ERR_SUCCESS)
-                error_code = translate_vector_error(buffer_error);
-        }
-        if (error_code == FT_ERR_SUCCESS)
-        {
-            ft_size_t length = buffer.size();
-            result = static_cast<char *>(cma_malloc(length));
-            if (!result)
-                error_code = FT_ERR_NO_MEMORY;
-            else
-            {
-                ft_size_t index = 0;
-                while (index < length)
-                {
-                    result[index] = buffer[index];
-                    index++;
-                }
-            }
-        }
-    }
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        if (result)
-            cma_free(result);
-        this->unlock(lock_acquired);
-        this->record_operation_error(error_code);
-        return (ft_nullptr);
-    }
-    this->unlock(lock_acquired);
+    ft_memcpy(result, content.c_str(), length);
     this->record_operation_error(FT_ERR_SUCCESS);
     return (result);
 }
 
+int32_t xml_document::write_to_string(ft_string &output) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "xml_document::write_to_string");
+    ft_string content;
+    int32_t status = this->serialize(content);
+    if (status == FT_ERR_SUCCESS)
+    {
+        if (output.is_initialised() == FT_FALSE)
+            status = output.move(content);
+        else
+            status = output.assign(content.c_str(), content.size());
+    }
+    this->record_operation_error(status);
+    return (status);
+}
+
 int32_t xml_document::write_to_file(const char *file_path) const noexcept
 {
-    char *content;
-    int32_t   error_code;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "xml_document::write_to_file");
-    content = this->write_to_string();
-    if (!content)
+    ft_string content;
+    int32_t status = this->serialize(content);
+    if (status != FT_ERR_SUCCESS)
     {
-        error_code = this->get_error();
-        this->record_operation_error(error_code);
-        return (error_code);
+        this->record_operation_error(status);
+        return (status);
+    }
+    if (file_path == ft_nullptr)
+    {
+        this->record_operation_error(FT_ERR_INVALID_ARGUMENT);
+        return (FT_ERR_INVALID_ARGUMENT);
     }
     errno = 0;
     FILE *file = std::fopen(file_path, "wb");
     if (!file)
     {
+        status = FT_ERR_INVALID_ARGUMENT;
         if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        this->record_operation_error(error_code);
-        cma_free(content);
-        return (error_code);
+            status = cmp_map_system_error_to_ft(errno);
+        this->record_operation_error(status);
+        return (status);
     }
-    ft_size_t length = ft_strlen(content);
+    const size_t length = FT_UINT64_TO_NATIVE_SIZE_CAST(content.size());
     errno = 0;
-    ft_size_t written = std::fwrite(content, 1, length, file);
-    if (written != length)
+    if (std::fwrite(content.c_str(), 1, length, file) != length)
     {
+        status = FT_ERR_INVALID_ARGUMENT;
         if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
+            status = cmp_map_system_error_to_ft(errno);
         std::fclose(file);
-        this->record_operation_error(error_code);
-        cma_free(content);
-        return (error_code);
     }
-    errno = 0;
-    if (std::fclose(file) != 0)
+    else
     {
-        if (errno != 0)
-            error_code = cmp_map_system_error_to_ft(errno);
-        else
-            error_code = FT_ERR_INVALID_ARGUMENT;
-        this->record_operation_error(error_code);
-        cma_free(content);
-        return (error_code);
+        errno = 0;
+        if (std::fclose(file) != 0)
+        {
+            status = FT_ERR_INVALID_ARGUMENT;
+            if (errno != 0)
+                status = cmp_map_system_error_to_ft(errno);
+        }
     }
-    cma_free(content);
-    this->record_operation_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    this->record_operation_error(status);
+    return (status);
 }
 
 int32_t xml_document::write_to_backend(ft_document_sink &sink) const noexcept
 {
-    char *content;
-    ft_size_t length;
-    int32_t write_result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "xml_document::write_to_backend");
-    content = this->write_to_string();
-    if (!content)
-        return (this->get_error());
-    length = ft_strlen(content);
-    write_result = sink.write_all(content, length);
-    cma_free(content);
-    int32_t final_error = write_result;
-    if (final_error != FT_ERR_SUCCESS)
-    {
-        this->record_operation_error(final_error);
-        return (final_error);
-    }
-    this->record_operation_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    ft_string content;
+    int32_t status = this->serialize(content);
+    if (status == FT_ERR_SUCCESS)
+        status = sink.write_all(content.c_str(), content.size());
+    this->record_operation_error(status);
+    return (status);
 }
 
 xml_node *xml_document::get_root() const noexcept
@@ -1220,9 +1398,10 @@ xml_node *xml_document::get_root() const noexcept
         this->record_operation_error(lock_error);
         return (ft_nullptr);
     }
+    xml_node *root = this->_root;
     this->unlock(lock_acquired);
     this->record_operation_error(FT_ERR_SUCCESS);
-    return (this->_root);
+    return (root);
 }
 
 void xml_document::set_manual_error(int32_t error_code) noexcept
@@ -1234,17 +1413,7 @@ void xml_document::set_manual_error(int32_t error_code) noexcept
 
 int32_t xml_document::get_error() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised(this->_initialised_state, "xml_document::get_error");
-    if (this->_initialised_state == FT_CLASS_STATE_DESTROYED)
-        return (xml_document::_last_error);
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-        return (lock_error);
-    this->unlock(lock_acquired);
     return (xml_document::_last_error);
 }
 

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <atomic>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -67,6 +68,64 @@ static void observability_test_wait_for_count(size_t expected_count)
 FT_TEST(test_observability_bridge_invalid_exporter)
 {
     FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, observability_task_scheduler_bridge_initialize(ft_nullptr));
+    return (1);
+}
+
+FT_TEST(test_observability_bridge_exports_terminal_event_without_prior_state)
+{
+    observability_test_clear_spans();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_task_scheduler_bridge_initialize(observability_test_exporter));
+    ft_task_trace_event event{};
+    event.phase = FT_TASK_TRACE_PHASE_CANCELLED;
+    event.trace_id = task_scheduler_trace_generate_span_id();
+    event.parent_id = 17;
+    event.label = g_ft_task_trace_label_schedule_once;
+    event.timestamp = time_monotonic_point_create(99);
+    event.thread_id = 42;
+    event.timer_thread = FT_TRUE;
+    task_scheduler_trace_emit(event);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_task_scheduler_bridge_shutdown());
+    const auto spans = observability_test_snapshot();
+    observability_test_clear_spans();
+    FT_ASSERT_EQ(1U, spans.size());
+    FT_ASSERT_EQ(event.trace_id, spans[0].span_id);
+    FT_ASSERT_EQ(event.parent_id, spans[0].parent_span_id);
+    FT_ASSERT_EQ(event.thread_id, spans[0].thread_id);
+    FT_ASSERT_EQ(0, spans[0].queue_duration_ms);
+    FT_ASSERT_EQ(0, spans[0].execution_duration_ms);
+    FT_ASSERT_EQ(0, spans[0].total_duration_ms);
+    FT_ASSERT_EQ(99, spans[0].finish_timestamp.milliseconds);
+    FT_ASSERT_EQ(FT_TRUE, spans[0].cancelled);
+    FT_ASSERT_EQ(FT_TRUE, spans[0].timer_thread);
+    return (1);
+}
+
+FT_TEST(test_observability_bridge_concurrent_initialize_registers_one_sink)
+{
+    observability_test_clear_spans();
+    std::atomic<ft_bool> ready{FT_FALSE};
+    int32_t first = FT_ERR_INTERNAL;
+    std::thread initializer([&]()
+    {
+        while (!ready.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        first = observability_task_scheduler_bridge_initialize(observability_test_exporter);
+        return ;
+    });
+    ready.store(FT_TRUE, std::memory_order_release);
+    const int32_t second = observability_task_scheduler_bridge_initialize(observability_test_exporter);
+    initializer.join();
+    ft_task_trace_event event{};
+    event.phase = FT_TASK_TRACE_PHASE_FINISHED;
+    event.trace_id = task_scheduler_trace_generate_span_id();
+    task_scheduler_trace_emit(event);
+    const int32_t shutdown = observability_task_scheduler_bridge_shutdown();
+    const auto spans = observability_test_snapshot();
+    observability_test_clear_spans();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, shutdown);
+    FT_ASSERT_EQ(1U, spans.size());
     return (1);
 }
 

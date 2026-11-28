@@ -1,11 +1,13 @@
 #include "linear_algebra.hpp"
 #include "math.hpp"
+#include "math_vector_norm.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/pthread.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include <new>
+#include <functional>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -67,7 +69,7 @@ int32_t vector3::lock_pair(const vector3 &first, const vector3 &second,
     }
     ordered_first = &first;
     ordered_second = &second;
-    if (ordered_first > ordered_second)
+    if (std::less<const vector3 *>{}(ordered_second, ordered_first))
     {
         const vector3 *temporary;
 
@@ -106,6 +108,20 @@ void vector3::unlock_pair(const vector3 *lower, const vector3 *upper)
     if (lower != ft_nullptr && lower != upper)
         (void)pt_recursive_mutex_unlock_if_not_null(lower->_mutex);
     return ;
+}
+
+int32_t vector3::get_components(double &x, double &y, double &z) const noexcept
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "vector3::get_components");
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (vector3::set_error(lock_error));
+    x = this->_x_component;
+    y = this->_y_component;
+    z = this->_z_component;
+    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    return (vector3::set_error(FT_ERR_SUCCESS));
 }
 
 double vector3::get_x() const
@@ -263,57 +279,35 @@ vector3 vector3::cross(const vector3 &other) const
 
 double vector3::length() const
 {
-    int32_t lock_error;
-    double squared;
-    double result;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector3::length");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector3::set_error(static_cast<uint32_t>(lock_error));
+        vector3::set_error(lock_error);
         return (0.0);
     }
-    squared = vector3_compute_dot(this->_x_component, this->_y_component, this->_z_component,
-            this->_x_component, this->_y_component, this->_z_component);
-    result = math_sqrt(squared);
+    const double components[] = {this->_x_component, this->_y_component, this->_z_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    const double result = math_vector_length(components);
     vector3::set_error(FT_ERR_SUCCESS);
     return (result);
 }
 
 vector3 vector3::normalize() const
 {
-    int32_t lock_error;
-    double squared_length;
-    double length_value;
-    double epsilon;
-    double normalized_x;
-    double normalized_y;
-    double normalized_z;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector3::normalize");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector3::set_error(static_cast<uint32_t>(lock_error));
+        vector3::set_error(lock_error);
         return (vector3());
     }
-    squared_length = this->_x_component * this->_x_component + this->_y_component * this->_y_component + this->_z_component * this->_z_component;
-    length_value = math_sqrt(squared_length);
-    epsilon = 0.0000001;
-    if (math_absdiff(length_value, 0.0) <= epsilon)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        vector3::set_error(FT_ERR_SUCCESS);
-        return (vector3());
-    }
-    normalized_x = this->_x_component / length_value;
-    normalized_y = this->_y_component / length_value;
-    normalized_z = this->_z_component / length_value;
+    double components[] = {this->_x_component, this->_y_component, this->_z_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     vector3::set_error(FT_ERR_SUCCESS);
-    return (vector3(normalized_x, normalized_y, normalized_z));
+    if (!math_vector_normalize(components))
+        return (vector3());
+    return (vector3(components[0], components[1], components[2]));
 }
 
 uint32_t vector3::enable_thread_safety() noexcept

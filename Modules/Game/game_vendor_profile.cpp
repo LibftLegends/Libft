@@ -53,52 +53,28 @@ int32_t game_vendor_profile::initialize() noexcept
 
 int32_t game_vendor_profile::initialize(const game_vendor_profile &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_vendor_profile::initialize(copy)",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
+        profile_values values;
+        result = other.read_values(values);
+        if (result != FT_ERR_SUCCESS)
+            return (this->set_error(result));
+        this->write_values(values);
+        this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     }
-    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
-    {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
-        return (FT_ERR_SUCCESS);
-    }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
-    }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(initialize_error);
-        return (initialize_error);
-    }
-    this->_vendor_id = other._vendor_id;
-    this->_buy_markup = other._buy_markup;
-    this->_sell_multiplier = other._sell_multiplier;
-    this->_tax_rate = other._tax_rate;
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -109,22 +85,19 @@ int32_t game_vendor_profile::initialize(game_vendor_profile &&other) noexcept
 
 int32_t game_vendor_profile::move(game_vendor_profile &other) noexcept
 {
-    int32_t initialize_error;
-
     if (&other == this)
         return (FT_ERR_SUCCESS);
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
+    const int32_t result = this->initialize(static_cast<const game_vendor_profile &>(other));
+    if (result != FT_ERR_SUCCESS || other._initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (result);
+    const int32_t source_error = this->get_error();
+    const int32_t destroy_error = other.destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
     {
-        errno_abort_lifecycle(other._initialised_state, "game_vendor_profile::move",
-            "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        (void)this->destroy();
+        return (this->set_error(destroy_error));
     }
-    initialize_error = this->initialize(static_cast<const game_vendor_profile &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -231,31 +204,20 @@ ft_bool game_vendor_profile::is_thread_safe() const noexcept
 
 int32_t game_vendor_profile::lock_internal(ft_bool *lock_acquired) const noexcept
 {
-    int32_t lock_error;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::lock_internal");
     if (lock_acquired != ft_nullptr)
         *lock_acquired = FT_FALSE;
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
         return (lock_error);
-    }
     if (lock_acquired != ft_nullptr && this->_mutex != ft_nullptr)
         *lock_acquired = FT_TRUE;
-    this->set_error(FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_vendor_profile::unlock_internal(ft_bool lock_acquired) const noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::unlock_internal");
     if (lock_acquired == FT_FALSE)
-    {
-        this->set_error(FT_ERR_SUCCESS);
         return (FT_ERR_SUCCESS);
-    }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (FT_ERR_SUCCESS);
 }
@@ -271,171 +233,178 @@ int32_t game_vendor_profile::lock(ft_bool *lock_acquired) const noexcept
 void game_vendor_profile::unlock(ft_bool lock_acquired) const noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::unlock");
-    (void)this->unlock_internal(lock_acquired);
+    if (lock_acquired)
+        (void)this->unlock_internal(lock_acquired);
+    else
+        this->set_error(FT_ERR_SUCCESS);
     return ;
+}
+
+int32_t game_vendor_profile::read_values(profile_values &values) const noexcept
+{
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    values = {this->_vendor_id, this->_buy_markup, this->_sell_multiplier, this->_tax_rate};
+    (void)this->unlock_internal(lock_acquired);
+    return (FT_ERR_SUCCESS);
+}
+
+void game_vendor_profile::write_values(const profile_values &values) noexcept
+{
+    this->_vendor_id = values.vendor_id;
+    this->_buy_markup = values.buy_markup;
+    this->_sell_multiplier = values.sell_multiplier;
+    this->_tax_rate = values.tax_rate;
+    return ;
+}
+
+int32_t game_vendor_profile::copy_values(const game_vendor_profile &other) noexcept
+{
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED
+        || other._initialised_state != FT_CLASS_STATE_INITIALISED)
+        return (this->initialize(other));
+    if (this == &other)
+        return (this->set_error(FT_ERR_SUCCESS));
+    profile_values values;
+    int32_t result = other.read_values(values);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    ft_bool lock_acquired;
+    result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        this->write_values(values);
+        (void)this->unlock_internal(lock_acquired);
+    }
+    return (this->set_error(result));
 }
 
 int32_t game_vendor_profile::get_vendor_id() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::get_vendor_id");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
+        this->set_error(result);
         return (0);
     }
-    value = this->_vendor_id;
+    const int32_t vendor_id = this->_vendor_id;
     (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-    return (value);
+    this->set_error(FT_ERR_SUCCESS);
+    return (vendor_id);
 }
 
 void game_vendor_profile::set_vendor_id(int32_t vendor_id) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::set_vendor_id");
     if (vendor_id < 0)
     {
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return ;
     }
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
+        this->_vendor_id = vendor_id;
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_vendor_id = vendor_id;
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 double game_vendor_profile::get_buy_markup() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    double value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::get_buy_markup");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
+        this->set_error(result);
         return (0.0);
     }
-    value = this->_buy_markup;
+    const double buy_markup = this->_buy_markup;
     (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-    return (value);
+    this->set_error(FT_ERR_SUCCESS);
+    return (buy_markup);
 }
 
 void game_vendor_profile::set_buy_markup(double buy_markup) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::set_buy_markup");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
+        this->_buy_markup = buy_markup;
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_buy_markup = buy_markup;
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 double game_vendor_profile::get_sell_multiplier() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    double value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::get_sell_multiplier");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
+        this->set_error(result);
         return (0.0);
     }
-    value = this->_sell_multiplier;
+    const double sell_multiplier = this->_sell_multiplier;
     (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-    return (value);
+    this->set_error(FT_ERR_SUCCESS);
+    return (sell_multiplier);
 }
 
 void game_vendor_profile::set_sell_multiplier(double sell_multiplier) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::set_sell_multiplier");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
+        this->_sell_multiplier = sell_multiplier;
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_sell_multiplier = sell_multiplier;
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
 
 double game_vendor_profile::get_tax_rate() const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    double value;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::get_tax_rate");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
+        this->set_error(result);
         return (0.0);
     }
-    value = this->_tax_rate;
+    const double tax_rate = this->_tax_rate;
     (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
-    return (value);
+    this->set_error(FT_ERR_SUCCESS);
+    return (tax_rate);
 }
 
 void game_vendor_profile::set_tax_rate(double tax_rate) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_vendor_profile::set_tax_rate");
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired;
+    const int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(lock_error);
-        return ;
+        this->_tax_rate = tax_rate;
+        (void)this->unlock_internal(lock_acquired);
     }
-    this->_tax_rate = tax_rate;
-    (void)this->unlock_internal(lock_acquired);
-        this->set_error(FT_ERR_SUCCESS);
+    this->set_error(result);
     return ;
 }
-
 
 int32_t game_vendor_profile::get_error() const noexcept
 {

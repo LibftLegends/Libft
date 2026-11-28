@@ -9,25 +9,6 @@
 
 thread_local int32_t game_world_region::_last_error = FT_ERR_SUCCESS;
 
-static int32_t game_world_region_copy_ids(const ft_vector<int32_t> &source,
-    ft_vector<int32_t> &destination)
-{
-    ft_vector<int32_t>::const_iterator entry;
-    ft_vector<int32_t>::const_iterator end_entry;
-
-    destination.clear();
-    entry = source.begin();
-    end_entry = source.end();
-    while (entry != end_entry)
-    {
-        destination.push_back(*entry);
-        if (destination.get_error() != FT_ERR_SUCCESS)
-            return (destination.get_error());
-        ++entry;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
 game_world_region::game_world_region() noexcept
     : _world_id(0), _region_ids(), _mutex(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED)
@@ -78,56 +59,42 @@ int32_t game_world_region::initialize() noexcept
 
 int32_t game_world_region::initialize(const game_world_region &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-    int32_t copy_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_world_region::initialize(copy)",
             "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
+        return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    result = this->initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    ft_bool source_locked;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
+        result = this->_region_ids.replace_from(other._region_ids);
+        if (result == FT_ERR_SUCCESS)
+            this->_world_id = other._world_id;
+        (void)other.unlock_internal(source_locked);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        (void)this->destroy();
+        return (this->set_error(result));
     }
-    this->_world_id = other._world_id;
-    copy_error = game_world_region_copy_ids(other._region_ids, this->_region_ids);
-    if (copy_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(copy_error);
-        return (copy_error);
-    }
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -138,56 +105,66 @@ int32_t game_world_region::initialize(game_world_region &&other) noexcept
 
 int32_t game_world_region::move(game_world_region &other) noexcept
 {
-    int32_t initialize_error;
-
-    if (&other == this)
-        return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_world_region::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_world_region &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
+    if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    if (this->_mutex != ft_nullptr && this->_mutex->lockState())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+    if (other._mutex != ft_nullptr && other._mutex->lockState())
+        return (this->set_error(FT_ERR_THREAD_BUSY));
+    result = this->_region_ids.move(other._region_ids);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    this->_world_id = other._world_id;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_world_region::initialize(int32_t world_id,
     const ft_vector<int32_t> &region_ids) noexcept
 {
-    int32_t initialize_error;
-    int32_t copy_error;
-
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    if (&region_ids == &this->_region_ids
+        && this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
+        this->set_world_id(world_id);
+        return (this->get_error());
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    int32_t result = this->destroy();
+    if (result == FT_ERR_SUCCESS)
+        result = this->initialize();
+    if (result == FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        result = this->_region_ids.replace_from(region_ids);
+        if (result == FT_ERR_SUCCESS)
+            this->_world_id = world_id;
+        else
+            (void)this->destroy();
     }
-    this->_world_id = world_id;
-    copy_error = game_world_region_copy_ids(region_ids, this->_region_ids);
-    if (copy_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(copy_error);
-        return (copy_error);
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(result));
 }
+
 
 int32_t game_world_region::destroy() noexcept
 {
@@ -200,11 +177,11 @@ int32_t game_world_region::destroy() noexcept
     }
     disable_error = this->disable_thread_safety();
     this->_world_id = 0;
-    if (this->_region_ids.is_initialised() == FT_CLASS_STATE_INITIALISED)
-        this->_region_ids.clear();
+    const int32_t ids_error = this->_region_ids.destroy();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(disable_error);
-    return (disable_error);
+    if (disable_error != FT_ERR_SUCCESS)
+        return (this->set_error(disable_error));
+    return (this->set_error(ids_error));
 }
 
 int32_t game_world_region::enable_thread_safety() noexcept
@@ -365,8 +342,9 @@ void game_world_region::set_region_ids(const ft_vector<int32_t> &region_ids) noe
         this->set_error(lock_error);
         return ;
     }
-    game_world_region_copy_ids(region_ids, this->_region_ids);
+    const int32_t result = this->_region_ids.replace_from(region_ids);
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
     return ;
 }
 

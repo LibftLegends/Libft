@@ -62,7 +62,10 @@ class game_world_delta_history
     private:
         ft_vector<game_block_delta> _entries;
         uint32_t _capacity;
+        uint32_t _oldest_index;
         uint8_t _initialised_state;
+
+        uint32_t entry_index(uint32_t offset) const noexcept;
 
     public:
         game_world_delta_history() noexcept;
@@ -102,6 +105,7 @@ struct game_world_delta_interest
 class game_world_delta_interest_set
 {
     private:
+        // Ordered by world and chunk, with subscription order within each chunk.
         ft_vector<game_world_delta_interest> _entries;
         uint8_t _initialised_state;
 

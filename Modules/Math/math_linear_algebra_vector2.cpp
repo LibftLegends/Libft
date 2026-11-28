@@ -1,11 +1,13 @@
 #include "linear_algebra.hpp"
 #include "math.hpp"
+#include "math_vector_norm.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include "../PThread/pthread.hpp"
 #include "../PThread/recursive_mutex.hpp"
 #include <new>
+#include <functional>
 
 #include "../Basic/limits.hpp"
 #include "../PThread/mutex.hpp"
@@ -56,7 +58,7 @@ int32_t vector2::lock_pair(const vector2 &first, const vector2 &second,
     }
     lower = &first;
     upper = &second;
-    if (lower > upper)
+    if (std::less<const vector2 *>{}(upper, lower))
     {
         const vector2 *temporary;
 
@@ -201,52 +203,35 @@ double vector2::dot(const vector2 &other) const
 
 double vector2::length() const
 {
-    int32_t lock_error;
-    double squared;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector2::length");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector2::set_error(static_cast<uint32_t>(lock_error));
+        vector2::set_error(lock_error);
         return (0.0);
     }
-    squared = vector2_compute_dot(this->_x_component, this->_y_component, this->_x_component, this->_y_component);
+    const double components[] = {this->_x_component, this->_y_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    const double result = math_vector_length(components);
     vector2::set_error(FT_ERR_SUCCESS);
-    return (math_sqrt(squared));
+    return (result);
 }
 
 vector2 vector2::normalize() const
 {
-    int32_t lock_error;
-    double squared_length;
-    double length_value;
-    double epsilon;
-    double normalized_x;
-    double normalized_y;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "vector2::normalize");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
     {
-        vector2::set_error(static_cast<uint32_t>(lock_error));
+        vector2::set_error(lock_error);
         return (vector2());
     }
-    squared_length = this->_x_component * this->_x_component + this->_y_component * this->_y_component;
-    length_value = math_sqrt(squared_length);
-    epsilon = 0.0000001;
-    if (math_absdiff(length_value, 0.0) <= epsilon)
-    {
-        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-        vector2::set_error(FT_ERR_SUCCESS);
-        return (vector2());
-    }
-    normalized_x = this->_x_component / length_value;
-    normalized_y = this->_y_component / length_value;
+    double components[] = {this->_x_component, this->_y_component};
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     vector2::set_error(FT_ERR_SUCCESS);
-    return (vector2(normalized_x, normalized_y));
+    if (!math_vector_normalize(components))
+        return (vector2());
+    return (vector2(components[0], components[1]));
 }
 
 uint32_t vector2::enable_thread_safety() noexcept

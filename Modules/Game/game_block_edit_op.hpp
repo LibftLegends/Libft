@@ -23,6 +23,7 @@ struct game_block_edit_op
 
 int32_t game_block_edit_op_serialize(const game_block_edit_op &edit,
     ft_byte_buffer &buffer) noexcept;
+// A truncated record leaves both the buffer cursor and the destination unchanged.
 int32_t game_block_edit_op_deserialize(game_block_edit_op &edit,
     ft_byte_buffer &buffer) noexcept;
 

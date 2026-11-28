@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Encryption/encryption.hpp"
+#include "../../Modules/Encryption/encryption_digest_internal.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
@@ -237,6 +238,47 @@ FT_TEST(test_sha256_hash_matches_known_vectors)
         FT_ASSERT_EQ(static_cast<int>(pangram_expected[digest_index]), static_cast<int>(digest[digest_index]));
         digest_index++;
     }
+    return (1);
+}
+
+FT_TEST(test_sha_digests_accumulate_uneven_updates_across_blocks)
+{
+    constexpr uint8_t SHA1_EXPECTED[20] = {
+        0x8b, 0x46, 0xb9, 0x1a, 0xdd, 0x01, 0x67, 0x75, 0x48, 0xa7,
+        0x34, 0x00, 0xf0, 0x2e, 0xe3, 0x98, 0xef, 0xac, 0x37, 0x8f
+    };
+    constexpr uint8_t SHA256_EXPECTED[32] = {
+        0xa1, 0x25, 0x3e, 0x22, 0x0a, 0x0a, 0x60, 0x17, 0x7b, 0xa2, 0x2d,
+        0x6f, 0x1a, 0xe0, 0x79, 0xf6, 0xb8, 0xf0, 0xb8, 0xfa, 0x59, 0x8b,
+        0x0a, 0xdc, 0x13, 0x90, 0xb0, 0xd7, 0xc8, 0x17, 0x56, 0xfa
+    };
+    uint8_t input[129];
+    ft_size_t index = 0;
+    while (index < sizeof(input))
+    {
+        input[index] = static_cast<uint8_t>(index * 17 + 3);
+        ++index;
+    }
+    constexpr ft_size_t CHUNK_LENGTHS[] = {3, 60, 50, 16};
+    sha1_digest_state sha1;
+    sha256_digest_state sha256;
+    sha1_digest_initialize(sha1);
+    sha256_digest_initialize(sha256);
+    ft_size_t offset = 0;
+    index = 0;
+    while (index < sizeof(CHUNK_LENGTHS) / sizeof(CHUNK_LENGTHS[0]))
+    {
+        sha1_digest_update(sha1, input + offset, CHUNK_LENGTHS[index]);
+        sha256_digest_update(sha256, input + offset, CHUNK_LENGTHS[index]);
+        offset += CHUNK_LENGTHS[index];
+        ++index;
+    }
+    uint8_t sha1_output[20];
+    uint8_t sha256_output[32];
+    sha1_digest_final(sha1, sha1_output);
+    sha256_digest_final(sha256, sha256_output);
+    FT_ASSERT_EQ(0, ft_memcmp(SHA1_EXPECTED, sha1_output, sizeof(sha1_output)));
+    FT_ASSERT_EQ(0, ft_memcmp(SHA256_EXPECTED, sha256_output, sizeof(sha256_output)));
     return (1);
 }
 

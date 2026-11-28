@@ -30,8 +30,13 @@ class game_event
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         void unlock_internal(ft_bool lock_acquired) const noexcept;
+        void subtract_duration(int32_t duration, int32_t *remaining_duration) noexcept;
+        int32_t read_modifier(const int32_t &field) const noexcept;
+        void write_modifier(int32_t &field, int32_t value) noexcept;
+        void adjust_modifier(int32_t &field, int64_t adjustment) noexcept;
 
         friend struct game_event_compare_ptr;
+        friend class game_event_scheduler;
 
     public:
         game_event() noexcept;
@@ -48,10 +53,12 @@ class game_event
         void set_id(int32_t id) noexcept;
 
         int32_t get_duration() const noexcept;
+        int32_t get_schedule_values(int32_t &id, int32_t &duration) const noexcept;
         void set_duration(int32_t duration) noexcept;
         int32_t add_duration(int32_t duration) noexcept;
         void sub_duration(int32_t duration) noexcept;
 
+        // Modifier arithmetic leaves the value unchanged on overflow and reports FT_ERR_OUT_OF_RANGE.
         int32_t get_modifier1() const noexcept;
         void set_modifier1(int32_t mod) noexcept;
         void add_modifier1(int32_t mod) noexcept;
@@ -72,6 +79,8 @@ class game_event
         void add_modifier4(int32_t mod) noexcept;
         void sub_modifier4(int32_t mod) noexcept;
 
+        // Configure callbacks before scheduling. Synchronize replacements and access
+        // to the returned reference externally through the end of invocation.
         const ft_function<void(game_world&, game_event&)> &get_callback() const noexcept;
         void set_callback(ft_function<void(game_world&, game_event&)> &&callback) noexcept;
         int32_t enable_thread_safety() noexcept;

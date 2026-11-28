@@ -4,25 +4,6 @@
 #include "recursive_mutex.hpp"
 #include "../Time/time.hpp"
 #include "../Errno/errno.hpp"
-#include <climits>
-
-static unsigned int ft_this_thread_get_sleep_chunk(long long remaining_milliseconds)
-{
-    unsigned int chunk_milliseconds;
-
-    if (remaining_milliseconds > static_cast<long long>(UINT_MAX))
-    {
-        chunk_milliseconds = UINT_MAX;
-        return (chunk_milliseconds);
-    }
-    if (remaining_milliseconds < 0)
-    {
-        chunk_milliseconds = 0;
-        return (chunk_milliseconds);
-    }
-    chunk_milliseconds = static_cast<unsigned int>(remaining_milliseconds);
-    return (chunk_milliseconds);
-}
 
 t_thread_id ft_this_thread_get_id()
 {
@@ -32,39 +13,35 @@ t_thread_id ft_this_thread_get_id()
     return (thread_identifier);
 }
 
+static void ft_this_thread_sleep_milliseconds(int64_t remaining)
+{
+    constexpr uint32_t MAX_FINITE_SLEEP_MS = UINT32_MAX - 1U;
+    while (remaining > 0)
+    {
+        uint32_t chunk = MAX_FINITE_SLEEP_MS;
+        if (remaining < MAX_FINITE_SLEEP_MS)
+            chunk = static_cast<uint32_t>(remaining);
+        pt_thread_sleep(chunk);
+        remaining -= chunk;
+    }
+    return ;
+}
+
 void ft_this_thread_sleep_for(t_duration_milliseconds duration)
 {
-    long long remaining_milliseconds;
-    unsigned int chunk_milliseconds;
-
-    remaining_milliseconds = duration.milliseconds;
-    if (remaining_milliseconds <= 0)
-        return ;
-    while (remaining_milliseconds > 0)
-    {
-        chunk_milliseconds = ft_this_thread_get_sleep_chunk(remaining_milliseconds);
-        if (chunk_milliseconds == 0)
-            return ;
-        pt_thread_sleep(chunk_milliseconds);
-        if (remaining_milliseconds <= static_cast<long long>(chunk_milliseconds))
-            return ;
-        remaining_milliseconds -= static_cast<long long>(chunk_milliseconds);
-    }
+    ft_this_thread_sleep_milliseconds(duration.milliseconds);
     return ;
 }
 
 void ft_this_thread_sleep_until(t_monotonic_time_point time_point)
 {
-    t_monotonic_time_point current_time;
-    long long remaining_milliseconds;
-    t_duration_milliseconds duration;
-
-    current_time = time_monotonic_point_now();
-    remaining_milliseconds = time_monotonic_point_diff_ms(current_time, time_point);
-    if (remaining_milliseconds <= 0)
+    const int64_t now = time_monotonic();
+    if (time_point.milliseconds <= now)
         return ;
-    duration = time_duration_ms_create(remaining_milliseconds);
-    ft_this_thread_sleep_for(duration);
+    int64_t remaining;
+    if (__builtin_sub_overflow(time_point.milliseconds, now, &remaining))
+        remaining = INT64_MAX;
+    ft_this_thread_sleep_milliseconds(remaining);
     return ;
 }
 

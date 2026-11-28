@@ -59,3 +59,24 @@ FT_TEST(test_math_lcm_long_overflow)
     FT_ASSERT_EQ(static_cast<int64_t>(0), result);
     return (1);
 }
+
+FT_TEST(test_math_lcm_reduces_before_multiplying)
+{
+    const int32_t multiple_int32 = INT32_MAX - 1;
+    const int64_t multiple_int64 = INT64_MAX - 1;
+    FT_ASSERT_EQ(multiple_int32, math_lcm(multiple_int32, -2));
+    FT_ASSERT_EQ(multiple_int64, math_lcm(static_cast<int64_t>(-2), multiple_int64));
+    return (1);
+}
+
+FT_TEST(test_math_lcm_signed_minimum_inputs)
+{
+    FT_ASSERT_EQ(0, math_lcm(INT32_MIN, INT32_MAX));
+    FT_ASSERT_EQ(0, math_lcm(0, INT32_MIN));
+
+    const int64_t minimum = INT64_MIN;
+    const int64_t maximum = INT64_MAX;
+    FT_ASSERT_EQ(static_cast<int64_t>(0), math_lcm(maximum, minimum));
+    FT_ASSERT_EQ(static_cast<int64_t>(0), math_lcm(minimum, static_cast<int64_t>(0)));
+    return (1);
+}

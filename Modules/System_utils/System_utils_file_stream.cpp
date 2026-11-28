@@ -4,13 +4,18 @@
 #include "../Errno/errno.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
+#include <atomic>
 #include <cstdlib>
 #include <new>
 #include <limits>
 #include "../Basic/limits.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#if defined(_WIN32) || defined(_WIN64)
+# include <io.h>
+#endif
 
-static ft_bool g_force_file_stream_allocation_failure = FT_FALSE;
+#ifdef LIBFT_TEST_BUILD
+static std::atomic<ft_bool> g_force_file_stream_allocation_failure{FT_FALSE};
+#endif
 
 int32_t su_file_prepare_thread_safety(su_file *stream)
 {
@@ -46,11 +51,13 @@ void su_file_teardown_thread_safety(su_file *stream)
     return ;
 }
 
+#ifdef LIBFT_TEST_BUILD
 void su_force_file_stream_allocation_failure(ft_bool should_fail)
 {
-    g_force_file_stream_allocation_failure = should_fail;
+    g_force_file_stream_allocation_failure.store(should_fail, std::memory_order_relaxed);
     return ;
 }
+#endif
 
 int32_t su_file_lock(su_file *stream, ft_bool *lock_acquired)
 {
@@ -82,11 +89,13 @@ static su_file *create_file_stream(int32_t file_descriptor)
 
     if (file_descriptor < 0)
         return (ft_nullptr);
-    if (g_force_file_stream_allocation_failure == FT_TRUE)
+#ifdef LIBFT_TEST_BUILD
+    if (g_force_file_stream_allocation_failure.load(std::memory_order_relaxed) == FT_TRUE)
     {
         (void)cmp_close(file_descriptor);
         return (ft_nullptr);
     }
+#endif
     file_stream = static_cast<su_file*>(std::malloc(sizeof(su_file)));
     if (file_stream == ft_nullptr)
     {
@@ -171,17 +180,12 @@ int32_t su_fclose(su_file *stream)
 
 ft_size_t su_fread(void *buffer, ft_size_t size, ft_size_t count, su_file *stream)
 {
-    ft_size_t   total_size;
-    ft_size_t   total_read;
-    char        *byte_buffer;
-    int64_t     bytes_read;
-    ft_size_t   maximum_size;
-    ft_bool        lock_acquired;
-
     if (buffer == ft_nullptr || stream == ft_nullptr)
         return (0);
-    if (size == 0 || count == 0)
+    if (size == 0U || count == 0U
+        || (size != 1U && count > std::numeric_limits<ft_size_t>::max() / size))
         return (0);
+    ft_bool lock_acquired;
     if (su_file_lock(stream, &lock_acquired) != 0)
         return (0);
     if (stream->closed == FT_TRUE)
@@ -189,38 +193,31 @@ ft_size_t su_fread(void *buffer, ft_size_t size, ft_size_t count, su_file *strea
         su_file_unlock(stream, lock_acquired);
         return (0);
     }
-    maximum_size = std::numeric_limits<ft_size_t>::max();
-    if (count > maximum_size / size)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (0);
-    }
-    total_size = size * count;
-    total_read = 0;
-    byte_buffer = static_cast<char*>(buffer);
+    const ft_size_t total_size = size * count;
+    ft_size_t total_read = 0U;
+    char *byte_buffer = static_cast<char *>(buffer);
     while (total_read < total_size)
     {
-        bytes_read = su_read(stream->_descriptor,
+        const int64_t bytes_read = su_read(stream->_descriptor,
             byte_buffer + total_read, total_size - total_read);
         if (bytes_read <= 0)
             break ;
         total_read += static_cast<ft_size_t>(bytes_read);
     }
     su_file_unlock(stream, lock_acquired);
+    if (size == 1U)
+        return (total_read);
     return (total_read / size);
 }
 
 ft_size_t su_fwrite(const void *buffer, ft_size_t size, ft_size_t count, su_file *stream)
 {
-    ft_size_t   total_size;
-    ft_size_t   maximum_size;
-    ft_bool        lock_acquired;
-    int64_t     bytes_written;
-
     if (buffer == ft_nullptr || stream == ft_nullptr)
         return (0);
-    if (size == 0 || count == 0)
+    if (size == 0U || count == 0U
+        || (size != 1U && count > std::numeric_limits<ft_size_t>::max() / size))
         return (0);
+    ft_bool lock_acquired;
     if (su_file_lock(stream, &lock_acquired) != 0)
         return (0);
     if (stream->closed == FT_TRUE)
@@ -228,120 +225,43 @@ ft_size_t su_fwrite(const void *buffer, ft_size_t size, ft_size_t count, su_file
         su_file_unlock(stream, lock_acquired);
         return (0);
     }
-    maximum_size = std::numeric_limits<ft_size_t>::max();
-    if (count > maximum_size / size)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (0);
-    }
-    total_size = size * count;
-    bytes_written = su_write(stream->_descriptor, buffer, total_size);
+    const int64_t bytes_written = su_write(stream->_descriptor, buffer, size * count);
     su_file_unlock(stream, lock_acquired);
     if (bytes_written < 0)
         return (0);
+    if (size == 1U)
+        return (static_cast<ft_size_t>(bytes_written));
     return (static_cast<ft_size_t>(bytes_written) / size);
+}
+
+static int64_t su_file_seek(su_file *stream, int64_t offset, int32_t origin)
+{
+    ft_bool lock_acquired;
+    if (su_file_lock(stream, &lock_acquired) != 0)
+        return (-1);
+    int64_t position = -1;
+    if (stream->closed == FT_FALSE && stream->_descriptor >= 0)
+    {
+#if defined(_WIN32) || defined(_WIN64)
+        position = _lseeki64(stream->_descriptor, offset, origin);
+#else
+        const off_t native_offset = static_cast<off_t>(offset);
+        if (static_cast<int64_t>(native_offset) == offset)
+            position = su_lseek(stream->_descriptor, native_offset, origin);
+#endif
+    }
+    su_file_unlock(stream, lock_acquired);
+    return (position);
 }
 
 int32_t su_fseek(su_file *stream, int64_t offset, int32_t origin)
 {
-#if defined(_WIN32) || defined(_WIN64)
-    LARGE_INTEGER distance_to_move;
-    LARGE_INTEGER new_position;
-    HANDLE file_handle;
-    ft_bool lock_acquired;
-
-    if (stream == ft_nullptr)
-        return (-1);
-    if (su_file_lock(stream, &lock_acquired) != 0)
-        return (-1);
-    if (stream->closed == FT_TRUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1);
-    }
-    file_handle = cmp_retrieve_handle(stream->_descriptor);
-    if (file_handle == INVALID_HANDLE_VALUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1);
-    }
-    distance_to_move.QuadPart = static_cast<LONGLONG>(offset);
-    if (SetFilePointerEx(file_handle, distance_to_move, &new_position, origin) == 0)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1);
-    }
-    su_file_unlock(stream, lock_acquired);
-    return (0);
-#else
-    off_t   result;
-    ft_bool    lock_acquired;
-
-    if (stream == ft_nullptr)
-        return (-1);
-    if (su_file_lock(stream, &lock_acquired) != 0)
-        return (-1);
-    if (stream->closed == FT_TRUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1);
-    }
-    result = su_lseek(stream->_descriptor, offset, origin);
-    su_file_unlock(stream, lock_acquired);
-    if (result < 0)
+    if (su_file_seek(stream, offset, origin) < 0)
         return (-1);
     return (0);
-#endif
 }
 
 int64_t su_ftell(su_file *stream)
 {
-#if defined(_WIN32) || defined(_WIN64)
-    LARGE_INTEGER distance_to_move;
-    LARGE_INTEGER new_position;
-    HANDLE file_handle;
-    ft_bool lock_acquired;
-
-    if (stream == ft_nullptr)
-        return (-1L);
-    if (su_file_lock(stream, &lock_acquired) != 0)
-        return (-1L);
-    if (stream->closed == FT_TRUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1L);
-    }
-    file_handle = cmp_retrieve_handle(stream->_descriptor);
-    if (file_handle == INVALID_HANDLE_VALUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1L);
-    }
-    distance_to_move.QuadPart = 0;
-    if (SetFilePointerEx(file_handle, distance_to_move, &new_position, FILE_CURRENT) == 0)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1L);
-    }
-    su_file_unlock(stream, lock_acquired);
-    return (static_cast<int64_t>(new_position.QuadPart));
-#else
-    off_t   position;
-    ft_bool    lock_acquired;
-
-    if (stream == ft_nullptr)
-        return (-1L);
-    if (su_file_lock(stream, &lock_acquired) != 0)
-        return (-1L);
-    if (stream->closed == FT_TRUE)
-    {
-        su_file_unlock(stream, lock_acquired);
-        return (-1L);
-    }
-    position = su_lseek(stream->_descriptor, 0, SEEK_CUR);
-    su_file_unlock(stream, lock_acquired);
-    if (position < 0)
-        return (-1L);
-    return (position);
-#endif
+    return (su_file_seek(stream, 0, SEEK_CUR));
 }

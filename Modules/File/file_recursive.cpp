@@ -1,441 +1,317 @@
-#include "file_utils.hpp"
-#include "open_dir.hpp"
-#include "../Basic/class_nullptr.hpp"
-#include "../Errno/errno.hpp"
+#include "file_internal.hpp"
+#include "../CMA/CMA.hpp"
+#include "../Compatebility/compatebility_internal.hpp"
 
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#if defined(_WIN32) || defined(_WIN64)
-# include <windows.h>
-#else
-# include <unistd.h>
-#endif
-
-static ft_bool file_recursive_is_dot_entry(const char *name) noexcept
+static int32_t file_recursive_ensure_directory(const char *path, mode_t mode,
+    ft_bool native_path_matches)
 {
-    if (name == ft_nullptr)
-        return (FT_FALSE);
-    if (name[0] == '.' && name[1] == '\0')
-        return (FT_TRUE);
-    if (name[0] == '.' && name[1] == '.' && name[2] == '\0')
-        return (FT_TRUE);
-    return (FT_FALSE);
-}
-
-static void file_recursive_delete_string(ft_string *string) noexcept
-{
-    if (string == ft_nullptr)
-        return ;
-    (void)string->destroy();
-    delete string;
-    return ;
-}
-
-static ft_string *file_recursive_normalize_system_path(const char *path)
-{
-    ft_string *normalized_path;
-
-    normalized_path = file_path_normalize(path);
-    if (normalized_path == ft_nullptr)
-        return (ft_nullptr);
-    if (normalized_path->get_error() != FT_ERR_SUCCESS)
-        return (normalized_path);
-#if defined(_WIN32) || defined(_WIN64)
-    char *path_buffer;
-    ft_size_t index;
-
-    path_buffer = normalized_path->print();
-    if (path_buffer != ft_nullptr)
+    if (native_path_matches == FT_TRUE)
     {
-        index = 0;
-        while (path_buffer[index] != '\0')
-        {
-            if (path_buffer[index] == '/')
-                path_buffer[index] = '\\';
-            ++index;
-        }
+        const file_type type = file_get_type(path);
+        if (type == FILE_TYPE_DIRECTORY)
+            return (FT_ERR_SUCCESS);
+        if (type == FILE_TYPE_REGULAR || type == FILE_TYPE_SYMLINK)
+            return (FT_ERR_ALREADY_EXISTS);
     }
-#endif
-    return (normalized_path);
+    const int32_t error_code = file_create_directory(path, mode);
+    if (error_code == FT_ERR_ALREADY_EXISTS && file_get_type(path) == FILE_TYPE_DIRECTORY)
+        return (FT_ERR_SUCCESS);
+    return (error_code);
 }
 
-static int32_t file_recursive_remove_directory(const char *path) noexcept
+static int32_t file_recursive_create_parents(char *path, mode_t mode)
 {
-#if defined(_WIN32) || defined(_WIN64)
-    if (RemoveDirectoryA(path) == 0)
-        return (FT_ERR_IO);
-#else
-    if (rmdir(path) != 0)
-        return (FT_ERR_IO);
-#endif
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t file_recursive_create_component(char *path_buffer,
-    ft_size_t component_end, mode_t mode)
-{
-    char saved_character;
-    file_type type_value;
-    int32_t error_code;
-
-    saved_character = path_buffer[component_end];
-    path_buffer[component_end] = '\0';
-    if (path_buffer[0] != '\0')
+    ft_bool native_path_matches = FT_TRUE;
+    if (cmp_path_separator() == '\\' && (path[0] == '/' || path[0] == '\\'))
+        native_path_matches = FT_FALSE;
+    ft_size_t index = 0;
+    while (path[index] != '\0')
     {
-        error_code = file_create_directory(path_buffer, mode);
-        if (error_code == FT_ERR_ALREADY_EXISTS)
+        if ((path[index] == '/' || path[index] == '\\') && index > 0 && path[index - 1] != ':')
         {
-            type_value = file_get_type(path_buffer);
-            if (type_value != FILE_TYPE_DIRECTORY)
-            {
-                path_buffer[component_end] = saved_character;
-                return (FT_ERR_ALREADY_EXISTS);
-            }
+            const char separator = path[index];
+            path[index] = '\0';
+            const int32_t error_code = file_recursive_ensure_directory(path, mode, native_path_matches);
+            path[index] = separator;
+            if (error_code != FT_ERR_SUCCESS)
+                return (error_code);
         }
-        else if (error_code != FT_ERR_SUCCESS)
-        {
-            path_buffer[component_end] = saved_character;
-            return (error_code);
-        }
+        ++index;
     }
-    path_buffer[component_end] = saved_character;
-    return (FT_ERR_SUCCESS);
+    if (index == 0 || path[index - 1] == '/' || path[index - 1] == '\\')
+    {
+        if (index == 0)
+            return (FT_ERR_INVALID_STATE);
+        if (index > 1 && path[index - 2] != ':')
+            return (FT_ERR_SUCCESS);
+    }
+    return (file_recursive_ensure_directory(path, mode, native_path_matches));
 }
 
 int32_t file_create_directories(const char *path, mode_t mode)
 {
-    ft_string *normalized_path;
-    char *path_buffer;
-    ft_size_t index;
-    int32_t error_code;
-
     if (path == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    normalized_path = file_path_normalize(path);
-    if (normalized_path == ft_nullptr)
+    ft_string *normalized = file_path_normalize(path);
+    if (normalized == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    if (normalized_path->get_error() != FT_ERR_SUCCESS)
+    char *data = normalized->data();
+    int32_t error_code = FT_ERR_INVALID_STATE;
+    if (data != ft_nullptr)
+        error_code = file_recursive_create_parents(data, mode);
+    delete normalized;
+    return (error_code);
+}
+
+static int32_t file_recursive_delete_leaf(const char *path)
+{
+    uint32_t attempt = 0;
+    int32_t error_code = FT_ERR_INVALID_OPERATION;
+    while (attempt < 20U)
     {
-        error_code = normalized_path->get_error();
-        file_recursive_delete_string(normalized_path);
+        error_code = file_delete(path);
+        if (error_code != FT_ERR_INVALID_OPERATION && error_code != FT_ERR_PERMISSION_DENIED)
+            break ;
+        ++attempt;
+        if (attempt < 20U)
+            (void)cmp_thread_sleep(100);
+    }
+    return (error_code);
+}
+
+static int32_t file_recursive_delete_native_path(const char *path);
+
+static int32_t file_recursive_delete_entries(file_dir *stream, const char *path)
+{
+    ft_string child;
+    int32_t error_code = child.initialize(path);
+    if (error_code != FT_ERR_SUCCESS)
         return (error_code);
-    }
-    path_buffer = normalized_path->print();
-    if (path_buffer == ft_nullptr)
+    const char separator = cmp_path_separator();
+    const char last = child.back();
+    if (last != separator && last != '/')
     {
-        file_recursive_delete_string(normalized_path);
-        return (FT_ERR_INVALID_STATE);
+        error_code = child.append(separator);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
     }
-    index = 0;
-    while (path_buffer[index] != '\0')
+    const ft_size_t prefix_length = child.size();
+    const file_dirent *entry;
+    while ((error_code = file_directory_read_entry(stream, &entry)) == FT_ERR_SUCCESS)
     {
-        if ((path_buffer[index] == '/' || path_buffer[index] == '\\') && index > 0
-            && path_buffer[index - 1] != ':')
-        {
-            error_code = file_recursive_create_component(path_buffer, index, mode);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                file_recursive_delete_string(normalized_path);
-                return (error_code);
-            }
-        }
-        ++index;
+        if (file_directory_is_dot_entry(entry->d_name) == FT_TRUE)
+            continue ;
+        // Keep the native entry name even when it contains a literal backslash.
+        error_code = child.append(entry->d_name);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = file_recursive_delete_native_path(child.c_str());
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = child.resize_length(prefix_length);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
     }
-    error_code = file_recursive_create_component(path_buffer, index, mode);
-    file_recursive_delete_string(normalized_path);
-    if (error_code == FT_ERR_ALREADY_EXISTS)
+    if (error_code == FT_ERR_END_OF_FILE)
         return (FT_ERR_SUCCESS);
     return (error_code);
+}
+
+static int32_t file_recursive_delete_native_path(const char *path)
+{
+    const file_type type = file_get_type(path);
+    if (type == FILE_TYPE_MISSING)
+        return (FT_ERR_SUCCESS);
+    if (type == FILE_TYPE_REGULAR || type == FILE_TYPE_SYMLINK)
+        return (file_recursive_delete_leaf(path));
+    if (type != FILE_TYPE_DIRECTORY)
+        return (FT_ERR_UNSUPPORTED_TYPE);
+    file_dir *stream = file_opendir(path);
+    if (stream == ft_nullptr)
+        return (FT_ERR_FILE_OPEN_FAILED);
+    const int32_t error_code = file_recursive_delete_entries(stream, path);
+    const int32_t close_error = file_closedir(stream);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (close_error != FT_ERR_SUCCESS)
+        return (close_error);
+    return (cmp_file_remove_directory(path));
 }
 
 int32_t file_delete_recursive(const char *path)
 {
-    ft_string *normalized_path;
-    const char *system_path;
-    file_type type_value;
-    file_dir *directory_stream;
-    file_dirent *entry;
-    ft_string *child_path;
-    int32_t error_code;
-    int32_t close_error;
-
     if (path == ft_nullptr)
         return (FT_ERR_INVALID_ARGUMENT);
-    normalized_path = file_recursive_normalize_system_path(path);
-    if (normalized_path == ft_nullptr)
+    ft_string *normalized = file_path_normalize(path);
+    if (normalized == ft_nullptr)
         return (FT_ERR_NO_MEMORY);
-    if (normalized_path->get_error() != FT_ERR_SUCCESS)
-    {
-        error_code = normalized_path->get_error();
-        file_recursive_delete_string(normalized_path);
-        return (error_code);
-    }
-    system_path = normalized_path->c_str();
-    type_value = file_get_type(system_path);
-    if (type_value == FILE_TYPE_MISSING)
-    {
-        file_recursive_delete_string(normalized_path);
-        return (FT_ERR_SUCCESS);
-    }
-    if (type_value == FILE_TYPE_REGULAR || type_value == FILE_TYPE_SYMLINK)
-    {
-        error_code = FT_ERR_INVALID_OPERATION;
-        ft_size_t retry_index;
-
-        retry_index = 0;
-        while (retry_index < 20U)
-        {
-            error_code = file_delete(system_path);
-            if (error_code != FT_ERR_INVALID_OPERATION
-                && error_code != FT_ERR_PERMISSION_DENIED)
-                break ;
-#if defined(_WIN32) || defined(_WIN64)
-            Sleep(100);
-#else
-            usleep(100000);
-#endif
-            retry_index++;
-        }
-        file_recursive_delete_string(normalized_path);
-        return (error_code);
-    }
-    if (type_value != FILE_TYPE_DIRECTORY)
-    {
-        file_recursive_delete_string(normalized_path);
-        return (FT_ERR_UNSUPPORTED_TYPE);
-    }
-    directory_stream = file_opendir(system_path);
-    if (directory_stream == ft_nullptr)
-    {
-        file_recursive_delete_string(normalized_path);
-        return (FT_ERR_FILE_OPEN_FAILED);
-    }
-    error_code = FT_ERR_SUCCESS;
-    entry = file_readdir(directory_stream);
-    while (entry != ft_nullptr)
-    {
-        if (file_recursive_is_dot_entry(entry->d_name) == FT_FALSE)
-        {
-            child_path = file_path_join(system_path, entry->d_name);
-            if (child_path == ft_nullptr)
-            {
-                error_code = FT_ERR_NO_MEMORY;
-                break ;
-            }
-            if (child_path->get_error() != FT_ERR_SUCCESS)
-                error_code = child_path->get_error();
-            else
-                error_code = file_delete_recursive(child_path->c_str());
-            file_recursive_delete_string(child_path);
-            if (error_code != FT_ERR_SUCCESS)
-            {
-                break ;
-            }
-        }
-        entry = file_readdir(directory_stream);
-    }
-    close_error = file_closedir(directory_stream);
-    if (error_code != FT_ERR_SUCCESS)
-    {
-        file_recursive_delete_string(normalized_path);
-        return (error_code);
-    }
-    if (close_error != FT_ERR_SUCCESS)
-    {
-        file_recursive_delete_string(normalized_path);
-        return (close_error);
-    }
-    error_code = file_recursive_remove_directory(system_path);
-    file_recursive_delete_string(normalized_path);
+    if (cmp_path_separator() == '\\')
+        cmp_normalize_slashes(normalized->data());
+    const int32_t error_code = file_recursive_delete_native_path(normalized->c_str());
+    delete normalized;
     return (error_code);
 }
 
-static ft_bool file_recursive_should_include(file_path_filter_callback filter_callback,
-    const char *path, ft_bool is_directory, void *user_context) noexcept
+struct file_recursive_transfer_options
 {
-    if (filter_callback == ft_nullptr)
+    file_path_filter_callback filter;
+    void *user_context;
+    ft_bool move_sources;
+    char *buffer;
+    ft_size_t buffer_size;
+};
+
+static ft_bool file_recursive_should_include(const file_recursive_transfer_options &options,
+    const char *path, ft_bool is_directory) noexcept
+{
+    if (options.filter == ft_nullptr)
         return (FT_TRUE);
-    return (filter_callback(path, is_directory, user_context));
-}
-
-static int32_t file_recursive_prepare_destination_directory(const char *destination_path)
-{
-    file_type destination_type;
-
-    destination_type = file_get_type(destination_path);
-    if (destination_type == FILE_TYPE_UNKNOWN)
-        return (FT_ERR_IO);
-    if (destination_type == FILE_TYPE_MISSING)
-        return (file_create_directory(destination_path, 0755));
-    if (destination_type == FILE_TYPE_DIRECTORY)
-        return (FT_ERR_SUCCESS);
-    return (FT_ERR_ALREADY_EXISTS);
+    return (options.filter(path, is_directory, options.user_context));
 }
 
 static int32_t file_recursive_transfer_directory(const char *source_path,
-    const char *destination_path, file_path_filter_callback filter_callback,
-    void *user_context, ft_bool move_sources)
-{
-    file_dir *directory_stream;
-    file_dirent *entry;
-    ft_string *source_child;
-    ft_string *destination_child;
-    file_type source_type;
-    ft_bool include_child;
-    int32_t error_code;
-    int32_t close_error;
+    const char *destination_path, file_recursive_transfer_options &options);
 
-    directory_stream = file_opendir(source_path);
-    if (directory_stream == ft_nullptr)
-        return (FT_ERR_FILE_OPEN_FAILED);
-    error_code = FT_ERR_SUCCESS;
-    entry = file_readdir(directory_stream);
-    while (entry != ft_nullptr)
+static int32_t file_recursive_prepare_destination_directory(const char *path)
+{
+    const file_type type = file_get_type(path);
+    if (type == FILE_TYPE_DIRECTORY)
+        return (FT_ERR_SUCCESS);
+    if (type == FILE_TYPE_UNKNOWN)
+        return (FT_ERR_IO);
+    if (type == FILE_TYPE_MISSING)
+        return (file_recursive_ensure_directory(path, 0755, FT_FALSE));
+    return (FT_ERR_ALREADY_EXISTS);
+}
+
+static int32_t file_recursive_transfer_child(const char *source, const char *destination,
+    file_type type, file_recursive_transfer_options &options)
+{
+    if (type == FILE_TYPE_DIRECTORY)
     {
-        if (file_recursive_is_dot_entry(entry->d_name) == FT_FALSE)
-        {
-            source_child = file_path_join(source_path, entry->d_name);
-            if (source_child == ft_nullptr)
-            {
-                error_code = FT_ERR_NO_MEMORY;
-                break ;
-            }
-            if (source_child->get_error() != FT_ERR_SUCCESS)
-                error_code = source_child->get_error();
-            else
-            {
-                source_type = file_get_type(source_child->c_str());
-                if (source_type == FILE_TYPE_UNKNOWN)
-                    error_code = FT_ERR_IO;
-                else
-                {
-                    include_child = file_recursive_should_include(filter_callback,
-                            source_child->c_str(),
-                            source_type == FILE_TYPE_DIRECTORY, user_context);
-                    if (include_child == FT_TRUE)
-                    {
-                        destination_child = file_path_join(destination_path,
-                                entry->d_name);
-                        if (destination_child == ft_nullptr)
-                        {
-                            error_code = FT_ERR_NO_MEMORY;
-                        }
-                        else if (destination_child->get_error() != FT_ERR_SUCCESS)
-                        {
-                            error_code = destination_child->get_error();
-                        }
-                        else if (source_type == FILE_TYPE_DIRECTORY)
-                        {
-                            error_code = file_recursive_prepare_destination_directory(
-                                    destination_child->c_str());
-                            if (error_code == FT_ERR_SUCCESS)
-                            {
-                                error_code = file_recursive_transfer_directory(
-                                        source_child->c_str(),
-                                        destination_child->c_str(),
-                                        filter_callback, user_context,
-                                        move_sources);
-                                if (error_code == FT_ERR_SUCCESS
-                                    && move_sources == FT_TRUE)
-                                    (void)file_delete(source_child->c_str());
-                            }
-                        }
-                        else if (source_type == FILE_TYPE_REGULAR)
-                        {
-                            if (move_sources == FT_TRUE)
-                                error_code = file_move(source_child->c_str(),
-                                        destination_child->c_str());
-                            else
-                                error_code = file_copy(source_child->c_str(),
-                                        destination_child->c_str());
-                        }
-                        else if (source_type == FILE_TYPE_SYMLINK)
-                        {
-                            if (move_sources == FT_TRUE)
-                                error_code = file_move(source_child->c_str(),
-                                        destination_child->c_str());
-                            else
-                                error_code = FT_ERR_UNSUPPORTED_TYPE;
-                        }
-                        else
-                        {
-                            error_code = FT_ERR_UNSUPPORTED_TYPE;
-                        }
-                        file_recursive_delete_string(destination_child);
-                    }
-                }
-            }
-            file_recursive_delete_string(source_child);
-            if (error_code != FT_ERR_SUCCESS)
-                break ;
-        }
-        entry = file_readdir(directory_stream);
+        const int32_t error_code = file_recursive_prepare_destination_directory(destination);
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        return (file_recursive_transfer_directory(source, destination, options));
     }
-    if (error_code == FT_ERR_SUCCESS && move_sources == FT_TRUE)
-        (void)file_delete(source_path);
-    close_error = file_closedir(directory_stream);
+    if (type == FILE_TYPE_SYMLINK && options.move_sources == FT_TRUE)
+        return (file_move(source, destination));
+    if (type != FILE_TYPE_REGULAR)
+        return (FT_ERR_UNSUPPORTED_TYPE);
+    if (options.move_sources == FT_TRUE)
+        return (file_move(source, destination));
+    if (options.buffer == ft_nullptr)
+    {
+        options.buffer = static_cast<char *>(cma_malloc(options.buffer_size));
+        if (options.buffer == ft_nullptr)
+            return (FT_ERR_IO);
+    }
+    return (file_copy_using_buffer(source, destination, options.buffer, options.buffer_size));
+}
+
+static int32_t file_recursive_transfer_entries(file_dir *stream, const char *source_path,
+    const char *destination_path, file_recursive_transfer_options &options)
+{
+    ft_string source_child;
+    ft_string destination_child;
+    int32_t error_code = source_child.initialize();
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = destination_child.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    ft_string *source_prefix = file_path_join(source_path, "");
+    if (source_prefix == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_string *destination_prefix = file_path_join(destination_path, "");
+    if (destination_prefix == ft_nullptr)
+    {
+        delete source_prefix;
+        return (FT_ERR_NO_MEMORY);
+    }
+    const file_dirent *entry;
+    while ((error_code = file_directory_read_entry(stream, &entry)) == FT_ERR_SUCCESS)
+    {
+        if (file_directory_is_dot_entry(entry->d_name) == FT_TRUE)
+            continue ;
+        ft_bool direct_entry;
+        error_code = file_directory_child_path(source_path, *source_prefix,
+            entry->d_name, source_child, direct_entry);
+        if (error_code != FT_ERR_SUCCESS)
+            break ;
+        const file_type type = file_get_type(source_child.c_str());
+        if (type == FILE_TYPE_UNKNOWN)
+        {
+            error_code = FT_ERR_IO;
+            break ;
+        }
+        if (file_recursive_should_include(options, source_child.c_str(),
+                type == FILE_TYPE_DIRECTORY) == FT_FALSE)
+            continue ;
+        error_code = file_directory_child_path(destination_path, *destination_prefix,
+            entry->d_name, destination_child, direct_entry);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = file_recursive_transfer_child(source_child.c_str(),
+                destination_child.c_str(), type, options);
+        if (error_code != FT_ERR_SUCCESS)
+            break ;
+    }
+    delete destination_prefix;
+    delete source_prefix;
+    if (error_code == FT_ERR_END_OF_FILE)
+        return (FT_ERR_SUCCESS);
+    return (error_code);
+}
+
+static int32_t file_recursive_transfer_directory(const char *source_path,
+    const char *destination_path, file_recursive_transfer_options &options)
+{
+    file_dir *stream = file_opendir(source_path);
+    if (stream == ft_nullptr)
+        return (FT_ERR_FILE_OPEN_FAILED);
+    const int32_t error_code = file_recursive_transfer_entries(stream, source_path,
+        destination_path, options);
+    const int32_t close_error = file_closedir(stream);
     if (error_code != FT_ERR_SUCCESS)
         return (error_code);
     if (close_error != FT_ERR_SUCCESS)
         return (close_error);
+    if (options.move_sources == FT_TRUE)
+        (void)cmp_file_remove_directory(source_path);
     return (FT_ERR_SUCCESS);
+}
+
+static int32_t file_recursive_transfer(const char *source_path, const char *destination_path,
+    file_path_filter_callback filter, void *user_context, ft_bool move_sources)
+{
+    if (source_path == ft_nullptr || destination_path == ft_nullptr
+        || file_get_type(source_path) != FILE_TYPE_DIRECTORY)
+        return (FT_ERR_INVALID_ARGUMENT);
+    file_recursive_transfer_options options{filter, user_context, move_sources,
+        ft_nullptr, file_default_copy_buffer_size()};
+    if (file_recursive_should_include(options, source_path, FT_TRUE) == FT_FALSE
+        || file_path_equal(source_path, destination_path) == FT_TRUE)
+        return (FT_ERR_SUCCESS);
+    if (file_path_is_inside_root(source_path, destination_path) == FT_TRUE)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const int32_t prepare_error = file_recursive_prepare_destination_directory(destination_path);
+    if (prepare_error != FT_ERR_SUCCESS)
+        return (prepare_error);
+    const int32_t result = file_recursive_transfer_directory(source_path, destination_path, options);
+    cma_free(options.buffer);
+    return (result);
 }
 
 int32_t file_copy_directory(const char *source_path, const char *destination_path)
 {
-    return (file_copy_directory_filtered(source_path, destination_path,
-            ft_nullptr, ft_nullptr));
+    return (file_copy_directory_filtered(source_path, destination_path, ft_nullptr, ft_nullptr));
 }
 
-int32_t file_copy_directory_filtered(const char *source_path,
-    const char *destination_path, file_path_filter_callback filter_callback,
-    void *user_context)
+int32_t file_copy_directory_filtered(const char *source_path, const char *destination_path,
+    file_path_filter_callback filter_callback, void *user_context)
 {
-    file_type source_type;
-    int32_t error_code;
-
-    if (source_path == ft_nullptr || destination_path == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    source_type = file_get_type(source_path);
-    if (source_type != FILE_TYPE_DIRECTORY)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (file_recursive_should_include(filter_callback, source_path, FT_TRUE,
-            user_context) == FT_FALSE)
-        return (FT_ERR_SUCCESS);
-    if (file_path_equal(source_path, destination_path) == FT_TRUE)
-        return (FT_ERR_SUCCESS);
-    if (file_path_is_inside_root(source_path, destination_path) == FT_TRUE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    error_code = file_recursive_prepare_destination_directory(destination_path);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (file_recursive_transfer_directory(source_path, destination_path,
-            filter_callback, user_context, FT_FALSE));
+    return (file_recursive_transfer(source_path, destination_path, filter_callback, user_context, FT_FALSE));
 }
 
-int32_t file_move_directory_filtered(const char *source_path,
-    const char *destination_path, file_path_filter_callback filter_callback,
-    void *user_context)
+int32_t file_move_directory_filtered(const char *source_path, const char *destination_path,
+    file_path_filter_callback filter_callback, void *user_context)
 {
-    file_type source_type;
-    int32_t error_code;
-
-    if (source_path == ft_nullptr || destination_path == ft_nullptr)
-        return (FT_ERR_INVALID_ARGUMENT);
-    source_type = file_get_type(source_path);
-    if (source_type != FILE_TYPE_DIRECTORY)
-        return (FT_ERR_INVALID_ARGUMENT);
-    if (file_recursive_should_include(filter_callback, source_path, FT_TRUE,
-            user_context) == FT_FALSE)
-        return (FT_ERR_SUCCESS);
-    if (file_path_equal(source_path, destination_path) == FT_TRUE)
-        return (FT_ERR_SUCCESS);
-    if (file_path_is_inside_root(source_path, destination_path) == FT_TRUE)
-        return (FT_ERR_INVALID_ARGUMENT);
-    error_code = file_recursive_prepare_destination_directory(destination_path);
-    if (error_code != FT_ERR_SUCCESS)
-        return (error_code);
-    return (file_recursive_transfer_directory(source_path, destination_path,
-            filter_callback, user_context, FT_TRUE));
+    return (file_recursive_transfer(source_path, destination_path, filter_callback, user_context, FT_TRUE));
 }

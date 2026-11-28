@@ -91,6 +91,8 @@ class game_pathfinding
         private:
     #endif
         ft_vector<game_path_step> _current_path;
+        uint64_t                  _cached_grid_identity;
+        uint64_t                  _cached_grid_revision;
         ft_bool                    _needs_replan;
         pt_recursive_mutex               *_mutex;
         uint8_t                 _initialised_state;

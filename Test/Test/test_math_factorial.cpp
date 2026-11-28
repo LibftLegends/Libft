@@ -92,3 +92,13 @@ FT_TEST(test_math_factorial_recovers_after_invalid_input)
     FT_ASSERT_EQ(static_cast<int64_t>(720), result);
     return (1);
 }
+
+FT_TEST(test_math_factorial_signed_width_boundaries)
+{
+    FT_ASSERT_EQ(479001600, math_factorial(12));
+    FT_ASSERT_EQ(0, math_factorial(INT32_MIN));
+    FT_ASSERT_EQ(0, math_factorial(INT32_MAX));
+    FT_ASSERT_EQ(static_cast<int64_t>(0), math_factorial(static_cast<int64_t>(INT64_MIN)));
+    FT_ASSERT_EQ(static_cast<int64_t>(0), math_factorial(static_cast<int64_t>(INT64_MAX)));
+    return (1);
+}

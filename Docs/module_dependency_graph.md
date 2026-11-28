@@ -15,7 +15,8 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | --- | --- |
 | `API` | `Basic`, `CMA`, `CPP_class`, `Compression`, `Encryption`, `Errno`, `JSon`, `Logger`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Advanced` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `System_utils` |
-| `Application` | `Basic`, `CMA`, `CPP_class`, `Encoding`, `Encryption`, `Errno`, `Filesystem`, `PThread`, `Printf`, `Storage`, `System_utils`, `Template`, `Time` |
+| `BMP` | `Basic`, `Errno`, `System_utils` |
+| `Application` | `Basic`, `CMA`, `CPP_class`, `Encoding`, `Encryption`, `Errno`, `File`, `Filesystem`, `PThread`, `Printf`, `Storage`, `System_utils`, `Template`, `Time` |
 | `Basic` | `Errno` |
 | `Buffer` | `Basic`, `CMA`, `Errno`, `PThread` |
 | `CLI` | `Basic`, `CPP_class`, `Errno`, `File`, `PThread` |
@@ -28,7 +29,7 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `Config` | `Advanced`, `Basic`, `CMA`, `Compatebility`, `Errno`, `File`, `JSon`, `PThread`, `Printf` |
 | `CrossProcess` | `Basic`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
 | `Crypto` | `Basic`, `Errno`, `RNG`, `Template` |
-| `DUMB` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `PThread` |
+| `DUMB` | `Basic`, `CMA`, `Compatebility`, `Errno`, `GetNextLine`, `PThread` |
 | `Debug` | `Basic`, `Compatebility`, `Errno` |
 | `Encoding` | `Basic`, `CMA`, `Errno` |
 | `Encryption` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Networking`, `PThread`, `RNG`, `System_utils`, `Template` |
@@ -43,24 +44,27 @@ For a broader architecture view grouped by layer, see [Docs/module_layering.md](
 | `HTML` | `Advanced`, `Basic`, `CMA`, `Compatebility`, `Errno`, `PThread`, `Printf`, `System_utils` |
 | `JSon` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template` |
 | `Logger` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Networking`, `PThread`, `Printf`, `Sink`, `System_utils`, `Template`, `Time` |
-| `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `GetNextLine`, `PThread`, `Printf`, `RNG`, `Template` |
+| `Math` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `Printf`, `RNG`, `Template` |
 | `Networking` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Crypto`, `Encryption`, `Errno`, `Observability`, `PThread`, `Printf`, `RNG`, `System_utils`, `Template`, `Threading`, `Time` |
 | `Observability` | `Basic`, `CMA`, `Errno`, `PThread`, `Template`, `Threading`, `Time` |
+| `Analytics` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Template` |
+| `CardGame` | `Basic`, `Errno`, `Scripting` |
 | `PThread` | `Basic`, `Compatebility`, `Errno`, `System_utils`, `Time` |
 | `Parser` | `Basic`, `CMA`, `CPP_class`, `Errno`, `Networking`, `Observability`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Printf` | `Basic`, `CPP_class`, `Errno`, `PThread`, `System_utils` |
 | `RNG` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `Math`, `PThread`, `Printf`, `Template` |
-| `ReadLine` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Printf`, `System_utils` |
+| `ReadLine` | `Advanced`, `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Printf`, `System_utils`, `Template` |
 | `Regex` | `Basic`, `CPP_class`, `Errno` |
 | `SCMA` | `Basic`, `Compatebility`, `Errno`, `PThread` |
 | `Sink` | `Basic`, `Errno` |
-| `Storage` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `GetNextLine`, `JSon`, `PThread`, `Parser`, `Printf`, `System_utils`, `Template`, `Threading`, `Time` |
+| `Storage` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Compression`, `Encryption`, `Errno`, `File`, `JSon`, `PThread`, `Parser`, `Template`, `Threading`, `Time` |
+| `Scripting` | `Basic`, `Errno` |
 | `System_utils` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `File`, `PThread`, `Printf`, `SCMA`, `Sink`, `Template` |
 | `Template` | `Basic`, `CMA`, `CPP_class`, `Errno`, `JSon`, `PThread`, `Printf`, `RNG`, `YAML` |
 | `Threading` | `Basic`, `CMA`, `Errno`, `PThread`, `System_utils`, `Template`, `Time` |
 | `Time` | `Basic`, `CMA`, `CPP_class`, `Compatebility`, `Errno`, `PThread` |
 | `URI` | `Basic`, `CMA`, `Errno` |
-| `Voxel` | `Basic`, `Buffer`, `Errno`, `Game`, `Geometry`, `Math`, `PThread`, `RNG`, `System_utils`, `Template` |
+| `Voxel` | `Basic`, `Buffer`, `Errno`, `File`, `Game`, `Geometry`, `Math`, `PThread`, `RNG`, `System_utils`, `Template` |
 | `XML` | `Basic`, `CMA`, `Errno`, `PThread`, `Parser`, `Template` |
 | `YAML` | `Basic`, `CMA`, `CPP_class`, `Errno`, `PThread`, `Parser`, `System_utils`, `Template` |
 
@@ -97,6 +101,7 @@ graph TD
     Application --> Encoding
     Application --> Encryption
     Application --> Errno
+    Application --> File
     Application --> Filesystem
     Application --> PThread
     Application --> Printf
@@ -171,7 +176,6 @@ graph TD
     Crypto --> Template
     DUMB --> Basic
     DUMB --> CMA
-    DUMB --> CPP_class
     DUMB --> Compatebility
     DUMB --> Errno
     DUMB --> GetNextLine
@@ -279,7 +283,6 @@ graph TD
     Math --> CMA
     Math --> CPP_class
     Math --> Errno
-    Math --> GetNextLine
     Math --> PThread
     Math --> Printf
     Math --> RNG
@@ -307,6 +310,17 @@ graph TD
     Observability --> Template
     Observability --> Threading
     Observability --> Time
+    Analytics --> Basic
+    Analytics --> CMA
+    Analytics --> CPP_class
+    Analytics --> Errno
+    Analytics --> Template
+    CardGame --> Basic
+    CardGame --> Errno
+    CardGame --> File
+    CardGame --> Scripting
+    Scripting --> Basic
+    Scripting --> Errno
     PThread --> Basic
     PThread --> Compatebility
     PThread --> Errno
@@ -348,6 +362,7 @@ graph TD
     ReadLine --> PThread
     ReadLine --> Printf
     ReadLine --> System_utils
+    ReadLine --> Template
     Regex --> Basic
     Regex --> CPP_class
     Regex --> Errno
@@ -364,12 +379,10 @@ graph TD
     Storage --> Compression
     Storage --> Encryption
     Storage --> Errno
-    Storage --> GetNextLine
+    Storage --> File
     Storage --> JSon
     Storage --> PThread
     Storage --> Parser
-    Storage --> Printf
-    Storage --> System_utils
     Storage --> Template
     Storage --> Threading
     Storage --> Time
@@ -412,6 +425,7 @@ graph TD
     Voxel --> Basic
     Voxel --> Buffer
     Voxel --> Errno
+    Voxel --> File
     Voxel --> Game
     Voxel --> Geometry
     Voxel --> Math

@@ -10,10 +10,13 @@
 #include "../PThread/pthread_internal.hpp"
 #include "../Advanced/advanced.hpp"
 #include "../Basic/class_nullptr.hpp"
+#include "../Template/move.hpp"
 #include "class_string.hpp"
 #include "class_istringstream.hpp"
 #include <cstdint>
 #include <sstream>
+#include <string>
+#include <type_traits>
 
 class DataBuffer;
 
@@ -65,7 +68,7 @@ class DataBuffer
 
         static int32_t set_last_error(int32_t error_code) noexcept;
         void set_operation_error(int32_t error_code) noexcept;
-        int32_t write_length_locked(ft_size_t length) noexcept;
+        int32_t write_record_locked(const char *bytes, ft_size_t length) noexcept;
         int32_t read_length_locked(ft_size_t &length) noexcept;
 
         template <typename ValueType>
@@ -120,30 +123,12 @@ int32_t DataBuffer::write_value(const ValueType &value) noexcept
 {
     std::ostringstream output_stream;
     output_stream << value;
-    char *bytes = adv_strdup(output_stream.str().c_str());
-    if (bytes == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    ft_size_t length = ft_strlen_size_t(bytes);
-    int32_t length_error = this->write_length_locked(length);
-    if (length_error != FT_ERR_SUCCESS)
-    {
-        cma_free(bytes);
-        return (length_error);
-    }
-    ft_size_t index = 0;
-    while (index < length)
-    {
-        this->_buffer.push_back(static_cast<uint8_t>(bytes[index]));
-        int32_t push_error = this->_buffer.get_error();
-        if (push_error != FT_ERR_SUCCESS)
-        {
-            cma_free(bytes);
-            return (push_error);
-        }
-        index++;
-    }
-    cma_free(bytes);
-    return (FT_ERR_SUCCESS);
+    const std::string bytes = output_stream.str();
+    const std::string::size_type terminator = bytes.find('\0');
+    ft_size_t length = bytes.size();
+    if (terminator != std::string::npos)
+        length = terminator;
+    return (this->write_record_locked(bytes.data(), length));
 }
 
 template <typename ValueType>
@@ -153,28 +138,39 @@ int32_t DataBuffer::read_value(ValueType &value) noexcept
     int32_t length_error = this->read_length_locked(length);
     if (length_error != FT_ERR_SUCCESS)
         return (length_error);
-    if (this->_read_pos + length > this->_buffer.size())
+    if (length > this->_buffer.size() - this->_read_pos)
         return (FT_ERR_INVALID_ARGUMENT);
-    char *bytes = static_cast<char *>(adv_calloc(length + 1, sizeof(char)));
-    if (bytes == ft_nullptr)
-        return (FT_ERR_NO_MEMORY);
-    ft_memcpy(bytes, this->_buffer.begin() + this->_read_pos, length);
+    const char *bytes = reinterpret_cast<const char *>(this->_buffer.begin() + this->_read_pos);
     this->_read_pos += length;
+    const char *terminator = static_cast<const char *>(ft_memchr(bytes, '\0', length));
+    if (terminator != ft_nullptr)
+        length = static_cast<ft_size_t>(terminator - bytes);
     ft_string string_value;
-    int32_t string_initialize_error;
-
-    string_initialize_error = string_value.initialize(bytes);
-    cma_free(bytes);
+    int32_t string_initialize_error = string_value.initialize();
     if (string_initialize_error != FT_ERR_SUCCESS)
         return (string_initialize_error);
-    if (string_value.get_error() != FT_ERR_SUCCESS)
-        return (string_value.get_error());
-    ft_istringstream input_stream;
-    uint32_t input_stream_initialize_error = input_stream.initialize(string_value);
-    if (input_stream_initialize_error != FT_ERR_SUCCESS)
-        return (input_stream_initialize_error);
-    input_stream >> value;
-    return (FT_ERR_SUCCESS);
+    const int32_t string_assign_error = string_value.assign(bytes, length);
+    if (string_assign_error != FT_ERR_SUCCESS)
+        return (string_assign_error);
+    if constexpr (std::is_same_v<ValueType, ft_string>)
+    {
+        value = ft_move(string_value);
+        return (value.get_error());
+    }
+    else if constexpr (std::is_same_v<ValueType, int32_t>)
+    {
+        value = ft_atoi(string_value.c_str());
+        return (FT_ERR_SUCCESS);
+    }
+    else
+    {
+        ft_istringstream input_stream;
+        const int32_t input_stream_initialize_error = input_stream.initialize(string_value);
+        if (input_stream_initialize_error != FT_ERR_SUCCESS)
+            return (input_stream_initialize_error);
+        input_stream >> value;
+        return (FT_ERR_SUCCESS);
+    }
 }
 
 template <typename ValueType>

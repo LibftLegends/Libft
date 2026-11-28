@@ -38,6 +38,7 @@ class game_world_region
         int32_t initialize() noexcept;
         int32_t initialize(const game_world_region &other) noexcept;
         int32_t initialize(game_world_region &&other) noexcept;
+        // Moving requires exclusive access to both records and their vectors.
         int32_t move(game_world_region &other) noexcept;
         int32_t initialize(int32_t world_id, const ft_vector<int32_t> &region_ids) noexcept;
         int32_t destroy() noexcept;
@@ -50,6 +51,7 @@ class game_world_region
         int32_t get_world_id() const noexcept;
         void set_world_id(int32_t world_id) noexcept;
 
+        // Callers must synchronize direct access through these vector references.
         const ft_vector<int32_t> &get_region_ids() const noexcept;
         ft_vector<int32_t> &get_region_ids() noexcept;
         void set_region_ids(const ft_vector<int32_t> &region_ids) noexcept;

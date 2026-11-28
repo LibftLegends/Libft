@@ -1,0 +1,84 @@
+#ifndef CARD_GAME_ORDERED_ZONE_HPP
+# define CARD_GAME_ORDERED_ZONE_HPP
+
+# include <cstdint>
+# include "../Basic/basic.hpp"
+# include "../Errno/errno.hpp"
+# include "card_game_limits.hpp"
+
+struct card_game_zone_entry
+{
+    uint32_t instance_id;
+    uint32_t card_id;
+};
+
+class card_game_ordered_zone
+{
+#ifdef LIBFT_TEST_BUILD
+    public:
+#else
+    private:
+#endif
+        friend class card_game_zone_store;
+        friend class card_game_engine;
+
+        uint8_t _initialised_state;
+        uint32_t _capacity;
+        ft_bool _allow_duplicates;
+        uint8_t _head;
+        uint32_t _count;
+        card_game_zone_entry _cards[FT_CARD_GAME_MAX_CARDS];
+
+        card_game_ordered_zone(const card_game_ordered_zone &other) = delete;
+        card_game_ordered_zone(card_game_ordered_zone &&other) = delete;
+        card_game_ordered_zone &operator=(
+            const card_game_ordered_zone &other) = delete;
+        card_game_ordered_zone &operator=(
+            card_game_ordered_zone &&other) = delete;
+
+        int32_t find_card(uint32_t card_instance_id,
+            uint32_t *index) const noexcept;
+        int32_t find_card_definition(uint32_t card_id, uint32_t *index) const noexcept;
+        int32_t append_at(uint32_t index, uint32_t card_instance_id) noexcept;
+        uint32_t storage_index(uint32_t index) const noexcept;
+        void shift_entries_right(uint32_t index) noexcept;
+        void shift_entries_left(uint32_t index) noexcept;
+        void erase_at(uint32_t index) noexcept;
+        void copy_entries_to(card_game_zone_entry *entries) const noexcept;
+        int32_t replace_entries(const card_game_zone_entry *entries,
+            uint32_t count) noexcept;
+
+    public:
+        card_game_ordered_zone() noexcept;
+        ~card_game_ordered_zone() noexcept;
+
+        int32_t initialize(uint32_t capacity, ft_bool allow_duplicates) noexcept;
+        int32_t destroy() noexcept;
+        int32_t move(card_game_ordered_zone &other) noexcept;
+        int32_t clear() noexcept;
+        int32_t push_top(uint32_t card_instance_id) noexcept;
+        int32_t push_bottom(uint32_t card_instance_id) noexcept;
+        int32_t insert_at(uint32_t index, uint32_t card_instance_id) noexcept;
+        int32_t push_top_entry(const card_game_zone_entry &entry) noexcept;
+        int32_t push_bottom_entry(const card_game_zone_entry &entry) noexcept;
+        int32_t insert_entry_at(uint32_t index,
+            const card_game_zone_entry &entry) noexcept;
+        int32_t peek_top(uint32_t *card_instance_id) const noexcept;
+        int32_t peek_bottom(uint32_t *card_instance_id) const noexcept;
+        int32_t pop_top(uint32_t *card_instance_id) noexcept;
+        int32_t pop_bottom(uint32_t *card_instance_id) noexcept;
+        int32_t remove_instance(uint32_t card_instance_id) noexcept;
+        int32_t get(uint32_t index, uint32_t *card_instance_id) const noexcept;
+        int32_t pop_top_entry(card_game_zone_entry *entry) noexcept;
+        int32_t pop_bottom_entry(card_game_zone_entry *entry) noexcept;
+        int32_t remove_entry(uint32_t instance_id,
+            card_game_zone_entry *entry) noexcept;
+        int32_t get_entry(uint32_t index,
+            card_game_zone_entry *entry) const noexcept;
+        ft_bool contains_instance(uint32_t instance_id) const noexcept;
+        int32_t shuffle(uint64_t *random_state) noexcept;
+        uint32_t size() const noexcept;
+        uint32_t capacity() const noexcept;
+};
+
+#endif

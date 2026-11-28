@@ -27,6 +27,11 @@ class game_behavior_profile
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        template <typename Value>
+        Value read_scalar(const Value &value) const noexcept;
+        int32_t replace_actions_from(const ft_vector<game_behavior_action> &actions) noexcept;
+        int32_t replace_contents_from(const game_behavior_profile &other,
+            ft_bool reuse_action_storage = FT_FALSE) noexcept;
         static int32_t set_error(int32_t error_code) noexcept;
 
         friend class game_behavior_table;

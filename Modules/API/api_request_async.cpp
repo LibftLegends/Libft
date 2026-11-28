@@ -1,5 +1,6 @@
 #include "api.hpp"
 #include "api_internal.hpp"
+#include "api_http_common.hpp"
 #include "../Networking/socket_class.hpp"
 #include "../Networking/openssl_support.hpp"
 #include "../CPP_class/class_string.hpp"
@@ -10,6 +11,7 @@
 #include "../Threading/thread.hpp"
 #include "../Time/time.hpp"
 #include <atomic>
+#include <new>
 #include <errno.h>
 #include <limits.h>
 
@@ -37,73 +39,6 @@ static std::atomic<int32_t> g_api_async_last_send_timeout(0);
 static std::atomic<int32_t> g_api_async_last_receive_state(0);
 static std::atomic<int32_t> g_api_async_last_receive_timeout(0);
 
-static ft_bool api_request_string_ends_with_crlf(const ft_string &value)
-{
-    ft_size_t length;
-    const char *character_pointer;
-
-    length = value.size();
-    if (length < 2)
-        return (FT_FALSE);
-    character_pointer = value.at(length - 2);
-    if (character_pointer == ft_nullptr)
-        return (FT_FALSE);
-    if (*character_pointer != '\r')
-        return (FT_FALSE);
-    character_pointer = value.at(length - 1);
-    if (character_pointer == ft_nullptr)
-        return (FT_FALSE);
-    if (*character_pointer != '\n')
-        return (FT_FALSE);
-    return (FT_TRUE);
-}
-
-static void api_request_trim_header_block(ft_string &headers)
-{
-    ft_size_t length;
-    const char *character_pointer;
-
-    length = headers.size();
-    while (length > 0)
-    {
-        character_pointer = headers.at(length - 1);
-        if (character_pointer == ft_nullptr)
-            break ;
-        if (*character_pointer == '\r' || *character_pointer == '\n')
-        {
-            headers.erase(length - 1, 1);
-            length -= 1;
-            continue;
-        }
-        break ;
-    }
-    length = headers.size();
-    while (length > 0)
-    {
-        character_pointer = headers.at(0);
-        if (character_pointer == ft_nullptr)
-            break ;
-        if (*character_pointer == '\r' || *character_pointer == '\n')
-        {
-            headers.erase(0, 1);
-            length -= 1;
-            continue;
-        }
-        break ;
-    }
-    return ;
-}
-
-static void api_request_append_header_block(ft_string &request, const ft_string &block)
-{
-    if (block.empty())
-        return ;
-    if (!api_request_string_ends_with_crlf(request))
-        request += "\r\n";
-    request += block;
-    return ;
-}
-
 static void api_request_reset_async_debug_counters(void)
 {
     g_api_async_last_request_size.store(0);
@@ -118,200 +53,101 @@ static void api_request_reset_async_debug_counters(void)
 
 struct api_async_request
 {
-    char *ip_address;
+    const char *ip_address;
     uint16_t port;
-    char *method;
-    char *path;
+    const char *method;
+    const char *path;
     json_group *payload;
-    char *headers;
+    const char *headers;
     int32_t timeout;
     api_callback callback;
     void *user_data;
 };
 
-static ft_bool api_async_build_request(const api_async_request &data,
-        ft_string &request)
+static ft_bool api_async_add_size(ft_size_t &total, ft_size_t size)
 {
-    ft_string body_string;
-    char *temporary_string;
-    if (request.initialize() != FT_ERR_SUCCESS)
+    if (size > FT_SYSTEM_SIZE_MAX - total)
         return (FT_FALSE);
-    request.clear();
-    if (body_string.initialize() != FT_ERR_SUCCESS)
-        return (FT_FALSE);
-    body_string.clear();
-    if (!data.method || !data.path || !data.ip_address)
-    {
-        return (FT_FALSE);
-    }
-    request += data.method;
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    request += " ";
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    request += data.path;
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    request += " HTTP/1.1\r\nHost: ";
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    request += data.ip_address;
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    if (data.headers && data.headers[0])
-    {
-        ft_string headers_string;
-
-        headers_string = data.headers;
-        if (headers_string.get_error() != FT_ERR_SUCCESS)
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-        api_request_trim_header_block(headers_string);
-        if (!headers_string.empty())
-        {
-            api_request_append_header_block(request, headers_string);
-            if (request.get_error() != FT_ERR_SUCCESS)
-            {
-                request.clear();
-                return (FT_FALSE);
-            }
-        }
-    }
-    if (data.payload)
-    {
-        temporary_string = json_write_to_string(data.payload);
-        if (!temporary_string)
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-        body_string = temporary_string;
-        cma_free(temporary_string);
-        if (body_string.get_error() != FT_ERR_SUCCESS)
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-        request += "\r\nContent-Type: application/json";
-        if (request.get_error() != FT_ERR_SUCCESS)
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-        if (!api_append_content_length_header(request, body_string.size()))
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-    }
-    request += "\r\nConnection: keep-alive\r\n\r\n";
-    if (request.get_error() != FT_ERR_SUCCESS)
-    {
-        request.clear();
-        return (FT_FALSE);
-    }
-    if (data.payload)
-    {
-        request += body_string.c_str();
-        if (request.get_error() != FT_ERR_SUCCESS)
-        {
-            request.clear();
-            return (FT_FALSE);
-        }
-    }
+    total += size;
     return (FT_TRUE);
 }
 
-static int32_t api_async_calculate_send_timeout(const ft_string &request,
-        int32_t timeout_ms)
+static ft_bool api_async_measure_request(const api_async_request &data,
+    ft_size_t &request_size)
 {
-    int32_t computed_timeout;
-    ft_size_t request_size;
-    ft_size_t request_kib;
-
-    computed_timeout = timeout_ms;
-    request_size = request.size();
-    if (computed_timeout > 0)
+    constexpr ft_size_t REQUEST_OVERHEAD = sizeof(" " " HTTP/1.1\r\nHost: "
+        "\r\nConnection: keep-alive\r\n\r\n") - 1U;
+    constexpr ft_size_t JSON_OVERHEAD = sizeof("\r\nContent-Type: application/json"
+        "\r\nContent-Length: ") - 1U;
+    request_size = 0;
+    ft_size_t total = REQUEST_OVERHEAD;
+    const ft_size_t host_size = ft_strlen_size_t(data.ip_address);
+    if (!api_async_add_size(total, ft_strlen_size_t(data.method))
+        || !api_async_add_size(total, ft_strlen_size_t(data.path))
+        || !api_async_add_size(total, host_size))
+        return (FT_FALSE);
+    if (data.headers)
     {
-        request_kib = request_size / 1024;
-        if ((request_size % 1024) != 0)
-            request_kib += 1;
-        if (request_kib > 0)
+        const char *begin = data.headers;
+        const char *end = begin + ft_strlen_size_t(begin);
+        while (begin < end && (*begin == '\r' || *begin == '\n'))
+            ++begin;
+        while (begin < end && (end[-1] == '\r' || end[-1] == '\n'))
+            --end;
+        if (begin < end)
         {
-            if (request_kib > static_cast<ft_size_t>(INT_MAX))
-                computed_timeout = INT_MAX;
-            else if (static_cast<int32_t>(request_kib) > computed_timeout)
-                computed_timeout = static_cast<int32_t>(request_kib);
+            if (!(host_size >= 2U && data.ip_address[host_size - 2U] == '\r'
+                    && data.ip_address[host_size - 1U] == '\n')
+                && !api_async_add_size(total, 2U))
+                return (FT_FALSE);
+            if (!api_async_add_size(total, static_cast<ft_size_t>(end - begin)))
+                return (FT_FALSE);
         }
     }
-    if (computed_timeout < 10000)
-        computed_timeout = 10000;
-    return (computed_timeout);
+    if (data.payload)
+    {
+        ft_size_t payload_size = 0;
+        if (!api_http_measure_json_payload(data.payload, payload_size)
+            || !api_async_add_size(total, payload_size))
+            return (FT_FALSE);
+        ft_size_t decimal_digits = 1;
+        while (payload_size >= 10U)
+        {
+            payload_size /= 10U;
+            ++decimal_digits;
+        }
+        if (!api_async_add_size(total, JSON_OVERHEAD + decimal_digits))
+            return (FT_FALSE);
+    }
+    request_size = total;
+    return (FT_TRUE);
 }
 
-static int32_t api_async_calculate_receive_timeout(
-        const ft_string &request, int32_t timeout_ms, int32_t send_timeout_ms)
+static void api_async_calculate_timeouts(ft_size_t request_size, int32_t timeout_ms,
+    int32_t &send_timeout_ms, int32_t &receive_timeout_ms)
 {
-    int64_t computed_timeout;
-    ft_size_t request_size;
-    ft_size_t request_kib;
-    int64_t extra_timeout;
+    ft_size_t request_kib = request_size / 1024U + (request_size % 1024U != 0U);
+    if (request_kib > static_cast<ft_size_t>(INT32_MAX))
+        request_kib = INT32_MAX;
+    send_timeout_ms = timeout_ms;
+    if (timeout_ms > 0 && request_kib > static_cast<ft_size_t>(timeout_ms))
+        send_timeout_ms = static_cast<int32_t>(request_kib);
+    if (send_timeout_ms < 10000)
+        send_timeout_ms = 10000;
 
-    computed_timeout = timeout_ms;
-    if (computed_timeout < 0)
-        computed_timeout = 0;
-    if (computed_timeout < send_timeout_ms)
-        computed_timeout = send_timeout_ms;
-    request_size = request.size();
-    extra_timeout = 0;
-    if (request_size > 0)
-    {
-        request_kib = request_size / 1024;
-        if ((request_size % 1024) != 0)
-            request_kib += 1;
-        if (request_kib > 0)
-        {
-            if (request_kib > static_cast<ft_size_t>(INT_MAX))
-                extra_timeout = INT_MAX;
-            else
-                extra_timeout = static_cast<int64_t>(request_kib);
-        }
-    }
-    if (extra_timeout > 0)
-    {
-        if (computed_timeout > static_cast<int64_t>(INT_MAX) - extra_timeout)
-            computed_timeout = INT_MAX;
-        else
-            computed_timeout += extra_timeout;
-    }
-    if (computed_timeout < 15000)
-        computed_timeout = 15000;
-    if (computed_timeout > INT_MAX)
-        computed_timeout = INT_MAX;
-    return (static_cast<int32_t>(computed_timeout));
+    int64_t receive_timeout = static_cast<int64_t>(send_timeout_ms)
+        + static_cast<int64_t>(request_kib);
+    if (receive_timeout < 15000)
+        receive_timeout = 15000;
+    if (receive_timeout > INT32_MAX)
+        receive_timeout = INT32_MAX;
+    receive_timeout_ms = static_cast<int32_t>(receive_timeout);
+    return ;
 }
 
 static void api_async_worker(api_async_request *data)
 {
-    ft_string request_string;
+    ft_size_t request_size = 0;
     api_retry_policy retry_policy;
     int32_t status;
     char *result_body;
@@ -325,13 +161,11 @@ static void api_async_worker(api_async_request *data)
     status = -1;
     result_body = ft_nullptr;
     api_request_reset_async_debug_counters();
-    request_prepared = api_async_build_request(*data, request_string);
-    g_api_async_last_request_size.store(request_string.size());
-    send_timeout_ms = api_async_calculate_send_timeout(request_string,
-            data->timeout);
+    request_prepared = api_async_measure_request(*data, request_size);
+    g_api_async_last_request_size.store(request_size);
+    api_async_calculate_timeouts(request_size, data->timeout,
+        send_timeout_ms, receive_timeout_ms);
     g_api_async_last_send_timeout.store(send_timeout_ms);
-    receive_timeout_ms = api_async_calculate_receive_timeout(
-            request_string, data->timeout, send_timeout_ms);
     g_api_async_last_receive_timeout.store(receive_timeout_ms);
     if (retry_policy.initialize() == FT_ERR_SUCCESS)
     {
@@ -349,8 +183,8 @@ static void api_async_worker(api_async_request *data)
     (void)retry_policy.destroy();
     if (result_body)
     {
-        body_length = ft_strlen(result_body);
-        g_api_async_last_bytes_sent.store(request_string.size());
+        body_length = ft_strlen_size_t(result_body);
+        g_api_async_last_bytes_sent.store(request_size);
         g_api_async_last_send_state.store(5);
         g_api_async_last_bytes_received.store(body_length);
         g_api_async_last_receive_state.store(5);
@@ -362,17 +196,10 @@ static void api_async_worker(api_async_request *data)
         g_api_async_last_bytes_received.store(0);
         g_api_async_last_receive_state.store(9);
     }
-    if (data->callback)
-        data->callback(result_body, status, data->user_data);
-    if (data->ip_address)
-        cma_free(data->ip_address);
-    if (data->method)
-        cma_free(data->method);
-    if (data->path)
-        cma_free(data->path);
-    if (data->headers)
-        cma_free(data->headers);
+    const api_callback callback = data->callback;
+    void *const user_data = data->user_data;
     cma_free(data);
+    callback(result_body, status, user_data);
     return ;
 }
 
@@ -411,6 +238,14 @@ int32_t     api_debug_get_last_async_receive_timeout(void)
     return (g_api_async_last_receive_timeout.load());
 }
 
+static const char *api_async_copy_text(char *&output, const char *input, ft_size_t size)
+{
+    char *const start = output;
+    ft_memcpy(output, input, size);
+    output += size;
+    return (start);
+}
+
 ft_bool    api_request_string_async(const char *ip_address, uint16_t port,
         const char *method, const char *path, api_callback callback,
         void *user_data, json_group *payload, const char *headers, int32_t timeout)
@@ -427,36 +262,40 @@ ft_bool    api_request_string_async(const char *ip_address, uint16_t port,
         return (hooks->request_string_async(ip_address, port, method, path, callback,
                 user_data, payload, headers, timeout, hooks->user_data));
     }
-    api_async_request *data = static_cast<api_async_request*>(cma_malloc(sizeof(api_async_request)));
-    if (!data)
-    {
-        return (FT_FALSE);
-    }
-    ft_bzero(data, sizeof(api_async_request));
-    data->ip_address = adv_strdup(ip_address);
-    data->method = adv_strdup(method);
-    data->path = adv_strdup(path);
+    constexpr ft_size_t REQUEST_SIZE = sizeof(api_async_request);
+    const ft_size_t host_size = ft_strlen_size_t(ip_address) + 1U;
+    const ft_size_t method_size = ft_strlen_size_t(method) + 1U;
+    const ft_size_t path_size = ft_strlen_size_t(path) + 1U;
+    ft_size_t headers_size = 0;
     if (headers)
-        data->headers = adv_strdup(headers);
+        headers_size = ft_strlen_size_t(headers) + 1U;
+    ft_size_t storage_size = REQUEST_SIZE;
+    if (!api_async_add_size(storage_size, host_size)
+        || !api_async_add_size(storage_size, method_size)
+        || !api_async_add_size(storage_size, path_size)
+        || !api_async_add_size(storage_size, headers_size))
+        return (FT_FALSE);
+    void *const storage = cma_malloc(storage_size);
+    if (!storage)
+        return (FT_FALSE);
+    auto *data = new (storage) api_async_request{};
+    char *text_storage = static_cast<char *>(storage) + REQUEST_SIZE;
+    data->ip_address = api_async_copy_text(text_storage, ip_address, host_size);
+    data->method = api_async_copy_text(text_storage, method, method_size);
+    data->path = api_async_copy_text(text_storage, path, path_size);
+    if (headers)
+        data->headers = api_async_copy_text(text_storage, headers, headers_size);
     data->port = port;
     data->payload = payload;
     data->timeout = timeout;
     data->callback = callback;
     data->user_data = user_data;
-    if (!data->ip_address || !data->method || !data->path || (headers && !data->headers))
+    ft_thread thread_worker(api_async_worker, data);
+    if (!thread_worker.joinable())
     {
-        if (data->ip_address)
-            cma_free(data->ip_address);
-        if (data->method)
-            cma_free(data->method);
-        if (data->path)
-            cma_free(data->path);
-        if (data->headers)
-            cma_free(data->headers);
         cma_free(data);
         return (FT_FALSE);
     }
-    ft_thread thread_worker(api_async_worker, data);
     thread_worker.detach();
     return (FT_TRUE);
 }

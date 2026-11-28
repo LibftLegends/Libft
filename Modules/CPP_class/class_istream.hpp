@@ -10,6 +10,8 @@
 
 class ft_istream
 {
+    friend class ft_fd_istream;
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else

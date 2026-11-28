@@ -260,6 +260,8 @@ int32_t ft_render_window::initialize(ft_render_window &&other)
     }
     if (this == &other)
         return (FT_ERR_SUCCESS);
+    if (other._shade_active == FT_TRUE)
+        return (FT_ERR_INVALID_OPERATION);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
@@ -310,6 +312,8 @@ int32_t ft_render_window::destroy(void)
     if (this->_initialised_state == FT_CLASS_STATE_UNINITIALISED
         || this->_initialised_state == FT_CLASS_STATE_DESTROYED)
         return (FT_ERR_SUCCESS);
+    if (this->_shade_active == FT_TRUE)
+        return (FT_ERR_INVALID_OPERATION);
     disable_error = this->disable_thread_safety();
     if (this->_is_initialised == FT_TRUE)
         this->shutdown();
@@ -332,6 +336,8 @@ int32_t ft_render_window::move(ft_render_window &other)
     }
     if (this == &other)
         return (FT_ERR_SUCCESS);
+    if (this->_shade_active == FT_TRUE || other._shade_active == FT_TRUE)
+        return (FT_ERR_INVALID_OPERATION);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
         if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
@@ -404,6 +410,11 @@ int32_t ft_render_window::initialize(const ft_render_window_desc &desc)
             "called while render window is already initialised");
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_ERR_INVALID_STATE);
+    }
+    if (this->_shade_active == FT_TRUE)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_ERR_INVALID_OPERATION);
     }
     if (desc.width <= 0 || desc.height <= 0 || desc.title == ft_nullptr)
     {
@@ -541,40 +552,55 @@ ft_render_depth_buffer &ft_render_window::depth_buffer(void)
 
 int32_t ft_render_window::clear(uint32_t color)
 {
-    int32_t                      index_width;
-    int32_t                      index_height;
-    int32_t                      width;
-    int32_t                      height;
-    uint32_t                     *pixels;
-    int32_t                      index;
-    int32_t                      lock_error;
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_render_window::clear");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
         return (lock_error);
-    }
     if (this->_is_initialised == FT_FALSE)
     {
-    (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_ERR_NOT_INITIALISED);
     }
-    width = this->_framebuffer.width;
-    height = this->_framebuffer.height;
-    pixels = this->_framebuffer.pixels;
-
-    index_height = 0;
-    while (index_height < height)
+    const int32_t width = this->_framebuffer.width;
+    const int32_t height = this->_framebuffer.height;
+    if (width <= 0 || height <= 0)
     {
-        index_width = 0;
-        while (index_width < width)
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_ERR_SUCCESS);
+    }
+    uint32_t *pixels = this->_framebuffer.pixels;
+    if (pixels == ft_nullptr)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_ERR_INVALID_STATE);
+    }
+    const ft_size_t pixel_count = static_cast<ft_size_t>(width) * static_cast<ft_size_t>(height);
+    if (pixel_count > SIZE_MAX / sizeof(*pixels))
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_ERR_OUT_OF_RANGE);
+    }
+
+    const uint32_t color_byte = color & 0xFFU;
+    if (color == color_byte * 0x01010101U)
+        (void)ft_memset(pixels, static_cast<int32_t>(color_byte), pixel_count * sizeof(*pixels));
+    else
+    {
+        ft_size_t index = 0;
+        while (pixel_count - index >= 4U)
         {
-            index = (index_height * width) + index_width;
             pixels[index] = color;
-            index_width = index_width + 1;
+            pixels[index + 1U] = color;
+            pixels[index + 2U] = color;
+            pixels[index + 3U] = color;
+            index += 4U;
         }
-        index_height = index_height + 1;
+        while (index < pixel_count)
+        {
+            pixels[index] = color;
+            ++index;
+        }
     }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (FT_ERR_SUCCESS);
@@ -586,7 +612,6 @@ int32_t ft_render_window::put_pixel(int32_t coordinate_x, int32_t coordinate_y,
     int32_t lock_error;
     int32_t width;
     int32_t height;
-    int32_t index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_render_window::put_pixel");
@@ -606,7 +631,13 @@ int32_t ft_render_window::put_pixel(int32_t coordinate_x, int32_t coordinate_y,
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    index = (coordinate_y * width) + coordinate_x;
+    if (this->_framebuffer.pixels == ft_nullptr)
+    {
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_ERR_INVALID_STATE);
+    }
+    const ft_size_t index = static_cast<ft_size_t>(coordinate_y) * static_cast<ft_size_t>(width)
+        + static_cast<ft_size_t>(coordinate_x);
     this->_framebuffer.pixels[index] = color;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (FT_ERR_SUCCESS);
@@ -619,7 +650,6 @@ int32_t ft_render_window::shade(ft_render_fragment_shader shader,
     ft_render_shader_output      output;
     int32_t                      index_width;
     int32_t                      index_height;
-    int32_t                      index;
     int32_t                      shader_error;
     int32_t                      lock_error;
 
@@ -643,38 +673,64 @@ int32_t ft_render_window::shade(ft_render_fragment_shader shader,
         (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
         return (FT_ERR_INVALID_STATE);
     }
-    input.width = this->_framebuffer.width;
-    input.height = this->_framebuffer.height;
+    const int32_t width = this->_framebuffer.width;
+    const int32_t height = this->_framebuffer.height;
+    input.width = width;
+    input.height = height;
     input.user_data = user_data;
+    uint32_t *const pixels = this->_framebuffer.pixels;
+    uint8_t *const depth_values = this->_depth_buffer.values;
+    const ft_bool was_shading = this->_shade_active;
+    this->_shade_active = FT_TRUE;
+    shader_error = FT_ERR_SUCCESS;
+    ft_size_t index = 0U;
     index_height = 0;
-    while (index_height < this->_framebuffer.height)
+    while (index_height < height && shader_error == FT_ERR_SUCCESS)
     {
         index_width = 0;
-        while (index_width < this->_framebuffer.width)
+        while (index_width < width)
         {
-            index = (index_height * this->_framebuffer.width) + index_width;
             input.coordinate_x = index_width;
             input.coordinate_y = index_height;
-            input.current_color = this->_framebuffer.pixels[index];
-            input.current_depth = this->_depth_buffer.values[index];
+            input.current_color = pixels[index];
+            input.current_depth = depth_values[index];
             output.color = input.current_color;
             output.depth = input.current_depth;
             output.write_depth = FT_FALSE;
-            shader_error = shader(&input, &output);
-            if (shader_error != FT_ERR_SUCCESS)
+            try
             {
-                (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-                return (shader_error);
+                shader_error = shader(&input, &output);
             }
-            this->_framebuffer.pixels[index] = output.color;
+            catch (...)
+            {
+                this->_shade_active = was_shading;
+                (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+                throw;
+            }
+            if (shader_error != FT_ERR_SUCCESS)
+                break ;
+            const int32_t dimension_changes = (this->_framebuffer.width ^ width)
+                | (this->_framebuffer.height ^ height)
+                | (this->_depth_buffer.width ^ width)
+                | (this->_depth_buffer.height ^ height);
+            if (this->_framebuffer.pixels != pixels
+                || this->_depth_buffer.values != depth_values
+                || dimension_changes != 0)
+            {
+                shader_error = FT_ERR_INVALID_STATE;
+                break ;
+            }
+            pixels[index] = output.color;
             if (output.write_depth == FT_TRUE)
-                this->_depth_buffer.values[index] = output.depth;
+                depth_values[index] = output.depth;
+            ++index;
             index_width = index_width + 1;
         }
         index_height = index_height + 1;
     }
+    this->_shade_active = was_shading;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_ERR_SUCCESS);
+    return (shader_error);
 }
 
 int32_t ft_render_window::set_fullscreen(ft_bool enabled)
@@ -729,6 +785,8 @@ int32_t ft_render_window::prepare_thread_safety(void) noexcept
         "ft_render_window::prepare_thread_safety");
     if (this->_mutex)
         return (FT_ERR_SUCCESS);
+    if (this->_shade_active == FT_TRUE)
+        return (FT_ERR_INVALID_OPERATION);
     pt_recursive_mutex *mutex_pointer = ft_nullptr;
     int32_t mutex_error;
 
@@ -743,6 +801,8 @@ uint32_t ft_render_window::teardown_thread_safety(void) noexcept
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
         "ft_render_window::teardown_thread_safety");
+    if (this->_shade_active == FT_TRUE && this->_mutex != ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
     return (destroy_recursive_mutex(&this->_mutex));
 }
 

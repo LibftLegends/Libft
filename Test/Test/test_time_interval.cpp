@@ -82,3 +82,18 @@ FT_TEST(test_time_parse_interval_rejects_subsecond_duration_offsets)
     FT_ASSERT_EQ(FT_FALSE, parse_result);
     return (1);
 }
+
+FT_TEST(test_time_parse_interval_accepts_long_left_component)
+{
+    const char input[] = "PT0000000000000000000000000000000000000000"
+        "00000000000000000000000000002H/1970-01-01T02:00:00Z";
+    t_time start_time = -1;
+    t_time end_time = -1;
+    t_duration_milliseconds duration = time_duration_ms_create(0);
+    FT_ASSERT_EQ(FT_TRUE, time_parse_interval(input, &start_time, &end_time,
+            &duration));
+    FT_ASSERT_EQ(0, start_time);
+    FT_ASSERT_EQ(7200, end_time);
+    FT_ASSERT_EQ(7200000, duration.milliseconds);
+    return (1);
+}

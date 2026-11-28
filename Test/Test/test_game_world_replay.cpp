@@ -93,6 +93,11 @@ FT_TEST(test_game_world_replay_capture_restore_replay)
 
     capture_result = session.capture_snapshot(*world_pointer, hero_character, hero_inventory);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, capture_result);
+    game_world_replay_session moved_session;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_session.move(session));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, session.initialize());
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE,
+        session.restore_snapshot(world_pointer, hero_character, hero_inventory));
 
     world_pointer->update_events(world_pointer, 1);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, world_pointer->get_error());
@@ -101,7 +106,7 @@ FT_TEST(test_game_world_replay_capture_restore_replay)
     FT_ASSERT_EQ(damage_invocations, 1);
     FT_ASSERT_EQ(world_pointer->get_event_scheduler()->size(), static_cast<size_t>(0));
 
-    restore_result = session.restore_snapshot(world_pointer, hero_character, hero_inventory);
+    restore_result = moved_session.restore_snapshot(world_pointer, hero_character, hero_inventory);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, restore_result);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hero_character.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hero_inventory.get_error());
@@ -113,7 +118,8 @@ FT_TEST(test_game_world_replay_capture_restore_replay)
 
     hero_character.set_hit_points(25);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hero_character.get_error());
-    replay_result = session.replay_ticks(world_pointer, hero_character, hero_inventory, 1, ft_nullptr, ft_nullptr);
+    replay_result = moved_session.replay_ticks(world_pointer, hero_character, hero_inventory, 1,
+        ft_nullptr, ft_nullptr);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, replay_result);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hero_character.get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, hero_inventory.get_error());

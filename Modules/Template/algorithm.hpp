@@ -1,24 +1,51 @@
 #ifndef FT_ALGORITHM_HPP
 #define FT_ALGORITHM_HPP
 
+#include <algorithm>
 #include <cstddef>
+#include <functional>
+#include <iterator>
+#include <type_traits>
 #include "swap.hpp"
 #include "../RNG/rng.hpp"
 
-template <typename RandomIt, typename Compare>
-void ft_sort(RandomIt first, RandomIt last, Compare comp)
+template <typename IteratorType, typename = void>
+struct ft_sort_has_random_access_category : std::false_type
 {
-    RandomIt i = first;
-    while (i != last)
+};
+
+template <typename IteratorType>
+struct ft_sort_has_random_access_category<IteratorType,
+    std::void_t<typename std::iterator_traits<IteratorType>::iterator_category>>
+    : std::is_base_of<std::random_access_iterator_tag,
+        typename std::iterator_traits<IteratorType>::iterator_category>
+{
+};
+
+template <typename RandomIt, typename Compare>
+void ft_sort(RandomIt first, RandomIt last, Compare compare)
+{
+    if (!(first != last))
+        return ;
+    if constexpr (ft_sort_has_random_access_category<RandomIt>::value)
     {
-        RandomIt j = i + 1;
-        while (j != last)
+        std::sort(first, last, std::ref(compare));
+    }
+    else
+    {
+        // Keep accepting iterators that only provide the original operations.
+        RandomIt position = first;
+        while (position != last)
         {
-            if (comp(*j, *i))
-                ft_swap(*i, *j);
-            ++j;
+            RandomIt candidate = position + 1;
+            while (candidate != last)
+            {
+                if (compare(*candidate, *position))
+                    ft_swap(*position, *candidate);
+                ++candidate;
+            }
+            ++position;
         }
-        ++i;
     }
     return ;
 }
@@ -34,23 +61,23 @@ void ft_sort(RandomIt first, RandomIt last)
 }
 
 template <typename RandomIt, typename T, typename Compare>
-ft_bool ft_binary_search(RandomIt first, RandomIt last, const T& value, Compare comp)
+constexpr ft_bool ft_binary_search(RandomIt first, RandomIt last, const T& value, Compare compare)
 {
     while (first < last)
     {
-        RandomIt mid = first + (last - first) / 2;
-        if (!comp(*mid, value) && !comp(value, *mid))
-            return (FT_TRUE);
-        if (comp(*mid, value))
-            first = mid + 1;
+        RandomIt middle = first + (last - first) / 2;
+        if (compare(*middle, value))
+            first = middle + 1;
+        else if (compare(value, *middle))
+            last = middle;
         else
-            last = mid;
+            return (FT_TRUE);
     }
     return (FT_FALSE);
 }
 
 template <typename RandomIt, typename T>
-ft_bool ft_binary_search(RandomIt first, RandomIt last, const T& value)
+constexpr ft_bool ft_binary_search(RandomIt first, RandomIt last, const T& value)
 {
     return (ft_binary_search(first, last, value,
         [](const auto& a, const auto& b)
@@ -76,7 +103,7 @@ void ft_shuffle(RandomIt first, RandomIt last)
 }
 
 template <typename BidirectionalIt>
-void ft_reverse(BidirectionalIt first, BidirectionalIt last)
+constexpr void ft_reverse(BidirectionalIt first, BidirectionalIt last)
 {
     while (first != last && first != --last)
     {

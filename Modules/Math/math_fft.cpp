@@ -1,163 +1,102 @@
 #include "math_fft.hpp"
-
+#include "../Basic/basic.hpp"
+#include <algorithm>
 #include <cmath>
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
-#include "../Template/vector.hpp"
+#include <functional>
 
-static const double FFT_PI = 3.141592653589793238462643383279502884;
+static constexpr double FFT_TWO_PI = 6.283185307179586476925286766559;
+static constexpr double FFT_CONVOLUTION_ZERO_THRESHOLD = 1e-12;
 
-static ft_bool math_fft_is_power_of_two(ft_size_t value) noexcept
+template <ft_size_t Count, typename Operation>
+static int32_t math_fft_with_locked_vectors(const ft_vector<double> *(&vectors)[Count],
+    Operation operation) noexcept
 {
-    ft_size_t reduced;
-
-    if (value == 0)
-        return (FT_FALSE);
-    reduced = value;
-    while ((reduced & 1) == 0)
-        reduced = reduced >> 1;
-    if (reduced == 1)
-        return (FT_TRUE);
-    return (FT_FALSE);
+    std::sort(vectors, vectors + Count, std::less<const ft_vector<double> *>{});
+    const auto *end = std::unique(vectors, vectors + Count);
+    ft_bool acquired[Count];
+    ft_size_t index = 0U;
+    int32_t error = FT_ERR_SUCCESS;
+    while (vectors + index != end)
+    {
+        error = vectors[index]->lock(&acquired[index]);
+        if (error != FT_ERR_SUCCESS)
+            break ;
+        index += 1U;
+    }
+    if (error == FT_ERR_SUCCESS)
+        error = operation();
+    while (index != 0U)
+    {
+        index -= 1U;
+        vectors[index]->unlock(acquired[index]);
+    }
+    return (error);
 }
 
-static int32_t math_fft_copy_inputs(const ft_vector<double> &input,
-    ft_vector<double> &output) noexcept
+static void math_fft_bit_reverse(double *real, double *imag, ft_size_t length) noexcept
 {
-    ft_size_t length;
-    ft_size_t index;
-
-    output.clear();
-    length = input.size();
-    output.reserve(length);
-    index = 0;
+    ft_size_t reversed = 0U;
+    ft_size_t index = 1U;
     while (index < length)
     {
-        output.push_back(input[index]);
-        index++;
+        // Advance the reversed index by carrying from its highest bit.
+        ft_size_t bit = length >> 1U;
+        while ((reversed & bit) != 0U)
+        {
+            reversed ^= bit;
+            bit >>= 1U;
+        }
+        reversed ^= bit;
+        if (index < reversed)
+        {
+            std::swap(real[index], real[reversed]);
+            std::swap(imag[index], imag[reversed]);
+        }
+        index += 1U;
     }
-    return (FT_ERR_SUCCESS);
-}
-
-static void math_fft_swap(ft_vector<double> &real,
-    ft_vector<double> &imag, ft_size_t first, ft_size_t second) noexcept
-{
-    double temporary;
-
-    temporary = real[first];
-    real[first] = real[second];
-    real[second] = temporary;
-    temporary = imag[first];
-    imag[first] = imag[second];
-    imag[second] = temporary;
     return ;
 }
 
-static int32_t math_fft_bit_reverse(ft_vector<double> &real,
-    ft_vector<double> &imag) noexcept
+static void math_fft_transform(double *real, double *imag,
+    ft_size_t length, ft_bool inverse) noexcept
 {
-    ft_size_t length;
-    ft_size_t levels;
-    ft_size_t index;
+    double angle_numerator = -FFT_TWO_PI;
+    if (inverse)
+        angle_numerator = FFT_TWO_PI;
 
-    length = real.size();
-    levels = 0;
-    ft_size_t value;
-
-    value = length;
-    while (value > 1)
-    {
-        value = value >> 1;
-        levels++;
-    }
-    index = 0;
-    while (index < length)
-    {
-        ft_size_t reversed;
-        ft_size_t bit_index;
-
-        reversed = 0;
-        bit_index = 0;
-        while (bit_index < levels)
-        {
-            reversed = (reversed << 1) | ((index >> bit_index) & 1);
-            bit_index++;
-        }
-        if (reversed > index)
-            math_fft_swap(real, imag, index, reversed);
-        index++;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t math_fft_iterative(ft_vector<double> &real,
-    ft_vector<double> &imag, ft_bool inverse) noexcept
-{
-    ft_size_t length;
-    ft_size_t half_size;
-
-    length = real.size();
-    if (length == 0)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    half_size = 1;
+    math_fft_bit_reverse(real, imag, length);
+    ft_size_t half_size = 1U;
     while (half_size < length)
     {
-        ft_size_t step;
-        double angle;
-        double phase_step_real;
-        double phase_step_imag;
-        ft_size_t block_start;
-
-        step = half_size << 1;
-        double angle_multiplier;
-
-        if (inverse)
-            angle_multiplier = 2.0;
-        else
-            angle_multiplier = -2.0;
-        angle = angle_multiplier * FFT_PI / static_cast<double>(step);
-        phase_step_real = std::cos(angle);
-        phase_step_imag = std::sin(angle);
-        block_start = 0;
+        const ft_size_t step = half_size << 1U;
+        const double angle = angle_numerator / static_cast<double>(step);
+        const double phase_step_real = std::cos(angle);
+        const double phase_step_imag = std::sin(angle);
+        ft_size_t block_start = 0U;
         while (block_start < length)
         {
-            double current_real;
-            double current_imag;
-            ft_size_t element_index;
-
-            current_real = 1.0;
-            current_imag = 0.0;
-            element_index = 0;
-            while (element_index < half_size)
+            double phase_real = 1.0;
+            double phase_imag = 0.0;
+            ft_size_t first = block_start;
+            const ft_size_t block_middle = block_start + half_size;
+            while (first < block_middle)
             {
-                ft_size_t first_index;
-                ft_size_t second_index;
-                double temp_real;
-                double temp_imag;
-                double updated_real;
-                double updated_imag;
-
-                first_index = block_start + element_index;
-                second_index = first_index + half_size;
-                temp_real = current_real * real[second_index]
-                    - current_imag * imag[second_index];
-                temp_imag = current_real * imag[second_index]
-                    + current_imag * real[second_index];
-                real[second_index] = real[first_index] - temp_real;
-                imag[second_index] = imag[first_index] - temp_imag;
-                real[first_index] = real[first_index] + temp_real;
-                imag[first_index] = imag[first_index] + temp_imag;
-                updated_real = current_real * phase_step_real
-                    - current_imag * phase_step_imag;
-                updated_imag = current_real * phase_step_imag
-                    + current_imag * phase_step_real;
-                current_real = updated_real;
-                current_imag = updated_imag;
-                element_index++;
+                const ft_size_t second = first + half_size;
+                const double second_real = real[second];
+                const double second_imag = imag[second];
+                const double product_real = phase_real * second_real - phase_imag * second_imag;
+                const double product_imag = phase_real * second_imag + phase_imag * second_real;
+                const double first_real = real[first];
+                const double first_imag = imag[first];
+                real[second] = first_real - product_real;
+                imag[second] = first_imag - product_imag;
+                real[first] = first_real + product_real;
+                imag[first] = first_imag + product_imag;
+                const double next_phase_real = phase_real * phase_step_real
+                    - phase_imag * phase_step_imag;
+                phase_imag = phase_real * phase_step_imag + phase_imag * phase_step_real;
+                phase_real = next_phase_real;
+                first += 1U;
             }
             block_start += step;
         }
@@ -165,196 +104,169 @@ static int32_t math_fft_iterative(ft_vector<double> &real,
     }
     if (inverse)
     {
-        double scale;
-        ft_size_t index;
-
-        scale = 1.0 / static_cast<double>(length);
-        index = 0;
+        const double scale = 1.0 / static_cast<double>(length);
+        ft_size_t index = 0U;
         while (index < length)
         {
-            real[index] = real[index] * scale;
-            imag[index] = imag[index] * scale;
-            index++;
+            real[index] *= scale;
+            imag[index] *= scale;
+            index += 1U;
         }
     }
-    return (FT_ERR_SUCCESS);
+    return ;
+}
+
+static void math_fft_copy(double *destination, const double *source, ft_size_t length) noexcept
+{
+    if (destination != source)
+        ft_memcpy(destination, source, length * sizeof(double));
+    return ;
+}
+
+static void math_fft_copy_components(double *real, double *imag,
+    const double *source_real, const double *source_imag, ft_size_t length) noexcept
+{
+    if (source_real == imag && source_imag == real)
+    {
+        ft_size_t index = 0U;
+        while (index < length)
+        {
+            std::swap(real[index], imag[index]);
+            index += 1U;
+        }
+    }
+    else if (source_imag == real)
+    {
+        math_fft_copy(imag, source_imag, length);
+        math_fft_copy(real, source_real, length);
+    }
+    else
+    {
+        math_fft_copy(real, source_real, length);
+        math_fft_copy(imag, source_imag, length);
+    }
+    return ;
 }
 
 static int32_t math_fft_dispatch(const ft_vector<double> &input_real,
-    const ft_vector<double> &input_imag,
-    ft_vector<double> &output_real,
-    ft_vector<double> &output_imag,
-    ft_bool inverse) noexcept
+    const ft_vector<double> &input_imag, ft_vector<double> &output_real,
+    ft_vector<double> &output_imag, ft_bool inverse) noexcept
 {
-    ft_size_t length;
+    if (&output_real == &output_imag)
+        return (FT_ERR_INVALID_ARGUMENT);
 
-    if (input_real.size() != input_imag.size())
+    const ft_vector<double> *vectors[] = {&input_real, &input_imag, &output_real, &output_imag};
+    return (math_fft_with_locked_vectors(vectors, [&]() -> int32_t
     {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    length = input_real.size();
-    if (!math_fft_is_power_of_two(length))
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    if (math_fft_copy_inputs(input_real, output_real) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_fft_copy_inputs(input_imag, output_imag) != FT_ERR_SUCCESS)
-    {
-        output_real.clear();
-        return (FT_ERR_INTERNAL);
-    }
-    if (math_fft_bit_reverse(output_real, output_imag) != FT_ERR_SUCCESS)
-    {
-        output_real.clear();
-        output_imag.clear();
-        return (FT_ERR_INTERNAL);
-    }
-    if (math_fft_iterative(output_real, output_imag, inverse) != FT_ERR_SUCCESS)
-    {
-        output_real.clear();
-        output_imag.clear();
-        return (FT_ERR_INTERNAL);
-    }
-    return (FT_ERR_SUCCESS);
+        const ft_size_t length = input_real.size();
+        if (length == 0U || (length & (length - 1U)) != 0U
+            || input_imag.size() != length)
+            return (FT_ERR_INVALID_ARGUMENT);
+        output_real.reserve(length);
+        if (output_real.get_error() != FT_ERR_SUCCESS)
+            return (output_real.get_error());
+        output_imag.reserve(length);
+        if (output_imag.get_error() != FT_ERR_SUCCESS)
+            return (output_imag.get_error());
+        output_real.resize(length);
+        if (output_real.get_error() != FT_ERR_SUCCESS)
+            return (output_real.get_error());
+        output_imag.resize(length);
+        if (output_imag.get_error() != FT_ERR_SUCCESS)
+            return (output_imag.get_error());
+
+        double *real = output_real.begin();
+        double *imag = output_imag.begin();
+        math_fft_copy_components(real, imag, input_real.begin(), input_imag.begin(), length);
+        math_fft_transform(real, imag, length, inverse);
+        return (FT_ERR_SUCCESS);
+    }));
 }
 
 int32_t math_fft(const ft_vector<double> &input_real,
-    const ft_vector<double> &input_imag,
-    ft_vector<double> &output_real,
+    const ft_vector<double> &input_imag, ft_vector<double> &output_real,
     ft_vector<double> &output_imag) noexcept
 {
-    return (math_fft_dispatch(input_real, input_imag, output_real,
-            output_imag, FT_FALSE));
+    return (math_fft_dispatch(input_real, input_imag, output_real, output_imag, FT_FALSE));
 }
 
 int32_t math_ifft(const ft_vector<double> &input_real,
-    const ft_vector<double> &input_imag,
-    ft_vector<double> &output_real,
+    const ft_vector<double> &input_imag, ft_vector<double> &output_real,
     ft_vector<double> &output_imag) noexcept
 {
-    return (math_fft_dispatch(input_real, input_imag, output_real,
-            output_imag, FT_TRUE));
+    return (math_fft_dispatch(input_real, input_imag, output_real, output_imag, FT_TRUE));
 }
 
-static ft_size_t math_fft_next_power_of_two(ft_size_t value) noexcept
+static void math_fft_multiply(double *first_real, double *first_imag,
+    const double *second_real, const double *second_imag, ft_size_t length) noexcept
 {
-    ft_size_t power;
-
-    if (value == 0)
-        return (1);
-    power = 1;
-    while (power < value)
-        power = power << 1;
-    return (power);
-}
-
-static int32_t math_fft_prepare_padded(const ft_vector<double> &input,
-    ft_size_t target_length, ft_vector<double> &real,
-    ft_vector<double> &imag) noexcept
-{
-    ft_size_t index;
-    ft_size_t length;
-
-    real.clear();
-    imag.clear();
-    real.reserve(target_length);
-    imag.reserve(target_length);
-    length = input.size();
-    index = 0;
-    while (index < target_length)
-    {
-        double value;
-
-        if (index < length)
-            value = input[index];
-        else
-            value = 0.0;
-        real.push_back(value);
-        imag.push_back(0.0);
-        index++;
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t math_fft_pointwise_multiply(ft_vector<double> &first_real,
-    ft_vector<double> &first_imag,
-    const ft_vector<double> &second_real,
-    const ft_vector<double> &second_imag) noexcept
-{
-    ft_size_t length;
-    ft_size_t index;
-
-    length = first_real.size();
-    if (second_real.size() != length || second_imag.size() != length)
-    {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    index = 0;
+    ft_size_t index = 0U;
     while (index < length)
     {
-        double result_real;
-        double result_imag;
-
-        result_real = first_real[index] * second_real[index]
-            - first_imag[index] * second_imag[index];
-        result_imag = first_real[index] * second_imag[index]
-            + first_imag[index] * second_real[index];
-        first_real[index] = result_real;
-        first_imag[index] = result_imag;
-        index++;
+        const double real = first_real[index];
+        const double imag = first_imag[index];
+        first_real[index] = real * second_real[index] - imag * second_imag[index];
+        first_imag[index] = real * second_imag[index] + imag * second_real[index];
+        index += 1U;
     }
-    return (FT_ERR_SUCCESS);
+    return ;
 }
 
 int32_t math_convolution(const ft_vector<double> &first,
-    const ft_vector<double> &second,
-    ft_vector<double> &result) noexcept
+    const ft_vector<double> &second, ft_vector<double> &result) noexcept
 {
-    ft_size_t result_length;
-    ft_size_t fft_length;
-    ft_vector<double> first_real;
-    ft_vector<double> first_imag;
-    ft_vector<double> second_real;
-    ft_vector<double> second_imag;
-    ft_vector<double> first_fft_real;
-    ft_vector<double> first_fft_imag;
-    ft_vector<double> second_fft_real;
-    ft_vector<double> second_fft_imag;
-    ft_size_t index;
-
-    if (first.size() == 0 || second.size() == 0)
+    const ft_vector<double> *vectors[] = {&first, &second, &result};
+    return (math_fft_with_locked_vectors(vectors, [&]() -> int32_t
     {
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    result_length = first.size() + second.size() - 1;
-    fft_length = math_fft_next_power_of_two(result_length);
-    if (math_fft_prepare_padded(first, fft_length, first_real, first_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_fft_prepare_padded(second, fft_length, second_real, second_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_fft(first_real, first_imag, first_fft_real, first_fft_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_fft(second_real, second_imag, second_fft_real, second_fft_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_fft_pointwise_multiply(first_fft_real, first_fft_imag,
-            second_fft_real, second_fft_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (math_ifft(first_fft_real, first_fft_imag,
-            second_fft_real, second_fft_imag) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    result.clear();
-    result.reserve(result_length);
-    index = 0;
-    while (index < result_length)
-    {
-        double value;
+        constexpr ft_size_t MAX_FFT_LENGTH = FT_SYSTEM_SIZE_MAX / sizeof(double) / 4U;
+        const ft_size_t first_length = first.size();
+        const ft_size_t second_length = second.size();
+        if (first_length == 0U || second_length == 0U)
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (first_length > MAX_FFT_LENGTH || second_length - 1U > MAX_FFT_LENGTH - first_length)
+            return (FT_ERR_NO_MEMORY);
 
-        value = second_fft_real[index];
-        if (std::fabs(value) < 1e-12)
-            value = 0.0;
-        result.push_back(value);
-        index++;
-    }
-    return (FT_ERR_SUCCESS);
+        const ft_size_t result_length = first_length + second_length - 1U;
+        ft_size_t fft_length = 1U;
+        while (fft_length < result_length)
+        {
+            if (fft_length > MAX_FFT_LENGTH / 2U)
+                return (FT_ERR_NO_MEMORY);
+            fft_length <<= 1U;
+        }
+
+        ft_vector<double> workspace;
+        const int32_t initialization_error = workspace.initialize();
+        if (initialization_error != FT_ERR_SUCCESS)
+            return (initialization_error);
+        workspace.resize(fft_length * 4U);
+        if (workspace.get_error() != FT_ERR_SUCCESS)
+            return (workspace.get_error());
+
+        double *first_real = workspace.begin();
+        double *first_imag = first_real + fft_length;
+        double *second_real = first_imag + fft_length;
+        double *second_imag = second_real + fft_length;
+        math_fft_copy(first_real, first.begin(), first_length);
+        math_fft_copy(second_real, second.begin(), second_length);
+        math_fft_transform(first_real, first_imag, fft_length, FT_FALSE);
+        math_fft_transform(second_real, second_imag, fft_length, FT_FALSE);
+        math_fft_multiply(first_real, first_imag, second_real, second_imag, fft_length);
+        math_fft_transform(first_real, first_imag, fft_length, FT_TRUE);
+
+        result.resize(result_length);
+        if (result.get_error() != FT_ERR_SUCCESS)
+            return (result.get_error());
+        double *output = result.begin();
+        ft_size_t index = 0U;
+        while (index < result_length)
+        {
+            double value = first_real[index];
+            if (std::fabs(value) < FFT_CONVOLUTION_ZERO_THRESHOLD)
+                value = 0.0;
+            output[index] = value;
+            index += 1U;
+        }
+        return (FT_ERR_SUCCESS);
+    }));
 }

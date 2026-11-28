@@ -8,7 +8,6 @@
 #include "../PThread/recursive_mutex.hpp"
 
 #include <chrono>
-#include <climits>
 #include <new>
 #include "../PThread/mutex.hpp"
 
@@ -198,8 +197,7 @@ int64_t time_timer::add_time(int64_t amount_ms) noexcept
     if (lock_error != FT_ERR_SUCCESS)
         return (result);
     if (this->_running == FT_TRUE && amount_ms >= static_cast<int64_t>(0)
-        && !(amount_ms > static_cast<int64_t>(0)
-            && this->_duration_ms > LONG_MAX - amount_ms))
+        && this->_duration_ms <= INT64_MAX - amount_ms)
     {
         std::chrono::steady_clock::time_point now;
         int64_t elapsed;
@@ -278,8 +276,16 @@ void time_timer::sleep_remaining(void) noexcept
             remaining = this->_duration_ms - elapsed;
     }
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    if (remaining > static_cast<int64_t>(0))
-        time_sleep_ms(static_cast<uint32_t>(remaining));
+    while (remaining > 0)
+    {
+        // UINT32_MAX is the infinite sleep sentinel on Windows.
+        constexpr uint32_t MAX_SLEEP_MS = UINT32_MAX - 1U;
+        uint32_t chunk = MAX_SLEEP_MS;
+        if (remaining < MAX_SLEEP_MS)
+            chunk = static_cast<uint32_t>(remaining);
+        time_sleep_ms(chunk);
+        remaining -= chunk;
+    }
     return ;
 }
 

@@ -97,50 +97,51 @@ int32_t game_quest::initialize() noexcept
 
 int32_t game_quest::initialize(const game_quest &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t copy_error;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
-        errno_abort_lifecycle(other._initialised_state, "game_quest::initialize(copy)", "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        errno_abort_lifecycle(other._initialised_state, "game_quest::initialize(copy)",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
     if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        this->set_error(FT_ERR_SUCCESS);
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
+        result = this->_description.initialize(other._description);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_objective.initialize(other._objective);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_reward_items.initialize(other._reward_items);
+        if (result == FT_ERR_SUCCESS)
         {
-            this->set_error(initialize_error);
-            return (initialize_error);
+            this->_id = other._id;
+            this->_phases = other._phases;
+            this->_current_phase = other._current_phase;
+            this->_reward_experience = other._reward_experience;
+            this->_initialised_state = FT_CLASS_STATE_INITIALISED;
         }
+        (void)other.unlock_internal(source_locked);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        (void)this->_description.destroy();
+        (void)this->_objective.destroy();
+        (void)this->_reward_items.destroy();
     }
-    this->_id = other._id;
-    this->_phases = other._phases;
-    this->_current_phase = other._current_phase;
-    this->_description = other._description;
-    this->_objective = other._objective;
-    this->_reward_experience = other._reward_experience;
-    copy_error = this->_reward_items.copy_from(other._reward_items);
-    if (copy_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(copy_error);
-        return (copy_error);
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(result));
 }
 
 int32_t game_quest::initialize(game_quest &&other) noexcept
@@ -150,60 +151,89 @@ int32_t game_quest::initialize(game_quest &&other) noexcept
 
 int32_t game_quest::move(game_quest &other) noexcept
 {
-    int32_t initialize_error;
-
     if (&other == this)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
-        errno_abort_lifecycle(other._initialised_state, "game_quest::move", "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        errno_abort_lifecycle(other._initialised_state, "game_quest::move",
+            "source object is uninitialised");
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_quest &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    (void)other.destroy();
-    other._initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (FT_ERR_SUCCESS);
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->_description.move(other._description);
+        if (result == FT_ERR_SUCCESS)
+        {
+            result = this->_objective.move(other._objective);
+            if (result == FT_ERR_SUCCESS)
+            {
+                result = this->_reward_items.move(other._reward_items);
+                if (result != FT_ERR_SUCCESS)
+                    (void)other._objective.move(this->_objective);
+            }
+            if (result != FT_ERR_SUCCESS)
+                (void)other._description.move(this->_description);
+        }
+        if (result == FT_ERR_SUCCESS)
+        {
+            this->_id = other._id;
+            this->_phases = other._phases;
+            this->_current_phase = other._current_phase;
+            this->_reward_experience = other._reward_experience;
+            this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+        }
+        (void)other.unlock_internal(source_locked);
+    }
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->_description.destroy();
+        (void)this->_objective.destroy();
+        (void)this->_reward_items.destroy();
+        return (this->set_error(result));
+    }
+    this->_mutex = other._mutex;
+    other._mutex = ft_nullptr;
+    result = other.destroy();
+    if (result == FT_ERR_SUCCESS)
+        this->set_error(source_error);
+    else
+        this->set_error(result);
+    return (result);
 }
 
 int32_t game_quest::destroy() noexcept
 {
-    int32_t description_error;
-    int32_t objective_error;
-    int32_t reward_items_error;
-    int32_t disable_error;
-    int32_t first_error;
-
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    first_error = FT_ERR_SUCCESS;
-    description_error = this->_description.destroy();
-    if (first_error == FT_ERR_SUCCESS && description_error != FT_ERR_SUCCESS)
-        first_error = description_error;
-    objective_error = this->_objective.destroy();
-    if (first_error == FT_ERR_SUCCESS && objective_error != FT_ERR_SUCCESS)
-        first_error = objective_error;
-    reward_items_error = this->_reward_items.destroy();
-    if (first_error == FT_ERR_SUCCESS && reward_items_error != FT_ERR_SUCCESS)
-        first_error = reward_items_error;
+        return (this->set_error(FT_ERR_SUCCESS));
+    int32_t result = this->disable_thread_safety();
+    const int32_t description_error = this->_description.destroy();
+    if (result == FT_ERR_SUCCESS)
+        result = description_error;
+    const int32_t objective_error = this->_objective.destroy();
+    if (result == FT_ERR_SUCCESS)
+        result = objective_error;
+    const int32_t reward_items_error = this->_reward_items.destroy();
+    if (result == FT_ERR_SUCCESS)
+        result = reward_items_error;
     this->_id = 0;
     this->_phases = 0;
     this->_current_phase = 0;
     this->_reward_experience = 0;
-    disable_error = this->disable_thread_safety();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    if (first_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(first_error);
-        return (first_error);
-    }
-    this->set_error(disable_error);
-    return (disable_error);
+    return (this->set_error(result));
 }
 
 int32_t game_quest::enable_thread_safety() noexcept
@@ -430,11 +460,11 @@ void game_quest::set_current_phase(int32_t phase) noexcept
     valid = (phase >= 0 && phase <= this->_phases);
     if (valid)
         this->_current_phase = phase;
+    (void)this->unlock_internal(lock_acquired);
     if (valid == FT_TRUE)
         this->set_error(FT_ERR_SUCCESS);
     else
         this->set_error(FT_ERR_INVALID_ARGUMENT);
-    (void)this->unlock_internal(lock_acquired);
     return ;
 }
 
@@ -458,9 +488,16 @@ void game_quest::set_description(const ft_string &description) noexcept
         this->set_error(lock_error);
         return ;
     }
-    this->_description = description;
-    this->set_error(FT_ERR_SUCCESS);
+    int32_t result;
+    if (this->_description.is_initialised() && description.is_initialised())
+        result = this->_description.assign(description);
+    else
+    {
+        this->_description = description;
+        result = this->_description.get_error();
+    }
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
     return ;
 }
 
@@ -484,9 +521,16 @@ void game_quest::set_objective(const ft_string &objective) noexcept
         this->set_error(lock_error);
         return ;
     }
-    this->_objective = objective;
-    this->set_error(FT_ERR_SUCCESS);
+    int32_t result;
+    if (this->_objective.is_initialised() && objective.is_initialised())
+        result = this->_objective.assign(objective);
+    else
+    {
+        this->_objective = objective;
+        result = this->_objective.get_error();
+    }
     (void)this->unlock_internal(lock_acquired);
+    this->set_error(result);
     return ;
 }
 
@@ -549,7 +593,7 @@ void game_quest::set_reward_items(const ft_vector<ft_sharedptr<game_item> > &ite
         this->set_error(lock_error);
         return ;
     }
-    copy_error = this->_reward_items.copy_from(items);
+    copy_error = this->_reward_items.replace_from(items);
     (void)this->unlock_internal(lock_acquired);
     if (copy_error != FT_ERR_SUCCESS)
     {
@@ -582,21 +626,23 @@ ft_bool game_quest::is_complete() const noexcept
 
 void game_quest::advance_phase() noexcept
 {
-    ft_bool lock_acquired;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_quest::advance_phase");
-    int32_t lock_error;
-
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return ;
-    }
-    if (this->_current_phase < this->_phases)
-        this->_current_phase += 1;
-    this->set_error(FT_ERR_SUCCESS);
-    (void)this->unlock_internal(lock_acquired);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_quest::advance_phase");
+    (void)this->advance_phase_internal(FT_FALSE);
     return ;
+}
+
+int32_t game_quest::advance_phase_internal(ft_bool require_incomplete) noexcept
+{
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        if (this->_current_phase < this->_phases)
+            ++this->_current_phase;
+        else if (require_incomplete)
+            result = FT_ERR_GAME_GENERAL_ERROR;
+        (void)this->unlock_internal(lock_acquired);
+    }
+    return (this->set_error(result));
 }

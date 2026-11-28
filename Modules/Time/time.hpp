@@ -169,10 +169,11 @@ ft_bool     time_async_sleep_is_complete(const t_time_async_sleep *sleep_state);
 int64_t     time_async_sleep_remaining_ms(t_time_async_sleep *sleep_state);
 int32_t     time_async_sleep_poll(event_loop *loop, t_time_async_sleep *sleep_state);
 
+#ifdef LIBFT_TEST_BUILD
 typedef std::chrono::system_clock::time_point (*t_time_clock_now_hook)(void);
-
 void        time_set_clock_now_hook(t_time_clock_now_hook hook);
 void        time_reset_clock_now_hook(void);
+#endif
 
 void        time_benchmark_init(t_time_benchmark *benchmark);
 void        time_benchmark_reset(t_time_benchmark *benchmark);

@@ -35,6 +35,7 @@ The `YAML` module provides a small YAML value tree with scalar, list, and map no
 - `yaml_read_from_file(const char *file_path)` - Parses YAML from a file.
 - `yaml_read_from_backend(ft_document_source &source)` - Parses YAML from an abstract source.
 - `yaml_write_to_string(const yaml_value *value)` - Serializes a YAML tree into an `ft_string`.
+- `yaml_write_to_string(const yaml_value *value, ft_string &output)` - Replaces the output with the serialized YAML after serialization succeeds.
 - `yaml_write_to_file(const char *file_path, const yaml_value *value)` - Writes YAML to a file.
 - `yaml_write_to_backend(ft_document_sink &sink, const yaml_value *value)` - Writes YAML to an abstract sink.
 - `yaml_free(yaml_value *value)` - Recursively frees a YAML tree.

@@ -8,6 +8,10 @@
 #ifndef LIBFT_TEST_BUILD
 #endif
 
+static_assert(ft_strlen("compile\0time") == 7);
+static_assert(ft_strlen_size_t("compile\0time") == 7U);
+static_assert(ft_strlen_size_t(nullptr) == 0U);
+
 FT_TEST(test_basic_strlen_nullptr)
 {
     FT_ASSERT_EQ(0, ft_strlen(ft_nullptr));

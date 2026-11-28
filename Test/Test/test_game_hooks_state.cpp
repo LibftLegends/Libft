@@ -9,7 +9,10 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include <cstdint>
+#include <atomic>
+#include <chrono>
 #include <new>
+#include <thread>
 
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/limits.hpp"
@@ -207,5 +210,72 @@ FT_TEST(test_game_hooks_move_source_destroy_failure_rolls_back_destination)
     FT_ASSERT_EQ(FT_TRUE, source.is_thread_safe());
     source._mutex->unlock_state(lock_acquired);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.disable_thread_safety());
+    return (1);
+}
+
+FT_TEST(test_game_hooks_move_preserves_locked_destination)
+{
+    game_hooks source;
+    game_hooks destination;
+    ft_bool acquired = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.lock(&acquired));
+    FT_ASSERT_EQ(FT_TRUE, acquired);
+    const int32_t result = destination.move(source);
+    destination.unlock(acquired);
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, source._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, destination._initialised_state);
+    FT_ASSERT_EQ(FT_TRUE, destination.is_thread_safe());
+    return (1);
+}
+
+FT_TEST(test_game_state_dispatch_releases_lock_before_running_hooks)
+{
+    game_state state;
+    game_character character;
+    ft_sharedptr<game_hooks> hooks(new game_hooks());
+    ft_sharedptr<game_hooks> empty;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, empty.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks->initialize());
+    std::atomic<ft_bool> entered(FT_FALSE);
+    std::atomic<ft_bool> cleared(FT_FALSE);
+    std::atomic<ft_bool> finished(FT_FALSE);
+    ft_bool cleared_during_callback = FT_FALSE;
+    uint32_t calls = 0U;
+    hooks->set_on_character_damaged([&](game_character &, int32_t, uint8_t)
+    {
+        entered.store(FT_TRUE);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!cleared.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        cleared_during_callback = cleared.load();
+        ++calls;
+    });
+    state.set_hooks(hooks);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, hooks.destroy());
+    std::thread clearer([&]()
+    {
+        while (!entered.load() && !finished.load())
+            std::this_thread::yield();
+        if (entered.load())
+        {
+            state.set_hooks(empty);
+            cleared.store(FT_TRUE);
+        }
+    });
+    state.dispatch_character_damaged(character, 1, 0);
+    finished.store(FT_TRUE);
+    clearer.join();
+    FT_ASSERT_EQ(FT_TRUE, cleared_during_callback);
+    FT_ASSERT_EQ(1U, calls);
+    state.dispatch_character_damaged(character, 1, 0);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.get_error());
+    FT_ASSERT_EQ(1U, calls);
     return (1);
 }

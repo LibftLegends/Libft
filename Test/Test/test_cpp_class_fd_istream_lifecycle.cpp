@@ -195,9 +195,16 @@ FT_TEST(test_cpp_class_fd_istream_move_constructor_preserves_readability)
 
     ft_fd_istream moved_stream;
 
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.ft_istream::enable_thread_safety());
+    pt_recursive_mutex *descriptor_mutex = source_stream._mutex;
+    pt_recursive_mutex *base_mutex = source_stream.ft_istream::_mutex;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.move(source_stream));
     FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source_stream._initialised_state);
+    FT_ASSERT_EQ(ft_nullptr, source_stream._mutex);
+    FT_ASSERT_EQ(ft_nullptr, source_stream.ft_istream::_mutex);
+    FT_ASSERT_EQ(descriptor_mutex, moved_stream._mutex);
+    FT_ASSERT_EQ(base_mutex, moved_stream.ft_istream::_mutex);
     FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, moved_stream._initialised_state);
     FT_ASSERT_EQ(read_descriptor, moved_stream.get_file_descriptor());
     FT_ASSERT_EQ(FT_TRUE, moved_stream.is_thread_safe());
@@ -211,6 +218,29 @@ FT_TEST(test_cpp_class_fd_istream_move_constructor_preserves_readability)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.destroy());
     close(read_descriptor);
     close(write_descriptor);
+    return (1);
+}
+
+FT_TEST(test_cpp_class_fd_istream_failed_descriptor_lock_keeps_source_for_retry)
+{
+    ft_fd_istream source;
+    ft_fd_istream destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    source.set_file_descriptor(17);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    pt_recursive_mutex *descriptor_mutex = source._mutex;
+
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    const int32_t result = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, source.ft_istream::_initialised_state);
+    FT_ASSERT_EQ(descriptor_mutex, source._mutex);
+    FT_ASSERT_EQ(17, source.get_file_descriptor());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(descriptor_mutex, destination._mutex);
+    FT_ASSERT_EQ(17, destination.get_file_descriptor());
     return (1);
 }
 

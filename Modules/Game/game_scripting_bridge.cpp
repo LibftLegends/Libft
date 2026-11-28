@@ -5,7 +5,6 @@
 #include "../Errno/errno.hpp"
 #include "../Basic/basic.hpp"
 #include "../Basic/class_nullptr.hpp"
-#include "../Printf/printf.hpp"
 #include "../System_utils/system_utils.hpp"
 #include "../Errno/errno_internal.hpp"
 #include <cstdio>
@@ -66,17 +65,50 @@ static void trim_whitespace(ft_string &target) noexcept
     return ;
 }
 
-static void game_script_delete_string(ft_string *string) noexcept
+static int32_t game_script_copy_line(const ft_string &script, const char *data,
+    ft_size_t start, ft_size_t count, ft_string &line) noexcept
 {
-    if (string == ft_nullptr)
-        return ;
-    (void)string->destroy();
-    delete string;
-    return ;
+    if (!script.is_thread_safe())
+        return (line.assign(data + start, count));
+    ft_string *substring = script.substr(start, count);
+    if (substring == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    const int32_t result = line.assign(*substring);
+    delete substring;
+    return (result);
 }
 
 thread_local int32_t game_script_context::_last_error = FT_ERR_SUCCESS;
 thread_local int32_t game_script_bridge::_last_error = FT_ERR_SUCCESS;
+
+template <ft_size_t Size>
+static ft_bool game_script_word_matches(const ft_string &value, const char (&word)[Size]) noexcept
+{
+    return (value.size() == Size - 1U && ft_strcasecmp(value.c_str(), word) == 0);
+}
+
+static ft_bool game_script_uses_legacy_commands(const ft_string &script)
+    noexcept
+{
+    const char *data;
+
+    data = script.c_str();
+    if (data == ft_nullptr)
+        return (FT_FALSE);
+    if (script.size() == 0U)
+        return (FT_FALSE);
+    if (ft_strstr(data, "set ") != ft_nullptr
+        || ft_strstr(data, "unset ") != ft_nullptr
+        || ft_strstr(data, "call ") != ft_nullptr)
+        return (FT_TRUE);
+    if (ft_strstr(data, "\n") != ft_nullptr
+        || ft_strstr(data, "\r") != ft_nullptr)
+        return (FT_TRUE);
+    if (ft_strstr(data, "(") == ft_nullptr
+        && ft_strstr(data, ";") == ft_nullptr)
+        return (FT_TRUE);
+    return (FT_FALSE);
+}
 
 int32_t game_script_context::set_error(int32_t error_code) noexcept
 {
@@ -245,8 +277,6 @@ int32_t game_script_context::initialize(const game_script_context &other) noexce
 
 int32_t game_script_context::move(game_script_context &other) noexcept
 {
-    int32_t initialize_error;
-
     if (this == &other)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
@@ -256,12 +286,33 @@ int32_t game_script_context::move(game_script_context &other) noexcept
         this->set_error(FT_ERR_INVALID_STATE);
         return (FT_ERR_INVALID_STATE);
     }
-    initialize_error = this->initialize(static_cast<const game_script_context &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
-    return (FT_ERR_SUCCESS);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+        return (this->initialize(static_cast<const game_script_context &>(other)));
+    const int32_t destroy_error = this->destroy();
+    if (destroy_error != FT_ERR_SUCCESS)
+        return (destroy_error);
+    int32_t result = this->_world.initialize();
+    if (result != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(result));
+    }
+    this->_world = other._world;
+    result = this->_variables.move(other._variables);
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->_variables.destroy();
+        (void)this->_world.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(result));
+    }
+    this->_state = other._state;
+    this->_user_data = other._user_data;
+    this->_result_integer = other._result_integer;
+    this->_result_integer_set = other._result_integer_set;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)other.destroy();
+    return (this->set_error(FT_ERR_SUCCESS));
 }
 
 int32_t game_script_context::destroy() noexcept
@@ -453,26 +504,12 @@ int32_t game_script_bridge::set_error(int32_t error_code) noexcept
 
 ft_bool game_script_bridge::is_supported_language(const ft_string &language) noexcept
 {
-    ft_string normalized;
-    char *data;
-
-    normalized = language;
-    data = normalized.data();
-    if (data)
-        ft_to_lower(data);
-    if (normalized == "lua")
-        return (FT_TRUE);
-    if (normalized == "python")
-        return (FT_TRUE);
-    return (FT_FALSE);
+    return (game_script_word_matches(language, "custom"));
 }
 
 game_script_bridge::game_script_bridge() noexcept
     : _world(), _callbacks(), _language(), _max_operations(32),
-      _lua_instruction_limit(100000), _lua_instruction_count(0),
-      _lua_callback_error(FT_ERR_SUCCESS),
-      _lua_memory_limit(16U * 1024U * 1024U), _lua_memory_used(0U),
-      _lua_state(ft_nullptr), _lua_context(ft_nullptr),
+      _custom_engine(), _custom_context(ft_nullptr),
       _initialised_state(FT_CLASS_STATE_UNINITIALISED),
       _mutex(ft_nullptr)
 {
@@ -492,7 +529,7 @@ int32_t game_script_bridge::initialize() noexcept
         this->set_error(world_error);
         return (world_error);
     }
-    return (this->initialize(world, "lua"));
+    return (this->initialize(world, "custom"));
 }
 
 int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
@@ -510,13 +547,7 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         return (FT_ERR_INVALID_STATE);
     }
     this->_max_operations = 32;
-    this->_lua_instruction_limit = 100000;
-    this->_lua_instruction_count = 0;
-    this->_lua_callback_error = FT_ERR_SUCCESS;
-    this->_lua_memory_limit = 16U * 1024U * 1024U;
-    this->_lua_memory_used = 0U;
-    this->_lua_state = ft_nullptr;
-    this->_lua_context = ft_nullptr;
+    this->_custom_context = ft_nullptr;
     map_error = this->_callbacks.initialize();
     if (map_error != FT_ERR_SUCCESS)
     {
@@ -536,7 +567,8 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
     if (language)
         this->_language = language;
     else
-        this->_language = "lua";
+        this->_language = "custom";
+    ft_to_lower(this->_language.data());
     if (game_script_bridge::is_supported_language(this->_language) == FT_FALSE)
     {
         (void)this->_world.destroy();
@@ -545,9 +577,21 @@ int32_t game_script_bridge::initialize(const ft_sharedptr<game_world> &world,
         this->set_error(FT_ERR_INVALID_ARGUMENT);
         return (FT_ERR_INVALID_ARGUMENT);
     }
-    map_error = this->initialize_lua_runtime();
+    map_error = this->_custom_engine.initialize();
     if (map_error != FT_ERR_SUCCESS)
     {
+        (void)this->_custom_engine.destroy();
+        (void)this->_world.destroy();
+        (void)this->_callbacks.destroy();
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        this->set_error(map_error);
+        return (map_error);
+    }
+    map_error = this->_custom_engine.set_operation_limit(
+        FT_SCRIPTING_MAX_OPERATIONS);
+    if (map_error != FT_ERR_SUCCESS)
+    {
+        (void)this->_custom_engine.destroy();
         (void)this->_world.destroy();
         (void)this->_callbacks.destroy();
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
@@ -579,7 +623,9 @@ int32_t game_script_bridge::destroy() noexcept
     current_error = this->disable_thread_safety();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
-    this->destroy_lua_runtime();
+    current_error = this->_custom_engine.destroy();
+    if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
+        first_error = current_error;
     current_error = this->_callbacks.destroy();
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
@@ -587,11 +633,8 @@ int32_t game_script_bridge::destroy() noexcept
     if (first_error == FT_ERR_SUCCESS && current_error != FT_ERR_SUCCESS)
         first_error = current_error;
     this->_language.clear();
+    this->_custom_context = ft_nullptr;
     this->_max_operations = 32;
-    this->_lua_instruction_limit = 100000;
-    this->_lua_instruction_count = 0;
-    this->_lua_callback_error = FT_ERR_SUCCESS;
-    this->_lua_memory_limit = 16U * 1024U * 1024U;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
     this->set_error(first_error);
     return (first_error);
@@ -599,13 +642,6 @@ int32_t game_script_bridge::destroy() noexcept
 
 int32_t game_script_bridge::move(game_script_bridge &other) noexcept
 {
-    int32_t destroy_error;
-    int32_t initialize_error;
-    Pair<ft_string, ft_function<int32_t(game_script_context &,
-        const ft_vector<ft_string> &)> > *entry;
-    Pair<ft_string, ft_function<int32_t(game_script_context &,
-        const ft_vector<ft_string> &)> > *entry_end;
-
     if (&other == this)
         return (FT_ERR_SUCCESS);
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
@@ -615,7 +651,7 @@ int32_t game_script_bridge::move(game_script_bridge &other) noexcept
         this->set_error(FT_ERR_INVALID_STATE);
         return (FT_ERR_INVALID_STATE);
     }
-    destroy_error = this->destroy();
+    const int32_t destroy_error = this->destroy();
     if (destroy_error != FT_ERR_SUCCESS)
         return (destroy_error);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
@@ -624,24 +660,38 @@ int32_t game_script_bridge::move(game_script_bridge &other) noexcept
         this->set_error(other.get_error());
         return (FT_ERR_SUCCESS);
     }
-    initialize_error = this->initialize(other._world, other._language.c_str());
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    this->_max_operations = other._max_operations;
-    entry = other._callbacks.end() - other._callbacks.size();
-    entry_end = other._callbacks.end();
-    while (entry != entry_end)
+    int32_t result = this->initialize(other._world, other._language.c_str());
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    result = this->_custom_engine.set_operation_limit(other._custom_engine.get_operation_limit());
+    const auto *entry_end = other._callbacks.end();
+    const auto *entry = entry_end;
+    const ft_size_t callback_count = other._callbacks.size();
+    if (callback_count != 0U)
+        entry -= callback_count;
+    // Native bindings carry the bridge address. Rebuild only the active bindings.
+    while (result == FT_ERR_SUCCESS && entry != entry_end)
     {
-        initialize_error = this->register_function(entry->key, entry->value);
-        if (initialize_error != FT_ERR_SUCCESS)
+        if (!entry->value)
+            result = FT_ERR_INVALID_ARGUMENT;
+        else
         {
-            (void)this->destroy();
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            this->set_error(initialize_error);
-            return (initialize_error);
+            uint32_t native_id;
+            result = this->_custom_engine.register_native(entry->key.c_str(),
+                &game_script_bridge::custom_callback_dispatch, this, &native_id);
+            if (result == FT_ERR_ALREADY_EXISTS)
+                result = FT_ERR_SUCCESS;
         }
-        entry++;
+        ++entry;
     }
+    if (result == FT_ERR_SUCCESS)
+        result = this->_callbacks.move(other._callbacks);
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->_max_operations = other._max_operations;
     (void)other.destroy();
     this->set_error(other.get_error());
     return (FT_ERR_SUCCESS);
@@ -717,6 +767,7 @@ void game_script_bridge::set_max_operations(int32_t limit) noexcept
 {
     ft_bool lock_acquired;
     int32_t lock_error;
+    int32_t engine_error;
 
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
@@ -733,7 +784,13 @@ void game_script_bridge::set_max_operations(int32_t limit) noexcept
         return ;
     }
     this->_max_operations = limit;
-    this->set_error(FT_ERR_SUCCESS);
+    if (limit > 0)
+        engine_error = this->_custom_engine.set_operation_limit(
+            static_cast<uint32_t>(limit));
+    else
+        engine_error = this->_custom_engine.set_operation_limit(
+            FT_SCRIPTING_MAX_OPERATIONS);
+    this->set_error(engine_error);
     this->unlock_internal(lock_acquired);
     return ;
 }
@@ -752,6 +809,7 @@ int32_t game_script_bridge::register_function(const ft_string &name, const ft_fu
 {
     ft_bool lock_acquired;
     int32_t lock_error;
+    uint32_t native_id;
     Pair<ft_string, ft_function<int32_t(game_script_context &, const ft_vector<ft_string> &)> > *entry;
 
     lock_acquired = FT_FALSE;
@@ -777,9 +835,29 @@ int32_t game_script_bridge::register_function(const ft_string &name, const ft_fu
         return (FT_ERR_SUCCESS);
     }
     this->_callbacks.insert(name, callback);
-    this->set_error(FT_ERR_SUCCESS);
+    int32_t error_code = this->_callbacks.get_error();
+    if (error_code == FT_ERR_SUCCESS)
+    {
+        const auto *inserted = this->_callbacks.find(name);
+        if (inserted == this->_callbacks.end())
+            error_code = FT_ERR_INVALID_STATE;
+        else
+        {
+            if (!inserted->value)
+                error_code = FT_ERR_NO_MEMORY;
+            else
+            {
+                error_code = this->_custom_engine.register_native(inserted->key.c_str(),
+                    &game_script_bridge::custom_callback_dispatch, this, &native_id);
+                if (error_code == FT_ERR_ALREADY_EXISTS)
+                    error_code = FT_ERR_SUCCESS;
+            }
+            if (error_code != FT_ERR_SUCCESS)
+                this->_callbacks.remove(name);
+        }
+    }
     this->unlock_internal(lock_acquired);
-    return (FT_ERR_SUCCESS);
+    return (this->set_error(error_code));
 }
 
 int32_t game_script_bridge::remove_function(const ft_string &name) noexcept
@@ -796,7 +874,6 @@ int32_t game_script_bridge::remove_function(const ft_string &name) noexcept
     }
 
     this->_callbacks.remove(name);
-    this->remove_lua_callback(name);
     this->set_error(FT_ERR_SUCCESS);
     this->unlock_internal(lock_acquired);
     return (FT_ERR_SUCCESS);
@@ -828,35 +905,29 @@ void game_script_bridge::tokenize_line(const ft_string &line, ft_vector<ft_strin
             && data[index] != '\t')
             index++;
         end = index;
-        ft_string *token;
-
-        token = line.substr(start, end - start);
-        if (token == ft_nullptr)
+        ft_string token;
+        if (token.initialize() != FT_ERR_SUCCESS
+            || token.assign(data + start, end - start) != FT_ERR_SUCCESS)
             return ;
-        if (tokens.push_back(ft_move(*token)) != FT_ERR_SUCCESS)
-        {
-            game_script_delete_string(token);
+        if (tokens.push_back(ft_move(token)) != FT_ERR_SUCCESS)
             return ;
-        }
-        game_script_delete_string(token);
     }
     return ;
 }
 
 int32_t game_script_bridge::handle_set(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept
 {
-    ft_string value;
-    ft_size_t index;
-    ft_size_t count;
-
-    if (tokens.size() < 3)
+    const ft_size_t count = tokens.size();
+    if (count < 3U)
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    if (count == 3U)
     {
-        this->set_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_ARGUMENT);
+        context.set_variable(tokens[1], tokens[2]);
+        return (this->set_error(FT_ERR_SUCCESS));
     }
+    ft_string value;
     value = tokens[2];
-    count = tokens.size();
-    index = 3;
+    ft_size_t index = 3U;
     while (index < count)
     {
         value.append(" ");
@@ -880,64 +951,26 @@ int32_t game_script_bridge::handle_unset(game_script_context &context, const ft_
     return (FT_ERR_SUCCESS);
 }
 
-int32_t game_script_bridge::handle_call(game_script_context &context, const ft_vector<ft_string> &tokens) noexcept
+int32_t game_script_bridge::handle_call(game_script_context &context, ft_vector<ft_string> &tokens) noexcept
 {
-    ft_vector<ft_string> arguments;
-    Pair<ft_string, ft_function<int32_t(game_script_context &, const ft_vector<ft_string> &)> > *entry;
-    ft_size_t count;
-    ft_size_t index;
-    int32_t initialize_error;
-    int32_t result;
-
     if (tokens.size() < 2)
-    {
-        this->set_error(FT_ERR_INVALID_ARGUMENT);
-        return (FT_ERR_INVALID_ARGUMENT);
-    }
-    entry = this->_callbacks.find(tokens[1]);
+        return (this->set_error(FT_ERR_INVALID_ARGUMENT));
+    auto *entry = this->_callbacks.find(tokens[1]);
     if (entry == this->_callbacks.end())
-    {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
+        return (this->set_error(FT_ERR_NOT_FOUND));
     if (!entry->value)
-    {
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
-    }
-    initialize_error = arguments.initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(arguments.get_error());
-        return (arguments.get_error());
-    }
-    count = tokens.size();
-    index = 2;
-    while (index < count)
-    {
-        initialize_error = arguments.push_back(tokens[index]);
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
-        index += 1;
-    }
-    result = entry->value(context, arguments);
-    if (result != FT_ERR_SUCCESS)
-    {
-        this->set_error(result);
-        return (result);
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+        return (this->set_error(FT_ERR_INVALID_STATE));
+    int32_t result = tokens.erase_at(1U);
+    if (result == FT_ERR_SUCCESS)
+        result = tokens.erase_at(0U);
+    if (result == FT_ERR_SUCCESS)
+        result = entry->value(context, tokens);
+    return (this->set_error(result));
 }
 
 int32_t game_script_bridge::execute_line(game_script_context &context, const ft_string &line) noexcept
 {
     ft_vector<ft_string> tokens;
-    ft_string command;
-    char *command_data;
     int32_t initialize_error;
 
     initialize_error = tokens.initialize();
@@ -953,18 +986,144 @@ int32_t game_script_bridge::execute_line(game_script_context &context, const ft_
         this->set_error(FT_ERR_SUCCESS);
         return (FT_ERR_SUCCESS);
     }
-    command = tokens[0];
-    command_data = command.data();
-    if (command_data)
-        ft_to_lower(command_data);
-    if (command == "call")
+    const ft_string &command = tokens[0];
+    if (game_script_word_matches(command, "call"))
         return (this->handle_call(context, tokens));
-    if (command == "set")
+    if (game_script_word_matches(command, "set"))
         return (this->handle_set(context, tokens));
-    if (command == "unset")
+    if (game_script_word_matches(command, "unset"))
         return (this->handle_unset(context, tokens));
     this->set_error(FT_ERR_INVALID_ARGUMENT);
     return (FT_ERR_INVALID_ARGUMENT);
+}
+
+static const char *game_script_format_integer(int64_t value, char *end) noexcept
+{
+    *--end = '\0';
+    uint64_t magnitude = static_cast<uint64_t>(value);
+    if (value < 0)
+        magnitude = uint64_t{0} - magnitude;
+    do
+    {
+        *--end = static_cast<char>('0' + magnitude % 10U);
+        magnitude /= 10U;
+    }
+    while (magnitude != 0U);
+    if (value < 0)
+        *--end = '-';
+    return (end);
+}
+
+int32_t game_script_bridge::custom_callback_dispatch(
+    const scripting_call_context *call_context,
+    const scripting_value *arguments, uint32_t argument_count,
+    scripting_value *result, void *user_data) noexcept
+{
+    game_script_bridge *bridge;
+    const char *native_name;
+    ft_vector<ft_string> callback_arguments;
+    Pair<ft_string, ft_function<int32_t(game_script_context &,
+        const ft_vector<ft_string> &)> > *entry;
+    uint32_t argument_index;
+    int32_t error_code;
+    char number_buffer[21];
+
+    bridge = static_cast<game_script_bridge *>(user_data);
+    if (bridge == ft_nullptr || call_context == ft_nullptr
+        || call_context->engine == ft_nullptr || result == ft_nullptr
+        || bridge->_custom_context == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (argument_count > 0U && arguments == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    error_code = call_context->engine->get_native_name(
+        call_context->native_id, &native_name);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    entry = bridge->_callbacks.find_as(native_name);
+    if (entry == bridge->_callbacks.end() || !entry->value)
+        return (FT_ERR_NOT_FOUND);
+    error_code = callback_arguments.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    argument_index = 0U;
+    while (argument_index < argument_count)
+    {
+        ft_string argument;
+        const scripting_value &source = arguments[argument_index];
+
+        if (source.type == SCRIPTING_VALUE_INTEGER)
+            error_code = argument.initialize(game_script_format_integer(source.integer_value,
+                number_buffer + sizeof(number_buffer)));
+        else if (source.type == SCRIPTING_VALUE_STRING)
+        {
+            error_code = argument.initialize();
+            if (error_code == FT_ERR_SUCCESS)
+                error_code = argument.assign(source.string_value, source.string_length);
+        }
+        else if (source.type == SCRIPTING_VALUE_BOOLEAN)
+        {
+            if (source.boolean_value == FT_FALSE)
+                error_code = argument.initialize("0");
+            else
+                error_code = argument.initialize("1");
+        }
+        else
+            return (FT_ERR_INVALID_ARGUMENT);
+        if (error_code == FT_ERR_SUCCESS)
+            error_code = callback_arguments.push_back(ft_move(argument));
+        if (error_code != FT_ERR_SUCCESS)
+            return (error_code);
+        argument_index += 1U;
+    }
+    bridge->_custom_context->clear_result();
+    error_code = entry->value(*bridge->_custom_context,
+        callback_arguments);
+    if (error_code != FT_ERR_SUCCESS)
+        return (error_code);
+    if (bridge->_custom_context->has_result_integer() == FT_TRUE)
+        return (scripting_value_set_integer(result,
+            bridge->_custom_context->get_result_integer()));
+    return (scripting_value_set_null(result));
+}
+
+int32_t game_script_bridge::execute_custom_with_user_data(
+    const ft_string &script, game_state *state, void *user_data) noexcept
+{
+    ft_bool lock_acquired;
+    int32_t error_code;
+    int32_t destroy_error;
+    scripting_value result;
+    game_script_context context;
+
+    lock_acquired = FT_FALSE;
+    error_code = this->lock_internal(&lock_acquired);
+    if (error_code != FT_ERR_SUCCESS)
+        return (this->set_error(error_code));
+    if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_NOT_INITIALISED));
+    }
+    if (script.empty())
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(FT_ERR_SUCCESS));
+    }
+    error_code = context.initialize(state, this->_world);
+    if (error_code != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(error_code));
+    }
+    context.set_user_data(user_data);
+    this->_custom_context = &context;
+    error_code = this->_custom_engine.execute(script.c_str(), &result);
+    this->_custom_context = ft_nullptr;
+    destroy_error = context.destroy();
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = destroy_error;
+    this->unlock_internal(lock_acquired);
+    return (this->set_error(error_code));
 }
 
 int32_t game_script_bridge::execute(const ft_string &script, game_state &state) noexcept
@@ -984,6 +1143,9 @@ int32_t game_script_bridge::execute_with_user_data(const ft_string &script,
     ft_size_t start;
     int32_t operations;
 
+    if (this->_language == "custom"
+        && game_script_uses_legacy_commands(script) == FT_FALSE)
+        return (this->execute_custom_with_user_data(script, state, user_data));
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -1009,11 +1171,16 @@ int32_t game_script_bridge::execute_with_user_data(const ft_string &script,
     length = script.size();
     start = 0;
     operations = 0;
+    ft_string line;
+    const int32_t line_initialize_error = line.initialize();
+    if (line_initialize_error != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(line_initialize_error));
+    }
     while (start <= length)
     {
         ft_size_t index;
-        ft_size_t count;
-        ft_string line;
         const char *line_data;
 
         if (start >= length)
@@ -1023,24 +1190,13 @@ int32_t game_script_bridge::execute_with_user_data(const ft_string &script,
             && data[index] != '\n'
             && data[index] != '\r')
             index++;
-        count = index - start;
-        ft_string *line_substring;
-
-        line_substring = script.substr(start, count);
-        if (line_substring == ft_nullptr)
+        const int32_t copy_error = game_script_copy_line(script, data, start,
+            index - start, line);
+        if (copy_error != FT_ERR_SUCCESS)
         {
-            this->set_error(FT_ERR_NO_MEMORY);
             this->unlock_internal(lock_acquired);
-            return (FT_ERR_NO_MEMORY);
+            return (this->set_error(copy_error));
         }
-        if (line.initialize(*line_substring) != FT_ERR_SUCCESS)
-        {
-            this->set_error(line.get_error());
-            game_script_delete_string(line_substring);
-            this->unlock_internal(lock_acquired);
-            return (line.get_error());
-        }
-        game_script_delete_string(line_substring);
         trim_whitespace(line);
         if (!line.empty())
         {
@@ -1098,11 +1254,16 @@ int32_t game_script_bridge::check_sandbox_capabilities(const ft_string &script, 
     length = script.size();
     start = 0;
     operations = 0;
+    ft_string line;
+    const int32_t line_initialize_error = line.initialize();
+    if (line_initialize_error != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(line_initialize_error));
+    }
     while (start <= length)
     {
         ft_size_t index;
-        ft_size_t count;
-        ft_string line;
         const char *line_data;
 
         if (start >= length)
@@ -1112,24 +1273,13 @@ int32_t game_script_bridge::check_sandbox_capabilities(const ft_string &script, 
             && data[index] != '\n'
             && data[index] != '\r')
             index++;
-        count = index - start;
-        ft_string *line_substring;
-
-        line_substring = script.substr(start, count);
-        if (line_substring == ft_nullptr)
+        const int32_t copy_error = game_script_copy_line(script, data, start,
+            index - start, line);
+        if (copy_error != FT_ERR_SUCCESS)
         {
-            this->set_error(FT_ERR_NO_MEMORY);
             this->unlock_internal(lock_acquired);
-            return (FT_ERR_NO_MEMORY);
+            return (this->set_error(copy_error));
         }
-        if (line.initialize(*line_substring) != FT_ERR_SUCCESS)
-        {
-            this->set_error(line.get_error());
-            game_script_delete_string(line_substring);
-            this->unlock_internal(lock_acquired);
-            return (line.get_error());
-        }
-        game_script_delete_string(line_substring);
         trim_whitespace(line);
         if (!line.empty())
         {
@@ -1237,11 +1387,16 @@ int32_t game_script_bridge::validate_dry_run(const ft_string &script, ft_vector<
     length = script.size();
     start = 0;
     operations = 0;
+    ft_string line;
+    const int32_t line_initialize_error = line.initialize();
+    if (line_initialize_error != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(line_initialize_error));
+    }
     while (start <= length)
     {
         ft_size_t index;
-        ft_size_t count;
-        ft_string line;
         const char *line_data;
 
         if (start >= length)
@@ -1251,24 +1406,13 @@ int32_t game_script_bridge::validate_dry_run(const ft_string &script, ft_vector<
             && data[index] != '\n'
             && data[index] != '\r')
             index++;
-        count = index - start;
-        ft_string *line_substring;
-
-        line_substring = script.substr(start, count);
-        if (line_substring == ft_nullptr)
+        const int32_t copy_error = game_script_copy_line(script, data, start,
+            index - start, line);
+        if (copy_error != FT_ERR_SUCCESS)
         {
-            this->set_error(FT_ERR_NO_MEMORY);
             this->unlock_internal(lock_acquired);
-            return (FT_ERR_NO_MEMORY);
+            return (this->set_error(copy_error));
         }
-        if (line.initialize(*line_substring) != FT_ERR_SUCCESS)
-        {
-            this->set_error(line.get_error());
-            game_script_delete_string(line_substring);
-            this->unlock_internal(lock_acquired);
-            return (line.get_error());
-        }
-        game_script_delete_string(line_substring);
         trim_whitespace(line);
         if (!line.empty())
         {
@@ -1435,11 +1579,16 @@ int32_t game_script_bridge::inspect_bytecode_budget(const ft_string &script, int
     length = script.size();
     start = 0;
     operations = 0;
+    ft_string line;
+    const int32_t line_initialize_error = line.initialize();
+    if (line_initialize_error != FT_ERR_SUCCESS)
+    {
+        this->unlock_internal(lock_acquired);
+        return (this->set_error(line_initialize_error));
+    }
     while (start <= length)
     {
         ft_size_t index;
-        ft_size_t count;
-        ft_string line;
         const char *line_data;
 
         if (start >= length)
@@ -1449,24 +1598,13 @@ int32_t game_script_bridge::inspect_bytecode_budget(const ft_string &script, int
             && data[index] != '\n'
             && data[index] != '\r')
             index++;
-        count = index - start;
-        ft_string *line_substring;
-
-        line_substring = script.substr(start, count);
-        if (line_substring == ft_nullptr)
+        const int32_t copy_error = game_script_copy_line(script, data, start,
+            index - start, line);
+        if (copy_error != FT_ERR_SUCCESS)
         {
-            this->set_error(FT_ERR_NO_MEMORY);
             this->unlock_internal(lock_acquired);
-            return (FT_ERR_NO_MEMORY);
+            return (this->set_error(copy_error));
         }
-        if (line.initialize(*line_substring) != FT_ERR_SUCCESS)
-        {
-            this->set_error(line.get_error());
-            game_script_delete_string(line_substring);
-            this->unlock_internal(lock_acquired);
-            return (line.get_error());
-        }
-        game_script_delete_string(line_substring);
         trim_whitespace(line);
         if (!line.empty())
         {

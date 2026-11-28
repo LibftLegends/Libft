@@ -11,7 +11,9 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
 #include <cstdint>
+#include <memory>
 #include <new>
+#include <type_traits>
 
 template <typename EventType, typename... Args>
 class ft_event_emitter
@@ -108,7 +110,6 @@ ft_bool ft_event_emitter<EventType, Args...>::ensure_capacity_unlocked(ft_size_t
     ft_size_t maximum_capacity;
     ft_size_t new_capacity;
     Listener *new_data;
-    ft_size_t listener_index;
 
     if (desired <= this->_capacity)
         return (FT_TRUE);
@@ -140,13 +141,22 @@ ft_bool ft_event_emitter<EventType, Args...>::ensure_capacity_unlocked(ft_size_t
         set_error(FT_ERR_NO_MEMORY);
         return (FT_FALSE);
     }
-    listener_index = 0;
-    while (listener_index < this->_size)
+    if constexpr (std::is_trivially_move_constructible_v<Listener>
+        && std::is_trivially_destructible_v<Listener>)
     {
-        construct_at(&new_data[listener_index],
-            ft_move(this->_listeners[listener_index]));
-        destroy_at(&this->_listeners[listener_index]);
-        listener_index = listener_index + 1;
+        if (this->_size != 0U)
+            std::uninitialized_move_n(this->_listeners, this->_size, new_data);
+    }
+    else
+    {
+        ft_size_t listener_index = 0U;
+        while (listener_index < this->_size)
+        {
+            ::construct_at(&new_data[listener_index],
+                ft_move(this->_listeners[listener_index]));
+            ::destroy_at(&this->_listeners[listener_index]);
+            ++listener_index;
+        }
     }
     if (this->_listeners != ft_nullptr)
         cma_free(this->_listeners);
@@ -230,6 +240,11 @@ int32_t ft_event_emitter<EventType, Args...>::initialize()
     this->_listeners = ft_nullptr;
     this->_capacity = 0;
     this->_size = 0;
+    if (this->_configured_initial_capacity > FT_SYSTEM_SIZE_MAX / sizeof(Listener))
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (this->set_error(FT_ERR_OUT_OF_RANGE));
+    }
     if (this->_configured_initial_capacity > 0)
     {
         this->_listeners = static_cast<Listener *>(
@@ -397,7 +412,7 @@ void ft_event_emitter<EventType, Args...>::on(const EventType& event,
         (void)this->unlock_internal(lock_acquired);
         return ;
     }
-    construct_at(&this->_listeners[this->_size], Listener{event, callback});
+    ::new (static_cast<void *>(this->_listeners + this->_size)) Listener{event, callback};
     this->_size = this->_size + 1;
     (void)this->unlock_internal(lock_acquired);
     set_error(FT_ERR_SUCCESS);
@@ -448,7 +463,6 @@ void ft_event_emitter<EventType, Args...>::remove_listener(const EventType& even
     ft_bool lock_acquired;
     int32_t lock_error;
     ft_size_t listener_index;
-    ft_size_t shift_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_event_emitter::remove_listener");
     lock_acquired = FT_FALSE;
@@ -464,14 +478,24 @@ void ft_event_emitter<EventType, Args...>::remove_listener(const EventType& even
         if (this->_listeners[listener_index]._event == event
             && this->_listeners[listener_index]._callback == callback)
         {
-            destroy_at(&this->_listeners[listener_index]);
-            shift_index = listener_index;
-            while ((shift_index + 1) < this->_size)
+            if constexpr (std::is_trivially_copyable_v<Listener>
+                && std::is_trivially_move_assignable_v<Listener>)
             {
-                construct_at(&this->_listeners[shift_index],
-                    ft_move(this->_listeners[shift_index + 1]));
-                destroy_at(&this->_listeners[shift_index + 1]);
-                shift_index = shift_index + 1;
+                ft_memmove(this->_listeners + listener_index,
+                    this->_listeners + listener_index + 1U,
+                    (this->_size - listener_index - 1U) * sizeof(Listener));
+            }
+            else
+            {
+                ::destroy_at(&this->_listeners[listener_index]);
+                ft_size_t shift_index = listener_index;
+                while (shift_index + 1U < this->_size)
+                {
+                    ::construct_at(&this->_listeners[shift_index],
+                        ft_move(this->_listeners[shift_index + 1U]));
+                    ::destroy_at(&this->_listeners[shift_index + 1U]);
+                    ++shift_index;
+                }
             }
             this->_size = this->_size - 1;
             (void)this->unlock_internal(lock_acquired);

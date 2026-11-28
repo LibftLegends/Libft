@@ -75,3 +75,21 @@ FT_TEST(test_math_log_recovers_after_invalid_input)
     FT_ASSERT(math_fabs(result - std::log(10.0)) < 0.000000001);
     return (1);
 }
+
+FT_TEST(test_math_log_handles_nonfinite_inputs)
+{
+    const double infinity = std::numeric_limits<double>::infinity();
+    FT_ASSERT_EQ(infinity, math_log(infinity));
+    FT_ASSERT(math_isnan(math_log(-infinity)));
+    FT_ASSERT(math_isnan(math_log(-0.0)));
+    FT_ASSERT(math_isnan(math_log(std::numeric_limits<double>::quiet_NaN())));
+    return (1);
+}
+
+FT_TEST(test_math_log_resolves_values_just_below_unity)
+{
+    const double input = std::nextafter(1.0, 0.0);
+    const double expected = -std::numeric_limits<double>::epsilon() * 0.5;
+    FT_ASSERT(math_fabs(math_log(input) / expected - 1.0) < 1e-12);
+    return (1);
+}

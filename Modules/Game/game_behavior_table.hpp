@@ -24,6 +24,7 @@ class game_behavior_table
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t register_profile_snapshot(const game_behavior_profile &profile) noexcept;
         static int32_t set_error(int32_t error_code) noexcept;
 
     public:

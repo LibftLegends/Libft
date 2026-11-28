@@ -1,5 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Math/math.hpp"
+#include <limits>
+#include <cmath>
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
@@ -65,5 +67,16 @@ FT_TEST(test_math_fabs_consistent_after_nan)
     FT_ASSERT(math_isnan(result));
     result = math_fabs(-42.0);
     FT_ASSERT(math_fabs(result - 42.0) < 0.000001);
+    return (1);
+}
+
+FT_TEST(test_math_fabs_preserves_nan_sign)
+{
+    const double nan = std::copysign(std::numeric_limits<double>::quiet_NaN(), -1.0);
+    const double result = math_fabs(nan);
+    FT_ASSERT(math_isnan(result));
+    FT_ASSERT(std::signbit(result));
+    FT_ASSERT_EQ(0, math_signbit(result));
+    FT_ASSERT_EQ(0, math_isinf(result));
     return (1);
 }

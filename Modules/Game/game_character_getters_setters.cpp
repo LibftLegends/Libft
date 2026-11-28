@@ -1059,50 +1059,27 @@ const ft_map<int32_t, game_skill> &game_character::get_skills() const noexcept
 
 game_skill *game_character::get_skill(int32_t id) noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    Pair<int32_t, game_skill> *found;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->set_error(lock_error);
-        return (ft_nullptr);
-    }
-    found = this->_skills.find(id);
-    if (found == this->_skills.end())
-    {
-        this->set_error(FT_ERR_NOT_FOUND);
-        this->unlock_internal(lock_acquired);
-        return (ft_nullptr);
-    }
-    this->set_error(FT_ERR_SUCCESS);
-    this->unlock_internal(lock_acquired);
-    return (&found->value);
+    return (const_cast<game_skill *>(static_cast<const game_character *>(this)->get_skill(id)));
 }
 
 const game_skill *game_character::get_skill(int32_t id) const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    const Pair<int32_t, game_skill> *found;
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
     {
-        const_cast<game_character *>(this)->set_error(lock_error);
+        this->set_error(result);
         return (ft_nullptr);
     }
-    found = this->_skills.find(id);
-    if (found == this->_skills.end())
+    const game_skill *skill = ft_nullptr;
+    result = this->_skills.visit_value(id, [&skill](const game_skill &entry) noexcept
     {
-        const_cast<game_character *>(this)->set_error(FT_ERR_NOT_FOUND);
-        this->unlock_internal(lock_acquired);
-        return (ft_nullptr);
-    }
-    const_cast<game_character *>(this)->set_error(FT_ERR_SUCCESS);
+        skill = &entry;
+        return (FT_ERR_SUCCESS);
+    });
     this->unlock_internal(lock_acquired);
-    return (&found->value);
+    this->set_error(result);
+    return (skill);
 }
 
 ft_map<int32_t, game_buff> &game_character::get_buffs() noexcept
@@ -1307,6 +1284,16 @@ const game_reputation &game_character::get_reputation() const noexcept
     return (this->_reputation);
 }
 
+game_inventory &game_character::get_inventory() noexcept
+{
+    return (this->_inventory);
+}
+
+const game_inventory &game_character::get_inventory() const noexcept
+{
+    return (this->_inventory);
+}
+
 game_experience_table &game_character::get_experience_table() noexcept
 {
     ft_bool lock_acquired;
@@ -1369,11 +1356,13 @@ int32_t game_character::get_level() const noexcept
 
 ft_sharedptr<game_item> *game_character::get_equipped_item(int32_t slot) noexcept
 {
+    return (static_cast<const game_character *>(this)->get_equipped_item(slot));
+}
+
+ft_sharedptr<game_item> *game_character::get_equipped_item(int32_t slot) const noexcept
+{
     ft_bool lock_acquired;
     int32_t lock_error;
-    int32_t equipment_error;
-    ft_sharedptr<game_item> *item;
-
     lock_acquired = FT_FALSE;
     lock_error = this->lock_internal(&lock_acquired);
     if (lock_error != FT_ERR_SUCCESS)
@@ -1381,44 +1370,21 @@ ft_sharedptr<game_item> *game_character::get_equipped_item(int32_t slot) noexcep
         this->set_error(lock_error);
         return (ft_nullptr);
     }
-    item = this->_equipment.get_item(slot);
-    equipment_error = this->_equipment.get_error();
-    if (equipment_error != FT_ERR_SUCCESS)
-    {
-        this->handle_component_error(equipment_error);
-        this->unlock_internal(lock_acquired);
-        return (ft_nullptr);
-    }
-    this->set_error(FT_ERR_SUCCESS);
+    ft_sharedptr<game_item> *item = this->_equipment.get_item(slot);
+    this->set_error(this->_equipment.get_error());
     this->unlock_internal(lock_acquired);
     return (item);
 }
 
-ft_sharedptr<game_item> *game_character::get_equipped_item(int32_t slot) const noexcept
+int32_t game_character::read_equipped_item(int32_t slot, ft_sharedptr<game_item> &item) const noexcept
 {
-    ft_bool lock_acquired;
-    int32_t lock_error;
-    int32_t equipment_error;
-    ft_sharedptr<game_item> *item;
-
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_internal(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        const_cast<game_character *>(this)->set_error(lock_error);
-        return (ft_nullptr);
-    }
-    item = this->_equipment.get_item(slot);
-    equipment_error = this->_equipment.get_error();
-    if (equipment_error != FT_ERR_SUCCESS)
-    {
-        const_cast<game_character *>(this)->handle_component_error(equipment_error);
-        this->unlock_internal(lock_acquired);
-        return (ft_nullptr);
-    }
-    const_cast<game_character *>(this)->set_error(FT_ERR_SUCCESS);
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (this->set_error(result));
+    result = this->_equipment.read_item(slot, item);
     this->unlock_internal(lock_acquired);
-    return (item);
+    return (this->set_error(result));
 }
 
 int32_t game_character::get_error() const noexcept
@@ -1437,35 +1403,63 @@ const char *game_character::get_error_str() const noexcept
     return (ft_strerror(game_character::_last_error));
 }
 
-void game_character::set_physical_armor_internal(int32_t armor) noexcept
-{
-    int32_t index;
+static constexpr int32_t CHARACTER_ARMOR_CACHE_POINTS = 512;
 
-    this->_physical_armor = armor;
-    this->_current_physical_armor = armor;
-    this->_physical_damage_multiplier = 1.0;
-    index = 0;
+struct character_armor_multiplier_table
+{
+    double values[CHARACTER_ARMOR_CACHE_POINTS + 1];
+};
+
+static constexpr character_armor_multiplier_table make_armor_multiplier_table() noexcept
+{
+    character_armor_multiplier_table table{};
+    table.values[0] = 1.0;
+    int32_t index = 1;
+    while (index <= CHARACTER_ARMOR_CACHE_POINTS)
+    {
+        table.values[index] = table.values[index - 1] * FT_ARMOR_POINT_REDUCTION;
+        ++index;
+    }
+    return (table);
+}
+
+static constexpr character_armor_multiplier_table CHARACTER_ARMOR_MULTIPLIERS
+    = make_armor_multiplier_table();
+
+static double character_armor_multiplier(int32_t armor) noexcept
+{
+    if (armor <= 0)
+        return (1.0);
+    if (armor <= CHARACTER_ARMOR_CACHE_POINTS)
+        return (CHARACTER_ARMOR_MULTIPLIERS.values[armor]);
+
+    double multiplier = CHARACTER_ARMOR_MULTIPLIERS.values[CHARACTER_ARMOR_CACHE_POINTS];
+    int32_t index = CHARACTER_ARMOR_CACHE_POINTS;
     while (index < armor)
     {
-        this->_physical_damage_multiplier = this->_physical_damage_multiplier * FT_ARMOR_POINT_REDUCTION;
-        index++;
+        const double next_multiplier = multiplier * FT_ARMOR_POINT_REDUCTION;
+        // Once rounding leaves the multiplier unchanged, further points have no effect.
+        if (next_multiplier >= multiplier)
+            break ;
+        multiplier = next_multiplier;
+        ++index;
     }
+    return (multiplier);
+}
+
+void game_character::set_physical_armor_internal(int32_t armor) noexcept
+{
+    this->_physical_armor = armor;
+    this->_current_physical_armor = armor;
+    this->_physical_damage_multiplier = character_armor_multiplier(armor);
     return ;
 }
 
 void game_character::set_magic_armor_internal(int32_t armor) noexcept
 {
-    int32_t index;
-
     this->_magic_armor = armor;
     this->_current_magic_armor = armor;
-    this->_magic_damage_multiplier = 1.0;
-    index = 0;
-    while (index < armor)
-    {
-        this->_magic_damage_multiplier = this->_magic_damage_multiplier * FT_ARMOR_POINT_REDUCTION;
-        index++;
-    }
+    this->_magic_damage_multiplier = character_armor_multiplier(armor);
     return ;
 }
 

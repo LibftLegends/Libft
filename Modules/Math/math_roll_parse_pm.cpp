@@ -1,38 +1,18 @@
-#include "roll.hpp"
 #include "math_internal.hpp"
-#include "../Printf/printf.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
-int32_t math_roll_excecute_pm(char *string, int32_t *index, int32_t string_boundary)
+int32_t math_roll_execute_pm(char *expression, int32_t &length)
 {
-    int32_t error = 0;
-
-    if (DEBUG == 1)
-        pf_printf_fd(1, "CHECKING PM\n");
-    while (*index < string_boundary)
+    int32_t index = 0;
+    while (index < length && expression[index] != ')')
     {
-        if (DEBUG == 1)
-            pf_printf("PM i=%d and j=%d\n", *index, string_boundary);
-        if (!string[*index] || string[*index] == ')')
-            break ;
-        if (string[*index] == '+' || string[*index] == '-')
+        if ((expression[index] == '+' || expression[index] == '-')
+            && !math_is_unary_sign(expression, index))
         {
-            if (math_is_unary_sign(string, *index))
-            {
-                (*index)++;
-                continue ;
-            }
-            if (math_process_sign(string, index, string_boundary, &error))
+            if (math_process_sign(expression, length, index))
                 return (1);
-            math_calculate_j(string, &string_boundary);
-            *index = 0;
         }
         else
-            (*index)++;
+            index += 1;
     }
-    math_calculate_j(string, &string_boundary);
-    if (DEBUG == 1)
-        pf_printf("The result after pm is %s\n", string);
     return (0);
 }

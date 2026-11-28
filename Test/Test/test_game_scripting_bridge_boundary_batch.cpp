@@ -215,7 +215,7 @@ FT_TEST(test_game_script_bridge_language_change_preserves_callback_count)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, bridge.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, callback_name.initialize("mark"));
-    FT_ASSERT_EQ(FT_ERR_SUCCESS, language.initialize("python"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, language.initialize("custom"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS,
                  bridge.register_function(callback_name, callback));
     bridge.set_language(language.c_str());

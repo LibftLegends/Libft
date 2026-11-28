@@ -26,6 +26,8 @@ class game_progress_tracker
         static int32_t set_error(int32_t error_code) noexcept;
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        template <typename Map, typename Visit>
+        int32_t visit_live(Map &map, int32_t id, Visit visit) const noexcept;
 
     public:
         game_progress_tracker() noexcept;
@@ -51,6 +53,7 @@ class game_progress_tracker
         ft_map<int32_t, game_quest> &get_quests() noexcept;
         const ft_map<int32_t, game_quest> &get_quests() const noexcept;
 
+        // A failed replacement leaves existing entries intact and sets get_error().
         void set_achievements(const ft_map<int32_t, game_achievement> &achievements) noexcept;
         void set_quests(const ft_map<int32_t, game_quest> &quests) noexcept;
 

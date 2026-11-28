@@ -41,6 +41,34 @@ FT_TEST(test_pt_thread_join_rejects_invalid_thread)
     return (1);
 }
 
+#if defined(__linux__) || defined(_WIN32)
+static void *pthread_timed_join_test_wait(void *argument)
+{
+    auto *released = static_cast<std::atomic<uint32_t> *>(argument);
+    while (released->load(std::memory_order_acquire) == 0U)
+        pt_thread_wait_uint32(released, 0U);
+    return (argument);
+}
+
+FT_TEST(test_pthread_thread_timed_join_times_out_and_can_be_retried)
+{
+    std::atomic<uint32_t> released{0U};
+    pthread_t thread;
+    void *returned = ft_nullptr;
+    FT_ASSERT_EQ(0, pt_thread_create(&thread, ft_nullptr,
+            pthread_timed_join_test_wait, &released));
+    const int32_t timeout = pt_thread_timed_join(thread, &returned, 10);
+    released.store(1U, std::memory_order_release);
+    (void)pt_thread_wake_one_uint32(&released);
+    const int32_t retry = pt_thread_timed_join(thread, &returned, 2000);
+    FT_ASSERT_EQ(ETIMEDOUT, timeout);
+    FT_ASSERT_EQ(0, retry);
+    FT_ASSERT_EQ(static_cast<void *>(&released), returned);
+    return (1);
+}
+
+#endif
+
 FT_TEST(test_pt_thread_detach_updates_errno)
 {
     pthread_t thread;

@@ -9,6 +9,30 @@
 # include <fcntl.h>
 #endif
 
+#if defined(LIBFT_TEST_BUILD)
+static int32_t g_test_file_sync_failure = FT_ERR_SUCCESS;
+static int32_t g_test_directory_sync_failure = FT_ERR_SUCCESS;
+
+void cmp_test_set_file_sync_failure(int32_t error_code)
+{
+    g_test_file_sync_failure = error_code;
+    return ;
+}
+
+void cmp_test_set_directory_sync_failure(int32_t error_code)
+{
+    g_test_directory_sync_failure = error_code;
+    return ;
+}
+
+void cmp_test_clear_sync_failures(void)
+{
+    g_test_file_sync_failure = FT_ERR_SUCCESS;
+    g_test_directory_sync_failure = FT_ERR_SUCCESS;
+    return ;
+}
+#endif
+
 static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 {
     if (error_code_out != ft_nullptr)
@@ -22,9 +46,10 @@ static void cmp_set_error_code(int32_t *error_code_out, int32_t error_code)
 # include <errno.h>
 # include <sys/stat.h>
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move);
-
 static ft_bool global_force_cross_device_move = FT_FALSE;
+#endif
 
 int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
 {
@@ -59,6 +84,7 @@ int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
     return (cmp_map_system_error_to_ft(system_error));
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
 {
     if (force_cross_device_move != 0)
@@ -67,6 +93,7 @@ void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
         global_force_cross_device_move = FT_FALSE;
     return ;
 }
+#endif
 
 int32_t cmp_file_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out)
@@ -160,6 +187,59 @@ int32_t cmp_file_delete(const char *path, int32_t *error_code_out)
     return (error_code);
 }
 
+static DWORD cmp_move_native_file(const char *source_path, const char *destination_path,
+    DWORD flags)
+{
+#if defined(LIBFT_TEST_BUILD)
+    if (global_force_cross_device_move == FT_TRUE)
+        return (ERROR_NOT_SAME_DEVICE);
+#endif
+    constexpr uint32_t maximum_attempts = 64U;
+    uint32_t attempt = 0;
+    DWORD last_error = ERROR_SUCCESS;
+    while (attempt < maximum_attempts)
+    {
+        if (MoveFileExA(source_path, destination_path, flags))
+            return (ERROR_SUCCESS);
+        last_error = GetLastError();
+        if (last_error != ERROR_SHARING_VIOLATION && last_error != ERROR_LOCK_VIOLATION
+            && last_error != ERROR_ACCESS_DENIED)
+            break ;
+        if (last_error == ERROR_ACCESS_DENIED)
+        {
+            const DWORD attributes = GetFileAttributesA(destination_path);
+            if (attributes != INVALID_FILE_ATTRIBUTES
+                && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U)
+                break ;
+        }
+        ++attempt;
+        if (attempt < maximum_attempts)
+            Sleep(1U);
+    }
+    return (last_error);
+}
+
+int32_t cmp_file_replace_atomic(const char *source_path, const char *destination_path)
+{
+    char *native_source = ft_nullptr;
+    char *native_destination = ft_nullptr;
+    int32_t error_code = cmp_translate_path_to_native(source_path, &native_source);
+    if (error_code == FT_ERR_SUCCESS)
+        error_code = cmp_translate_path_to_native(destination_path, &native_destination);
+    if (error_code == FT_ERR_SUCCESS)
+    {
+        const DWORD move_error = cmp_move_native_file(native_source, native_destination,
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        if (move_error == ERROR_NOT_SAME_DEVICE)
+            error_code = FT_ERR_INVALID_OPERATION;
+        else if (move_error != ERROR_SUCCESS)
+            error_code = cmp_file_error_to_errno(static_cast<int32_t>(move_error));
+    }
+    cma_free(native_source);
+    cma_free(native_destination);
+    return (error_code);
+}
+
 int32_t cmp_file_move(const char *source_path, const char *destination_path, int32_t *error_code_out)
 {
     char *native_source_path;
@@ -184,20 +264,15 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
         cmp_set_error_code(error_code_out, FT_ERR_NO_MEMORY);
         return (FT_ERR_NO_MEMORY);
     }
-    if (global_force_cross_device_move == FT_FALSE)
+    last_error = cmp_move_native_file(native_source_path, native_destination_path,
+        MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (last_error == ERROR_SUCCESS)
     {
-        if (MoveFileExA(native_source_path, native_destination_path,
-                MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING))
-        {
-            cma_free(native_source_path);
-            cma_free(native_destination_path);
-            cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-            return (FT_ERR_SUCCESS);
-        }
-        last_error = GetLastError();
+        cma_free(native_source_path);
+        cma_free(native_destination_path);
+        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
+        return (FT_ERR_SUCCESS);
     }
-    else
-        last_error = ERROR_NOT_SAME_DEVICE;
     if (last_error == ERROR_NOT_SAME_DEVICE)
     {
         cma_free(native_source_path);
@@ -289,6 +364,15 @@ int32_t cmp_file_copy(const char *source_path, const char *destination_path, int
     return (error_code);
 }
 
+int32_t cmp_file_remove_directory(const char *path) noexcept
+{
+    if (path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (RemoveDirectoryA(path) == 0)
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t cmp_file_create_directory(const char *path, mode_t mode, int32_t *error_code_out)
 {
     char *native_path;
@@ -370,60 +454,63 @@ int32_t cmp_file_get_type(const char *path, file_type *type_out,
     return (FT_ERR_SUCCESS);
 }
 
+int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata)
+{
+    const int32_t type_error = cmp_file_get_type(path, &metadata.type, ft_nullptr);
+    if (type_error != FT_ERR_SUCCESS || metadata.type == FILE_TYPE_MISSING)
+        return (type_error);
+    struct _stat file_info;
+    if (_stat(path, &file_info) == 0)
+    {
+        metadata.size = static_cast<ft_size_t>(file_info.st_size);
+        metadata.permissions = static_cast<mode_t>(file_info.st_mode);
+        metadata.details_error = FT_ERR_SUCCESS;
+    }
+    else if (errno != 0)
+        metadata.details_error = cmp_file_error_to_errno(errno);
+    else
+        metadata.details_error = FT_ERR_INVALID_ARGUMENT;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_file_get_size_and_mtime(const char *path, ft_size_t *size_out,
+    t_time *modification_time_out, int32_t *error_code_out)
+{
+    if (size_out != ft_nullptr)
+        *size_out = 0U;
+    if (modification_time_out != ft_nullptr)
+        *modification_time_out = 0;
+    int32_t error_code = FT_ERR_INVALID_ARGUMENT;
+    if (path != ft_nullptr && (size_out != ft_nullptr
+        || modification_time_out != ft_nullptr))
+    {
+        struct _stat metadata;
+        if (_stat(path, &metadata) == 0)
+        {
+            if (size_out != ft_nullptr)
+                *size_out = static_cast<ft_size_t>(metadata.st_size);
+            if (modification_time_out != ft_nullptr)
+                *modification_time_out = static_cast<t_time>(metadata.st_mtime);
+            error_code = FT_ERR_SUCCESS;
+        }
+        else if (errno != 0)
+            error_code = cmp_file_error_to_errno(errno);
+    }
+    cmp_set_error_code(error_code_out, error_code);
+    return (error_code);
+}
+
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct _stat file_info;
-
-    if (size_out != ft_nullptr)
-        *size_out = 0;
-    if (path == ft_nullptr || size_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (_stat(path, &file_info) == 0)
-    {
-        *size_out = static_cast<ft_size_t>(file_info.st_size);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (errno != 0)
-        error_code = cmp_file_error_to_errno(errno);
-    else
-        error_code = FT_ERR_INVALID_ARGUMENT;
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, size_out, ft_nullptr, error_code_out));
 }
 
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct _stat file_info;
-
-    if (modification_time_out != ft_nullptr)
-        *modification_time_out = 0;
-    if (path == ft_nullptr || modification_time_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (_stat(path, &file_info) == 0)
-    {
-        *modification_time_out = static_cast<t_time>(file_info.st_mtime);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    if (errno != 0)
-        error_code = cmp_file_error_to_errno(errno);
-    else
-        error_code = FT_ERR_INVALID_ARGUMENT;
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, ft_nullptr, modification_time_out,
+        error_code_out));
 }
 
 int32_t cmp_file_get_permissions(const char *path, mode_t *mode_out, int32_t *error_code_out)
@@ -499,9 +586,10 @@ int32_t cmp_file_set_permissions(const char *path, int32_t owner_permissions,
 # include <new>
 # include <sys/stat.h>
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move);
-
 static ft_bool global_force_cross_device_move = FT_FALSE;
+#endif
 
 int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
 {
@@ -524,6 +612,7 @@ int32_t cmp_file_error_to_errno(int32_t system_error) noexcept
     return (cmp_map_system_error_to_ft(system_error));
 }
 
+#if defined(LIBFT_TEST_BUILD)
 void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
 {
     if (force_cross_device_move != 0)
@@ -532,6 +621,7 @@ void cmp_set_force_cross_device_move(int32_t force_cross_device_move)
         global_force_cross_device_move = FT_FALSE;
     return ;
 }
+#endif
 
 int32_t cmp_file_exists(const char *path, int32_t *exists_out,
     int32_t *error_code_out)
@@ -592,6 +682,21 @@ int32_t cmp_file_delete(const char *path, int32_t *error_code_out)
     return (error_code);
 }
 
+int32_t cmp_file_replace_atomic(const char *source_path, const char *destination_path)
+{
+    if (source_path == ft_nullptr || destination_path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+#if defined(LIBFT_TEST_BUILD)
+    if (global_force_cross_device_move == FT_TRUE)
+        return (FT_ERR_INVALID_OPERATION);
+#endif
+    if (rename(source_path, destination_path) == 0)
+        return (FT_ERR_SUCCESS);
+    if (errno == EXDEV)
+        return (FT_ERR_INVALID_OPERATION);
+    return (cmp_file_error_to_errno(errno));
+}
+
 int32_t cmp_file_move(const char *source_path, const char *destination_path, int32_t *error_code_out)
 {
     std::error_code copy_error_code;
@@ -606,9 +711,11 @@ int32_t cmp_file_move(const char *source_path, const char *destination_path, int
             cmp_set_error_code(error_code_out, FT_ERR_INVALID_ARGUMENT);
             return (FT_ERR_INVALID_ARGUMENT);
         }
+#if defined(LIBFT_TEST_BUILD)
         if (global_force_cross_device_move != FT_FALSE)
             errno = EXDEV;
         if (global_force_cross_device_move == FT_FALSE)
+#endif
         {
             if (rename(source_path, destination_path) == 0)
             {
@@ -737,6 +844,15 @@ int32_t cmp_file_copy(const char *source_path, const char *destination_path, int
     return (FT_ERR_INTERNAL);
 }
 
+int32_t cmp_file_remove_directory(const char *path) noexcept
+{
+    if (path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (rmdir(path) != 0)
+        return (FT_ERR_IO);
+    return (FT_ERR_SUCCESS);
+}
+
 int32_t cmp_file_create_directory(const char *path, mode_t mode, int32_t *error_code_out)
 {
     int32_t error_code;
@@ -755,6 +871,17 @@ int32_t cmp_file_create_directory(const char *path, mode_t mode, int32_t *error_
     error_code = cmp_file_error_to_errno(errno);
     cmp_set_error_code(error_code_out, error_code);
     return (error_code);
+}
+
+static file_type cmp_file_type_from_mode(mode_t mode) noexcept
+{
+    if (S_ISLNK(mode))
+        return (FILE_TYPE_SYMLINK);
+    if (S_ISDIR(mode))
+        return (FILE_TYPE_DIRECTORY);
+    if (S_ISREG(mode))
+        return (FILE_TYPE_REGULAR);
+    return (FILE_TYPE_UNKNOWN);
 }
 
 int32_t cmp_file_get_type(const char *path, file_type *type_out,
@@ -789,66 +916,77 @@ int32_t cmp_file_get_type(const char *path, file_type *type_out,
         cmp_set_error_code(error_code_out, error_code);
         return (error_code);
     }
-    if (S_ISLNK(stat_buffer.st_mode))
-        *type_out = FILE_TYPE_SYMLINK;
-    else if (S_ISDIR(stat_buffer.st_mode))
-        *type_out = FILE_TYPE_DIRECTORY;
-    else if (S_ISREG(stat_buffer.st_mode))
-        *type_out = FILE_TYPE_REGULAR;
-    else
-        *type_out = FILE_TYPE_UNKNOWN;
+    *type_out = cmp_file_type_from_mode(stat_buffer.st_mode);
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_file_read_metadata(const char *path, cmp_file_metadata &metadata)
+{
+    struct stat file_info;
+    if (path == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    if (lstat(path, &file_info) != 0)
+    {
+        if (errno != ENOENT && errno != ENOTDIR)
+        {
+            const int32_t error_code = cmp_file_error_to_errno(errno);
+            if (error_code != FT_ERR_NOT_FOUND)
+                return (error_code);
+        }
+        metadata.type = FILE_TYPE_MISSING;
+        return (FT_ERR_SUCCESS);
+    }
+    metadata.type = cmp_file_type_from_mode(file_info.st_mode);
+    metadata.details_error = FT_ERR_SUCCESS;
+    if (metadata.type == FILE_TYPE_SYMLINK && stat(path, &file_info) != 0)
+    {
+        metadata.details_error = cmp_file_error_to_errno(errno);
+        return (FT_ERR_SUCCESS);
+    }
+    metadata.size = static_cast<ft_size_t>(file_info.st_size);
+    metadata.permissions = file_info.st_mode;
+    return (FT_ERR_SUCCESS);
+}
+
+int32_t cmp_file_get_size_and_mtime(const char *path, ft_size_t *size_out,
+    t_time *modification_time_out, int32_t *error_code_out)
+{
+    if (size_out != ft_nullptr)
+        *size_out = 0U;
+    if (modification_time_out != ft_nullptr)
+        *modification_time_out = 0;
+    int32_t error_code = FT_ERR_INVALID_ARGUMENT;
+    if (path != ft_nullptr && (size_out != ft_nullptr
+        || modification_time_out != ft_nullptr))
+    {
+        struct stat metadata;
+        if (stat(path, &metadata) == 0)
+        {
+            if (size_out != ft_nullptr)
+                *size_out = static_cast<ft_size_t>(metadata.st_size);
+            if (modification_time_out != ft_nullptr)
+                *modification_time_out = static_cast<t_time>(metadata.st_mtime);
+            error_code = FT_ERR_SUCCESS;
+        }
+        else if (errno != 0)
+            error_code = cmp_file_error_to_errno(errno);
+    }
+    cmp_set_error_code(error_code_out, error_code);
+    return (error_code);
 }
 
 int32_t cmp_file_get_size(const char *path, ft_size_t *size_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct stat stat_buffer;
-
-    if (size_out != ft_nullptr)
-        *size_out = 0;
-    if (path == ft_nullptr || size_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (stat(path, &stat_buffer) == 0)
-    {
-        *size_out = static_cast<ft_size_t>(stat_buffer.st_size);
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    error_code = cmp_file_error_to_errno(errno);
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, size_out, ft_nullptr, error_code_out));
 }
 
 int32_t cmp_file_get_modification_time(const char *path, t_time *modification_time_out,
     int32_t *error_code_out)
 {
-    int32_t error_code;
-    struct stat stat_buffer;
-
-    if (modification_time_out != ft_nullptr)
-        *modification_time_out = 0;
-    if (path == ft_nullptr || modification_time_out == ft_nullptr)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        cmp_set_error_code(error_code_out, error_code);
-        return (error_code);
-    }
-    if (stat(path, &stat_buffer) == 0)
-    {
-        *modification_time_out = stat_buffer.st_mtime;
-        cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    error_code = cmp_file_error_to_errno(errno);
-    cmp_set_error_code(error_code_out, error_code);
-    return (error_code);
+    return (cmp_file_get_size_and_mtime(path, ft_nullptr, modification_time_out,
+        error_code_out));
 }
 
 int32_t cmp_file_get_permissions(const char *path, mode_t *mode_out, int32_t *error_code_out)
@@ -930,6 +1068,14 @@ int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
     HANDLE file_handle;
     int32_t error_code;
 
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_file_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_file_sync_failure);
+        return (g_test_file_sync_failure);
+    }
+#endif
+
     file_handle = cmp_retrieve_handle(file_descriptor);
     if (file_handle == INVALID_HANDLE_VALUE)
     {
@@ -948,6 +1094,13 @@ int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
 
 int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 {
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_directory_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_directory_sync_failure);
+        return (g_test_directory_sync_failure);
+    }
+#endif
     (void)path;
     cmp_set_error_code(error_code_out, FT_ERR_SUCCESS);
     return (FT_ERR_SUCCESS);
@@ -956,6 +1109,14 @@ int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 int32_t cmp_file_sync(int32_t file_descriptor, int32_t *error_code_out)
 {
     int32_t error_code;
+
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_file_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_file_sync_failure);
+        return (g_test_file_sync_failure);
+    }
+#endif
 
     if (fsync(file_descriptor) == 0)
     {
@@ -971,6 +1132,14 @@ int32_t cmp_file_sync_directory(const char *path, int32_t *error_code_out)
 {
     int32_t directory_descriptor;
     int32_t error_code;
+
+#if defined(LIBFT_TEST_BUILD)
+    if (g_test_directory_sync_failure != FT_ERR_SUCCESS)
+    {
+        cmp_set_error_code(error_code_out, g_test_directory_sync_failure);
+        return (g_test_directory_sync_failure);
+    }
+#endif
 
     if (path == ft_nullptr)
     {

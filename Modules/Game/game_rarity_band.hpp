@@ -25,6 +25,9 @@ class game_rarity_band
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t read_values(int32_t &rarity, double &value_multiplier) const noexcept;
+        int32_t copy_values(const game_rarity_band &other) noexcept;
+        friend class game_economy_table;
 
     public:
         game_rarity_band() noexcept;

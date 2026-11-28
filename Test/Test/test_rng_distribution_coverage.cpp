@@ -2,6 +2,7 @@
 #include "../../Modules/RNG/rng.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "test_rng_test_utils.hpp"
+#include <cmath>
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/PThread/mutex.hpp"
@@ -57,6 +58,21 @@ FT_TEST(test_rng_beta_pdf_cdf_reference)
         difference = -difference;
     if (difference > 0.01)
         return (0);
+    return (1);
+}
+
+FT_TEST(test_rng_distribution_cdf_singular_endpoints_and_segment_cap)
+{
+    const double gamma_cdf = rng_gamma_cdf(0.5, 2.0, 1.0);
+    const double beta_cdf = rng_beta_cdf(0.5, 0.5, 0.5);
+    const double concentrated_beta_cdf = rng_beta_cdf(1.0, 1000000000.0, 0.000000001);
+
+    FT_ASSERT(std::isinf(rng_gamma_pdf(0.5, 2.0, 0.0)));
+    FT_ASSERT(std::isinf(rng_beta_pdf(0.5, 0.5, 0.0)));
+    FT_ASSERT(std::isinf(rng_beta_pdf(0.5, 0.5, 1.0)));
+    FT_ASSERT(std::fabs(gamma_cdf - std::erf(std::sqrt(0.5))) < 0.02);
+    FT_ASSERT(std::fabs(beta_cdf - 0.5) < 0.02);
+    FT_ASSERT(std::fabs(concentrated_beta_cdf - (1.0 - std::exp(-1.0))) < 0.00001);
     return (1);
 }
 

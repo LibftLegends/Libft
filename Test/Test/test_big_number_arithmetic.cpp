@@ -1,4 +1,5 @@
 #include "../test_internal.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/CPP_class/class_big_number.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -156,6 +157,35 @@ FT_TEST(test_big_number_subtraction_negative_result)
     return (1);
 }
 
+FT_TEST(test_big_number_signed_sum_reports_allocation_failure_and_can_retry)
+{
+    ft_big_number left;
+    ft_big_number right;
+    ft_big_number result;
+    INIT_BIG_NUMBER(left);
+    INIT_BIG_NUMBER(right);
+    INIT_BIG_NUMBER(result);
+    left.assign("123456789012345678901234567890");
+    right.assign("1");
+
+    cma_set_alloc_limit(16U);
+    const ft_big_number_proxy addition = left + right;
+    const ft_big_number_proxy subtraction = right - left;
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, addition.get_error());
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, subtraction.get_error());
+
+    result = right - left;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "123456789012345678901234567889"));
+    result = left + right;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(FT_FALSE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "123456789012345678901234567891"));
+    return (1);
+}
+
 FT_TEST(test_big_number_multiplication_large_values)
 {
     ft_big_number left_number;
@@ -169,6 +199,53 @@ FT_TEST(test_big_number_multiplication_large_values)
     ft_big_number product_number;
     product_number = left_number * right_number;
     FT_ASSERT_EQ(0, std::strcmp(product_number.c_str(), "8888711112"));
+    return (1);
+}
+
+FT_TEST(test_big_number_grouped_multiply_handles_sparse_digits_and_allocation_failure)
+{
+    ft_big_number left;
+    ft_big_number right;
+    ft_big_number result;
+    INIT_BIG_NUMBER(left);
+    INIT_BIG_NUMBER(right);
+    INIT_BIG_NUMBER(result);
+    left.assign("-900000000012000000000045678901235");
+    right.assign("100000000000000006700000089123456789");
+    cma_set_alloc_limit(16U);
+    const ft_big_number_proxy failed_result = left * right;
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_result.get_error());
+    result = left * right;
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(),
+        "90000000001200006030004648181634611169787530110345561580386521234415"));
+
+    char operand[161];
+    std::memset(operand, '0', sizeof(operand) - 1U);
+    operand[0] = '1';
+    operand[159] = '1';
+    operand[160] = '\0';
+    left.assign(operand);
+    cma_set_alloc_limit(400U);
+    const ft_big_number_proxy failed_scratch = left * left;
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_scratch.get_error());
+
+    result = left * left;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    char expected[320];
+    std::memset(expected, '0', sizeof(expected) - 1U);
+    expected[0] = '1';
+    expected[159] = '2';
+    expected[318] = '1';
+    expected[319] = '\0';
+    FT_ASSERT_EQ(FT_FALSE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(expected, result.c_str()));
+    right.assign("-1");
+    result = right * left;
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(operand, result.c_str()));
     return (1);
 }
 
@@ -271,6 +348,75 @@ FT_TEST(test_big_number_division_by_zero_error)
     numerator_number.assign("12345");
     ft_big_number result_number;
     result_number = numerator_number / zero_number;
+    return (1);
+}
+
+FT_TEST(test_big_number_division_reuses_multiples_for_signed_wide_operands)
+{
+    ft_big_number numerator;
+    ft_big_number divisor;
+    ft_big_number result;
+    INIT_BIG_NUMBER(numerator);
+    INIT_BIG_NUMBER(divisor);
+    INIT_BIG_NUMBER(result);
+    numerator.assign("-98765432101234567890987654321012345678909876543210123456789098765432101234567890");
+    divisor.assign("-1000000000000000123");
+
+    cma_set_alloc_limit(16U);
+    const ft_big_number_proxy failed_quotient = numerator / divisor;
+    const ft_big_number_proxy failed_remainder = numerator % divisor;
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_quotient.get_error());
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_remainder.get_error());
+
+    result = numerator / divisor;
+    FT_ASSERT_EQ(FT_FALSE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(),
+        "98765432101234555742839505869161989309650654636285438369758578"));
+    result = numerator % divisor;
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "502323181754262796"));
+    divisor.assign("7");
+    result = numerator / divisor;
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(),
+        "14109347443033509698712522045858906525558553791887160493827014109347443033509698"));
+    result = numerator % divisor;
+    FT_ASSERT_EQ(FT_TRUE, result.is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "4"));
+    divisor.assign("0");
+    FT_ASSERT_EQ(FT_ERR_DIVIDE_BY_ZERO, (numerator % divisor).get_error());
+    return (1);
+}
+
+FT_TEST(test_big_number_wide_divisor_table_can_retry_after_allocation_failure)
+{
+    ft_big_number numerator;
+    ft_big_number divisor;
+    ft_big_number result;
+    INIT_BIG_NUMBER(numerator);
+    INIT_BIG_NUMBER(divisor);
+    INIT_BIG_NUMBER(result);
+    char digits[161];
+    std::memset(digits, '0', sizeof(digits) - 1U);
+    digits[160] = '\0';
+    digits[0] = '1';
+    digits[159] = '1';
+    divisor.assign(digits);
+    digits[0] = '3';
+    digits[159] = '9';
+    numerator.assign(digits);
+
+    cma_set_alloc_limit(500U);
+    const ft_big_number_proxy failed_quotient = numerator / divisor;
+    const ft_big_number_proxy failed_remainder = numerator % divisor;
+    cma_set_alloc_limit(0U);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_quotient.get_error());
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed_remainder.get_error());
+    result = numerator / divisor;
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "3"));
+    result = numerator % divisor;
+    FT_ASSERT_EQ(0, std::strcmp(result.c_str(), "6"));
     return (1);
 }
 
@@ -386,6 +532,7 @@ FT_TEST(test_big_number_modular_exponentiation)
     exponent_one.assign("1");
     ft_big_number *modulus_error = base_number.mod_pow(exponent_one, zero_modulus);
     FT_ASSERT(modulus_error != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_DIVIDE_BY_ZERO, ft_big_number::get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, modulus_error->destroy());
     delete modulus_error;
 
@@ -396,8 +543,50 @@ FT_TEST(test_big_number_modular_exponentiation)
     ft_big_number *exponent_error
         = base_number.mod_pow(negative_exponent, modulus_number);
     FT_ASSERT(exponent_error != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, ft_big_number::get_error());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, exponent_error->destroy());
     delete exponent_error;
+    return (1);
+}
+
+FT_TEST(test_big_number_mod_pow_large_exponent_and_allocation_retry)
+{
+    ft_big_number base;
+    ft_big_number exponent;
+    ft_big_number modulus;
+    INIT_BIG_NUMBER(base);
+    INIT_BIG_NUMBER(exponent);
+    INIT_BIG_NUMBER(modulus);
+    base.assign("-123456789012345678901234567890");
+    modulus.assign("987654321098765432109876543211");
+    char oversized[161];
+    std::memset(oversized, '9', sizeof(oversized) - 1U);
+    oversized[160] = '\0';
+    exponent.assign(oversized);
+
+    cma_set_alloc_limit(128U);
+    ft_big_number *failure = base.mod_pow(exponent, modulus);
+    const int32_t failure_error = ft_big_number::get_error();
+    cma_set_alloc_limit(0U);
+    FT_ASSERT(failure != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failure_error);
+    FT_ASSERT(failure->empty());
+    delete failure;
+
+    exponent.assign("100000000000000000000000000000000000000000000000123");
+    ft_big_number *result = base.mod_pow(exponent, modulus);
+    FT_ASSERT(result != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(FT_FALSE, result->is_negative());
+    FT_ASSERT_EQ(0, std::strcmp(result->c_str(), "895680982089804569934957139271"));
+    delete result;
+    exponent.assign("0");
+    modulus.assign("1");
+    result = base.mod_pow(exponent, modulus);
+    FT_ASSERT(result != ft_nullptr);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_big_number::get_error());
+    FT_ASSERT_EQ(0, std::strcmp(result->c_str(), "0"));
+    delete result;
     return (1);
 }
 
@@ -425,6 +614,26 @@ FT_TEST(test_big_number_comparisons)
     FT_ASSERT(third_number > first_number);
     FT_ASSERT(zero_number <= first_number);
     FT_ASSERT(first_number >= zero_number);
+    return (1);
+}
+
+FT_TEST(test_big_number_relations_treat_reduced_negative_zero_as_zero)
+{
+    ft_big_number reduced;
+    ft_big_number zero;
+    ft_big_number negative;
+    INIT_BIG_NUMBER(reduced);
+    INIT_BIG_NUMBER(zero);
+    INIT_BIG_NUMBER(negative);
+    reduced.assign("-7");
+    reduced.reduce_to(0U);
+    zero.assign("0");
+    negative.assign("-1");
+    FT_ASSERT(reduced == zero);
+    FT_ASSERT(reduced >= zero);
+    FT_ASSERT(reduced <= zero);
+    FT_ASSERT(reduced > negative);
+    FT_ASSERT(negative < reduced);
     return (1);
 }
 

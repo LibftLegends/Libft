@@ -85,19 +85,6 @@ int32_t game_economy_table::initialize() noexcept
 
 int32_t game_economy_table::initialize(const game_economy_table &other) noexcept
 {
-    int32_t initialize_error;
-    int32_t destroy_error;
-    ft_size_t count;
-    ft_size_t index;
-    const Pair<int32_t, game_price_definition> *price_entry;
-    const Pair<int32_t, game_price_definition> *price_end;
-    const Pair<int32_t, game_rarity_band> *rarity_entry;
-    const Pair<int32_t, game_rarity_band> *rarity_end;
-    const Pair<int32_t, game_vendor_profile> *vendor_entry;
-    const Pair<int32_t, game_vendor_profile> *vendor_end;
-    const Pair<int32_t, game_currency_rate> *currency_entry;
-    const Pair<int32_t, game_currency_rate> *currency_end;
-
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_economy_table::initialize(copy)",
@@ -105,126 +92,123 @@ int32_t game_economy_table::initialize(const game_economy_table &other) noexcept
         return (FT_ERR_INVALID_STATE);
     }
     if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
+        return (this->set_error(FT_ERR_SUCCESS));
+
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
     if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
     {
-        destroy_error = this->destroy();
-        if (destroy_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(destroy_error);
-            return (destroy_error);
-        }
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        this->set_error(static_cast<uint32_t>(other.get_error()));
+        this->set_error(source_error);
         return (FT_ERR_SUCCESS);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+
+    ft_bool source_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
     {
-        initialize_error = this->destroy();
-        if (initialize_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(initialize_error);
-            return (initialize_error);
-        }
+        result = this->initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = this->_price_definitions.copy_from(other._price_definitions);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_rarity_bands.copy_from(other._rarity_bands);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_vendor_profiles.copy_from(other._vendor_profiles);
+        if (result == FT_ERR_SUCCESS)
+            result = this->_currency_rates.copy_from(other._currency_rates);
+        (void)other.unlock_internal(source_locked);
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
+    if (result != FT_ERR_SUCCESS)
     {
-        this->set_error(initialize_error);
-        return (initialize_error);
+        (void)this->destroy();
+        return (this->set_error(result));
     }
-    count = other._price_definitions.size();
-    price_end = other._price_definitions.end();
-    price_entry = price_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_price_definitions.insert(price_entry->key, price_entry->value);
-        price_entry++;
-        index += 1;
-    }
-    count = other._rarity_bands.size();
-    rarity_end = other._rarity_bands.end();
-    rarity_entry = rarity_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_rarity_bands.insert(rarity_entry->key, rarity_entry->value);
-        rarity_entry++;
-        index += 1;
-    }
-    count = other._vendor_profiles.size();
-    vendor_end = other._vendor_profiles.end();
-    vendor_entry = vendor_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_vendor_profiles.insert(vendor_entry->key, vendor_entry->value);
-        vendor_entry++;
-        index += 1;
-    }
-    count = other._currency_rates.size();
-    currency_end = other._currency_rates.end();
-    currency_entry = currency_end - count;
-    index = 0;
-    while (index < count)
-    {
-        this->_currency_rates.insert(currency_entry->key, currency_entry->value);
-        currency_entry++;
-        index += 1;
-    }
-    this->set_error(FT_ERR_SUCCESS);
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t game_economy_table::initialize(game_economy_table &&other) noexcept
 {
-    int32_t initialize_error;
-
-    if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
-    {
-        errno_abort_lifecycle(other._initialised_state, "game_economy_table::initialize(move)",
-            "source object is uninitialised");
-        return (FT_ERR_INVALID_STATE);
-    }
-    if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
-    initialize_error = this->initialize(static_cast<const game_economy_table &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    (void)other.destroy();
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    return (this->move(other));
 }
 
 int32_t game_economy_table::move(game_economy_table &other) noexcept
 {
-    int32_t initialize_error;
-
-    if (&other == this)
-    {
-        this->set_error(FT_ERR_SUCCESS);
-        return (FT_ERR_SUCCESS);
-    }
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
     {
         errno_abort_lifecycle(other._initialised_state, "game_economy_table::move",
             "source object is uninitialised");
-        this->set_error(FT_ERR_INVALID_STATE);
-        return (FT_ERR_INVALID_STATE);
+        return (this->set_error(FT_ERR_INVALID_STATE));
     }
-    initialize_error = this->initialize(static_cast<const game_economy_table &>(other));
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (initialize_error);
-    if (other._initialised_state == FT_CLASS_STATE_INITIALISED)
-        (void)other.destroy();
-    this->set_error(FT_ERR_SUCCESS);
+    if (&other == this)
+        return (this->set_error(FT_ERR_SUCCESS));
+
+    const int32_t source_error = other.get_error();
+    int32_t result = this->destroy();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (other._initialised_state == FT_CLASS_STATE_DESTROYED)
+    {
+        this->set_error(source_error);
+        return (FT_ERR_SUCCESS);
+    }
+
+    ft_bool source_locked = FT_FALSE;
+    ft_bool prices_locked = FT_FALSE;
+    ft_bool rarities_locked = FT_FALSE;
+    ft_bool vendors_locked = FT_FALSE;
+    ft_bool currencies_locked = FT_FALSE;
+    result = other.lock_internal(&source_locked);
+    if (result == FT_ERR_SUCCESS)
+        result = other._price_definitions.lock(&prices_locked);
+    if (result == FT_ERR_SUCCESS)
+        result = other._rarity_bands.lock(&rarities_locked);
+    if (result == FT_ERR_SUCCESS)
+        result = other._vendor_profiles.lock(&vendors_locked);
+    if (result == FT_ERR_SUCCESS)
+        result = other._currency_rates.lock(&currencies_locked);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = this->_price_definitions.move(other._price_definitions);
+        const ft_bool prices_moved = result == FT_ERR_SUCCESS;
+        if (prices_moved)
+            result = this->_rarity_bands.move(other._rarity_bands);
+        const ft_bool rarities_moved = result == FT_ERR_SUCCESS;
+        if (rarities_moved)
+            result = this->_vendor_profiles.move(other._vendor_profiles);
+        const ft_bool vendors_moved = result == FT_ERR_SUCCESS;
+        if (vendors_moved)
+            result = this->_currency_rates.move(other._currency_rates);
+        if (result != FT_ERR_SUCCESS)
+        {
+            // Return transferred storage before releasing the source locks.
+            if (vendors_moved)
+                (void)other._vendor_profiles.move(this->_vendor_profiles);
+            if (rarities_moved)
+                (void)other._rarity_bands.move(this->_rarity_bands);
+            if (prices_moved)
+                (void)other._price_definitions.move(this->_price_definitions);
+        }
+    }
+    if (currencies_locked)
+        (void)other._currency_rates.unlock(currencies_locked);
+    if (vendors_locked)
+        (void)other._vendor_profiles.unlock(vendors_locked);
+    if (rarities_locked)
+        (void)other._rarity_bands.unlock(rarities_locked);
+    if (prices_locked)
+        (void)other._price_definitions.unlock(prices_locked);
+    (void)other.unlock_internal(source_locked);
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    if (result == FT_ERR_SUCCESS)
+        result = other.destroy();
+    if (result != FT_ERR_SUCCESS)
+    {
+        (void)this->destroy();
+        return (this->set_error(result));
+    }
+    this->set_error(source_error);
     return (FT_ERR_SUCCESS);
 }
 
@@ -232,7 +216,6 @@ int32_t game_economy_table::destroy() noexcept
 {
     int32_t first_error;
     int32_t map_error;
-    int32_t disable_error;
 
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
     {
@@ -240,7 +223,7 @@ int32_t game_economy_table::destroy() noexcept
         this->set_error(FT_ERR_SUCCESS);
         return (FT_ERR_SUCCESS);
     }
-    first_error = FT_ERR_SUCCESS;
+    first_error = this->disable_thread_safety();
     map_error = this->_price_definitions.destroy();
     if (map_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
         first_error = map_error;
@@ -253,12 +236,8 @@ int32_t game_economy_table::destroy() noexcept
     map_error = this->_currency_rates.destroy();
     if (map_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
         first_error = map_error;
-    disable_error = this->disable_thread_safety();
-    if (disable_error != FT_ERR_SUCCESS && first_error == FT_ERR_SUCCESS)
-        first_error = disable_error;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    this->set_error(static_cast<uint32_t>(first_error));
-    return (first_error);
+    return (this->set_error(first_error));
 }
 
 int32_t game_economy_table::enable_thread_safety() noexcept
@@ -405,219 +384,190 @@ const ft_map<int32_t, game_currency_rate> &game_economy_table::get_currency_rate
     return (this->_currency_rates);
 }
 
+template <typename Operation>
+int32_t game_economy_table::with_table_lock(Operation operation) const noexcept
+{
+    if (this->_mutex == ft_nullptr)
+        return (this->set_error(operation()));
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+    {
+        result = operation();
+        (void)this->unlock_internal(lock_acquired);
+    }
+    return (this->set_error(result));
+}
+
 void game_economy_table::set_price_definitions(
     const ft_map<int32_t, game_price_definition> &price_definitions) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::set_price_definitions");
-    this->_price_definitions.clear();
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::set_price_definitions");
+    (void)this->with_table_lock([this, &price_definitions]() noexcept
     {
-        ft_size_t count;
-        ft_size_t index;
-        const Pair<int32_t, game_price_definition> *entry;
-        const Pair<int32_t, game_price_definition> *entry_end;
-
-        count = price_definitions.size();
-        entry_end = price_definitions.end();
-        entry = entry_end - count;
-        index = 0;
-        while (index < count)
-        {
-            this->_price_definitions.insert(entry->key, entry->value);
-            entry++;
-            index += 1;
-        }
-    }
-    this->set_error(FT_ERR_SUCCESS);
+        return (this->_price_definitions.copy_from(price_definitions));
+    });
     return ;
 }
 
 void game_economy_table::set_rarity_bands(
     const ft_map<int32_t, game_rarity_band> &rarity_bands) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::set_rarity_bands");
-    this->_rarity_bands.clear();
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::set_rarity_bands");
+    (void)this->with_table_lock([this, &rarity_bands]() noexcept
     {
-        ft_size_t count;
-        ft_size_t index;
-        const Pair<int32_t, game_rarity_band> *entry;
-        const Pair<int32_t, game_rarity_band> *entry_end;
-
-        count = rarity_bands.size();
-        entry_end = rarity_bands.end();
-        entry = entry_end - count;
-        index = 0;
-        while (index < count)
-        {
-            this->_rarity_bands.insert(entry->key, entry->value);
-            entry++;
-            index += 1;
-        }
-    }
-    this->set_error(FT_ERR_SUCCESS);
+        return (this->_rarity_bands.copy_from(rarity_bands));
+    });
     return ;
 }
 
 void game_economy_table::set_vendor_profiles(
     const ft_map<int32_t, game_vendor_profile> &vendor_profiles) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::set_vendor_profiles");
-    this->_vendor_profiles.clear();
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::set_vendor_profiles");
+    (void)this->with_table_lock([this, &vendor_profiles]() noexcept
     {
-        ft_size_t count;
-        ft_size_t index;
-        const Pair<int32_t, game_vendor_profile> *entry;
-        const Pair<int32_t, game_vendor_profile> *entry_end;
-
-        count = vendor_profiles.size();
-        entry_end = vendor_profiles.end();
-        entry = entry_end - count;
-        index = 0;
-        while (index < count)
-        {
-            this->_vendor_profiles.insert(entry->key, entry->value);
-            entry++;
-            index += 1;
-        }
-    }
-    this->set_error(FT_ERR_SUCCESS);
+        return (this->_vendor_profiles.copy_from(vendor_profiles));
+    });
     return ;
 }
 
 void game_economy_table::set_currency_rates(
     const ft_map<int32_t, game_currency_rate> &currency_rates) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::set_currency_rates");
-    this->_currency_rates.clear();
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::set_currency_rates");
+    (void)this->with_table_lock([this, &currency_rates]() noexcept
     {
-        ft_size_t count;
-        ft_size_t index;
-        const Pair<int32_t, game_currency_rate> *entry;
-        const Pair<int32_t, game_currency_rate> *entry_end;
-
-        count = currency_rates.size();
-        entry_end = currency_rates.end();
-        entry = entry_end - count;
-        index = 0;
-        while (index < count)
-        {
-            this->_currency_rates.insert(entry->key, entry->value);
-            entry++;
-            index += 1;
-        }
-    }
-    this->set_error(FT_ERR_SUCCESS);
+        return (this->_currency_rates.copy_from(currency_rates));
+    });
     return ;
 }
 
-int32_t game_economy_table::register_price_definition(
-    const game_price_definition &definition) noexcept
+int32_t game_economy_table::register_price_definition(const game_price_definition &definition) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::register_price_definition");
-    this->_price_definitions.insert(definition.get_item_id(), definition);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::register_price_definition");
+    return (this->with_table_lock([this, &definition]() noexcept
+    {
+        this->_price_definitions.insert(definition.get_item_id(), definition);
+        return (this->_price_definitions.get_error());
+    }));
 }
 
 int32_t game_economy_table::register_rarity_band(const game_rarity_band &band) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::register_rarity_band");
-    this->_rarity_bands.insert(band.get_rarity(), band);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::register_rarity_band");
+    return (this->with_table_lock([this, &band]() noexcept
+    {
+        game_rarity_band snapshot;
+        int32_t result = snapshot.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = snapshot.copy_values(band);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        this->_rarity_bands.insert(snapshot._rarity, snapshot);
+        return (this->_rarity_bands.get_error());
+    }));
 }
 
-int32_t game_economy_table::register_vendor_profile(
-    const game_vendor_profile &profile) noexcept
+int32_t game_economy_table::register_vendor_profile(const game_vendor_profile &profile) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::register_vendor_profile");
-    this->_vendor_profiles.insert(profile.get_vendor_id(), profile);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::register_vendor_profile");
+    return (this->with_table_lock([this, &profile]() noexcept
+    {
+        errno_abort_if_uninitialised_or_destroyed(profile._initialised_state,
+            "game_economy_table::register_vendor_profile source");
+        game_vendor_profile snapshot;
+        const int32_t result = snapshot.initialize(profile);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        this->_vendor_profiles.insert(snapshot._vendor_id, snapshot);
+        return (this->_vendor_profiles.get_error());
+    }));
 }
 
 int32_t game_economy_table::register_currency_rate(const game_currency_rate &rate) noexcept
 {
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::register_currency_rate");
-    this->_currency_rates.insert(rate.get_currency_id(), rate);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::register_currency_rate");
+    return (this->with_table_lock([this, &rate]() noexcept
+    {
+        game_currency_rate snapshot;
+        int32_t result = snapshot.initialize();
+        if (result == FT_ERR_SUCCESS)
+            result = snapshot.copy_values(rate);
+        if (result != FT_ERR_SUCCESS)
+            return (result);
+        this->_currency_rates.insert(snapshot._currency_id, snapshot);
+        return (this->_currency_rates.get_error());
+    }));
 }
 
 int32_t game_economy_table::fetch_price_definition(int32_t item_id,
     game_price_definition &definition) const noexcept
 {
-    const Pair<int32_t, game_price_definition> *entry;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::fetch_price_definition");
-    entry = this->_price_definitions.find(item_id);
-    if (entry == this->_price_definitions.end())
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::fetch_price_definition");
+    return (this->with_table_lock([this, item_id, &definition]() noexcept
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
-    definition.set_item_id(entry->value.get_item_id());
-    definition.set_rarity(entry->value.get_rarity());
-    definition.set_base_value(entry->value.get_base_value());
-    definition.set_minimum_value(entry->value.get_minimum_value());
-    definition.set_maximum_value(entry->value.get_maximum_value());
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+        return (this->_price_definitions.visit_value(item_id,
+            [&definition](const game_price_definition &stored) noexcept
+            {
+                return (definition.copy_values(stored));
+            }));
+    }));
 }
 
 int32_t game_economy_table::fetch_rarity_band(int32_t rarity,
     game_rarity_band &band) const noexcept
 {
-    const Pair<int32_t, game_rarity_band> *entry;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::fetch_rarity_band");
-    entry = this->_rarity_bands.find(rarity);
-    if (entry == this->_rarity_bands.end())
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::fetch_rarity_band");
+    return (this->with_table_lock([this, rarity, &band]() noexcept
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
-    band.set_rarity(entry->value.get_rarity());
-    band.set_value_multiplier(entry->value.get_value_multiplier());
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+        return (this->_rarity_bands.visit_value(rarity,
+            [&band](const game_rarity_band &stored) noexcept
+            {
+                return (band.copy_values(stored));
+            }));
+    }));
 }
 
 int32_t game_economy_table::fetch_vendor_profile(int32_t vendor_id,
     game_vendor_profile &profile) const noexcept
 {
-    const Pair<int32_t, game_vendor_profile> *entry;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::fetch_vendor_profile");
-    entry = this->_vendor_profiles.find(vendor_id);
-    if (entry == this->_vendor_profiles.end())
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::fetch_vendor_profile");
+    return (this->with_table_lock([this, vendor_id, &profile]() noexcept
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
-    profile.initialize(entry->value);
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+        return (this->_vendor_profiles.visit_value(vendor_id,
+            [&profile](const game_vendor_profile &stored) noexcept
+            {
+                return (profile.copy_values(stored));
+            }));
+    }));
 }
 
 int32_t game_economy_table::fetch_currency_rate(int32_t currency_id,
     game_currency_rate &rate) const noexcept
 {
-    const Pair<int32_t, game_currency_rate> *entry;
-
-    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "game_economy_table::fetch_currency_rate");
-    entry = this->_currency_rates.find(currency_id);
-    if (entry == this->_currency_rates.end())
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "game_economy_table::fetch_currency_rate");
+    return (this->with_table_lock([this, currency_id, &rate]() noexcept
     {
-        this->set_error(FT_ERR_NOT_FOUND);
-        return (FT_ERR_NOT_FOUND);
-    }
-    rate.set_currency_id(entry->value.get_currency_id());
-    rate.set_rate_to_base(entry->value.get_rate_to_base());
-    rate.set_display_precision(entry->value.get_display_precision());
-    this->set_error(FT_ERR_SUCCESS);
-    return (FT_ERR_SUCCESS);
+        return (this->_currency_rates.visit_value(currency_id,
+            [&rate](const game_currency_rate &stored) noexcept
+            {
+                return (rate.copy_values(stored));
+            }));
+    }));
 }
-
 
 int32_t game_economy_table::get_error() const noexcept
 {

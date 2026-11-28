@@ -6,6 +6,6 @@
 
 void ft_log_set_color(ft_bool enable)
 {
-    g_use_color = enable;
+    g_use_color.store(enable, std::memory_order_relaxed);
     return ;
 }

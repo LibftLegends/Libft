@@ -7,8 +7,8 @@ Target repository state: post-PR #919 (`a0bc98f4` in the supplied review)
 Primary implementation areas:
 
 - `Modules/Voxel/voxel_json.cpp`
-- `Modules/Voxel/terrain_types.hpp`
-- `Modules/Voxel/terrain_config.hpp`
+- `Modules/Voxel/voxel_types.hpp`
+- `Modules/Voxel/voxel_config.hpp`
 - `Test/Test/test_voxel_generator.cpp`
 - root `Makefile`, `mk/global_graph.mk`, and new build-regression scripts
 - `Modules/Networking` and `Modules/Crypto`
@@ -61,8 +61,8 @@ testable.
 
 ### 3.1 Current defect
 
-`terrain_json_add_u32()` in `Modules/Voxel/voxel_json.cpp` currently casts the
-value to `int32_t` and delegates to `terrain_json_add_i32()`. Values in
+`voxel_json_add_u32()` in `Modules/Voxel/voxel_json.cpp` currently casts the
+value to `int32_t` and delegates to `voxel_json_add_i32()`. Values in
 `[2147483648, 4294967295]` are therefore emitted as negative JSON numbers.
 
 ### 3.2 Required implementation
@@ -71,7 +71,7 @@ Replace the signed cast with a real unsigned decimal conversion.
 
 Preferred implementation:
 
-1. Add a dedicated helper such as `terrain_json_append_u32_decimal()`.
+1. Add a dedicated helper such as `voxel_json_append_u32_decimal()`.
 2. Use the existing `adv_to_string(uint32_t)` overload, which formats through
    the unsigned path, or add a non-allocating Libft unsigned conversion helper
    if the team wants to avoid the temporary allocation.
@@ -133,7 +133,7 @@ behavior:
 
 ### 4.2 Required implementation
 
-Stop destroying `output` inside `terrain_json_prepare()`.
+Stop destroying `output` inside `voxel_json_prepare()`.
 
 Build into a local initialized `ft_string staging_output`:
 
@@ -185,10 +185,10 @@ modify CMA production behavior solely for this test.
 
 The project requirement is to support only:
 
-- `TERRAIN_JSON_FILE_CREATE_ONLY`;
-- `TERRAIN_JSON_FILE_REPLACE`.
+- `VOXEL_JSON_FILE_CREATE_ONLY`;
+- `VOXEL_JSON_FILE_REPLACE`.
 
-Delete `TERRAIN_JSON_FILE_APPEND` from `terrain_json_file_mode`, remove the
+Delete `VOXEL_JSON_FILE_APPEND` from `voxel_json_file_mode`, remove the
 `O_APPEND` branch, remove append-mode tests, and update all call sites and docs.
 An out-of-range enum value must return `FT_ERR_INVALID_ARGUMENT` without opening
 or changing a file.
@@ -224,7 +224,7 @@ Required semantics:
 - return `FT_ERR_SUCCESS` only when a valid descriptor was produced;
 - never infer `ALREADY_EXISTS` from the requested mode.
 
-If no shared helper is added, `terrain_json_write_file()` must still capture and
+If no shared helper is added, `voxel_json_write_file()` must still capture and
 map `errno` immediately and use the mapped result. Avoid duplicating a partial
 platform error table in Voxel.
 
@@ -330,7 +330,10 @@ events emitted by `BUILD_PLAN_MODE=1`.
     Require separate output roots/configuration fingerprints and intact archives.
 12. Use paths containing spaces and long paths on Windows/macOS/Linux.
 13. Change a module manifest, root graph, and compiler configuration separately;
-    assert each invalidates the intended targets.
+    assert each invalidates the intended targets. Change the host/target
+    platform while keeping the compiler command and flags the same; assert the
+    object root changes and shared archive filenames are rebuilt for that
+    platform before linking.
 14. Run the stale-source/member scanner after every scenario.
 
 Manifest invalidation must be content-based rather than dependent solely on
@@ -804,6 +807,8 @@ The work is complete only when the grouped gates below are evidenced:
   two remaining file modes preserve precise mapped errors and never leak handles.
 - Every incremental-build scenario and archive-integrity check passes on
   Windows, Linux, and macOS, including sanitizer/release separation.
+- Host/target platform and compiler-target changes never reuse incompatible
+  object files or link shared archive filenames from another configuration.
 - Crypto vectors, boundaries, lifecycle/failure, mutation, differential, fuzz,
   randomness, wiping, and review gates pass; the standalone path has no OpenSSL
   dependency.

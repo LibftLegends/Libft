@@ -26,9 +26,9 @@ static const ft_size_t EFFICIENCY_MUTEX_OPERATIONS = 1000000;
 static const ft_size_t EFFICIENCY_TRANSITION_OPERATIONS = 128;
 static const ft_size_t EFFICIENCY_THREAD_LIFECYCLE_OPERATIONS = 128;
 static const ft_size_t EFFICIENCY_SAMPLE_COUNT = 10;
-static const char *EFFICIENCY_JSON_PATH = "performance_benchmarks.json";
+static const char *EFFICIENCY_JSON_PATH = "Test/performance_benchmarks.json";
 static const char *EFFICIENCY_FAILED_JSON_PATH =
-    "performance_benchmarks_failed.json";
+    "Test/performance_benchmarks_failed.json";
 
 struct s_allocator_result
 {
@@ -408,6 +408,8 @@ static s_mutex_result benchmark_pt_thread_lifecycle(void)
     t_active_clock clock;
     s_mutex_result result;
     pthread_t thread;
+    int create_error;
+    int join_error;
     ft_size_t operation_index;
 
     result.passed = FT_TRUE;
@@ -417,10 +419,24 @@ static s_mutex_result benchmark_pt_thread_lifecycle(void)
     operation_index = 0;
     while (operation_index < EFFICIENCY_THREAD_LIFECYCLE_OPERATIONS)
     {
-        if (pt_thread_create(&thread, ft_nullptr,
-                efficiency_thread_lifecycle_worker, ft_nullptr) != 0
-            || pt_thread_join(thread, ft_nullptr) != 0)
+        create_error = pt_thread_create(&thread, ft_nullptr,
+            efficiency_thread_lifecycle_worker, ft_nullptr);
+        if (create_error != 0)
         {
+            std::fprintf(stderr,
+                "[PERFORMANCE] pt thread lifecycle create failed at "
+                "operation=" FT_UINT64_DECIMAL_FORMAT " error=%d\n",
+                operation_index, create_error);
+            result.passed = FT_FALSE;
+            break ;
+        }
+        join_error = pt_thread_join(thread, ft_nullptr);
+        if (join_error != 0)
+        {
+            std::fprintf(stderr,
+                "[PERFORMANCE] pt thread lifecycle join failed at "
+                "operation=" FT_UINT64_DECIMAL_FORMAT " error=%d\n",
+                operation_index, join_error);
             result.passed = FT_FALSE;
             break ;
         }
@@ -448,7 +464,7 @@ static void print_mutex_result(const char *name, s_mutex_result result,
     std::printf("[PERFORMANCE] %s: %" PRIu64
         " us (lock_ops=%" PRIu64 "; %.2f%% of std baseline) status=%s\n",
         name, result.elapsed_microseconds,
-        static_cast<uint64_t>(result.lock_operations), relative_percent,
+        result.lock_operations, relative_percent,
         status);
 }
 
@@ -844,7 +860,7 @@ static void efficiency_write_allocator_json(FILE *output, const char *name,
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<uint64_t>(instances),
+        name, instances,
         efficiency_average_microseconds(result.elapsed_microseconds, instances),
         efficiency_average_microseconds(result.allocation_microseconds, instances),
         efficiency_average_microseconds(result.access_microseconds, instances),
@@ -869,7 +885,7 @@ static void print_operation_result(const char *name, s_mutex_result result)
     std::printf("[PERFORMANCE] %s: %" PRIu64
         " us (operations=%" PRIu64 "; status=%s)\n",
         name, result.elapsed_microseconds,
-        static_cast<uint64_t>(result.lock_operations), status);
+        result.lock_operations, status);
     return ;
 }
 
@@ -884,7 +900,7 @@ static void efficiency_write_mutex_json(FILE *output, const char *name,
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<uint64_t>(result.lock_operations),
+        name, result.lock_operations,
         efficiency_average_microseconds(result.elapsed_microseconds,
             result.lock_operations), result.elapsed_microseconds,
         result.percentile_95_microseconds,
@@ -907,7 +923,7 @@ static void efficiency_write_operation_json(FILE *output, const char *name,
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         ", %" PRIu64 ", %" PRIu64 ", %" PRIu64
         "], \"passed\": %s}%s\n",
-        name, static_cast<uint64_t>(result.lock_operations),
+        name, result.lock_operations,
         result.elapsed_microseconds, result.percentile_95_microseconds,
         result.samples[0], result.samples[1], result.samples[2],
         result.samples[3], result.samples[4], result.samples[5],

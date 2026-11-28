@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+// Return the number of bytes accepted from this span. Partial writes are retried.
+// Return zero to signal an I/O failure.
 typedef ft_size_t (*json_stream_write_callback)(void *user_data, const char *buffer, ft_size_t size);
 
 typedef struct json_stream_writer_context
@@ -33,6 +35,9 @@ typedef struct json_stream_writer
 } json_stream_writer;
 
 int32_t     json_stream_writer_init(json_stream_writer *writer, json_stream_write_callback callback, void *user_data);
+// Begin fresh after a completed or abandoned document, retaining the callback and scratch storage.
+// Callers must discard any previously emitted bytes for an abandoned document.
+int32_t     json_stream_writer_reset(json_stream_writer *writer);
 void    json_stream_writer_destroy(json_stream_writer *writer);
 int32_t     json_stream_writer_process(json_stream_writer *writer, const json_stream_event *event);
 int32_t     json_stream_writer_finish(json_stream_writer *writer);

@@ -23,8 +23,12 @@ class game_reputation
         static thread_local int32_t _last_error;
         uint8_t           _initialised_state;
         static int32_t set_error(int32_t error_code) noexcept;
-        int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
-        int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t lock_internal() const noexcept;
+        void unlock_internal() const noexcept;
+        int32_t read_counter(const int32_t &counter) const noexcept;
+        void set_counter(int32_t &counter, int32_t value) noexcept;
+        void adjust_counter(int32_t &counter, int64_t delta) noexcept;
+        friend class game_character;
 
     public:
         game_reputation() noexcept;

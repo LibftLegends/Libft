@@ -39,3 +39,30 @@ FT_TEST(test_cma_metadata_release_block_reuses_blocks)
     cma_metadata_release_block(second_block);
     return (1);
 }
+
+FT_TEST(test_cma_metadata_growth_retains_older_slots)
+{
+    constexpr ft_size_t BLOCK_COUNT = 129U;
+    Block *blocks[BLOCK_COUNT];
+    ft_size_t index = 0U;
+
+    while (index < BLOCK_COUNT)
+    {
+        blocks[index] = cma_metadata_allocate_block();
+        FT_ASSERT(blocks[index] != ft_nullptr);
+        blocks[index]->size = index + 1U;
+        ++index;
+    }
+    index = 0U;
+    while (index < BLOCK_COUNT)
+    {
+        FT_ASSERT_EQ(index + 1U, blocks[index]->size);
+        cma_metadata_release_block(blocks[index]);
+        ++index;
+    }
+    Block *reused = cma_metadata_allocate_block();
+    FT_ASSERT_EQ(blocks[BLOCK_COUNT - 1U], reused);
+    FT_ASSERT_EQ(0U, reused->size);
+    cma_metadata_release_block(reused);
+    return (1);
+}

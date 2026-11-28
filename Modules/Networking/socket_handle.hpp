@@ -27,6 +27,8 @@ class ft_socket_handle
         int32_t move(ft_socket_handle &other) noexcept;
 
         int32_t initialize() noexcept;
+        int32_t initialize_duplicate(int32_t descriptor) noexcept;
+        // Copying creates a separately owned descriptor for the same socket.
         int32_t initialize(const ft_socket_handle &other) noexcept;
         int32_t initialize(ft_socket_handle &&other) noexcept;
         int32_t destroy() noexcept;

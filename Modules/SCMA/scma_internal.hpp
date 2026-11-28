@@ -64,9 +64,7 @@ void    scma_push_free_block(ft_size_t index);
 ft_size_t scma_pop_free_block(void);
 int32_t scma_take_free_span(ft_size_t size, ft_size_t *index_out);
 void    scma_coalesce_free_block(ft_size_t index);
-void    scma_discard_free_block(ft_size_t index);
 void    scma_discard_free_spans_from(ft_size_t offset);
-void    scma_reconcile_free_spans(void);
 int32_t     scma_unlock_and_return_int(int32_t value);
 ft_size_t    scma_unlock_and_return_size(ft_size_t value);
 scma_handle    scma_unlock_and_return_handle(scma_handle value);
@@ -74,6 +72,7 @@ void    *scma_unlock_and_return_pointer(void *value);
 void    scma_unlock_and_return_void(void);
 
 #ifdef LIBFT_TEST_BUILD
+ft_bool scma_allocator_transition_pending_for_test(void);
 void    scma_capture_leak_stack(scma_block *block, ft_size_t skip_count);
 void    scma_test_secure_wipe_runtime(void);
 #endif

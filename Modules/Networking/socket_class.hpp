@@ -34,6 +34,7 @@ class ft_socket
         int32_t accept_connection();
         void     reset_to_empty_state();
         void     reset_to_empty_state_locked();
+        ft_size_t find_client_index_locked(int32_t file_descriptor) const;
         static void sleep_backoff();
         ssize_t send_data_locked(const void *data, ft_size_t size, int32_t flags);
         ssize_t send_all_locked(const void *data, ft_size_t size, int32_t flags);

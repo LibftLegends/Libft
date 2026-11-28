@@ -330,6 +330,24 @@ FT_TEST(test_file_path_dirname_uses_current_directory_for_leaf)
     return (1);
 }
 
+FT_TEST(test_file_path_dirname_preserves_absolute_drive_root)
+{
+    ft_string *directory = file_path_dirname_string("C:/save.bin");
+    FT_ASSERT(directory != ft_nullptr);
+    char *raw_directory = file_path_dirname("C:/save.bin");
+    FT_ASSERT(raw_directory != ft_nullptr);
+#if defined(_WIN32) || defined(_WIN64)
+    const char *expected = "C:\\";
+#else
+    const char *expected = "C:/";
+#endif
+    FT_ASSERT_EQ(FT_TRUE, *directory == expected);
+    FT_ASSERT_EQ(FT_TRUE, *directory == raw_directory);
+    cma_free(raw_directory);
+    delete directory;
+    return (1);
+}
+
 FT_TEST(test_file_path_extension_extracts_last_extension)
 {
     char *extension;

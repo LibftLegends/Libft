@@ -55,3 +55,18 @@ FT_TEST(test_math_gcd_mixed_signs_match_positive_result)
     FT_ASSERT_EQ(6LL, result_first_sign);
     return (1);
 }
+
+FT_TEST(test_math_gcd_signed_minimum_inputs)
+{
+    FT_ASSERT_EQ(2, math_gcd(INT32_MIN, 6));
+    FT_ASSERT_EQ(2, math_gcd(-6, INT32_MIN));
+    FT_ASSERT_EQ(INT32_MAX, math_gcd(INT32_MIN, 0));
+    FT_ASSERT_EQ(INT32_MAX, math_gcd(INT32_MIN, INT32_MIN));
+
+    const int64_t minimum = INT64_MIN;
+    FT_ASSERT_EQ(static_cast<int64_t>(4), math_gcd(minimum, static_cast<int64_t>(12)));
+    FT_ASSERT_EQ(static_cast<int64_t>(4), math_gcd(static_cast<int64_t>(-12), minimum));
+    FT_ASSERT_EQ(static_cast<int64_t>(INT64_MAX), math_gcd(static_cast<int64_t>(0), minimum));
+    FT_ASSERT_EQ(static_cast<int64_t>(INT64_MAX), math_gcd(minimum, minimum));
+    return (1);
+}

@@ -121,13 +121,19 @@ FT_TEST(test_game_state_thread_safety_toggle)
     return (1);
 }
 
-FT_TEST(test_game_state_move_failure_destroys_destination)
+FT_TEST(test_game_state_move_transfers_heap_collections_without_allocating)
 {
     game_state source;
     game_state destination;
+    ft_string key;
+    ft_string value;
     ft_size_t world_index;
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, key.initialize("mode"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, value.initialize("survival"));
+    source.set_variable(key, value);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_error());
     world_index = 0;
     while (world_index < 8)
     {
@@ -140,11 +146,100 @@ FT_TEST(test_game_state_move_failure_destroys_destination)
         world_index += 1;
     }
     FT_ASSERT_EQ(static_cast<ft_size_t>(9), source.get_worlds().size());
+    const auto *world_storage = source.get_worlds().begin();
+    const ft_string *stored = source.get_variable(key);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1));
-    FT_ASSERT_NE(FT_ERR_SUCCESS, destination.move(source));
+    const int32_t result = destination.move(source);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, destination._initialised_state);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
+    FT_ASSERT_EQ(9U, destination.get_worlds().size());
+    FT_ASSERT(destination.get_worlds().begin() == world_storage);
+    FT_ASSERT(destination.get_variable(key) == stored);
+    FT_ASSERT_STR_EQ("survival", stored->c_str());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(1U, source.get_worlds().size());
+    return (1);
+}
+
+FT_TEST(test_game_state_move_staging_failure_keeps_source_intact)
+{
+    game_state source;
+    game_state destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.get_characters().enable_thread_safety());
+    const auto *world = source.get_worlds()[0].get();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
     FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
     FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, source._initialised_state);
+    FT_ASSERT_EQ(1U, source.get_worlds().size());
+    FT_ASSERT(source.get_worlds()[0].get() == world);
+    FT_ASSERT_EQ(FT_TRUE, source.get_characters().is_thread_safe());
+    return (1);
+}
+
+FT_TEST(test_game_state_move_preserves_locked_destination_collection)
+{
+    game_state source;
+    game_state destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    auto &worlds = destination.get_worlds();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, worlds.enable_thread_safety());
+    ft_bool locked = FT_FALSE;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, worlds.lock(&locked));
+    const int32_t result = destination.move(source);
+    worlds.unlock(locked);
+    FT_ASSERT_EQ(FT_ERR_THREAD_BUSY, result);
+    FT_ASSERT_EQ(1U, destination.get_worlds().size());
+    FT_ASSERT_EQ(1U, source.get_worlds().size());
+    return (1);
+}
+
+FT_TEST(test_game_state_character_removal_reports_collection_lock_failure)
+{
+    game_state state;
+    ft_sharedptr<game_character> first(new game_character());
+    ft_sharedptr<game_character> second(new game_character());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.add_character(first));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.add_character(second));
+    auto &characters = state.get_characters();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, characters.enable_thread_safety());
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    state.remove_character(0U);
+    const int32_t result = state.get_error();
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS,
+        std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(2U, characters.size());
+    FT_ASSERT(characters[0].get() == first.get());
+    state.remove_character(0U);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.get_error());
+    FT_ASSERT_EQ(1U, characters.size());
+    FT_ASSERT(characters[0].get() == second.get());
+    return (1);
+}
+
+FT_TEST(test_game_state_initialize_can_retry_after_allocation_failure)
+{
+    game_state state;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(1U));
+    const int32_t result = state.initialize();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, cma_set_alloc_limit(0U));
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, state._initialised_state);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, state.initialize());
+    FT_ASSERT_EQ(1U, state.get_worlds().size());
+    FT_ASSERT_EQ(0U, state.get_characters().size());
     return (1);
 }
 

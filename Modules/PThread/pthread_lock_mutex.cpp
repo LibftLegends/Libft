@@ -9,11 +9,15 @@
 
 #include "../Basic/limits.hpp"
 #include "recursive_mutex.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 #ifdef LIBFT_TEST_BUILD
 std::atomic<int> pt_mutex_lock_override_error_code(FT_ERR_SUCCESS);
 #endif
 
-int pt_mutex::lock() const
+int pt_mutex::lock_uninstrumented() const
 {
     pt_thread_id_type thread_id = pt_thread_self();
     int ensure_error = this->ensure_native_mutex();
@@ -29,13 +33,13 @@ int pt_mutex::lock() const
         return (override_error);
 #endif
 
-    pthread_t owner = this->_owner.load(std::memory_order_relaxed);
-    if (this->_lock.load(std::memory_order_acquire)
-            && pt_thread_equal(owner, thread_id))
+    const ft_bool was_locked = this->_lock.load(std::memory_order_acquire);
+    if (was_locked == FT_TRUE && pt_thread_equal(
+            this->_owner.load(std::memory_order_relaxed), thread_id))
         return (FT_ERR_MUTEX_ALREADY_LOCKED);
     acquired_without_wait = false;
     mutex_error = FT_ERR_SUCCESS;
-    if (!this->_lock.load(std::memory_order_acquire))
+    if (was_locked == FT_FALSE)
     {
         try
         {
@@ -117,4 +121,27 @@ int pt_mutex::lock() const
     }
 
     return (FT_ERR_SUCCESS);
+}
+
+int pt_mutex::lock() const
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int analytics_error;
+    int result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_MUTEX_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (this->lock_uninstrumented());
+    result = this->lock_uninstrumented();
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_mutex_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (this->lock_uninstrumented());
+#endif
 }

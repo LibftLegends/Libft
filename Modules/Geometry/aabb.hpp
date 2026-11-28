@@ -18,9 +18,7 @@ class aabb
         mutable pt_recursive_mutex *_mutex;
         uint8_t                   _initialised_state;
 
-        uint32_t lock_pair(const aabb &other, const aabb *&lower,
-                    const aabb *&upper) const;
-        static void unlock_pair(const aabb *lower, const aabb *upper);
+        uint32_t release_mutex() noexcept;
 
     public:
         aabb() noexcept;

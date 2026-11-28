@@ -3,6 +3,7 @@
 #include "../Printf/printf.hpp"
 #include "../Sink/sink.hpp"
 #include "system_utils.hpp"
+#include <algorithm>
 #include <mutex>
 #include <new>
 #include <vector>
@@ -19,7 +20,7 @@ static std::mutex                         g_su_abort_reason_mutex;
 
 static void su_log_resource_tracing_event(const char *reason)
 {
-    char message_buffer[512];
+    char message_buffer[512] = {};
 
     if (reason == ft_nullptr)
         (void)pf_snprintf(message_buffer, sizeof(message_buffer),
@@ -96,58 +97,43 @@ int32_t su_unregister_resource_tracer(t_su_resource_tracer tracer)
 
 void su_clear_resource_tracers(void)
 {
+    t_tracer_vector removed;
     g_su_resource_tracers_mutex.lock();
-    t_tracer_vector().swap(g_su_resource_tracers);
+    removed.swap(g_su_resource_tracers);
     g_su_resource_tracers_mutex.unlock();
     return ;
 }
 
 void su_run_resource_tracers(const char *reason)
 {
+    constexpr ft_size_t INLINE_TRACER_COUNT = 8;
+    t_su_resource_tracer inline_tracers[INLINE_TRACER_COUNT];
     t_tracer_vector local_tracers;
-    ft_bool lock_acquired;
-    ft_size_t count;
-    ft_size_t index;
+    const t_su_resource_tracer *snapshot = inline_tracers;
 
-    lock_acquired = FT_FALSE;
     g_su_resource_tracers_mutex.lock();
-    lock_acquired = FT_TRUE;
-    count = g_su_resource_tracers.size();
-    try
-    {
-        local_tracers.reserve(count);
-    }
-    catch (const std::bad_alloc &)
-    {
-        if (lock_acquired)
-            g_su_resource_tracers_mutex.unlock();
-        return ;
-    }
-    index = 0;
-    while (index < count)
+    const ft_size_t count = g_su_resource_tracers.size();
+    if (count <= INLINE_TRACER_COUNT)
+        std::copy_n(g_su_resource_tracers.begin(), count, inline_tracers);
+    else
     {
         try
         {
-            local_tracers.push_back(g_su_resource_tracers[index]);
+            local_tracers = g_su_resource_tracers;
         }
         catch (const std::bad_alloc &)
         {
-            if (lock_acquired)
-                g_su_resource_tracers_mutex.unlock();
+            g_su_resource_tracers_mutex.unlock();
             return ;
         }
-        index += 1;
+        snapshot = local_tracers.data();
     }
-    if (lock_acquired)
-        g_su_resource_tracers_mutex.unlock();
+    g_su_resource_tracers_mutex.unlock();
     su_log_resource_tracing_event(reason);
     ft_size_t run_index = 0;
-    ft_size_t total = local_tracers.size();
-    while (run_index < total)
+    while (run_index < count)
     {
-        t_su_resource_tracer tracer = local_tracers[run_index];
-        if (tracer != ft_nullptr)
-            tracer(reason);
+        snapshot[run_index](reason);
         run_index += 1;
     }
     return ;

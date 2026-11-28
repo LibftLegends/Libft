@@ -1,28 +1,19 @@
-#include <cstdlib>
-
 #include "logger_internal.hpp"
 #include "../Errno/errno.hpp"
 #include "../PThread/mutex.hpp"
 #include "../PThread/pthread_internal.hpp"
-#include "../PThread/pthread.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <new>
 
 int32_t network_sink_prepare_thread_safety(s_network_sink *sink)
 {
-    pt_mutex *mutex_pointer;
-        int32_t      error_code_value;
-
     if (!sink)
         return (FT_ERR_INVALID_ARGUMENT);
     if (sink->thread_safe_enabled && sink->mutex)
         return (FT_ERR_SUCCESS);
-    mutex_pointer = new(std::nothrow) pt_mutex();
+    pt_mutex *mutex_pointer = new (std::nothrow) pt_mutex();
     if (!mutex_pointer)
         return (FT_ERR_NO_MEMORY);
-    int32_t initialize_result;
-
-    initialize_result = mutex_pointer->initialize();
+    const int32_t initialize_result = mutex_pointer->initialize();
     if (initialize_result != FT_ERR_SUCCESS)
     {
         delete mutex_pointer;
@@ -30,8 +21,7 @@ int32_t network_sink_prepare_thread_safety(s_network_sink *sink)
     }
     sink->mutex = mutex_pointer;
     sink->thread_safe_enabled = FT_TRUE;
-    error_code_value = FT_ERR_SUCCESS;
-    return (error_code_value);
+    return (FT_ERR_SUCCESS);
 }
 
 void network_sink_teardown_thread_safety(s_network_sink *sink)
@@ -50,34 +40,24 @@ void network_sink_teardown_thread_safety(s_network_sink *sink)
 
 int32_t network_sink_lock(const s_network_sink *sink, ft_bool *lock_acquired)
 {
-    s_network_sink *mutable_sink;
-    int32_t error_code_value;
-
     if (lock_acquired)
         *lock_acquired = FT_FALSE;
     if (!sink)
         return (FT_ERR_INVALID_ARGUMENT);
-    mutable_sink = const_cast<s_network_sink *>(sink);
-    if (!mutable_sink->thread_safe_enabled || !mutable_sink->mutex)
+    if (!sink->thread_safe_enabled || !sink->mutex)
         return (FT_ERR_SUCCESS);
-    error_code_value = pt_mutex_lock_if_not_null(mutable_sink->mutex);
+    const int32_t error_code_value = pt_mutex_lock_if_not_null(sink->mutex);
     if (error_code_value != FT_ERR_SUCCESS)
         return (error_code_value);
     if (lock_acquired)
         *lock_acquired = FT_TRUE;
-    error_code_value = FT_ERR_SUCCESS;
-    return (error_code_value);
+    return (FT_ERR_SUCCESS);
 }
 
 void network_sink_unlock(const s_network_sink *sink, ft_bool lock_acquired)
 {
-    s_network_sink *mutable_sink;
-
     if (!sink || !lock_acquired)
         return ;
-    mutable_sink = const_cast<s_network_sink *>(sink);
-    if (!mutable_sink->mutex)
-        return ;
-    (void)pt_mutex_unlock_if_not_null(mutable_sink->mutex);
+    (void)pt_mutex_unlock_if_not_null(sink->mutex);
     return ;
 }

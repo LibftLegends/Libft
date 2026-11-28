@@ -2,6 +2,8 @@
 #define FT_STRING_VIEW_HPP
 
 #include <cstdint>
+#include <type_traits>
+#include "../Basic/basic.hpp"
 #include "../Errno/errno.hpp"
 #include "../Errno/errno_internal.hpp"
 #include "../Basic/class_nullptr.hpp"
@@ -190,8 +192,6 @@ int32_t ft_string_view<CharType>::initialize()
 template <typename CharType>
 int32_t ft_string_view<CharType>::initialize(const CharType *string)
 {
-    ft_size_t index;
-
     if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
     {
         errno_abort_lifecycle(this->_initialised_state, "ft_string_view::initialize(string)", "called while object is already initialised");
@@ -201,10 +201,15 @@ int32_t ft_string_view<CharType>::initialize(const CharType *string)
     this->_size = 0;
     if (string != ft_nullptr)
     {
-        index = 0;
-        while (string[index] != CharType())
-            ++index;
-        this->_size = index;
+        if constexpr (std::is_same_v<CharType, char>)
+            this->_size = ft_strlen_size_t(string);
+        else
+        {
+            ft_size_t length = 0U;
+            while (string[length] != CharType())
+                ++length;
+            this->_size = length;
+        }
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
@@ -405,9 +410,21 @@ int32_t ft_string_view<CharType>::compare(const ft_string_view& other) const
     second_data = other._data;
     first_size = this->_size;
     second_size = other._size;
+    ft_size_t common_size = first_size;
+    if (second_size < common_size)
+        common_size = second_size;
     first_index = 0;
     compare_result = 0;
-    while (first_index < first_size && first_index < second_size)
+    if constexpr (std::is_same_v<CharType, char> || std::is_same_v<CharType, signed char>
+        || std::is_same_v<CharType, unsigned char>)
+    {
+        constexpr ft_size_t BLOCK_SIZE = 256U;
+        // Skip equal blocks. Ordering still follows CharType at the first difference.
+        while (common_size - first_index >= BLOCK_SIZE
+            && ft_memcmp(first_data + first_index, second_data + first_index, BLOCK_SIZE) == 0)
+            first_index += BLOCK_SIZE;
+    }
+    while (first_index < common_size)
     {
         if (first_data[first_index] != second_data[first_index])
         {

@@ -8,7 +8,7 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "game_event.hpp"
 
-static const int64_t g_event_scheduler_ns_per_second = 1000000000LL;
+static constexpr int64_t NANOSECONDS_PER_SECOND = 1000000000;
 
 static void game_event_scheduler_telemetry_emit(const char *event_name,
         const char *attribute,
@@ -67,24 +67,38 @@ void game_event_scheduler_telemetry_state_reset(game_event_scheduler_telemetry_s
     return ;
 }
 
+static int64_t game_event_scheduler_events_per_second(int64_t events,
+        int64_t elapsed_ns) noexcept
+{
+    if (elapsed_ns <= 0 || events <= 0)
+        return (0);
+    constexpr int64_t MAXIMUM = std::numeric_limits<int64_t>::max();
+    if (events <= MAXIMUM / NANOSECONDS_PER_SECOND)
+        return (events * NANOSECONDS_PER_SECOND / elapsed_ns);
+    const __int128 rate = static_cast<__int128>(events)
+        * NANOSECONDS_PER_SECOND / elapsed_ns;
+    if (rate > MAXIMUM)
+        return (MAXIMUM);
+    return (static_cast<int64_t>(rate));
+}
+
 void game_event_scheduler_telemetry_record(game_event_scheduler_telemetry_state &state,
         const t_event_scheduler_profile &profile) noexcept
 {
-    int64_t delta_updates;
-    int64_t delta_processed;
-    int64_t delta_processing_ns;
-    int64_t events_per_update;
-    int64_t events_per_second;
-    int64_t queue_depth_value;
-    int64_t latency_value;
-    ft_bool metrics_changed;
-    ft_bool success;
-
     if (state.scheduler_name == ft_nullptr)
-    {
-        
         return ;
-    }
+    if (profile.update_count == state.last_update_count
+        && profile.events_processed == state.last_events_processed
+        && profile.last_update_processing_ns == state.last_last_update_ns
+        && profile.max_queue_depth == state.last_max_queue_depth
+        && profile.events_rescheduled == state.last_events_rescheduled
+        && profile.total_processing_ns == state.last_total_processing_ns
+        && profile.max_ready_batch == state.last_max_ready_batch)
+        return ;
+
+    if (profile.update_count < 0 || profile.events_processed < 0
+        || profile.events_rescheduled < 0 || profile.total_processing_ns < 0)
+        return ;
     if (profile.update_count < state.last_update_count
         || profile.events_processed < state.last_events_processed
         || profile.events_rescheduled < state.last_events_rescheduled
@@ -92,64 +106,38 @@ void game_event_scheduler_telemetry_record(game_event_scheduler_telemetry_state 
         || profile.max_queue_depth < state.last_max_queue_depth
         || profile.max_ready_batch < state.last_max_ready_batch)
         game_event_scheduler_telemetry_state_reset(state);
-    delta_updates = profile.update_count - state.last_update_count;
-    if (delta_updates < 0)
-        delta_updates = profile.update_count;
-    delta_processed = profile.events_processed - state.last_events_processed;
-    if (delta_processed < 0)
-        delta_processed = profile.events_processed;
-    delta_processing_ns = profile.total_processing_ns - state.last_total_processing_ns;
-    if (delta_processing_ns < 0)
-        delta_processing_ns = profile.total_processing_ns;
-    int64_t adjusted_processing_ns;
 
-    adjusted_processing_ns = delta_processing_ns;
-    if (delta_updates > 0
-        && profile.last_update_processing_ns > 0
-        && state.last_last_update_ns > 0
-        && profile.last_update_processing_ns < state.last_last_update_ns)
-    {
-        int64_t maximum_value;
-        int64_t projected_processing_ns;
-
-        maximum_value = std::numeric_limits<int64_t>::max();
-        if (profile.last_update_processing_ns > 0
-            && delta_updates > maximum_value / profile.last_update_processing_ns)
-            projected_processing_ns = maximum_value;
-        else
-            projected_processing_ns = delta_updates * profile.last_update_processing_ns;
-        if (projected_processing_ns > adjusted_processing_ns)
-            adjusted_processing_ns = projected_processing_ns;
-    }
-    delta_processing_ns = adjusted_processing_ns;
-    metrics_changed = FT_FALSE;
-    if (delta_updates > 0)
-        metrics_changed = FT_TRUE;
-    if (delta_processed > 0)
-        metrics_changed = FT_TRUE;
-    if (profile.max_queue_depth != state.last_max_queue_depth)
-        metrics_changed = FT_TRUE;
-    if (profile.last_update_processing_ns != state.last_last_update_ns)
-        metrics_changed = FT_TRUE;
-    if (!metrics_changed)
+    const int64_t delta_updates = profile.update_count - state.last_update_count;
+    const int64_t delta_processed = profile.events_processed - state.last_events_processed;
+    if (delta_updates == 0 && delta_processed == 0
+        && profile.max_queue_depth == state.last_max_queue_depth
+        && profile.last_update_processing_ns == state.last_last_update_ns)
     {
         game_event_scheduler_telemetry_update_state(state, profile);
-        
         return ;
     }
-    events_per_update = 0;
+
+    int64_t delta_processing_ns = profile.total_processing_ns - state.last_total_processing_ns;
+    if (delta_updates > 0 && profile.last_update_processing_ns > 0
+        && profile.last_update_processing_ns < state.last_last_update_ns)
+    {
+        constexpr int64_t MAXIMUM = std::numeric_limits<int64_t>::max();
+        int64_t projected_processing_ns = MAXIMUM;
+        if (delta_updates <= MAXIMUM / profile.last_update_processing_ns)
+            projected_processing_ns = delta_updates * profile.last_update_processing_ns;
+        if (projected_processing_ns > delta_processing_ns)
+            delta_processing_ns = projected_processing_ns;
+    }
+    int64_t events_per_update = 0;
     if (delta_updates > 0)
         events_per_update = delta_processed / delta_updates;
-    events_per_second = 0;
-    if (delta_processing_ns > 0 && delta_processed > 0)
-    {
-        events_per_second = (delta_processed * g_event_scheduler_ns_per_second) / delta_processing_ns;
-        if (events_per_second < 0)
-            events_per_second = 0;
-    }
-    queue_depth_value = static_cast<int64_t>(profile.max_queue_depth);
-    latency_value = profile.last_update_processing_ns;
-    success = profile.last_error_code == FT_ERR_SUCCESS;
+    const int64_t events_per_second = game_event_scheduler_events_per_second(
+        delta_processed, delta_processing_ns);
+    int64_t queue_depth_value = std::numeric_limits<int64_t>::max();
+    if (profile.max_queue_depth <= static_cast<ft_size_t>(queue_depth_value))
+        queue_depth_value = static_cast<int64_t>(profile.max_queue_depth);
+    const int64_t latency_value = profile.last_update_processing_ns;
+    const ft_bool success = profile.last_error_code == FT_ERR_SUCCESS;
     game_event_scheduler_telemetry_emit("event_scheduler.throughput",
         "events_per_update",
         events_per_update,
@@ -183,7 +171,7 @@ void game_event_scheduler_telemetry_record(game_event_scheduler_telemetry_state 
         success,
         state.scheduler_name);
     game_event_scheduler_telemetry_update_state(state, profile);
-    
+
     return ;
 }
 
@@ -194,7 +182,7 @@ void game_event_scheduler_publish_telemetry(game_event_scheduler &scheduler,
     scheduler.snapshot_profile(profile);
     if (scheduler.get_error() != FT_ERR_SUCCESS)
     {
-        
+
         return ;
     }
     game_event_scheduler_telemetry_record(state, profile);

@@ -7,16 +7,7 @@
 
 t_monotonic_time_point   time_monotonic_point_now(void)
 {
-    t_monotonic_time_point time_point;
-    std::chrono::steady_clock::time_point chrono_now;
-    std::chrono::milliseconds elapsed_milliseconds;
-
-    chrono_now = std::chrono::steady_clock::now();
-    elapsed_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(chrono_now.time_since_epoch());
-    time_point.mutex = ft_nullptr;
-    time_point.thread_safe_enabled = FT_FALSE;
-    time_point.milliseconds = elapsed_milliseconds.count();
-    return (time_point);
+    return (time_monotonic_point_create(time_monotonic()));
 }
 
 t_monotonic_time_point   time_monotonic_point_add_ms(t_monotonic_time_point time_point, int64_t milliseconds)

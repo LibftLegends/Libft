@@ -4,7 +4,6 @@
 #include "../Networking/socket_class.hpp"
 #include "../Networking/ssl_wrapper.hpp"
 #include "../Networking/networking.hpp"
-#include "../Networking/http2_client.hpp"
 #include "../Networking/openssl_support.hpp"
 #include "../Networking/networking_ssl_compat.hpp"
 #include "../CPP_class/class_string.hpp"
@@ -205,13 +204,6 @@ static ft_bool api_https_prepare_socket(api_connection_pool_handle &connection_h
     return (FT_TRUE);
 }
 
-static char *api_https_execute_http2_once(
-    api_connection_pool_handle &connection_handle,
-    const char *method, const char *path, const char *host_header,
-    json_group *payload, const char *headers, int32_t *status, int32_t timeout,
-    const char *ca_certificate, ft_bool verify_peer, ft_bool &used_http2,
-    int32_t &error_code);
-
 static ft_bool api_https_send_request(SSL *ssl_session, const ft_string &request,
     int32_t &error_code)
 {
@@ -352,23 +344,17 @@ static ft_bool api_https_ensure_session(
         SSL_CTX_free(context);
         return (FT_FALSE);
     }
-    ft_bool alpn_selected_http2;
-    int32_t alpn_error_code;
-
-    alpn_selected_http2 = FT_FALSE;
-    alpn_error_code = FT_ERR_SUCCESS;
-    if (!http2_select_alpn_protocol(ssl_session, alpn_selected_http2,
-            alpn_error_code))
+    // The TLS request path currently sends HTTP/1.1 on the wire.
+    static constexpr unsigned char PROTOCOLS[] = {
+        8, 'h', 't', 't', 'p', '/', '1', '.', '1'
+    };
+    connection_handle.negotiated_http2 = FT_FALSE;
+    if (SSL_set_alpn_protos(ssl_session, PROTOCOLS, sizeof(PROTOCOLS)) != 0)
     {
-        connection_handle.negotiated_http2 = FT_FALSE;
-        if (alpn_error_code != FT_ERR_SUCCESS)
-        {
-            error_code = alpn_error_code;
-            SSL_shutdown(ssl_session);
-            SSL_free(ssl_session);
-            SSL_CTX_free(context);
-            return (FT_FALSE);
-        }
+        error_code = FT_ERR_IO;
+        SSL_free(ssl_session);
+        SSL_CTX_free(context);
+        return (FT_FALSE);
     }
     if (SSL_set_fd(ssl_session, socket_wrapper.get_file_descriptor()) != 1)
     {
@@ -392,21 +378,6 @@ static ft_bool api_https_ensure_session(
         connection_handle.negotiated_http2 = FT_FALSE;
         return (FT_FALSE);
     }
-    const unsigned char *alpn_protocol;
-    uint32_t alpn_length;
-
-    alpn_protocol = ft_nullptr;
-    alpn_length = 0;
-    SSL_get0_alpn_selected(ssl_session, &alpn_protocol, &alpn_length);
-    if (alpn_protocol && alpn_length == 2)
-    {
-        if (alpn_protocol[0] == 'h' && alpn_protocol[1] == '2')
-            connection_handle.negotiated_http2 = FT_TRUE;
-        else
-            connection_handle.negotiated_http2 = FT_FALSE;
-    }
-    else
-        connection_handle.negotiated_http2 = FT_FALSE;
     connection_handle.tls_context = context;
     connection_handle.tls_session = ssl_session;
     if (!api_connection_pool_track_tls_session(connection_handle.tls_session))
@@ -501,6 +472,7 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
     int32_t header_status_code;
     int64_t chunk_stream_remaining;
     ft_bool chunk_stream_trailers;
+    api_http_chunk_scan buffered_chunk_scan;
     char buffer[2048];
 
     streaming_enabled = (streaming_handler != ft_nullptr);
@@ -515,15 +487,14 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
         error_code = response.get_error();
         return (FT_FALSE);
     }
-    if (header_storage.initialize() != FT_ERR_SUCCESS)
+    if (streaming_enabled)
     {
-        error_code = header_storage.get_error();
-        return (FT_FALSE);
-    }
-    if (streaming_body_buffer.initialize() != FT_ERR_SUCCESS)
-    {
-        error_code = streaming_body_buffer.get_error();
-        return (FT_FALSE);
+        error_code = header_storage.initialize();
+        if (error_code != FT_ERR_SUCCESS)
+            return (FT_FALSE);
+        error_code = streaming_body_buffer.initialize();
+        if (error_code != FT_ERR_SUCCESS)
+            return (FT_FALSE);
     }
     response.clear();
     header_length = 0;
@@ -570,12 +541,10 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
                 }
                 if (chunked_encoding)
                 {
-                    ft_size_t consumed_length;
-
                     if (!api_http_chunked_body_complete(
                             response.c_str() + header_length,
                             response.size() - header_length,
-                            consumed_length))
+                            buffered_chunk_scan))
                     {
                         error_code = FT_ERR_SOCKET_RECEIVE_FAILED;
                         return (FT_FALSE);
@@ -654,14 +623,11 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
                 content_length);
             if (!chunked_encoding && !has_length)
                 connection_close = FT_TRUE;
-            header_storage.assign(response.c_str(), header_length);
-            if (header_storage.get_error() != FT_ERR_SUCCESS)
-            {
-                error_code = header_storage.get_error();
-                return (FT_FALSE);
-            }
             if (streaming_enabled)
             {
+                error_code = header_storage.assign(response.c_str(), header_length);
+                if (error_code != FT_ERR_SUCCESS)
+                    return (FT_FALSE);
                 const char *status_space;
                 ft_size_t body_length;
 
@@ -692,6 +658,19 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
                 }
                 response = header_storage;
             }
+            else
+            {
+                const ft_size_t body_size = response.size() - header_length;
+                if (chunked_encoding)
+                {
+                    if (api_http_chunked_body_complete(
+                            response.c_str() + header_length,
+                            body_size, buffered_chunk_scan))
+                        return (FT_TRUE);
+                }
+                else if (has_length && body_size >= static_cast<ft_size_t>(content_length))
+                    return (FT_TRUE);
+            }
             headers_complete = FT_TRUE;
             continue ;
         }
@@ -705,17 +684,10 @@ static ft_bool api_https_receive_response(SSL *ssl_session, ft_string &response,
             }
             if (chunked_encoding)
             {
-                ft_size_t body_size;
-                ft_size_t consumed_length;
-
-                body_size = response.size() - header_length;
                 if (api_http_chunked_body_complete(
-                        response.c_str() + header_length, body_size,
-                        consumed_length))
-                {
-                    if (consumed_length <= body_size)
-                        return (FT_TRUE);
-                }
+                        response.c_str() + header_length,
+                        response.size() - header_length, buffered_chunk_scan))
+                    return (FT_TRUE);
             }
             else if (has_length)
             {
@@ -772,7 +744,7 @@ static ft_bool api_https_execute_streaming_once(
     json_group *payload, const char *headers, int32_t timeout,
     const char *ca_certificate, ft_bool verify_peer,
     const api_streaming_handler *streaming_handler, ft_bool &connection_close,
-    int32_t &error_code)
+    ft_bool &request_started, int32_t &error_code)
 {
     connection_close = FT_FALSE;
     if (!api_https_ensure_session(connection_handle, timeout,
@@ -785,6 +757,7 @@ static ft_bool api_https_execute_streaming_once(
     if (!api_https_prepare_request(method, path, host_header, payload,
             headers, request, error_code))
         return (FT_FALSE);
+    request_started = FT_TRUE;
     if (!api_https_send_request(ssl_session, request, error_code))
         return (FT_FALSE);
     if (!api_https_send_payload(ssl_session, payload, error_code))
@@ -818,7 +791,9 @@ static ft_bool api_https_prepare_request(const char *method, const char *path,
         error_code = FT_ERR_INVALID_ARGUMENT;
         return (FT_FALSE);
     }
-    request.clear();
+    error_code = request.initialize();
+    if (error_code != FT_ERR_SUCCESS)
+        return (FT_FALSE);
     request += method;
     request += " ";
     request += path;
@@ -912,19 +887,18 @@ static char *api_https_execute_once(
         if (space)
             *status = ft_atoi(space + 1);
     }
-    const char *body_start = response.c_str() + header_length;
-    ft_size_t body_length = response.size() - header_length;
+    const char *result_source = response.c_str() + header_length;
+    ft_size_t result_length = response.size() - header_length;
     ft_string decoded_body;
-    const char *result_source;
-    ft_size_t result_length;
 
-    result_source = body_start;
-    result_length = body_length;
     if (chunked_encoding)
     {
         ft_size_t consumed_length;
 
-        if (!api_http_decode_chunked(body_start, body_length, decoded_body,
+        error_code = decoded_body.initialize();
+        if (error_code != FT_ERR_SUCCESS)
+            return (ft_nullptr);
+        if (!api_http_decode_chunked(result_source, result_length, decoded_body,
                 consumed_length))
         {
             error_code = FT_ERR_IO;
@@ -935,42 +909,16 @@ static char *api_https_execute_once(
     }
     else if (has_length)
     {
-        ft_size_t expected_length;
-        ft_size_t index;
-
-        expected_length = static_cast<ft_size_t>(content_length);
-        if (body_length < expected_length)
+        const ft_size_t expected_length = static_cast<ft_size_t>(content_length);
+        if (result_length < expected_length)
         {
             error_code = FT_ERR_IO;
             return (ft_nullptr);
         }
-        decoded_body.clear();
-        index = 0;
-        while (index < expected_length)
-        {
-            decoded_body.append(body_start[index]);
-            if (decoded_body.get_error() != FT_ERR_SUCCESS)
-            {
-                error_code = decoded_body.get_error();
-                return (ft_nullptr);
-            }
-            index++;
-        }
-        result_source = decoded_body.c_str();
-        result_length = decoded_body.size();
+        result_length = expected_length;
     }
     else
-    {
-        decoded_body.clear();
-        decoded_body.append(body_start);
-        if (decoded_body.get_error() != FT_ERR_SUCCESS)
-        {
-            error_code = decoded_body.get_error();
-            return (ft_nullptr);
-        }
-        result_source = decoded_body.c_str();
-        result_length = decoded_body.size();
-    }
+        result_length = ft_strlen_size_t(result_source);
     if (connection_close)
         api_connection_pool_disable_store(connection_handle);
     char *result_body;
@@ -989,82 +937,6 @@ static char *api_https_execute_once(
     result_body[result_length] = '\0';
     error_code = FT_ERR_SUCCESS;
     return (result_body);
-}
-
-char *api_https_execute_http2(api_connection_pool_handle &connection_handle,
-    const char *method, const char *path, const char *host_header,
-    json_group *payload, const char *headers, int32_t *status, int32_t timeout,
-    const char *ca_certificate, ft_bool verify_peer, const char *host,
-    uint16_t port, const char *security_identity,
-    const api_retry_policy *retry_policy, ft_bool &used_http2, int32_t &error_code)
-{
-    int32_t max_attempts;
-    int32_t attempt_index;
-    int32_t initial_delay;
-    int32_t current_delay;
-    int32_t max_delay;
-    int32_t multiplier;
-    ft_bool http2_used_local;
-
-    max_attempts = api_retry_get_max_attempts(retry_policy);
-    initial_delay = api_retry_get_initial_delay(retry_policy);
-    max_delay = api_retry_get_max_delay(retry_policy);
-    multiplier = api_retry_get_multiplier(retry_policy);
-    current_delay = api_retry_prepare_delay(initial_delay, max_delay);
-    attempt_index = 0;
-    http2_used_local = FT_FALSE;
-    while (attempt_index < max_attempts)
-    {
-        if (!api_retry_circuit_allow(connection_handle, retry_policy,
-                error_code))
-            return (ft_nullptr);
-        ft_bool socket_ready;
-        ft_bool should_retry;
-
-        socket_ready = api_https_prepare_socket(connection_handle, host, port,
-                timeout, security_identity, error_code);
-        if (socket_ready)
-        {
-            http2_used_local = FT_FALSE;
-            char *result_body;
-
-            result_body = api_https_execute_http2_once(connection_handle, method,
-                    path, host_header, payload, headers, status, timeout,
-                    ca_certificate, verify_peer, http2_used_local, error_code);
-            if (result_body)
-            {
-                used_http2 = http2_used_local;
-                api_retry_circuit_record_success(connection_handle,
-                    retry_policy);
-                return (result_body);
-            }
-        }
-        should_retry = api_https_should_retry(error_code);
-        if (!should_retry)
-            break ;
-        api_retry_circuit_record_failure(connection_handle, retry_policy);
-        api_connection_pool_evict(connection_handle);
-        attempt_index++;
-        if (attempt_index >= max_attempts)
-            break ;
-        if (current_delay > 0)
-        {
-            int32_t sleep_delay;
-
-            sleep_delay = api_retry_prepare_delay(current_delay, max_delay);
-            if (sleep_delay > 0)
-                time_sleep_ms(static_cast<uint32_t>(sleep_delay));
-        }
-        current_delay = api_retry_next_delay(current_delay, max_delay,
-                multiplier);
-        if (current_delay <= 0)
-            current_delay = api_retry_prepare_delay(initial_delay,
-                    max_delay);
-    }
-    used_http2 = FT_FALSE;
-    if (error_code == FT_ERR_SUCCESS)
-        error_code = FT_ERR_IO;
-    return (ft_nullptr);
 }
 
 char *api_https_execute(api_connection_pool_handle &connection_handle,
@@ -1170,6 +1042,7 @@ ft_bool api_https_execute_streaming(api_connection_pool_handle &connection_handl
             return (FT_FALSE);
         ft_bool socket_ready;
         ft_bool should_retry;
+        ft_bool request_started = FT_FALSE;
 
         socket_ready = api_https_prepare_socket(connection_handle, host, port,
                 timeout, security_identity, error_code);
@@ -1182,7 +1055,7 @@ ft_bool api_https_execute_streaming(api_connection_pool_handle &connection_handl
             success = api_https_execute_streaming_once(connection_handle,
                     method, path, host_header, payload, headers, timeout,
                     ca_certificate, verify_peer, streaming_handler,
-                    connection_close, error_code);
+                    connection_close, request_started, error_code);
             if (success)
             {
                 api_retry_circuit_record_success(connection_handle,
@@ -1193,7 +1066,8 @@ ft_bool api_https_execute_streaming(api_connection_pool_handle &connection_handl
             }
         }
         should_retry = api_https_should_retry(error_code);
-        if (!should_retry)
+        // A write may already have reached the server, and callbacks may have seen response data.
+        if (!should_retry || (!retry_policy && request_started))
             return (FT_FALSE);
         api_retry_circuit_record_failure(connection_handle, retry_policy);
         if (!implicit_retry_added && retry_policy == ft_nullptr)
@@ -1221,223 +1095,6 @@ ft_bool api_https_execute_streaming(api_connection_pool_handle &connection_handl
     if (error_code == FT_ERR_SUCCESS)
         error_code = FT_ERR_IO;
     return (FT_FALSE);
-}
-
-ft_bool api_https_execute_http2_streaming(
-    api_connection_pool_handle &connection_handle, const char *method,
-    const char *path, const char *host_header, json_group *payload,
-    const char *headers, int32_t timeout, const char *ca_certificate,
-    ft_bool verify_peer, const char *host, uint16_t port,
-    const char *security_identity, const api_retry_policy *retry_policy,
-    const api_streaming_handler *streaming_handler, ft_bool &used_http2,
-    int32_t &error_code)
-{
-    used_http2 = FT_FALSE;
-    if (!api_https_ensure_session(connection_handle, timeout,
-            ca_certificate, verify_peer, error_code))
-        return (FT_FALSE);
-    if (!connection_handle.negotiated_http2)
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (FT_FALSE);
-    }
-    ft_bool result;
-
-    result = api_https_execute_streaming(connection_handle, method, path,
-            host_header, payload, headers, timeout, ca_certificate,
-            verify_peer, host, port, security_identity, retry_policy,
-            streaming_handler, error_code);
-    if (result)
-        used_http2 = FT_TRUE;
-    return (result);
-}
-
-static char *api_https_execute_http2_once(
-    api_connection_pool_handle &connection_handle,
-    const char *method, const char *path, const char *host_header,
-    json_group *payload, const char *headers, int32_t *status, int32_t timeout,
-    const char *ca_certificate, ft_bool verify_peer, ft_bool &used_http2,
-    int32_t &error_code)
-{
-    ft_vector<http2_header_field> header_fields;
-    http2_header_field field_entry;
-    ft_string compressed_headers;
-    http2_frame headers_frame;
-    ft_string encoded_frame;
-    http2_stream_manager stream_manager;
-    char *http_response;
-
-    used_http2 = FT_FALSE;
-    error_code = FT_ERR_SUCCESS;
-    if (!method || !path)
-    {
-        error_code = FT_ERR_INVALID_ARGUMENT;
-        return (ft_nullptr);
-    }
-    if (!api_https_ensure_session(connection_handle, timeout,
-            ca_certificate, verify_peer, error_code))
-        return (ft_nullptr);
-    if (!connection_handle.negotiated_http2)
-        return (ft_nullptr);
-    if (!field_entry.assign_from_cstr(":method", method))
-    {
-        error_code = FT_ERR_IO;
-        return (ft_nullptr);
-    }
-    header_fields.push_back(field_entry);
-    if (!field_entry.assign_from_cstr(":path", path))
-    {
-        error_code = FT_ERR_IO;
-        return (ft_nullptr);
-    }
-    header_fields.push_back(field_entry);
-    if (!field_entry.assign_from_cstr(":scheme", "https"))
-    {
-        error_code = FT_ERR_IO;
-        return (ft_nullptr);
-    }
-    header_fields.push_back(field_entry);
-    if (host_header)
-    {
-        if (!field_entry.assign_from_cstr(":authority", host_header))
-        {
-            error_code = FT_ERR_IO;
-            return (ft_nullptr);
-        }
-    }
-    else
-    {
-        if (!field_entry.assign_from_cstr(":authority", ""))
-        {
-            error_code = FT_ERR_IO;
-            return (ft_nullptr);
-        }
-    }
-    header_fields.push_back(field_entry);
-    if (headers && headers[0])
-    {
-        const char *header_cursor;
-        ft_string header_name;
-        ft_string header_value;
-
-        header_cursor = headers;
-        while (*header_cursor != '\0')
-        {
-            ft_size_t index;
-
-            header_name.clear();
-            header_value.clear();
-            index = 0;
-            while (header_cursor[index] && header_cursor[index] != ':' && header_cursor[index] != '\r')
-            {
-                header_name.append(header_cursor[index]);
-                if (header_name.get_error() != FT_ERR_SUCCESS)
-                {
-                    error_code = header_name.get_error();
-                    return (ft_nullptr);
-                }
-                index++;
-            }
-            while (header_cursor[index] == ':' || header_cursor[index] == ' ')
-                index++;
-            while (header_cursor[index] && header_cursor[index] != '\r' && header_cursor[index] != '\n')
-            {
-                header_value.append(header_cursor[index]);
-                if (header_value.get_error() != FT_ERR_SUCCESS)
-                {
-                    error_code = header_value.get_error();
-                    return (ft_nullptr);
-                }
-                index++;
-            }
-            if (header_name.size() > 0)
-            {
-                if (!field_entry.assign(header_name, header_value))
-                {
-                    error_code = FT_ERR_IO;
-                    return (ft_nullptr);
-                }
-                header_fields.push_back(field_entry);
-            }
-            while (header_cursor[index] == '\r' || header_cursor[index] == '\n')
-                index++;
-            header_cursor += index;
-        }
-    }
-    if (!http2_compress_headers(header_fields, compressed_headers, error_code))
-    {
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_IO;
-        return (ft_nullptr);
-    }
-    if (!headers_frame.set_type(0x1))
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (ft_nullptr);
-    }
-    if (!headers_frame.set_flags(0x4))
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (ft_nullptr);
-    }
-    if (!headers_frame.set_stream_identifier(1))
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (ft_nullptr);
-    }
-    if (!headers_frame.set_payload(compressed_headers))
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (ft_nullptr);
-    }
-    if (!http2_encode_frame(headers_frame, encoded_frame, error_code))
-    {
-        if (error_code == FT_ERR_SUCCESS)
-            error_code = FT_ERR_IO;
-        return (ft_nullptr);
-    }
-    if (!stream_manager.open_stream(1))
-    {
-        error_code = FT_ERR_SUCCESS;
-        return (ft_nullptr);
-    }
-    if (connection_handle.tls_session)
-    {
-        const unsigned char *protocol;
-        uint32_t protocol_length;
-
-        protocol = ft_nullptr;
-        protocol_length = 0;
-        SSL_get0_alpn_selected(connection_handle.tls_session, &protocol,
-            &protocol_length);
-        if (protocol && protocol_length == 2)
-        {
-            if (protocol[0] == 'h' && protocol[1] == '2')
-                used_http2 = FT_TRUE;
-        }
-    }
-    http_response = api_https_execute_once(connection_handle, method, path,
-            host_header, payload, headers, status, timeout,
-            ca_certificate, verify_peer, error_code);
-    if (!http_response)
-        return (ft_nullptr);
-    ft_size_t body_length;
-
-    body_length = ft_strlen(http_response);
-    if (!stream_manager.append_data(1, http_response, body_length))
-    {
-        error_code = FT_ERR_SUCCESS;
-        cma_free(http_response);
-        return (ft_nullptr);
-    }
-    if (!stream_manager.close_stream(1))
-    {
-        error_code = FT_ERR_SUCCESS;
-        cma_free(http_response);
-        return (ft_nullptr);
-    }
-    error_code = FT_ERR_SUCCESS;
-    return (http_response);
 }
 
 #endif

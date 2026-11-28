@@ -9,8 +9,84 @@
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include "../../Modules/Template/shared_ptr.hpp"
+#include <atomic>
+#include <chrono>
+#include <thread>
 #ifndef LIBFT_TEST_BUILD
 #endif
+
+FT_TEST(test_ft_future_publication_wakes_all_waiters_and_delivers_value)
+{
+    ft_promise<uint32_t> promise;
+    ft_future<uint32_t> future(promise);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, future.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, promise.enable_thread_safety());
+    std::atomic<uint32_t> waiting(0U);
+    uint32_t first_value = 0U;
+    uint32_t second_value = 0U;
+    std::thread first([&]()
+    {
+        waiting.fetch_add(1U);
+        first_value = future.get();
+        return ;
+    });
+    std::thread second([&]()
+    {
+        waiting.fetch_add(1U);
+        future.wait();
+        second_value = future.get();
+        return ;
+    });
+    while (waiting.load() != 2U)
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const uint32_t expected = 27U;
+    promise.set_value(expected);
+    first.join();
+    second.join();
+    FT_ASSERT_EQ(expected, first_value);
+    FT_ASSERT_EQ(expected, second_value);
+    FT_ASSERT_EQ(expected, future.get());
+    promise.set_value(31U);
+    FT_ASSERT_EQ(31U, future.get());
+    return (1);
+}
+
+FT_TEST(test_ft_future_void_completes_when_the_promise_is_published)
+{
+    ft_promise<void> promise;
+    ft_future<void> future(promise);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, future.initialize());
+    std::atomic<ft_bool> waiting(FT_FALSE);
+    int32_t worker_error = FT_ERR_INVALID_STATE;
+    std::thread worker([&]()
+    {
+        waiting.store(FT_TRUE);
+        future.get();
+        worker_error = future.get_error();
+        return ;
+    });
+    while (waiting.load() == FT_FALSE)
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    promise.set_value();
+    worker.join();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, worker_error);
+    future.wait();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, future.get_error());
+    return (1);
+}
+
+FT_TEST(test_ft_future_wait_timeout_leaves_readiness_available_for_publication)
+{
+    std::atomic<uint32_t> readiness(ft_promise_detail::PENDING);
+    FT_ASSERT_EQ(FT_ERR_TIMEOUT, ft_promise_detail::wait_ready(
+        readiness, std::chrono::milliseconds(2)));
+    ft_promise_detail::publish_ready(readiness);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_promise_detail::wait_ready(
+        readiness, std::chrono::milliseconds(0)));
+    return (1);
+}
 
 FT_TEST(test_ft_future_default_is_invalid)
 {

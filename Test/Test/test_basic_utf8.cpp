@@ -10,6 +10,20 @@
 #ifndef LIBFT_TEST_BUILD
 #endif
 
+FT_TEST(test_basic_utf8_transform_mixed_bytes_and_explicit_null)
+{
+    const char input[] = "a\0" "\xC3\xA9" "z";
+    const char expected[] = "A\0" "\xC3\xA9" "Z";
+    char output[sizeof(expected)];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, ft_utf8_transform(input, sizeof(input) - 1U,
+        output, sizeof(output), ft_utf8_case_ascii_upper));
+    FT_ASSERT_EQ(0, ft_memcmp(output, expected, sizeof(expected)));
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, ft_utf8_transform(input, sizeof(input) - 1U,
+        output, sizeof(output) - 1U, ft_utf8_case_ascii_upper));
+    return (1);
+}
+
 FT_TEST(test_basic_utf8_count_ascii)
 {
     ft_size_t code_point_count;

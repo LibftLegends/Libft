@@ -1,5 +1,4 @@
 #include "networking_tls_aead.hpp"
-#include "../Errno/errno.hpp"
 #include "../Basic/basic.hpp"
 #include "openssl_support.hpp"
 
@@ -8,6 +7,34 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../Template/vector.hpp"
 #if NETWORKING_HAS_OPENSSL
+
+#include <openssl/crypto.h>
+
+struct networking_tls_aead_material
+{
+    unsigned char bytes[2U * (EVP_MAX_KEY_LENGTH + EVP_MAX_IV_LENGTH)];
+    const unsigned char *send_key;
+    const unsigned char *receive_key;
+    ft_size_t key_length;
+    ft_size_t iv_length;
+
+    networking_tls_aead_material() noexcept;
+    ~networking_tls_aead_material() noexcept;
+    networking_tls_aead_material(const networking_tls_aead_material &other) = delete;
+    networking_tls_aead_material &operator=(const networking_tls_aead_material &other) = delete;
+};
+
+networking_tls_aead_material::networking_tls_aead_material() noexcept
+    : send_key(ft_nullptr), receive_key(ft_nullptr), key_length(0U), iv_length(0U)
+{
+    return ;
+}
+
+networking_tls_aead_material::~networking_tls_aead_material() noexcept
+{
+    OPENSSL_cleanse(this->bytes, sizeof(this->bytes));
+    return ;
+}
 
 static const EVP_CIPHER *networking_tls_resolve_cipher(const SSL_CIPHER *cipher)
 {
@@ -44,124 +71,61 @@ static ft_bool networking_tls_prepare_buffer(ft_vector<unsigned char> &buffer,
     return (FT_TRUE);
 }
 
+static ft_bool networking_tls_export_material(SSL *ssl_session, ft_bool outbound,
+    networking_tls_aead_material &material) noexcept
+{
+    constexpr char LABEL[] = "EXPORTER-Libft-AEAD";
+
+    if (ssl_session == ft_nullptr)
+        return (FT_FALSE);
+    const EVP_CIPHER *cipher = networking_tls_resolve_cipher(
+        SSL_get_current_cipher(ssl_session));
+    if (cipher == ft_nullptr)
+        return (FT_FALSE);
+    const int32_t key_length = EVP_CIPHER_key_length(cipher);
+    const int32_t iv_length = EVP_CIPHER_iv_length(cipher);
+    if (key_length <= 0 || key_length > EVP_MAX_KEY_LENGTH
+        || iv_length <= 0 || iv_length > EVP_MAX_IV_LENGTH)
+        return (FT_FALSE);
+    material.key_length = static_cast<ft_size_t>(key_length);
+    material.iv_length = static_cast<ft_size_t>(iv_length);
+    const ft_size_t direction_length = material.key_length + material.iv_length;
+    if (SSL_export_keying_material(ssl_session, material.bytes,
+            FT_UINT64_TO_NATIVE_SIZE_CAST(2U * direction_length),
+            LABEL, sizeof(LABEL) - 1U, ft_nullptr, 0, 0) != 1)
+        return (FT_FALSE);
+    if (outbound != FT_FALSE)
+    {
+        material.send_key = material.bytes;
+        material.receive_key = material.bytes + direction_length;
+    }
+    else
+    {
+        material.send_key = material.bytes + direction_length;
+        material.receive_key = material.bytes;
+    }
+    return (FT_TRUE);
+}
+
 ft_bool    networking_tls_export_aead_keys(SSL *ssl_session, ft_bool outbound,
         ft_vector<unsigned char> &send_key,
         ft_vector<unsigned char> &send_iv,
         ft_vector<unsigned char> &receive_key,
         ft_vector<unsigned char> &receive_iv)
 {
-    const SSL_CIPHER *cipher;
-    const EVP_CIPHER *evp_cipher;
-    int32_t key_length_value;
-    int32_t iv_length_value;
-    ft_size_t key_length;
-    ft_size_t iv_length;
-    ft_size_t material_length;
-    ft_vector<unsigned char> material;
-    unsigned char *material_data;
-    const char *label;
-    ft_size_t label_length;
-
-    if (ssl_session == NULL)
-    {
-        (void)(FT_ERR_INVALID_ARGUMENT);
+    networking_tls_aead_material material;
+    if (!networking_tls_export_material(ssl_session, outbound, material)
+        || !networking_tls_prepare_buffer(send_key, material.key_length)
+        || !networking_tls_prepare_buffer(send_iv, material.iv_length)
+        || !networking_tls_prepare_buffer(receive_key, material.key_length)
+        || !networking_tls_prepare_buffer(receive_iv, material.iv_length))
         return (FT_FALSE);
-    }
-    cipher = SSL_get_current_cipher(ssl_session);
-    evp_cipher = networking_tls_resolve_cipher(cipher);
-    if (evp_cipher == NULL)
-    {
-        (void)(FT_ERR_UNSUPPORTED_TYPE);
-        return (FT_FALSE);
-    }
-    key_length_value = EVP_CIPHER_key_length(evp_cipher);
-    iv_length_value = EVP_CIPHER_iv_length(evp_cipher);
-    if (key_length_value <= 0 || iv_length_value <= 0)
-    {
-        (void)(FT_ERR_INVALID_STATE);
-        return (FT_FALSE);
-    }
-    key_length = static_cast<ft_size_t>(key_length_value);
-    iv_length = static_cast<ft_size_t>(iv_length_value);
-    material_length = (key_length + iv_length) * 2;
-    if (!networking_tls_prepare_buffer(material, material_length))
-    {
-        (void)(FT_ERR_NO_MEMORY);
-        return (FT_FALSE);
-    }
-    if (material.size() > 0)
-        material_data = material.begin();
-    else
-        material_data = NULL;
-    label = "EXPORTER-Libft-AEAD";
-    label_length = ft_strlen(label);
-    if (material_length > 0)
-    {
-        if (SSL_export_keying_material(ssl_session, material_data, material_length,
-                label, label_length, NULL, 0, 0) != 1)
-        {
-            (void)(FT_ERR_INTERNAL);
-            return (FT_FALSE);
-        }
-    }
-    if (!networking_tls_prepare_buffer(send_key, key_length))
-    {
-        (void)(FT_ERR_NO_MEMORY);
-        return (FT_FALSE);
-    }
-    if (!networking_tls_prepare_buffer(send_iv, iv_length))
-    {
-        (void)(FT_ERR_NO_MEMORY);
-        return (FT_FALSE);
-    }
-    if (!networking_tls_prepare_buffer(receive_key, key_length))
-    {
-        (void)(FT_ERR_NO_MEMORY);
-        return (FT_FALSE);
-    }
-    if (!networking_tls_prepare_buffer(receive_iv, iv_length))
-    {
-        (void)(FT_ERR_NO_MEMORY);
-        return (FT_FALSE);
-    }
-    const unsigned char *cursor;
-    const unsigned char *first_key;
-    const unsigned char *first_iv;
-    const unsigned char *second_key;
-    const unsigned char *second_iv;
-
-    cursor = material_data;
-    first_key = cursor;
-    first_iv = cursor + key_length;
-    second_key = first_iv + iv_length;
-    second_iv = second_key + key_length;
-    if (outbound)
-    {
-        if (key_length > 0)
-        {
-            ft_memcpy(send_key.begin(), first_key, key_length);
-            ft_memcpy(receive_key.begin(), second_key, key_length);
-        }
-        if (iv_length > 0)
-        {
-            ft_memcpy(send_iv.begin(), first_iv, iv_length);
-            ft_memcpy(receive_iv.begin(), second_iv, iv_length);
-        }
-    }
-    else
-    {
-        if (key_length > 0)
-        {
-            ft_memcpy(send_key.begin(), second_key, key_length);
-            ft_memcpy(receive_key.begin(), first_key, key_length);
-        }
-        if (iv_length > 0)
-        {
-            ft_memcpy(send_iv.begin(), second_iv, iv_length);
-            ft_memcpy(receive_iv.begin(), first_iv, iv_length);
-        }
-    }
-    (void)(FT_ERR_SUCCESS);
+    ft_memcpy(send_key.begin(), material.send_key, material.key_length);
+    ft_memcpy(receive_key.begin(), material.receive_key, material.key_length);
+    ft_memcpy(send_iv.begin(), material.send_key + material.key_length,
+        material.iv_length);
+    ft_memcpy(receive_iv.begin(), material.receive_key + material.key_length,
+        material.iv_length);
     return (FT_TRUE);
 }
 
@@ -171,33 +135,25 @@ ft_bool    networking_tls_initialize_aead_contexts(SSL *ssl_session, ft_bool out
         ft_vector<unsigned char> &send_iv,
         ft_vector<unsigned char> &receive_iv)
 {
-    ft_vector<unsigned char> send_key;
-    ft_vector<unsigned char> receive_key;
-
-    if (!networking_tls_export_aead_keys(ssl_session, outbound, send_key,
-            send_iv, receive_key, receive_iv))
+    networking_tls_aead_material material;
+    if (!networking_tls_export_material(ssl_session, outbound, material)
+        || !networking_tls_prepare_buffer(send_iv, material.iv_length)
+        || !networking_tls_prepare_buffer(receive_iv, material.iv_length))
         return (FT_FALSE);
-    if (send_key.size() == 0 || receive_key.size() == 0)
-    {
-        (void)(FT_ERR_INVALID_STATE);
-        return (FT_FALSE);
-    }
-    if (send_iv.size() == 0 || receive_iv.size() == 0)
-    {
-        (void)(FT_ERR_INVALID_STATE);
-        return (FT_FALSE);
-    }
+    ft_memcpy(send_iv.begin(), material.send_key + material.key_length,
+        material.iv_length);
+    ft_memcpy(receive_iv.begin(), material.receive_key + material.key_length,
+        material.iv_length);
     if (send_context.initialize() != FT_ERR_SUCCESS)
         return (FT_FALSE);
     if (receive_context.initialize() != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    if (send_context.initialize_encrypt(send_key.begin(), send_key.size(),
-            send_iv.begin(), send_iv.size()) != FT_ERR_SUCCESS)
+    if (send_context.initialize_encrypt(material.send_key, material.key_length,
+            send_iv.begin(), material.iv_length) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    if (receive_context.initialize_decrypt(receive_key.begin(),
-            receive_key.size(), receive_iv.begin(), receive_iv.size()) != FT_ERR_SUCCESS)
+    if (receive_context.initialize_decrypt(material.receive_key,
+            material.key_length, receive_iv.begin(), material.iv_length) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    (void)(FT_ERR_SUCCESS);
     return (FT_TRUE);
 }
 

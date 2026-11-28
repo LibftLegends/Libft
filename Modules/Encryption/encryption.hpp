@@ -11,17 +11,21 @@ void    aes_decrypt(uint8_t *block_buffer, const uint8_t *key_buffer);
 void    aes_encrypt_software(uint8_t *block_buffer, const uint8_t *key_buffer);
 void    aes_decrypt_software(uint8_t *block_buffer, const uint8_t *key_buffer);
 
+#ifdef LIBFT_TEST_BUILD
 typedef int32_t (*t_be_open_function)(const char *path_name, int32_t flags,
     mode_t mode);
 typedef int64_t (*t_be_write_function)(int32_t file_descriptor,
     const void *buffer, ft_size_t count);
+#endif
 
 int32_t         be_save_game(const char *filename, const char *data,
                     const char *key_string);
 char            **be_decrypt_data(char **data_buffer, const char *key_string);
 const char      *be_get_encryption_key();
+#ifdef LIBFT_TEST_BUILD
 void            be_set_save_game_hooks(t_be_open_function open_function,
                     t_be_write_function write_function);
+#endif
 
 uint8_t *encryption_generate_symmetric_key(ft_size_t key_length);
 uint8_t *encryption_generate_initialization_vector(
@@ -46,7 +50,9 @@ int32_t rsa_generate_key_pair(uint64_t *public_key, uint64_t *private_key,
     uint64_t *modulus, int32_t bit_size);
 uint64_t rsa_encrypt(uint64_t message, uint64_t public_key, uint64_t modulus);
 uint64_t rsa_decrypt(uint64_t cipher, uint64_t private_key, uint64_t modulus);
+#ifdef LIBFT_TEST_BUILD
 void rsa_set_force_mod_inverse_failure(ft_bool enable);
+#endif
 
 typedef void (*t_encryption_block_function)(uint8_t *block_buffer,
     const uint8_t *key_buffer);

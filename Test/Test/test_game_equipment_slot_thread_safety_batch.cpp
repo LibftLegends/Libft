@@ -24,6 +24,44 @@ static ft_bool equipment_slot_contains_item(game_equipment &value, int32_t slot)
     return (contains_item);
 }
 
+FT_TEST(test_game_equipment_move_preserves_distinct_slots_and_reference_counts)
+{
+    game_equipment source;
+    game_equipment destination;
+    ft_sharedptr<game_item> items[6];
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    int32_t slot = EQUIP_HEAD;
+    while (slot <= EQUIP_OFF_HAND)
+    {
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, items[slot].initialize(new game_item()));
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, items[slot]->initialize());
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, source.equip(slot, items[slot]));
+        FT_ASSERT_EQ(2, items[slot].use_count());
+        ++slot;
+    }
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.move(source));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    slot = EQUIP_HEAD;
+    while (slot <= EQUIP_OFF_HAND)
+    {
+        FT_ASSERT_EQ(2, items[slot].use_count());
+        FT_ASSERT_EQ(FT_FALSE, equipment_slot_contains_item(source, slot));
+        ft_sharedptr<game_item> *retained = destination.get_item(slot);
+        FT_ASSERT(retained != ft_nullptr);
+        FT_ASSERT(retained->get() == items[slot].get());
+        destination.unequip(slot);
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.get_error());
+        FT_ASSERT_EQ(FT_FALSE, equipment_slot_contains_item(destination, slot));
+        FT_ASSERT_EQ(2, items[slot].use_count());
+        equipment_slot_cleanup(retained);
+        FT_ASSERT_EQ(1, items[slot].use_count());
+        ++slot;
+    }
+    return (1);
+}
+
 FT_TEST(test_game_equipment_equip_head_stores_initialized_item)
 {
     game_equipment value;

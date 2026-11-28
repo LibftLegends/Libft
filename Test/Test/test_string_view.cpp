@@ -81,6 +81,23 @@ FT_TEST(test_string_view_compare_substr)
     return (1);
 }
 
+FT_TEST(test_string_view_preserves_signed_order_after_equal_binary_prefix)
+{
+    signed char first[520] = {};
+    signed char second[520] = {};
+    first[517] = -1;
+    second[517] = 1;
+    ft_string_view<signed char> left(first, sizeof(first));
+    ft_string_view<signed char> right(second, sizeof(second));
+    ft_string_view<signed char> prefix(first, 517U);
+    FT_ASSERT_EQ(-1, left.compare(right));
+    FT_ASSERT_EQ(1, right.compare(left));
+    FT_ASSERT_EQ(-1, prefix.compare(right));
+    first[517] = 1;
+    FT_ASSERT_EQ(0, left.compare(right));
+    return (1);
+}
+
 FT_TEST(test_string_view_substr_oob)
 {
     char    *buffer;

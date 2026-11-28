@@ -23,6 +23,10 @@ class http2_header_field
         ft_string           _value;
         mutable pt_recursive_mutex   *_mutex;
 
+        friend ft_bool http2_compress_headers(
+            const ft_vector<http2_header_field> &headers, ft_string &out_block,
+            int32_t &error_code) noexcept;
+
         int32_t     lock(ft_bool *lock_acquired) const noexcept;
         void    unlock(ft_bool lock_acquired) const noexcept;
 
@@ -76,6 +80,13 @@ class http2_frame
         ft_string           _payload;
         mutable pt_recursive_mutex   *_mutex;
         static thread_local int32_t _last_error;
+
+        friend class http2_settings_state;
+        friend ft_bool http2_encode_frame(const http2_frame &frame,
+            ft_string &out_buffer, int32_t &error_code) noexcept;
+        friend ft_bool http2_decode_frame(const unsigned char *buffer,
+            ft_size_t buffer_size, ft_size_t &offset, http2_frame &out_frame,
+            int32_t &error_code) noexcept;
 
         int32_t     lock(ft_bool *lock_acquired) const noexcept;
         void    unlock(ft_bool lock_acquired) const noexcept;
@@ -137,16 +148,12 @@ class http2_stream_manager
     private:
 #endif
         uint8_t                                     _initialised_state;
-        ft_bool        validate_receive_window(uint32_t stream_identifier,
-                        uint32_t length) noexcept;
-        ft_bool        record_received_data(uint32_t stream_identifier,
-                        uint32_t length) noexcept;
         ft_bool        reserve_remote_connection_window(uint32_t length) noexcept;
         ft_bool        record_connection_send(uint32_t length) noexcept;
-        void        remove_stream_identifier(uint32_t stream_identifier) noexcept;
+        ft_bool        update_initial_window(uint32_t new_window, uint32_t &initial_window,
+                        uint32_t http2_stream_state::*stream_window) noexcept;
 
         ft_map<uint32_t, http2_stream_state>    _streams;
-        ft_vector<uint32_t>                     _stream_identifiers;
         uint32_t                                _initial_remote_window;
         uint32_t                                _initial_local_window;
         uint32_t                                _connection_remote_window;

@@ -22,7 +22,5 @@ int64_t rng_seed_value(const char *seed_string)
 
 int64_t rng_seed_value(const ft_string &seed_string)
 {
-    if (seed_string.empty() == FT_TRUE)
-        return (rng_seed_value(ft_nullptr));
     return (rng_seed_value(seed_string.c_str()));
 }

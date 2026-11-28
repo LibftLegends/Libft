@@ -6,7 +6,7 @@ Each module below has a short purpose statement to clarify its role in the tree.
 ## GNU Make build and validation
 
 The canonical build is one GNU Make dependency graph. It schedules individual
-objects across modules, then creates module archives and `Full_Libft.a`.
+objects across modules, then creates module archives and `build/archives/Full_Libft.a`.
 Module Makefiles remain compatibility wrappers; the repository root is the
 canonical build entry point.
 GNU Make 3.81 or newer is supported. GNU Make 4.0 and newer may optionally
@@ -53,6 +53,10 @@ compiling the full graph. `make -n`, `make -pn`, and `make --trace` can be used 
 inspect scheduling and prerequisites without changing source files. For
 build-system diagnostics that intentionally bypass the summary wrapper, use
 `make internal-all` or `make internal-tests`.
+
+Release and debug archives are stored in `build/archives/`. Test diagnostics
+are written to `build_logs/` under the test working directory, normally
+`Test/build_logs/` when started with `make run-tests`.
 
 ## Modules
 
@@ -223,6 +227,15 @@ Every module that allocates through this layer inherits the same mechanisms for 
   The module follows the shared error conventions while exposing helpers that publish counters, histograms, and trace spans.
   Observability/ keeps samples and events in sync with the rest of the tree so instrumentation never feels like an afterthought.
   It exists to let service authors wire up telemetry without per-module experimentation, ensuring consistent visibility across deployments.
+
+- `Analytics/`: Provides low-overhead runtime timing for frames and named scopes, including invocation counts, rolling samples, percentiles, and export callbacks.
+  It is intended for game render and world-generation profiling, with collection controlled by the build and runtime session configuration.
+
+- `CardGame/`: Provides a configuration-driven card-game state engine.
+- `Scripting/`: Provides a deterministic, sandboxed custom scripting runtime
+  with typed native callbacks. It is the replacement target for the legacy Lua
+  integration and does not expose raw host pointers.
+  Card definitions, board limits, turn limits, and effect function pointers are supplied by the game, so the library dispatches mechanics without hard-coding a particular ruleset.
 
 - `PThread/`: Wraps the low-level threading and synchronization primitives such as mutexes, condition variables, rwlocks, and native thread helpers.
   Every helper normalizes platform differences and integrates with the error/runtime conventions so concurrent modules share consistent safety practices.

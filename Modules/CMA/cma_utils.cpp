@@ -57,13 +57,13 @@ static Block *cma_find_block_in_page(Page *page,
 
 void cma_set_alloc_logging(ft_bool enable)
 {
-    g_cma_alloc_logging = enable;
+    g_cma_alloc_logging.store(enable, std::memory_order_relaxed);
     return ;
 }
 
 ft_bool cma_get_alloc_logging(void)
 {
-    return (g_cma_alloc_logging);
+    return (g_cma_alloc_logging.load(std::memory_order_relaxed));
 }
 
 void cma_record_allocation_log(const char *format_string, ...)
@@ -72,7 +72,7 @@ void cma_record_allocation_log(const char *format_string, ...)
     va_list argument_list;
     int32_t formatted_length;
 
-    if (format_string == nullptr || g_cma_alloc_logging == FT_FALSE)
+    if (format_string == nullptr || cma_get_alloc_logging() == FT_FALSE)
         return ;
     va_start(argument_list, format_string);
     formatted_length = std::vsnprintf(message_buffer, sizeof(message_buffer),
@@ -646,7 +646,7 @@ int32_t cma_get_extended_stats(ft_size_t *allocation_count,
         ft_size_t *peak_bytes)
 {
     ft_bool lock_acquired = FT_FALSE;
-    int32_t lock_error = cma_lock_allocator(&lock_acquired);
+    int32_t lock_error = cma_lock_allocator_arena(&lock_acquired);
 
     if (lock_error != FT_ERR_SUCCESS)
         return (lock_error);

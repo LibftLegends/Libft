@@ -66,3 +66,25 @@ FT_TEST(test_time_trace_detects_unbalanced_events)
     std::remove(file_path);
     return (1);
 }
+
+FT_TEST(test_time_trace_escapes_control_bytes_in_consecutive_events)
+{
+    const char *path = "time_trace_escape_test.json";
+    std::remove(path);
+    FT_ASSERT(time_trace_begin_session(path));
+    FT_ASSERT(time_trace_instant_event("quote\" newline\n", "backslash\\"));
+    FT_ASSERT(time_trace_begin_event("form\fback\b", "low\x01"));
+    FT_ASSERT(time_trace_end_event());
+    FT_ASSERT(time_trace_end_session());
+    std::ifstream input(path, std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(input)),
+            std::istreambuf_iterator<char>());
+    input.close();
+    std::remove(path);
+    FT_ASSERT(contents.find("quote\\\" newline\\n") != std::string::npos);
+    FT_ASSERT(contents.find("backslash\\\\") != std::string::npos);
+    FT_ASSERT(contents.find("form\\u000cback\\u0008") != std::string::npos);
+    FT_ASSERT(contents.find("low\\u0001") != std::string::npos);
+    FT_ASSERT(contents.find(',') != std::string::npos);
+    return (1);
+}

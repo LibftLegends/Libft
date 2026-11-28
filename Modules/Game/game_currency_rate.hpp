@@ -25,6 +25,10 @@ class game_currency_rate
 
         int32_t lock_internal(ft_bool *lock_acquired) const noexcept;
         int32_t unlock_internal(ft_bool lock_acquired) const noexcept;
+        int32_t read_values(int32_t &currency_id, double &rate_to_base,
+            int32_t &display_precision) const noexcept;
+        int32_t copy_values(const game_currency_rate &other) noexcept;
+        friend class game_economy_table;
 
     public:
         game_currency_rate() noexcept;

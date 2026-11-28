@@ -12,8 +12,12 @@ std::atomic<int> pt_recursive_mutex_lock_override_error_code(FT_ERR_SUCCESS);
 #include "pthread.hpp"
 #include "recursive_mutex.hpp"
 #include "pthread_lock_tracking.hpp"
+#if defined(LIBFT_ENABLE_ANALYTICS)
+# include "../Analytics/analytics.hpp"
+# include <cstdio>
+#endif
 
-int pt_recursive_mutex::lock() const
+int pt_recursive_mutex::lock_uninstrumented() const
 {
     int ensure_error = this->ensure_native_mutex();
     int notify_error;
@@ -29,12 +33,15 @@ int pt_recursive_mutex::lock() const
 #endif
 
     pt_thread_id_type thread_id = pt_thread_self();
-    if (this->_lock.load(std::memory_order_acquire))
+    const ft_bool was_locked = this->_lock.load(std::memory_order_acquire);
+    if (was_locked == FT_TRUE)
     {
         pt_thread_id_type owner = this->_owner.load(std::memory_order_relaxed);
         if (pt_thread_equal(owner, thread_id))
         {
-            this->_lock_depth.fetch_add(1, std::memory_order_relaxed);
+            // The owning thread is the only writer until the native lock is released.
+            const std::size_t depth = this->_lock_depth.load(std::memory_order_relaxed);
+            this->_lock_depth.store(depth + 1U, std::memory_order_relaxed);
             return (FT_ERR_SUCCESS);
         }
     }
@@ -42,7 +49,7 @@ int pt_recursive_mutex::lock() const
     const void *mutex_handle = static_cast<const void *>(this);
     acquired_without_wait = false;
     mutex_error = FT_ERR_SUCCESS;
-    if (!this->_lock.load(std::memory_order_acquire))
+    if (was_locked == FT_FALSE)
     {
         try
         {
@@ -125,4 +132,27 @@ int pt_recursive_mutex::lock() const
     }
 
     return (FT_ERR_SUCCESS);
+}
+
+int pt_recursive_mutex::lock() const
+{
+#if defined(LIBFT_ENABLE_ANALYTICS)
+    analytics_runtime_scope_token token;
+    int analytics_error;
+    int result;
+
+    analytics_error = analytics_runtime_scope_begin(
+        analytics_runtime_region::PT_RECURSIVE_MUTEX_LOCK, &token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        return (this->lock_uninstrumented());
+    result = this->lock_uninstrumented();
+    analytics_error = analytics_runtime_scope_end(&token);
+    if (analytics_error != FT_ERR_SUCCESS)
+        std::fprintf(stderr,
+            "[LIBFT][Analytics] pt_recursive_mutex_lock scope failed: %d\n",
+            analytics_error);
+    return (result);
+#else
+    return (this->lock_uninstrumented());
+#endif
 }

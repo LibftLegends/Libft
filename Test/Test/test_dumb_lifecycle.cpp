@@ -343,6 +343,46 @@ FT_TEST(test_dumb_sound_device_move_destroyed_destination_succeeds)
     return (1);
 }
 
+FT_TEST(test_dumb_sound_device_initialize_move_transfers_mutex)
+{
+    test_sound_device_lifecycle_impl source;
+    test_sound_device_lifecycle_impl destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.enable_thread_safety());
+    pt_recursive_mutex *source_mutex = source._mutex;
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(static_cast<ft_sound_device &&>(source)));
+    FT_ASSERT(destination._mutex == source_mutex);
+    FT_ASSERT_EQ(FT_TRUE, destination.is_thread_safe());
+    FT_ASSERT(source._mutex == ft_nullptr);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source._initialised_state);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_FALSE, source.is_thread_safe());
+    return (1);
+}
+
+FT_TEST(test_dumb_sound_device_move_lock_failure_preserves_source)
+{
+    test_sound_device_lifecycle_impl source;
+    test_sound_device_lifecycle_impl destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.enable_thread_safety());
+    pt_recursive_mutex *source_mutex = source._mutex;
+
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED,
+        std::memory_order_release);
+    const int32_t result = destination.move(source);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS, std::memory_order_release);
+    FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, result);
+    FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, destination._initialised_state);
+    FT_ASSERT(destination._mutex == ft_nullptr);
+    FT_ASSERT(source._mutex == source_mutex);
+    FT_ASSERT_EQ(FT_TRUE, source.is_thread_safe());
+    return (1);
+}
+
 FT_TEST(test_dumb_sound_device_initialize_twice_aborts)
 {
     FT_ASSERT_EQ(1, dumb_expect_sigabrt(sound_device_initialize_twice_aborts_operation));

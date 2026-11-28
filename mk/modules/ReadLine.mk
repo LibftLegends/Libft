@@ -13,7 +13,6 @@ ReadLine_SOURCES := readline.cpp \
     readline_initialize.cpp \
     readline_state.cpp \
     readline_thread_safety.cpp \
-    readline_terminal_dimensions.cpp \
     readline_get_terminal_width.cpp
 ReadLine_SOURCES += readline_utf8.cpp
 

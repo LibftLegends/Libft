@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdarg>
+#include <atomic>
 #include "../Time/time.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../PThread/pthread.hpp"
@@ -135,6 +136,8 @@ int32_t     ft_log_context_push_field(const char *key, const char *value);
 void    ft_log_context_pop(ft_size_t field_count);
 void    ft_log_context_clear();
 
+struct s_log_context_group;
+
 class ft_log_context_guard
 {
 #ifdef LIBFT_TEST_BUILD
@@ -143,8 +146,7 @@ class ft_log_context_guard
     private:
 #endif
         uint8_t _initialised_state;
-        ft_size_t _pushed_count;
-        ft_bool _active;
+        s_log_context_group *_group;
         mutable int32_t _error_code;
 
         void set_error(int32_t error_code_value) const;
@@ -208,13 +210,15 @@ class ft_logger
         uint8_t _initialised_state;
         pt_recursive_mutex *_mutex;
         ft_bool _thread_safe_enabled;
-        ft_bool _alloc_logging;
-        ft_bool _api_logging;
-        mutable int32_t _error_code;
+        std::atomic<ft_bool> _alloc_logging;
+        std::atomic<ft_bool> _api_logging;
+        mutable std::atomic<int32_t> _error_code;
 
         void set_error(int32_t error_code_value) const noexcept;
-        friend void ft_log_vwrite(t_log_level level, const char *format_string, va_list argument_list);
-        friend void ft_log_process_message(const ft_string &message);
+        void emit_variadic(t_log_level level, const char *format_string,
+            va_list arguments) noexcept;
+        int32_t release_instance(ft_bool close_runtime) noexcept;
+        friend void logger_report_sink_error(int32_t error);
 
         int32_t lock(ft_bool *lock_acquired) const noexcept;
         void unlock(ft_bool lock_acquired) const noexcept;

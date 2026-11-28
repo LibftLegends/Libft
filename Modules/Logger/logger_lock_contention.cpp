@@ -2,100 +2,55 @@
 #include "../Errno/errno.hpp"
 #include "../PThread/pthread_lock_tracking.hpp"
 #include "../Time/time.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/pthread.hpp"
-#include "../PThread/recursive_mutex.hpp"
 
-static pthread_mutex_t g_lock_contention_mutex;
-static pthread_once_t g_lock_contention_once = PTHREAD_ONCE_INIT;
-static int32_t g_lock_contention_mutex_init_error = 0;
-static ft_bool g_lock_contention_sampling_enabled = FT_TRUE;
-static uint32_t g_lock_contention_sample_interval_ms = 250;
-static int64_t g_lock_contention_last_sample_ms = 0;
-static int64_t g_lock_contention_priority_threshold_ms = 500;
-static ft_size_t g_lock_contention_total_samples = 0;
-static ft_size_t g_lock_contention_priority_inversions = 0;
-static ft_size_t g_lock_contention_skipped_samples = 0;
-static double g_lock_contention_wait_total_ms = 0.0;
-static ft_size_t g_lock_contention_wait_observations = 0;
-static int64_t g_lock_contention_longest_wait_ms = 0;
-
-static void logger_lock_contention_initialize_mutex()
+struct s_logger_waiter_snapshot
 {
-    int32_t initialization_status;
+    pt_lock_wait_snapshot_vector waiters;
 
-    initialization_status = pthread_mutex_init(&g_lock_contention_mutex, ft_nullptr);
-    if (initialization_status != 0)
+    s_logger_waiter_snapshot() : waiters{}
     {
-        g_lock_contention_mutex_init_error = initialization_status;
         return ;
     }
-    g_lock_contention_mutex_init_error = 0;
-    return ;
-}
 
-static int32_t logger_lock_contention_lock()
-{
-    int32_t once_status;
-    int32_t lock_status;
+    ~s_logger_waiter_snapshot()
+    {
+        pt_buffer_destroy(this->waiters);
+        return ;
+    }
+};
 
-    once_status = pthread_once(&g_lock_contention_once, logger_lock_contention_initialize_mutex);
-    if (once_status != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (g_lock_contention_mutex_init_error != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    lock_status = pthread_mutex_lock(&g_lock_contention_mutex);
-    if (lock_status != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    return (FT_ERR_SUCCESS);
-}
-
-static int32_t logger_lock_contention_unlock()
-{
-    int32_t once_status;
-    int32_t unlock_status;
-
-    once_status = pthread_once(&g_lock_contention_once, logger_lock_contention_initialize_mutex);
-    if (once_status != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (g_lock_contention_mutex_init_error != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    unlock_status = pthread_mutex_unlock(&g_lock_contention_mutex);
-    if (unlock_status != 0)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    return (FT_ERR_SUCCESS);
-}
+static pthread_mutex_t g_lock_contention_mutex = PTHREAD_MUTEX_INITIALIZER;
+static s_logger_waiter_snapshot g_lock_contention_snapshot;
+static ft_bool g_lock_contention_sampling_enabled = FT_TRUE;
+static uint32_t g_lock_contention_sample_interval_ms = 250U;
+static int64_t g_lock_contention_last_sample_ms = 0;
+static int64_t g_lock_contention_priority_threshold_ms = 500;
+static ft_size_t g_lock_contention_total_samples = 0U;
+static ft_size_t g_lock_contention_priority_inversions = 0U;
+static ft_size_t g_lock_contention_skipped_samples = 0U;
+static double g_lock_contention_wait_total_ms = 0.0;
+static int64_t g_lock_contention_longest_wait_ms = 0;
 
 void ft_log_enable_lock_contention_sampling(ft_bool enable)
 {
-    if (logger_lock_contention_lock() != 0)
+    if (pthread_mutex_lock(&g_lock_contention_mutex) != 0)
         return ;
     g_lock_contention_sampling_enabled = enable;
-    if (!g_lock_contention_sampling_enabled)
+    if (enable == FT_FALSE)
+    {
         g_lock_contention_last_sample_ms = 0;
-    logger_lock_contention_unlock();
+        pt_buffer_destroy(g_lock_contention_snapshot.waiters);
+    }
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return ;
 }
 
 void ft_log_set_lock_contention_sampling_interval(uint32_t interval_ms)
 {
-    if (logger_lock_contention_lock() != 0)
+    if (pthread_mutex_lock(&g_lock_contention_mutex) != 0)
         return ;
     g_lock_contention_sample_interval_ms = interval_ms;
-    logger_lock_contention_unlock();
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return ;
 }
 
@@ -103,138 +58,117 @@ void ft_log_set_lock_contention_priority_threshold(int64_t threshold_ms)
 {
     if (threshold_ms < 0)
         threshold_ms = 0;
-    if (logger_lock_contention_lock() != 0)
+    if (pthread_mutex_lock(&g_lock_contention_mutex) != 0)
         return ;
     g_lock_contention_priority_threshold_ms = threshold_ms;
-    logger_lock_contention_unlock();
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return ;
 }
 
-static void logger_lock_contention_record_sample(int64_t wait_duration_ms, ft_bool priority_inversion, ft_bool skipped)
+static void logger_lock_contention_collect(const pt_lock_wait_snapshot_vector &waiters,
+    s_log_lock_contention_sample *samples, ft_size_t output_count)
 {
-    g_lock_contention_total_samples += 1;
-    if (priority_inversion)
-        g_lock_contention_priority_inversions += 1;
-    if (skipped)
-        g_lock_contention_skipped_samples += 1;
-    if (wait_duration_ms > g_lock_contention_longest_wait_ms)
-        g_lock_contention_longest_wait_ms = wait_duration_ms;
-    g_lock_contention_wait_total_ms += static_cast<double>(wait_duration_ms);
-    g_lock_contention_wait_observations += 1;
-    return ;
-}
-
-int32_t ft_log_sample_lock_contention(s_log_lock_contention_sample *samples, ft_size_t capacity, ft_size_t *entry_count)
-{
-    pt_lock_wait_snapshot_vector waiters;
-    ft_size_t entry_index;
-    ft_size_t output_index;
-    int64_t now_ms;
-
-    if (entry_count)
-        *entry_count = 0;
-    if ((samples == ft_nullptr && capacity > 0) || capacity == 0)
+    if (waiters.size == 0U)
+        return ;
+    const int64_t wall_now_ms = time_now_ms();
+    ft_size_t index = 0U;
+    double wait_total_ms = 0.0;
+    int64_t longest_wait_ms = g_lock_contention_longest_wait_ms;
+    ft_size_t priority_inversions = 0U;
+    while (index < waiters.size)
     {
-        return (FT_ERR_INTERNAL);
+        const s_pt_lock_wait_snapshot &waiter = waiters.data[index];
+        int64_t wait_duration_ms = 0;
+        if (waiter.wait_started_ms > 0 && wall_now_ms >= waiter.wait_started_ms)
+            wait_duration_ms = wall_now_ms - waiter.wait_started_ms;
+        const ft_bool priority_inversion =
+            wait_duration_ms >= g_lock_contention_priority_threshold_ms
+            && waiter.owner_thread != 0 && waiter.waiting_thread != 0;
+        if (index < output_count)
+        {
+            samples[index].mutex_pointer = waiter.mutex_pointer;
+            samples[index].owner_thread = waiter.owner_thread;
+            samples[index].waiting_thread = waiter.waiting_thread;
+            samples[index].wait_duration_ms = wait_duration_ms;
+            samples[index].priority_inversion = priority_inversion;
+        }
+        if (wait_duration_ms > longest_wait_ms)
+            longest_wait_ms = wait_duration_ms;
+        priority_inversions += priority_inversion;
+        wait_total_ms += static_cast<double>(wait_duration_ms);
+        index += 1U;
     }
-    if (logger_lock_contention_lock() != 0)
+    g_lock_contention_total_samples += waiters.size;
+    g_lock_contention_skipped_samples += waiters.size - output_count;
+    g_lock_contention_priority_inversions += priority_inversions;
+    g_lock_contention_longest_wait_ms = longest_wait_ms;
+    g_lock_contention_wait_total_ms += wait_total_ms;
+    return ;
+}
+
+int32_t ft_log_sample_lock_contention(s_log_lock_contention_sample *samples,
+    ft_size_t capacity, ft_size_t *entry_count)
+{
+    if (entry_count != ft_nullptr)
+        *entry_count = 0U;
+    if (samples == ft_nullptr || capacity == 0U)
         return (FT_ERR_INTERNAL);
-    if (!g_lock_contention_sampling_enabled)
+    if (pthread_mutex_lock(&g_lock_contention_mutex) != 0)
+        return (FT_ERR_INTERNAL);
+    if (g_lock_contention_sampling_enabled == FT_FALSE)
     {
-        logger_lock_contention_unlock();
+        (void)pthread_mutex_unlock(&g_lock_contention_mutex);
         return (FT_ERR_SUCCESS);
     }
-    now_ms = time_now_ms();
-    if (g_lock_contention_sample_interval_ms > 0 && g_lock_contention_last_sample_ms != 0)
+    const int64_t now_ms = time_monotonic();
+    if (g_lock_contention_last_sample_ms != 0 && g_lock_contention_sample_interval_ms > 0U
+        && now_ms - g_lock_contention_last_sample_ms < g_lock_contention_sample_interval_ms)
     {
-        int64_t elapsed_ms;
-
-        elapsed_ms = now_ms - g_lock_contention_last_sample_ms;
-        if (elapsed_ms >= 0 && elapsed_ms < static_cast<int64_t>(g_lock_contention_sample_interval_ms))
-        {
-            logger_lock_contention_unlock();
-            return (FT_ERR_SUCCESS);
-        }
+        (void)pthread_mutex_unlock(&g_lock_contention_mutex);
+        return (FT_ERR_SUCCESS);
     }
-    g_lock_contention_last_sample_ms = now_ms;
-    if (!pt_lock_tracking::snapshot_waiters(waiters))
+    pt_lock_wait_snapshot_vector &waiters = g_lock_contention_snapshot.waiters;
+    if (pt_lock_tracking::snapshot_waiters(waiters) != FT_ERR_SUCCESS)
     {
-        logger_lock_contention_unlock();
+        (void)pthread_mutex_unlock(&g_lock_contention_mutex);
         return (FT_ERR_INTERNAL);
     }
-    entry_index = 0;
-    output_index = 0;
-    while (entry_index < waiters.size)
-    {
-        s_pt_lock_wait_snapshot snapshot_entry;
-        int64_t wait_duration_ms;
-        ft_bool priority_inversion;
-
-        snapshot_entry = waiters.data[entry_index];
-        wait_duration_ms = 0;
-        if (snapshot_entry.wait_started_ms > 0 && now_ms >= snapshot_entry.wait_started_ms)
-            wait_duration_ms = now_ms - snapshot_entry.wait_started_ms;
-        priority_inversion = FT_FALSE;
-        if (wait_duration_ms >= g_lock_contention_priority_threshold_ms
-            && snapshot_entry.owner_thread != 0 && snapshot_entry.waiting_thread != 0)
-        {
-            priority_inversion = FT_TRUE;
-        }
-        if (output_index < capacity)
-        {
-            s_log_lock_contention_sample sample;
-
-            sample.mutex_pointer = snapshot_entry.mutex_pointer;
-            sample.owner_thread = snapshot_entry.owner_thread;
-            sample.waiting_thread = snapshot_entry.waiting_thread;
-            sample.wait_duration_ms = wait_duration_ms;
-            sample.priority_inversion = priority_inversion;
-            samples[output_index] = sample;
-            logger_lock_contention_record_sample(wait_duration_ms, priority_inversion, FT_FALSE);
-            output_index += 1;
-        }
-        else
-            logger_lock_contention_record_sample(wait_duration_ms, priority_inversion, FT_TRUE);
-        entry_index += 1;
-    }
-    if (entry_count)
-        *entry_count = output_index;
-    logger_lock_contention_unlock();
+    g_lock_contention_last_sample_ms = now_ms;
+    ft_size_t output_count = waiters.size;
+    if (output_count > capacity)
+        output_count = capacity;
+    logger_lock_contention_collect(waiters, samples, output_count);
+    if (entry_count != ft_nullptr)
+        *entry_count = output_count;
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t ft_log_lock_contention_get_statistics(s_log_lock_contention_statistics *statistics)
 {
-    double average_ms;
-
-    if (!statistics)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (logger_lock_contention_lock() != 0)
+    if (statistics == ft_nullptr || pthread_mutex_lock(&g_lock_contention_mutex) != 0)
         return (FT_ERR_INTERNAL);
     statistics->total_samples = g_lock_contention_total_samples;
     statistics->priority_inversions = g_lock_contention_priority_inversions;
     statistics->skipped_samples = g_lock_contention_skipped_samples;
     statistics->longest_wait_ms = g_lock_contention_longest_wait_ms;
-    average_ms = 0.0;
-    if (g_lock_contention_wait_observations > 0)
-        average_ms = g_lock_contention_wait_total_ms / static_cast<double>(g_lock_contention_wait_observations);
-    statistics->average_wait_ms = average_ms;
-    logger_lock_contention_unlock();
+    statistics->average_wait_ms = 0.0;
+    if (g_lock_contention_total_samples > 0U)
+        statistics->average_wait_ms = g_lock_contention_wait_total_ms
+            / static_cast<double>(g_lock_contention_total_samples);
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return (FT_ERR_SUCCESS);
 }
 
 void ft_log_lock_contention_reset_statistics()
 {
-    if (logger_lock_contention_lock() != 0)
+    if (pthread_mutex_lock(&g_lock_contention_mutex) != 0)
         return ;
-    g_lock_contention_total_samples = 0;
-    g_lock_contention_priority_inversions = 0;
-    g_lock_contention_skipped_samples = 0;
+    g_lock_contention_total_samples = 0U;
+    g_lock_contention_priority_inversions = 0U;
+    g_lock_contention_skipped_samples = 0U;
     g_lock_contention_wait_total_ms = 0.0;
-    g_lock_contention_wait_observations = 0;
     g_lock_contention_longest_wait_ms = 0;
-    logger_lock_contention_unlock();
+    (void)pthread_mutex_unlock(&g_lock_contention_mutex);
     return ;
 }

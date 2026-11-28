@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Networking/networking.hpp"
+#include "../../Modules/Networking/udp_socket.hpp"
 #include "../../Modules/CMA/CMA.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
@@ -116,6 +117,112 @@ static void close_one_socket(int descriptor)
 {
     if (descriptor >= 0)
         (void)nw_close(descriptor);
+}
+
+static int32_t bind_udp_loopback(udp_socket &socket, struct sockaddr_in &address)
+{
+    SocketConfig configuration;
+    if (configuration.initialize() != FT_ERR_SUCCESS)
+        return (-1);
+    configuration._type = SocketType::SERVER;
+    configuration._protocol = IPPROTO_UDP;
+    configuration._port = 0;
+    if (socket.initialize() != FT_ERR_SUCCESS
+        || socket.initialize(configuration) != FT_ERR_SUCCESS)
+        return (-1);
+    socklen_t address_length = sizeof(address);
+    if (getsockname(socket.get_fd(), reinterpret_cast<sockaddr *>(&address),
+            &address_length) != 0 || address.sin_family != AF_INET)
+        return (-1);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    return (0);
+}
+
+FT_TEST(test_networking_udp_event_wait_ignores_other_ready_sockets)
+{
+    udp_socket socket;
+    struct sockaddr_in address{};
+    FT_ASSERT_EQ(0, bind_udp_loopback(socket, address));
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    const int32_t other_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ);
+    const int32_t write_result = event_loop_add_interest(&loop, socket.get_fd(),
+        EVENT_LOOP_INTEREST_WRITE);
+    const ssize_t other_sent = nw_send(connection[1], "x", 1, 0);
+    const auto timeout_start = std::chrono::steady_clock::now();
+    const int32_t idle_result = udp_event_loop_wait_read(&loop, socket, 60);
+    const auto timeout_elapsed = std::chrono::steady_clock::now() - timeout_start;
+    const int32_t sender = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    ssize_t sent = -1;
+    if (sender >= 0)
+        sent = nw_sendto(sender, "y", 1, 0, reinterpret_cast<const sockaddr *>(&address),
+            sizeof(address));
+    char byte = '\0';
+    const ssize_t received = udp_event_loop_receive(&loop, socket, &byte, 1, 0,
+        ft_nullptr, ft_nullptr, 500);
+    const int32_t writable = udp_event_loop_wait_write(&loop, socket, 500);
+    event_loop_ready_event ready_events[2]{};
+    uint32_t ready_count = 0U;
+    const int32_t wait_result = event_loop_wait(&loop, ready_events, 2, &ready_count, 500);
+    const uint32_t registration_count = loop.registration_count;
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    close_one_socket(sender);
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, other_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, write_result);
+    FT_ASSERT_EQ(1, other_sent);
+    FT_ASSERT_EQ(0, idle_result);
+    FT_ASSERT(timeout_elapsed >= std::chrono::milliseconds(40));
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(1, received);
+    FT_ASSERT_EQ('y', byte);
+    FT_ASSERT_EQ(1, writable);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wait_result);
+    FT_ASSERT_EQ(2U, registration_count);
+    FT_ASSERT_EQ(2U, ready_count);
+    return (1);
+}
+
+FT_TEST(test_networking_udp_event_wait_can_be_interrupted)
+{
+    udp_socket socket;
+    struct sockaddr_in address{};
+    FT_ASSERT_EQ(0, bind_udp_loopback(socket, address));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t wait_result = -1;
+    std::thread waiter([&]()
+    {
+        wait_result = udp_event_loop_wait_read(&loop, socket, 1500);
+        return ;
+    });
+    ft_bool active = FT_FALSE;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    while (!active && std::chrono::steady_clock::now() < deadline)
+    {
+        if (event_loop_lock(&loop, ft_nullptr) == FT_ERR_SUCCESS)
+        {
+            active = loop.wait_active;
+            event_loop_unlock(&loop, FT_TRUE);
+        }
+        if (!active)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const auto interrupt_start = std::chrono::steady_clock::now();
+    const int32_t interrupted = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto interrupt_elapsed = std::chrono::steady_clock::now() - interrupt_start;
+    event_loop_clear(&loop);
+
+    FT_ASSERT(active);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupted);
+    FT_ASSERT_EQ(0, wait_result);
+    FT_ASSERT(interrupt_elapsed < std::chrono::milliseconds(800));
+    return (1);
 }
 
 FT_TEST(test_networking_event_loop_add_socket_reports_allocation_failure)
@@ -296,6 +403,105 @@ FT_TEST(test_networking_event_loop_merges_read_write_interest)
     return (1);
 }
 
+FT_TEST(test_networking_event_loop_updates_existing_interests_without_heap)
+{
+    int32_t descriptors[2];
+    FT_ASSERT_EQ(0, make_socket_pair(descriptors));
+    event_loop loop;
+    const int32_t init_result = event_loop_initialize(&loop);
+    if (init_result != FT_ERR_SUCCESS)
+    {
+        close_socket_pair(descriptors);
+        return (0);
+    }
+    const int32_t first = event_loop_add_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_WRITE);
+    const int32_t second = event_loop_add_interest(&loop, descriptors[1],
+        EVENT_LOOP_INTEREST_READ);
+    cma_set_alloc_limit(1);
+    const int32_t merged = event_loop_add_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_READ);
+    const ft_bool in_order = (loop.read_count == 2
+        && loop.read_file_descriptors[0] == descriptors[0]
+        && loop.read_file_descriptors[1] == descriptors[1]);
+    const int32_t removed = event_loop_remove_interest(&loop, descriptors[0],
+        EVENT_LOOP_INTEREST_READ | EVENT_LOOP_INTEREST_WRITE);
+    const ft_bool retained = (loop.registration_count == 1
+        && loop.read_count == 1 && loop.write_count == 0
+        && loop.read_file_descriptors[0] == descriptors[1]);
+    cma_set_alloc_limit(0);
+    event_loop_clear(&loop);
+    close_socket_pair(descriptors);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, first);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, second);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, merged);
+    FT_ASSERT(in_order);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, removed);
+    FT_ASSERT(retained);
+    return (1);
+}
+
+#ifdef _WIN32
+FT_TEST(test_networking_event_loop_runs_small_ready_set_without_heap)
+{
+    int32_t descriptors[2];
+    FT_ASSERT_EQ(0, make_socket_pair(descriptors));
+    event_loop loop;
+    event_loop_init(&loop);
+    const int32_t add_result = event_loop_add_interest(&loop, descriptors[1],
+        EVENT_LOOP_INTEREST_WRITE);
+    cma_set_alloc_limit(1);
+    const int32_t ready = event_loop_run(&loop, 0);
+    cma_set_alloc_limit(0);
+    event_loop_clear(&loop);
+    close_socket_pair(descriptors);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(1, ready);
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_recovers_after_large_snapshot_allocation_failure)
+{
+    constexpr uint32_t SOCKET_COUNT = 65U;
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t descriptors[SOCKET_COUNT];
+    uint32_t count = 0U;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (count < SOCKET_COUNT)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        descriptors[count++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_WRITE);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    event_loop_ready_event ready[SOCKET_COUNT];
+    uint32_t ready_count = 0U;
+    cma_set_alloc_limit(1);
+    const int32_t limited = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
+    cma_set_alloc_limit(0);
+    const int32_t recovered = event_loop_wait(&loop, ready, SOCKET_COUNT, &ready_count, 0);
+    // The select snapshot fits this limit. A second allocation for results does not.
+    cma_set_alloc_limit(400U);
+    const int32_t count_only = event_loop_run(&loop, 0);
+    cma_set_alloc_limit(0U);
+    event_loop_clear(&loop);
+    const uint32_t opened = count;
+    while (count > 0)
+        nw_close(descriptors[--count]);
+    FT_ASSERT_EQ(SOCKET_COUNT, opened);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, limited);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, recovered);
+    FT_ASSERT_EQ(SOCKET_COUNT, ready_count);
+    FT_ASSERT_EQ(static_cast<int32_t>(SOCKET_COUNT), count_only);
+    return (1);
+}
+#endif
+
 FT_TEST(test_networking_event_loop_interrupt_wakes_waiter)
 {
     event_loop loop;
@@ -324,6 +530,164 @@ FT_TEST(test_networking_event_loop_interrupt_wakes_waiter)
         return (0);
     return (1);
 }
+
+#ifdef _WIN32
+static int32_t test_event_loop_interrupt_wait(int32_t timeout)
+{
+    event_loop loop;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, event_loop_initialize(&loop));
+    constexpr int32_t STILL_WAITING = -1;
+    std::atomic<int32_t> result(STILL_WAITING);
+    uint32_t event_count = 0;
+    std::thread waiter([&]()
+    {
+        event_loop_ready_event event;
+        result.store(event_loop_wait(&loop, &event, 1, &event_count, timeout));
+        return ;
+    });
+    // Make the observation longer than the previous Windows 50 ms polling interval.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const int32_t prior_result = result.load();
+    const auto interrupt_time = std::chrono::steady_clock::now();
+    const int32_t interrupt_result = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto elapsed = std::chrono::steady_clock::now() - interrupt_time;
+    event_loop_destroy(&loop);
+
+    FT_ASSERT_EQ(STILL_WAITING, prior_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupt_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result.load());
+    FT_ASSERT_EQ(0, event_count);
+    FT_ASSERT(elapsed < std::chrono::milliseconds(500));
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_windows_interrupt_breaks_finite_wait)
+{
+    return (test_event_loop_interrupt_wait(1500));
+}
+
+FT_TEST(test_networking_event_loop_windows_interrupt_breaks_indefinite_wait)
+{
+    return (test_event_loop_interrupt_wait(-1));
+}
+
+FT_TEST(test_networking_event_loop_windows_full_read_set_keeps_tail_and_wake_socket)
+{
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t idle_sockets[FD_SETSIZE];
+    int32_t opened = 0;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (opened < FD_SETSIZE)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        idle_sockets[opened++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_READ);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    const int32_t tail_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ);
+    const ssize_t sent = nw_send(connection[1], "x", 1, 0);
+    event_loop_ready_event event{};
+    uint32_t ready_count = 0;
+    const int32_t read_result = event_loop_wait(&loop, &event, 1, &ready_count, 500);
+    if (ready_count == 1 && event.file_descriptor == connection[0])
+        consume_one_byte(connection[0]);
+
+    std::atomic<int32_t> result(-1);
+    uint32_t wake_count = 0;
+    std::thread waiter([&]()
+    {
+        event_loop_ready_event wake_event;
+        result.store(event_loop_wait(&loop, &wake_event, 1, &wake_count, 1500));
+        return ;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const int32_t prior_result = result.load();
+    const auto interrupt_time = std::chrono::steady_clock::now();
+    const int32_t interrupted = event_loop_interrupt(&loop);
+    waiter.join();
+    const auto elapsed = std::chrono::steady_clock::now() - interrupt_time;
+
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    const int32_t socket_count = opened;
+    while (opened > 0)
+        nw_close(idle_sockets[--opened]);
+
+    FT_ASSERT_EQ(FD_SETSIZE, socket_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tail_result);
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_result);
+    FT_ASSERT_EQ(1, ready_count);
+    FT_ASSERT_EQ(connection[0], event.file_descriptor);
+    FT_ASSERT((event.ready_mask & EVENT_LOOP_READY_READ) != 0);
+    FT_ASSERT_EQ(-1, prior_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, interrupted);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, result.load());
+    FT_ASSERT_EQ(0, wake_count);
+    FT_ASSERT(elapsed < std::chrono::milliseconds(500));
+    return (1);
+}
+
+FT_TEST(test_networking_event_loop_windows_standard_read_set_needs_no_heap)
+{
+    constexpr uint32_t SOCKET_COUNT = 64U;
+    int32_t connection[2];
+    FT_ASSERT_EQ(0, make_socket_pair(connection));
+    event_loop loop;
+    event_loop_init(&loop);
+    int32_t idle_sockets[SOCKET_COUNT - 1U];
+    uint32_t opened = 0U;
+    int32_t add_result = FT_ERR_SUCCESS;
+    while (opened < SOCKET_COUNT - 1U)
+    {
+        const int32_t descriptor = nw_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (descriptor < 0)
+            break ;
+        idle_sockets[opened++] = descriptor;
+        add_result = event_loop_add_interest(&loop, descriptor, EVENT_LOOP_INTEREST_READ);
+        if (add_result != FT_ERR_SUCCESS)
+            break ;
+    }
+    const int32_t tail_result = event_loop_add_interest(&loop, connection[0],
+        EVENT_LOOP_INTEREST_READ | EVENT_LOOP_INTEREST_WRITE);
+    const ssize_t sent = nw_send(connection[1], "x", 1U, 0);
+    int32_t readable_descriptor = connection[0];
+    const int32_t readable = nw_poll(&readable_descriptor, 1, ft_nullptr, 0, 500);
+    event_loop_ready_event event{};
+    uint32_t ready_count = 0U;
+    cma_set_alloc_limit(1U);
+    const int32_t wait_result = event_loop_wait(&loop, &event, 1U, &ready_count, 100);
+    const int32_t counted = event_loop_run(&loop, 100);
+    cma_set_alloc_limit(0U);
+    const int32_t ready_descriptor = connection[0];
+    event_loop_clear(&loop);
+    close_socket_pair(connection);
+    const uint32_t opened_count = opened;
+    while (opened > 0U)
+        nw_close(idle_sockets[--opened]);
+
+    FT_ASSERT_EQ(SOCKET_COUNT - 1U, opened_count);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, add_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, tail_result);
+    FT_ASSERT_EQ(1, sent);
+    FT_ASSERT_EQ(1, readable);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, wait_result);
+    FT_ASSERT_EQ(1U, ready_count);
+    FT_ASSERT_EQ(1, counted);
+    FT_ASSERT_EQ(ready_descriptor, event.file_descriptor);
+    FT_ASSERT_EQ(EVENT_LOOP_READY_READ | EVENT_LOOP_READY_WRITE, event.ready_mask);
+    return (1);
+}
+#endif
 
 FT_TEST(test_networking_event_loop_add_while_waiting_wakes_and_reports)
 {

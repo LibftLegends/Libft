@@ -7,11 +7,6 @@
 #include "../PThread/mutex.hpp"
 #include "../PThread/recursive_mutex.hpp"
 
-static int32_t file_string_error(const ft_string &string_value) noexcept
-{
-    return (string_value.get_error());
-}
-
 static void file_path_delete_string(ft_string *string) noexcept
 {
     if (string == ft_nullptr)
@@ -82,27 +77,6 @@ static ft_bool file_path_last_segment_is_dot_dot(const ft_string &result,
         && result.c_str()[segment_start + 1] == '.')
         return (FT_TRUE);
     return (FT_FALSE);
-}
-
-static void file_path_convert_separator(ft_string &path_value,
-    char source_separator, char destination_separator) noexcept
-{
-    char *data;
-    ft_size_t index;
-
-    if (source_separator == destination_separator)
-        return ;
-    data = path_value.print();
-    if (data == ft_nullptr)
-        return ;
-    index = 0;
-    while (index < path_value.size())
-    {
-        if (data[index] == source_separator)
-            data[index] = destination_separator;
-        index++;
-    }
-    return ;
 }
 
 static int32_t file_path_remove_last_segment(ft_string &result,
@@ -235,14 +209,11 @@ static int32_t file_path_process_segment(ft_string &result, const char *data,
 ft_string *file_path_normalize(const char *path)
 {
     ft_string *result;
-    ft_string original;
-    char *data;
     char path_separator;
     ft_bool use_native_separator;
     ft_size_t index;
     ft_size_t root_length;
     ft_size_t segment_start;
-    ft_bool trailing_separator;
     int32_t error_code;
 
     result = new (std::nothrow) ft_string();
@@ -262,40 +233,19 @@ ft_string *file_path_normalize(const char *path)
             return (file_path_delete_string(result), ft_nullptr);
         return (result);
     }
-    if (original.initialize(path) != FT_ERR_SUCCESS)
-    {
-        file_path_delete_string(result);
-        return (ft_nullptr);
-    }
-    if (file_string_error(original) != FT_ERR_SUCCESS)
-    {
-        file_path_delete_string(result);
-        return (ft_nullptr);
-    }
-    data = original.print();
-    if (data == ft_nullptr)
-    {
-        file_path_delete_string(result);
-        return (ft_nullptr);
-    }
-    cmp_normalize_slashes(data);
     use_native_separator = FT_FALSE;
-    if (data[0] != '\0')
+    if (path[0] != '\0')
     {
-        if (file_path_is_drive_letter(data[0]) == FT_TRUE && data[1] == ':')
+        if (file_path_is_drive_letter(path[0]) == FT_TRUE && path[1] == ':')
             use_native_separator = FT_TRUE;
-        else if (file_path_is_separator(data[0]) == FT_TRUE
-            && data[1] != '\0')
+        else if (file_path_is_separator(path[0]) == FT_TRUE
+            && path[1] != '\0')
             use_native_separator = FT_TRUE;
     }
     path_separator = '/';
     if (use_native_separator == FT_TRUE)
         path_separator = cmp_path_separator();
-    trailing_separator = FT_FALSE;
-    if (original.size() > 0
-        && file_path_is_separator(data[original.size() - 1]) == FT_TRUE)
-        trailing_separator = FT_TRUE;
-    error_code = file_path_append_root(*result, data, path_separator, &root_length);
+    error_code = file_path_append_root(*result, path, path_separator, &root_length);
     if (error_code != FT_ERR_SUCCESS)
     {
         file_path_delete_string(result);
@@ -303,33 +253,31 @@ ft_string *file_path_normalize(const char *path)
     }
     index = root_length;
     segment_start = index;
-    while (data[index] != '\0')
+    while (path[index] != '\0')
     {
-        if (file_path_is_separator(data[index]) == FT_TRUE)
+        if (file_path_is_separator(path[index]) == FT_TRUE)
         {
-            error_code = file_path_process_segment(*result, data, segment_start,
+            error_code = file_path_process_segment(*result, path, segment_start,
                     index - segment_start, path_separator);
             if (error_code != FT_ERR_SUCCESS)
             {
                 file_path_delete_string(result);
                 return (ft_nullptr);
             }
-            while (file_path_is_separator(data[index]) == FT_TRUE)
+            while (file_path_is_separator(path[index]) == FT_TRUE)
                 ++index;
             segment_start = index;
         }
         else
             ++index;
     }
-    error_code = file_path_process_segment(*result, data, segment_start,
+    error_code = file_path_process_segment(*result, path, segment_start,
             index - segment_start, path_separator);
     if (error_code != FT_ERR_SUCCESS)
     {
         file_path_delete_string(result);
         return (ft_nullptr);
     }
-    if (use_native_separator == FT_FALSE)
-        file_path_convert_separator(*result, cmp_path_separator(), '/');
     if (result->size() == 0)
     {
         if (result->append('.') != FT_ERR_SUCCESS)
@@ -338,7 +286,7 @@ ft_string *file_path_normalize(const char *path)
             return (ft_nullptr);
         }
     }
-    if (trailing_separator == FT_TRUE && result->size() > 1
+    if (file_path_is_separator(path[index - 1]) == FT_TRUE && result->size() > 1
         && file_path_result_ends_with_separator(*result, path_separator) == FT_FALSE)
     {
         if (result->append(path_separator) != FT_ERR_SUCCESS)

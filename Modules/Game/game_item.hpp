@@ -6,6 +6,12 @@
 #include "../PThread/recursive_mutex.hpp"
 #include "../PThread/mutex.hpp"
 
+struct game_item_modifier_value
+{
+    int32_t id;
+    int32_t value;
+};
+
 class game_item_modifier
 {
     #ifdef LIBFT_TEST_BUILD
@@ -20,6 +26,8 @@ class game_item_modifier
         static thread_local int32_t _last_error;
 
         static int32_t set_error(int32_t error_code) noexcept;
+        int32_t capture_value(game_item_modifier_value &value) const noexcept;
+        friend class game_item;
 
     public:
         game_item_modifier() noexcept;
@@ -49,6 +57,8 @@ class game_item_modifier
         const char *get_error_str() const noexcept;
 };
 
+struct game_inventory_item_snapshot;
+
 class game_item
 {
     #ifdef LIBFT_TEST_BUILD
@@ -62,6 +72,7 @@ class game_item
         int32_t             _rarity;
         int32_t             _width;
         int32_t             _height;
+        uint64_t            _instance_id;
         game_item_modifier _modifier1;
         game_item_modifier _modifier2;
         game_item_modifier _modifier3;
@@ -76,6 +87,17 @@ class game_item
         static int32_t lock_pair(const game_item &first, const game_item &second,
                 ft_bool *first_locked,
                 ft_bool *second_locked);
+        friend class game_inventory;
+        friend class game_character;
+        friend class game_crafting;
+        int32_t stack_room_for(const game_item &other, int32_t &room) const noexcept;
+        int32_t stack_room_unlocked(const game_item &other, int32_t &room) const noexcept;
+        int32_t merge_stack_from(const game_item &other, int32_t requested, int32_t &merged) noexcept;
+        void change_stack(int64_t delta, ft_bool cap_at_max) noexcept;
+        int32_t capture_modifiers(game_item_modifier_value (&modifiers)[4]) const noexcept;
+        int32_t capture_modifiers_unlocked(game_item_modifier_value (&modifiers)[4]) const noexcept;
+        int32_t capture_inventory_fields(int32_t slot,
+            game_inventory_item_snapshot &snapshot) const noexcept;
 
     public:
         game_item() noexcept;
@@ -104,6 +126,11 @@ class game_item
 
         int32_t get_item_id() const noexcept;
         void set_item_id(int32_t id) noexcept;
+
+		/* Zero identifies a stackable/untracked item. Nonzero IDs identify
+		 * one physical instance and require a single-unit stack. */
+		uint64_t get_instance_id() const noexcept;
+		void set_instance_id(uint64_t instance_id) noexcept;
 
         int32_t get_width() const noexcept;
         void set_width(int32_t width) noexcept;

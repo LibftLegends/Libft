@@ -106,3 +106,73 @@ FT_TEST(test_ft_variant_visit_and_reset)
     FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, variant_value.get_error());
     return (1);
 }
+
+struct template_fallback_test_value
+{
+    static inline uint32_t default_constructions = 0U;
+    uint32_t value;
+
+    template_fallback_test_value() : value(0U)
+    {
+        ++default_constructions;
+        return ;
+    }
+};
+
+FT_TEST(test_ft_optional_constructs_value_fallbacks_only_on_failure)
+{
+    template_fallback_test_value seed;
+    seed.value = 42U;
+    const uint32_t initial_constructions = template_fallback_test_value::default_constructions;
+    ft_optional<template_fallback_test_value> optional_value;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, optional_value.initialize(seed));
+    const ft_optional<template_fallback_test_value> &const_optional = optional_value;
+    FT_ASSERT_EQ(42U, optional_value.value().value);
+    FT_ASSERT_EQ(42U, const_optional.value().value);
+    FT_ASSERT_EQ(initial_constructions, template_fallback_test_value::default_constructions);
+
+    optional_value.reset();
+    template_fallback_test_value &mutable_fallback = optional_value.value();
+    FT_ASSERT_EQ(FT_ERR_EMPTY, optional_value.get_error());
+    FT_ASSERT_EQ(initial_constructions + 1U,
+        template_fallback_test_value::default_constructions);
+    const template_fallback_test_value &const_fallback = const_optional.value();
+    FT_ASSERT_EQ(FT_ERR_EMPTY, const_optional.get_error());
+    FT_ASSERT_EQ(initial_constructions + 2U,
+        template_fallback_test_value::default_constructions);
+    FT_ASSERT_EQ(&mutable_fallback, &optional_value.value());
+    FT_ASSERT_EQ(&const_fallback, &const_optional.value());
+    FT_ASSERT_EQ(initial_constructions + 2U,
+        template_fallback_test_value::default_constructions);
+    return (1);
+}
+
+FT_TEST(test_ft_variant_constructs_value_fallbacks_only_on_failure)
+{
+    template_fallback_test_value seed;
+    seed.value = 73U;
+    const uint32_t initial_constructions = template_fallback_test_value::default_constructions;
+    ft_variant<template_fallback_test_value, uint64_t> variant;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, variant.initialize(seed));
+    const ft_variant<template_fallback_test_value, uint64_t> &const_variant = variant;
+    const auto stored_proxy = variant.get<template_fallback_test_value>();
+    const auto const_stored_proxy = const_variant.get<template_fallback_test_value>();
+    template_fallback_test_value &stored_value = stored_proxy;
+    const template_fallback_test_value &const_stored_value = const_stored_proxy;
+    FT_ASSERT_EQ(73U, stored_value.value);
+    FT_ASSERT_EQ(&stored_value, &const_stored_value);
+    FT_ASSERT_EQ(initial_constructions, template_fallback_test_value::default_constructions);
+
+    variant.reset();
+    const auto mutable_proxy = variant.get<template_fallback_test_value>();
+    const auto const_proxy = const_variant.get<template_fallback_test_value>();
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, mutable_proxy.get_error());
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, const_proxy.get_error());
+    template_fallback_test_value &mutable_fallback = mutable_proxy;
+    const template_fallback_test_value &const_fallback = const_proxy;
+    FT_ASSERT_EQ(0U, mutable_fallback.value);
+    FT_ASSERT_EQ(0U, const_fallback.value);
+    FT_ASSERT_EQ(initial_constructions + 2U,
+        template_fallback_test_value::default_constructions);
+    return (1);
+}

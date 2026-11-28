@@ -10,7 +10,6 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <new>
-#include <cstdio>
 #include "../PThread/pthread.hpp"
 
 #include "../Basic/limits.hpp"
@@ -69,19 +68,6 @@ ft_bool ft_socket::is_thread_safe() const noexcept
     return (this->_mutex != ft_nullptr);
 }
 
-struct networking_error_entry
-{
-    int32_t                    error_code;
-};
-
-static networking_error_entry networking_consume_last_error(void) noexcept
-{
-    networking_error_entry entry;
-
-    entry.error_code = FT_ERR_SUCCESS;
-    return (entry);
-}
-
 ssize_t ft_socket::send_data_locked(const void *data, ft_size_t size, int32_t flags)
 {
     if (this->_socket_file_descriptor < 0)
@@ -98,68 +84,17 @@ ssize_t ft_socket::send_data_locked(const void *data, ft_size_t size, int32_t fl
 ssize_t ft_socket::send_all_locked(const void *data, ft_size_t size, int32_t flags)
 {
     if (this->_socket_file_descriptor < 0)
-    {
-        (void)(FT_ERR_CONFIGURATION);
         return (-1);
-    }
-    ft_size_t total_sent;
-    const char *buffer;
-
-    total_sent = 0;
-    buffer = static_cast<const char *>(data);
+    ft_size_t total_sent = 0;
+    const char *buffer = static_cast<const char *>(data);
     while (total_sent < size)
     {
-        ssize_t bytes_sent;
-
-        bytes_sent = nw_send(this->_socket_file_descriptor, buffer + total_sent,
+        const ssize_t bytes_sent = nw_send(this->_socket_file_descriptor, buffer + total_sent,
                 size - total_sent, flags);
-        if (bytes_sent < 0)
-        {
-            FILE *file_pointer;
-            int32_t last_error;
-
-            last_error = 0;
-#ifdef _WIN32
-            last_error = WSAGetLastError();
-#else
-            last_error = errno;
-#endif
-            file_pointer = fopen("socket_send_debug.log", "a");
-            if (file_pointer)
-            {
-                fprintf(file_pointer,
-                    "send_all_locked fail fd=%d errno=%d\n",
-                    this->_socket_file_descriptor, last_error);
-                fclose(file_pointer);
-            }
+        if (bytes_sent <= 0)
             return (-1);
-        }
-        if (bytes_sent == 0)
-        {
-            FILE *file_pointer;
-            int32_t last_error;
-
-            last_error = 0;
-#ifdef _WIN32
-            last_error = WSAGetLastError();
-#else
-            last_error = errno;
-#endif
-            file_pointer = fopen("socket_send_debug.log", "a");
-            if (file_pointer)
-            {
-                fprintf(file_pointer,
-                    "send_all_locked zero fd=%d errno=%d\n",
-                    this->_socket_file_descriptor, last_error);
-                fclose(file_pointer);
-            }
-            (void)(FT_ERR_SOCKET_SEND_FAILED);
-            return (-1);
-        }
-        total_sent += bytes_sent;
+        total_sent += static_cast<ft_size_t>(bytes_sent);
     }
-    networking_consume_last_error();
-    (void)(FT_ERR_SUCCESS);
     return (static_cast<ssize_t>(total_sent));
 }
 
@@ -402,16 +337,7 @@ ft_bool ft_socket::close_socket()
         shutdown_success = FT_FALSE;
     }
     socket_fd = this->_socket_file_descriptor;
-    if (nw_close(socket_fd) == 0)
-    {
-        closed = FT_TRUE;
-        networking_consume_last_error();
-    }
-    else
-    {
-        closed = FT_FALSE;
-        networking_consume_last_error();
-    }
+    closed = (nw_close(socket_fd) == 0);
     if (closed)
         this->_socket_file_descriptor = -1;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
@@ -420,35 +346,28 @@ ft_bool ft_socket::close_socket()
     return (FT_FALSE);
 }
 
+ft_size_t ft_socket::find_client_index_locked(int32_t file_descriptor) const
+{
+    const ft_size_t client_count = this->_connected.size();
+    const int32_t *clients = this->_connected.begin();
+    ft_size_t index = 0;
+    while (index < client_count)
+    {
+        if (clients[index] == file_descriptor)
+            return (index);
+        ++index;
+    }
+    return (FT_SYSTEM_SIZE_MAX);
+}
+
 ssize_t ft_socket::send_data(const void *data, ft_size_t size, int32_t flags, int32_t file_descriptor)
 {
-    ft_size_t index;
-    ft_bool found;
-    ssize_t result;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_socket::send_data(file_descriptor)");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return (-1);
-    index = 0;
-    found = FT_FALSE;
-    result = -1;
-    while (index < this->_connected.size())
-    {
-        if (this->_connected[index] == file_descriptor)
-        {
-            result = nw_send(file_descriptor, data, size, flags);
-            found = FT_TRUE;
-            break ;
-        }
-        index++;
-    }
-    if (!found)
-    {
-        (void)(FT_ERR_INVALID_ARGUMENT);
-        result = -1;
-    }
+    ssize_t result = -1;
+    if (this->find_client_index_locked(file_descriptor) != FT_SYSTEM_SIZE_MAX)
+        result = nw_send(file_descriptor, data, size, flags);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (result);
 }
@@ -539,35 +458,23 @@ int32_t ft_socket::accept_connection()
 
 ft_bool ft_socket::disconnect_client(int32_t file_descriptor)
 {
-    ft_size_t index;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_socket::disconnect_client");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    index = 0;
-    while (index < this->_connected.size())
+    const ft_size_t index = this->find_client_index_locked(file_descriptor);
+    if (index == FT_SYSTEM_SIZE_MAX)
     {
-        if (this->_connected[index] == file_descriptor)
-        {
-            ft_size_t last;
-
-            last = this->_connected.size() - 1;
-            if (index != last)
-                this->_connected[index] = this->_connected[last];
-            if (file_descriptor >= 0)
-                (void)nw_close(file_descriptor);
-            this->_connected.pop_back();
-            (void)(FT_ERR_SUCCESS);
-            (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-            return (FT_TRUE);
-        }
-        index++;
+        (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+        return (FT_FALSE);
     }
-    (void)(FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t last = this->_connected.size() - 1;
+    if (index != last)
+        this->_connected[index] = this->_connected[last];
+    if (file_descriptor >= 0)
+        (void)nw_close(file_descriptor);
+    this->_connected.pop_back();
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    return (FT_FALSE);
+    return (FT_TRUE);
 }
 
 void ft_socket::disconnect_all_clients()
@@ -609,26 +516,10 @@ ft_size_t ft_socket::get_client_count() const
 
 ft_bool ft_socket::is_client_connected(int32_t file_descriptor) const
 {
-    ft_size_t index;
-    ft_bool connected;
-    int32_t lock_error;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_socket::is_client_connected");
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
-    if (lock_error != FT_ERR_SUCCESS)
+    if (pt_recursive_mutex_lock_if_not_null(this->_mutex) != FT_ERR_SUCCESS)
         return (FT_FALSE);
-    index = 0;
-    connected = FT_FALSE;
-    while (index < this->_connected.size())
-    {
-        if (this->_connected[index] == file_descriptor)
-        {
-            connected = FT_TRUE;
-            break ;
-        }
-        index++;
-    }
-    (void)(FT_ERR_SUCCESS);
+    const ft_bool connected = (this->find_client_index_locked(file_descriptor) != FT_SYSTEM_SIZE_MAX);
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     return (connected);
 }

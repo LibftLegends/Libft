@@ -30,6 +30,7 @@ class udp_socket
 
         struct sockaddr_storage _address;
         int32_t _socket_fd;
+        ft_bool _connected;
         mutable pt_recursive_mutex *_mutex;
 
     public:

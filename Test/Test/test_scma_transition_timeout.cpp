@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "test_scma_shared.hpp"
+#include "../../Modules/SCMA/scma_internal.hpp"
 #include "../../Modules/PThread/pthread.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
@@ -26,6 +27,53 @@ static void *scma_transition_worker(void *argument)
         (void)pt_thread_sleep(1);
     state->unlock_result.store(scma_mutex_unlock());
     return (ft_nullptr);
+}
+
+static void *scma_disable_transition_worker(void *argument)
+{
+    int32_t *result = static_cast<int32_t *>(argument);
+
+    *result = scma_disable_thread_safety_timed(2000U);
+    return (ft_nullptr);
+}
+
+FT_TEST(test_scma_timed_transition_finishes_when_active_operation_releases)
+{
+    pthread_t transition_thread;
+    ft_bool saw_transition = FT_FALSE;
+    int32_t disable_error = FT_ERR_INVALID_STATE;
+    int32_t join_error = FT_ERR_INVALID_STATE;
+    uint32_t wait_count = 0U;
+
+    scma_test_reset();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_enable_thread_safety_timed(1000U));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, scma_mutex_lock());
+    const int32_t create_error = pthread_create(&transition_thread, ft_nullptr,
+        scma_disable_transition_worker, &disable_error);
+    if (create_error == 0)
+    {
+        while (wait_count < 1000U
+            && scma_allocator_transition_pending_for_test() == FT_FALSE)
+        {
+            (void)pt_thread_sleep(1);
+            wait_count++;
+        }
+        saw_transition = scma_allocator_transition_pending_for_test();
+    }
+    const int32_t unlock_error = scma_mutex_unlock();
+    if (create_error == 0)
+        join_error = pt_thread_join(transition_thread, ft_nullptr);
+    const ft_bool enabled_after_transition = scma_is_thread_safe_enabled();
+    const int32_t enable_error = scma_enable_thread_safety_timed(1000U);
+
+    FT_ASSERT_EQ(0, create_error);
+    FT_ASSERT_EQ(FT_TRUE, saw_transition);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, unlock_error);
+    FT_ASSERT_EQ(0, join_error);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, disable_error);
+    FT_ASSERT_EQ(FT_FALSE, enabled_after_transition);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, enable_error);
+    return (1);
 }
 
 FT_TEST(test_scma_timed_transition_returns_timeout_for_active_operation)
