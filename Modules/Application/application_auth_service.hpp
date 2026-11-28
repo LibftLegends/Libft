@@ -32,23 +32,18 @@ class application_auth_service
         int32_t build_login_signal_one_time_password_key(const char *username, ft_string &key_output) const noexcept;
         int32_t build_login_session_key(const char *username, ft_string &key_output) const noexcept;
         int32_t build_user_stat_key(const char *key_prefix, const char *username, ft_string &key_output) const noexcept;
-        int32_t store_integer_value(const char *key, int64_t value) noexcept;
         int32_t load_integer_value(const char *key, int64_t &value, ft_bool *found = ft_nullptr) const noexcept;
-        int32_t store_string_value(const char *key, const char *value) noexcept;
         int32_t load_string_value(const char *key, ft_string &value, ft_bool *found = ft_nullptr) const noexcept;
-        int32_t generate_salt_hex(ft_string &salt_hex) const noexcept;
         int32_t generate_login_signal_one_time_password(ft_string &one_time_password_output) const noexcept;
         int32_t generate_login_session_token(ft_string &session_token_output) const noexcept;
         int32_t build_login_signal_one_time_password_hash(const char *one_time_password, ft_string &hash_hex) const noexcept;
         int32_t write_login_signal_one_time_password(const char *username, const char *one_time_password) const noexcept;
         int32_t build_login_session_value(const char *session_token, const char *client_ip_address,
             int64_t login_timestamp, ft_string &value_output) const noexcept;
-        int32_t parse_login_session_value(const char *value, ft_string &session_token_output,
-            ft_string &client_ip_address_output, int64_t &login_timestamp_output) const noexcept;
+        int32_t parse_login_session_value(const char *value, ft_string *client_ip_address_output,
+            int64_t &login_timestamp_output) const noexcept;
         int32_t is_login_access_allowed(const char *username) const noexcept;
-        int32_t build_password_hash(const char *password, const ft_string &salt_hex, ft_string &hash_hex) const noexcept;
         int32_t build_credential_record(const char *password, ft_string &record_output) const noexcept;
-        int32_t parse_credential_record(const char *record_string, ft_string &salt_hex, ft_string &hash_hex) const noexcept;
         int32_t load_manual_login_approval_enabled(ft_bool &enabled) const noexcept;
         int32_t load_user_login_approval_required(const char *username, ft_bool &required) const noexcept;
         int32_t record_login_failure(const char *username, const char *client_ip_address) noexcept;

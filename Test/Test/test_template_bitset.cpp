@@ -110,6 +110,36 @@ FT_TEST(test_ft_bitset_clear_and_set)
     return (1);
 }
 
+FT_TEST(test_ft_bitset_copy_across_blocks_preserves_bits)
+{
+    constexpr ft_size_t LAST_BIT = sizeof(ft_size_t) * CHAR_BIT * 2;
+    ft_bitset source;
+    ft_bitset destination;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize(LAST_BIT + 1));
+    source.set(0);
+    source.set(LAST_BIT);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, destination.initialize(source));
+    FT_ASSERT_EQ(LAST_BIT + 1, destination.size());
+    FT_ASSERT_EQ(FT_TRUE, destination.test(0));
+    FT_ASSERT_EQ(FT_FALSE, destination.test(LAST_BIT - 1));
+    FT_ASSERT_EQ(FT_TRUE, destination.test(LAST_BIT));
+    destination.reset(0);
+    FT_ASSERT_EQ(FT_TRUE, source.test(0));
+    return (1);
+}
+
+FT_TEST(test_ft_bitset_maximum_size_reports_allocation_failure)
+{
+    ft_bitset bitset_value;
+    cma_set_alloc_limit(1);
+    const int32_t result = bitset_value.initialize(FT_SYSTEM_SIZE_MAX);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_BITSET_NO_MEMORY, result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, bitset_value.initialize(1));
+    FT_ASSERT_EQ(FT_FALSE, bitset_value.test(0));
+    return (1);
+}
+
 FT_TEST(test_ft_bitset_error_queries_follow_lifecycle_contract)
 {
     ft_bitset bitset_value(8);

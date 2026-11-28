@@ -614,14 +614,38 @@ uint8_t *encoding_base32_decode(const char *input, ft_size_t input_size,
     return (encoding_base32_decode_internal(input, input_size, output_size));
 }
 
+static void encoding_hex_write(const uint8_t *input, ft_size_t input_size,
+    ft_bool uppercase, char *output)
+{
+    const char *digits = "0123456789abcdef";
+    if (uppercase == FT_TRUE)
+        digits = "0123456789ABCDEF";
+    ft_size_t input_index = 0;
+    ft_size_t output_index = 0;
+    while (input_index < input_size)
+    {
+        output[output_index++] = digits[(input[input_index] >> 4) & 0x0FU];
+        output[output_index++] = digits[input[input_index] & 0x0FU];
+        ++input_index;
+    }
+    output[output_index] = '\0';
+    return ;
+}
+
+int32_t encoding_hex_encode_into(const uint8_t *input, ft_size_t input_size,
+    ft_bool uppercase, char *output, ft_size_t output_capacity) noexcept
+{
+    if ((input == ft_nullptr && input_size != 0) || output == ft_nullptr)
+        return (encoding_set_error(FT_ERR_INVALID_ARGUMENT));
+    if (input_size > FT_SYSTEM_SIZE_MAX / 2 || output_capacity <= input_size * 2)
+        return (encoding_set_error(FT_ERR_OUT_OF_RANGE));
+    encoding_hex_write(input, input_size, uppercase, output);
+    return (encoding_set_error(FT_ERR_SUCCESS));
+}
+
 char *encoding_hex_encode(const uint8_t *input, ft_size_t input_size,
     ft_bool uppercase)
 {
-    const char *digits;
-    char *output;
-    ft_size_t input_index;
-    ft_size_t output_index;
-
     if (input == ft_nullptr && input_size != 0)
     {
         encoding_set_error(FT_ERR_INVALID_ARGUMENT);
@@ -632,24 +656,13 @@ char *encoding_hex_encode(const uint8_t *input, ft_size_t input_size,
         encoding_set_error(FT_ERR_OUT_OF_RANGE);
         return (ft_nullptr);
     }
-    digits = "0123456789abcdef";
-    if (uppercase == FT_TRUE)
-        digits = "0123456789ABCDEF";
-    output = static_cast<char *>(cma_malloc((input_size * 2) + 1));
+    char *output = static_cast<char *>(cma_malloc((input_size * 2) + 1));
     if (output == ft_nullptr)
     {
         encoding_set_error(FT_ERR_NO_MEMORY);
         return (ft_nullptr);
     }
-    input_index = 0;
-    output_index = 0;
-    while (input_index < input_size)
-    {
-        output[output_index++] = digits[(input[input_index] >> 4) & 0x0FU];
-        output[output_index++] = digits[input[input_index] & 0x0FU];
-        input_index++;
-    }
-    output[output_index] = '\0';
+    encoding_hex_write(input, input_size, uppercase, output);
     encoding_set_error(FT_ERR_SUCCESS);
     return (output);
 }

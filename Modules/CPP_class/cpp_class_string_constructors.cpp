@@ -121,41 +121,28 @@ int32_t ft_string::initialize(const ft_string &other) noexcept
     int32_t initialization_error = this->initialize();
     if (initialization_error != FT_ERR_SUCCESS)
         return (this->set_error(initialization_error));
-    int32_t other_lock_error = FT_ERR_SUCCESS;
-    if (other._mutex != ft_nullptr)
+    const int32_t other_lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
+    if (other_lock_error != FT_ERR_SUCCESS)
     {
-        other_lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
-        if (other_lock_error != FT_ERR_SUCCESS)
-        {
-            (void)this->destroy();
-            return (this->set_error(other_lock_error));
-        }
+        (void)this->destroy();
+        return (this->set_error(other_lock_error));
     }
-    this->_length = other._length;
-    this->_capacity = other._capacity;
-    if (other._data)
+    if (other._data != ft_nullptr)
     {
-        this->_data = static_cast<char*>(cma_malloc(this->_capacity + 1));
-        if (!this->_data)
+        this->_data = static_cast<char *>(cma_malloc(other._capacity + 1));
+        if (this->_data == ft_nullptr)
         {
-            if (other._mutex != ft_nullptr)
-                (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
-            this->_length = 0;
-            this->_capacity = 0;
+            (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
             (void)this->destroy();
             return (this->set_error(FT_ERR_NO_MEMORY));
         }
-        ft_memset(this->_data, 0, this->_capacity + 1);
-        ft_memcpy(this->_data, other._data, this->_length + 1);
+        (void)ft_memcpy(this->_data, other._data, other._length + 1);
+        this->_capacity = other._capacity;
     }
-    else
-    {
-        this->_data = ft_nullptr;
-        this->_capacity = 0;
-    }
-    if (other._mutex != ft_nullptr)
-        (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
-    return (this->set_error(other.get_error()));
+    this->_length = other._length;
+    const int32_t source_error = other.get_error();
+    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
+    return (this->set_error(source_error));
 }
 
 int32_t ft_string::initialize(ft_string &&other) noexcept
@@ -188,9 +175,6 @@ int32_t ft_string::initialize(ft_string &&other) noexcept
         if (destroy_error != FT_ERR_SUCCESS)
             return (this->set_error(destroy_error));
     }
-    int32_t initialization_error = this->initialize();
-    if (initialization_error != FT_ERR_SUCCESS)
-        return (this->set_error(initialization_error));
     int32_t move_error = this->move(other);
     if (move_error != FT_ERR_SUCCESS)
     {
@@ -262,20 +246,7 @@ ft_string &ft_string::operator=(const ft_string &other) noexcept
         this->set_error(FT_ERR_SUCCESS);
         return (*this);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        assignment_error = this->destroy();
-        if (assignment_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(assignment_error);
-            return (*this);
-        }
-    }
-    assignment_error = this->initialize(other);
-    if (assignment_error == FT_ERR_SUCCESS)
-        this->set_error(other.get_error());
-    else
-        this->set_error(assignment_error);
+    (void)this->initialize(other);
     return (*this);
 }
 
@@ -310,20 +281,7 @@ ft_string &ft_string::operator=(ft_string &&other) noexcept
         this->set_error(FT_ERR_SUCCESS);
         return (*this);
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
-    {
-        assignment_error = this->destroy();
-        if (assignment_error != FT_ERR_SUCCESS)
-        {
-            this->set_error(assignment_error);
-            return (*this);
-        }
-    }
-    assignment_error = this->initialize(static_cast<ft_string &&>(other));
-    if (assignment_error == FT_ERR_SUCCESS)
-        this->set_error(other.get_error());
-    else
-        this->set_error(assignment_error);
+    (void)this->initialize(static_cast<ft_string &&>(other));
     return (*this);
 }
 

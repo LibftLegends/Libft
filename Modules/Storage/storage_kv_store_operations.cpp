@@ -1594,48 +1594,78 @@ ft_bool kv_store::kv_contains(const char *key_string) const
 int32_t kv_store::kv_delete(const char *key_string)
 {
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::kv_delete");
+    if (key_string == ft_nullptr)
+        return (FT_ERR_INVALID_OPERATION);
+    const ft_size_t key_length = ft_strlen_size_t(key_string);
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_store(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (FT_ERR_INVALID_OPERATION);
+    ft_size_t lookup_index = ft_string::npos;
+    const ft_size_t count = this->_data.size();
+    result = this->_data.get_error();
+    if (result == FT_ERR_SUCCESS && count != 0)
+    {
+        const auto *end = this->_data.end();
+        result = this->_data.get_error();
+        if (result == FT_ERR_SUCCESS)
+        {
+            const auto *begin = end - count;
+            const auto *entry = begin;
+            while (entry != end)
+            {
+                if (entry->key.size() == key_length
+                    && ft_memcmp(entry->key.c_str(), key_string, key_length) == 0)
+                {
+                    lookup_index = static_cast<ft_size_t>(entry - begin);
+                    break ;
+                }
+                ++entry;
+            }
+        }
+    }
+    if (result != FT_ERR_SUCCESS || lookup_index == ft_string::npos)
+    {
+        this->unlock_store_guard(lock_acquired, result);
+        if (result != FT_ERR_SUCCESS)
+            return (FT_ERR_INVALID_OPERATION);
+        return (FT_ERR_SUCCESS);
+    }
+
+    result = this->prune_expired_locked(&lookup_index);
+    if (result != FT_ERR_SUCCESS || lookup_index == ft_string::npos)
+    {
+        this->unlock_store_guard(lock_acquired, result);
+        return (FT_ERR_INVALID_OPERATION);
+    }
+    const ft_size_t live_count = this->_data.size();
+    if (this->_data.get_error() != FT_ERR_SUCCESS || lookup_index >= live_count)
+    {
+        this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
+        return (FT_ERR_INVALID_OPERATION);
+    }
+    auto *live_end = this->_data.end();
+    if (this->_data.get_error() != FT_ERR_SUCCESS)
+    {
+        this->unlock_store_guard(lock_acquired, FT_ERR_INVALID_OPERATION);
+        return (FT_ERR_INVALID_OPERATION);
+    }
+    auto *entry = live_end - live_count + lookup_index;
     ft_vector<kv_store_operation> operations;
     kv_store_operation operation;
-    ft_string key_value;
-    ft_bool lock_acquired;
-    Pair<ft_string, kv_store_entry> *existing_pair;
-    Pair<ft_string, kv_store_entry> *map_end;
-    int32_t operations_initialize_error;
-    int32_t operations_error;
-    int32_t lock_error;
-
-    if (key_string == ft_nullptr)
-    {
+    result = operations.initialize();
+    if (result == FT_ERR_SUCCESS)
+        result = kv_store_init_delete_operation(operation, entry->key.c_str());
+    if (result == FT_ERR_SUCCESS)
+        result = operations.push_back(ft_move(operation));
+    if (result == FT_ERR_SUCCESS)
+        result = storage_kv_erase_entry(this->_data, entry);
+    if (result == FT_ERR_SUCCESS)
+        this->record_delete_operation();
+    this->unlock_store_guard(lock_acquired, result);
+    if (result != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
-    }
-    operations_error = key_value.initialize(key_string);
-    if (operations_error != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_OPERATION);
-    lock_acquired = FT_FALSE;
-    lock_error = this->lock_store(&lock_acquired);
-    if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->unlock_store_guard(lock_acquired, lock_error);
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    existing_pair = this->_data.find(key_value);
-    map_end = this->_data.end();
-    this->unlock_store_guard(lock_acquired, FT_ERR_SUCCESS);
-    if (existing_pair == map_end)
-        return (FT_ERR_SUCCESS);
-    operations_initialize_error = operations.initialize();
-    if (operations_initialize_error != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_OPERATION);
-    operations.clear();
-    if (kv_store_init_delete_operation(operation, key_string) != 0)
-    {
-        return (FT_ERR_INVALID_OPERATION);
-    }
-    operations.push_back(operation);
-    operations_error = operations.get_error();
-    if (operations_error != FT_ERR_SUCCESS)
-        return (FT_ERR_INVALID_OPERATION);
-    return (this->kv_apply(operations));
+    return (this->notify_replication_listeners(operations));
 }
 
 int32_t kv_store::kv_flush() const
@@ -1761,6 +1791,70 @@ int32_t kv_store::export_snapshot(ft_vector<kv_store_snapshot_entry> &out_entrie
     if (result != FT_ERR_SUCCESS)
         return (FT_ERR_INVALID_OPERATION);
     return (FT_ERR_SUCCESS);
+}
+
+int32_t kv_store::export_key_suffixes(const char *prefix,
+    ft_vector<ft_string> &out_suffixes) const
+{
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "kv_store::export_key_suffixes");
+    errno_abort_if_uninitialised_or_destroyed(out_suffixes.is_initialised(),
+        "kv_store::export_key_suffixes output");
+    if (prefix == ft_nullptr)
+        return (FT_ERR_INVALID_ARGUMENT);
+    const ft_size_t prefix_length = ft_strlen_size_t(prefix);
+    ft_vector<ft_string> suffixes;
+    int32_t result = suffixes.initialize();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+
+    ft_bool lock_acquired = FT_FALSE;
+    result = this->lock_store(&lock_acquired);
+    if (result == FT_ERR_SUCCESS)
+        result = const_cast<kv_store *>(this)->prune_expired_locked();
+    if (result == FT_ERR_SUCCESS)
+    {
+        const ft_size_t count = this->_data.size();
+        result = this->_data.get_error();
+        if (result == FT_ERR_SUCCESS && count != 0)
+        {
+            const auto *end = this->_data.end();
+            result = this->_data.get_error();
+            if (result == FT_ERR_SUCCESS)
+            {
+                const auto *entry = end - count;
+                while (result == FT_ERR_SUCCESS && entry != end)
+                {
+                    if (entry->key.size() > prefix_length
+                        && ft_memcmp(entry->key.c_str(), prefix, prefix_length) == 0)
+                    {
+                        ft_string suffix;
+                        result = suffix.initialize(entry->key.c_str() + prefix_length);
+                        if (result == FT_ERR_SUCCESS)
+                            result = suffixes.push_back(ft_move(suffix));
+                    }
+                    ++entry;
+                }
+            }
+        }
+    }
+    this->unlock_store_guard(lock_acquired, result);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+
+    const ft_size_t suffix_count = suffixes.size();
+    out_suffixes.reserve(suffix_count);
+    result = out_suffixes.get_error();
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    out_suffixes.clear();
+    result = out_suffixes.get_error();
+    ft_size_t index = 0;
+    while (result == FT_ERR_SUCCESS && index < suffix_count)
+    {
+        result = out_suffixes.push_back(ft_move(suffixes[index]));
+        ++index;
+    }
+    return (result);
 }
 
 int32_t kv_store::export_snapshot_to_file(const char *file_path) const

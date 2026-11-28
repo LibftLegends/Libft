@@ -75,28 +75,27 @@ void DataBuffer::set_operation_error(int32_t error_code) noexcept
     return ;
 }
 
-int32_t DataBuffer::write_length_locked(ft_size_t length) noexcept
+int32_t DataBuffer::write_record_locked(const char *bytes, ft_size_t length) noexcept
 {
-    const uint8_t *pointer = reinterpret_cast<const uint8_t *>(&length);
-    ft_size_t index = 0;
-
-    while (index < sizeof(ft_size_t))
-    {
-        this->_buffer.push_back(pointer[index]);
-        int32_t push_error = this->_buffer.get_error();
-        if (push_error != FT_ERR_SUCCESS)
-            return (push_error);
-        index++;
-    }
-    return (FT_ERR_SUCCESS);
+    const ft_size_t previous_size = this->_buffer.size();
+    const int32_t header_error = this->_buffer.append(
+        reinterpret_cast<const uint8_t *>(&length), sizeof(length));
+    if (header_error != FT_ERR_SUCCESS)
+        return (header_error);
+    const int32_t payload_error = this->_buffer.append(
+        reinterpret_cast<const uint8_t *>(bytes), length);
+    if (payload_error != FT_ERR_SUCCESS)
+        this->_buffer.resize(previous_size);
+    return (payload_error);
 }
 
 int32_t DataBuffer::read_length_locked(ft_size_t &length) noexcept
 {
-    if (this->_read_pos + sizeof(ft_size_t) > this->_buffer.size())
+    const ft_size_t buffer_size = this->_buffer.size();
+    if (this->_read_pos > buffer_size || sizeof(length) > buffer_size - this->_read_pos)
         return (FT_ERR_INVALID_ARGUMENT);
-    ft_memcpy(&length, this->_buffer.begin() + this->_read_pos, sizeof(ft_size_t));
-    this->_read_pos += sizeof(ft_size_t);
+    (void)ft_memcpy_fixed<sizeof(length)>(&length, this->_buffer.begin() + this->_read_pos);
+    this->_read_pos += sizeof(length);
     return (FT_ERR_SUCCESS);
 }
 
@@ -212,25 +211,16 @@ int32_t DataBuffer::initialize(const DataBuffer &other) noexcept
         this->set_operation_error(prepare_error);
         return (prepare_error);
     }
-    int32_t copy_error = FT_ERR_SUCCESS;
-    ft_size_t index = 0;
-    while (index < other._buffer.size() && copy_error == FT_ERR_SUCCESS)
-    {
-        this->_buffer.push_back(other._buffer[index]);
-        copy_error = this->_buffer.get_error();
-        index++;
-    }
+    const int32_t copy_error = this->_buffer.append(other._buffer.begin(),
+        other._buffer.size());
     if (copy_error == FT_ERR_SUCCESS)
         this->_read_pos = other._read_pos;
-    if (copy_error == FT_ERR_SUCCESS)
-        this->_ok = other._ok;
     (void)pt_recursive_mutex_unlock_if_not_null(second_locked->_mutex);
     (void)pt_recursive_mutex_unlock_if_not_null(first_locked->_mutex);
     if (copy_error == FT_ERR_SUCCESS)
         this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    int32_t final_error = copy_error;
-    this->set_operation_error(final_error);
-    return (final_error);
+    this->set_operation_error(copy_error);
+    return (copy_error);
 }
 
 int32_t DataBuffer::move(DataBuffer &other) noexcept

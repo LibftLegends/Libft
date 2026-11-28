@@ -4,6 +4,7 @@
 #include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/Basic/basic.hpp"
+#include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <atomic>
 #include <chrono>
@@ -85,6 +86,24 @@ FT_TEST(test_ft_stringbuf_read_past_end_returns_zero)
     bytes_read = buffer.read(storage, 2);
     FT_ASSERT_EQ(static_cast<std::size_t>(0), bytes_read);
     FT_ASSERT_EQ(true, buffer.is_valid());
+    return (1);
+}
+
+FT_TEST(test_ft_stringbuf_bulk_read_clamps_to_remaining_binary_bytes)
+{
+    const char bytes[] = { 'a', '\0', 'b', '\0', 'c' };
+    ft_string source;
+    ft_stringbuf buffer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.assign(bytes, sizeof(bytes)));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer.initialize(source));
+    char output[6] = {};
+    output[5] = '!';
+    FT_ASSERT_EQ(2, buffer.read(output, 2));
+    FT_ASSERT_EQ(3, buffer.read(output + 2, FT_SYSTEM_SIZE_MAX));
+    FT_ASSERT_EQ(0, ft_memcmp(bytes, output, sizeof(bytes)));
+    FT_ASSERT_EQ('!', output[5]);
+    FT_ASSERT_EQ(0, buffer.read(output, sizeof(output)));
     return (1);
 }
 

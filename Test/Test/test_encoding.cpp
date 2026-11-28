@@ -177,6 +177,24 @@ FT_TEST(test_encoding_base64_rejects_non_ascii_and_excess_padding)
     return (1);
 }
 
+FT_TEST(test_encoding_hex_caller_buffer_checks_capacity)
+{
+    const uint8_t bytes[] = { 0xab, 0x05 };
+    char output[] = "keep";
+    cma_set_alloc_limit(1);
+    const int32_t short_result = encoding_hex_encode_into(bytes, sizeof(bytes),
+        FT_TRUE, output, sizeof(output) - 1);
+    const ft_bool output_unchanged = ft_strcmp(output, "keep") == 0;
+    const int32_t exact_result = encoding_hex_encode_into(bytes, sizeof(bytes),
+        FT_TRUE, output, sizeof(output));
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_OUT_OF_RANGE, short_result);
+    FT_ASSERT_EQ(FT_TRUE, output_unchanged);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, exact_result);
+    FT_ASSERT_EQ(0, ft_strcmp(output, "AB05"));
+    return (1);
+}
+
 FT_TEST(test_encoding_hex_roundtrip)
 {
     const uint8_t input[] = {0x00, 0xAB, 0xCD, 0xEF};

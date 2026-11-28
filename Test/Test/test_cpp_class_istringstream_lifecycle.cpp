@@ -235,3 +235,47 @@ FT_TEST(test_cpp_class_istringstream_get_string_after_move_constructor_matches_s
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_value.destroy());
     return (1);
 }
+
+FT_TEST(test_cpp_class_istringstream_extraction_preserves_remaining_text_and_cursor)
+{
+    ft_istringstream input;
+    ft_string source;
+    ft_string output;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize("prefix -42tail"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, input.initialize(source));
+    char prefix[6];
+    input.read(prefix, sizeof(prefix));
+    FT_ASSERT_EQ(sizeof(prefix), input.gcount());
+    FT_ASSERT_EQ(0, ft_memcmp("prefix", prefix, sizeof(prefix)));
+    int32_t number = 0;
+    input >> number;
+    FT_ASSERT_EQ(-42, number);
+    input >> output;
+    FT_ASSERT(output == " -42tail");
+    char next = '\0';
+    input.read(&next, 1);
+    FT_ASSERT_EQ(' ', next);
+    return (1);
+}
+
+FT_TEST(test_cpp_class_istringstream_failed_extraction_leaves_outputs_unchanged)
+{
+    ft_istringstream input;
+    ft_string source;
+    ft_string output;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize("12345678"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, output.initialize("original"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, input.initialize(source));
+    int32_t number = -1;
+    cma_set_alloc_limit(1);
+    ft_string *owned = input.get_string();
+    input >> number;
+    input >> output;
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(ft_nullptr, owned);
+    FT_ASSERT_EQ(-1, number);
+    FT_ASSERT(output == "original");
+    input >> number;
+    FT_ASSERT_EQ(12345678, number);
+    return (1);
+}

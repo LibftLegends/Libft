@@ -26,6 +26,8 @@ class ft_file
         uint8_t _initialised_state;
         static thread_local int32_t _last_error;
         static int32_t set_error(int32_t error_code) noexcept;
+        int32_t close_descriptor() noexcept;
+        int32_t replace_descriptor(int32_t new_descriptor) noexcept;
 
     public:
         ft_file() noexcept;

@@ -239,6 +239,8 @@ class kv_store
         int32_t kv_compare_and_swap(const char *key_string, const char *expected_value, const char *new_value, int64_t ttl_seconds = -1);
         int32_t get_metrics(kv_store_metrics &out_metrics) const;
         int32_t export_snapshot(ft_vector<kv_store_snapshot_entry> &out_entries) const;
+        // Replace the output with nonempty suffixes of live keys, in store order.
+        int32_t export_key_suffixes(const char *prefix, ft_vector<ft_string> &out_suffixes) const;
         int32_t export_snapshot_to_file(const char *file_path) const;
         int32_t import_snapshot(const ft_vector<kv_store_snapshot_entry> &entries);
         int32_t write_snapshot(ft_document_sink &sink) const;

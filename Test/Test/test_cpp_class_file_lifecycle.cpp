@@ -1,5 +1,6 @@
 #include "../test_internal.hpp"
 #include "../../Modules/CPP_class/class_file.hpp"
+#include "../../Modules/System_utils/system_utils.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 #include <fcntl.h>
 #include <unistd.h>
@@ -70,6 +71,23 @@ FT_TEST(test_ft_file_close_when_already_closed_keeps_invalid_fd)
 
     file.close();
     FT_ASSERT_EQ(-1, file.get_file_descriptor());
+    return (1);
+}
+
+FT_TEST(test_ft_file_destructor_closes_descriptor_from_legacy_open)
+{
+    const char *path = "tmp_ft_file_legacy_open_cleanup.txt";
+    cleanup_file(path);
+    int32_t file_descriptor = -1;
+    {
+        ft_file file;
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, file.open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644));
+        file_descriptor = file.get_file_descriptor();
+        FT_ASSERT(file_descriptor >= 0);
+    }
+    const int32_t close_result = su_close(file_descriptor);
+    cleanup_file(path);
+    FT_ASSERT_EQ(FT_ERR_INVALID_HANDLE, close_result);
     return (1);
 }
 

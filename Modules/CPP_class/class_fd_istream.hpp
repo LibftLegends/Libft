@@ -29,6 +29,7 @@ class ft_fd_istream : public ft_istream
 
         int32_t initialize() noexcept;
         int32_t destroy() noexcept;
+        // The caller retains ownership of the descriptor.
         void set_file_descriptor(int32_t file_descriptor) noexcept;
         int32_t move(ft_fd_istream &other) noexcept;
         int32_t get_file_descriptor() const noexcept;

@@ -7,6 +7,9 @@
 
 class ft_istringstream : public ft_istream
 {
+    friend ft_istringstream &operator>>(ft_istringstream &input, int32_t &value);
+    friend ft_istringstream &operator>>(ft_istringstream &input, ft_string &value);
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else

@@ -23,6 +23,21 @@
 - `benchmark_storage_formats.cpp` measures JSON Lines, memory-mapped, and optional SQLite flushes for a 512-entry store with expiration metadata.
 
 - `benchmark_basic_memory.cpp` measures late byte searches, overlapping moves in both directions, equal and late-mismatch comparisons, small and large copies, and binary substring searches.
+- `benchmark_bitset_copy.cpp` measures fresh initialization and copy initialization of a 4 MiB bitset with checks at the first and last bit.
+- `benchmark_command_stack_overflow.cpp` measures appending to full command histories at capacities of 4 and 4,096 entries.
+- `benchmark_data_buffer.cpp` measures writing and decoding 512 serialized 8 KiB strings and copying the resulting buffer. It checks decoded lengths and a payload checksum.
+- `benchmark_string_stream.cpp` measures nonconsuming string extraction and raw stream reads of 8 KiB across 1,024 iterations. It checks the extracted length, read count, and payload endpoints.
+- `benchmark_input_stream_move.cpp` measures descriptor stream moves with the descriptor mutex alone and with both stream mutexes enabled. It checks that the borrowed descriptor and thread-safety settings survive the moves.
+- `benchmark_output_stream_move.cpp` measures 100,000 moves of an initialized output stream with thread safety enabled. It isolates move overhead from disk I/O.
+- `benchmark_string_initialization.cpp` measures 256 initializations from a 128 KiB C string and 256 copies of a short string with a large reserved buffer.
+- `benchmark_string_growth.cpp` measures 256 append and self-append pairs in reserved storage and 256 fills of a 128 KiB string.
+- `benchmark_string_operations.cpp` measures late substring matches, equality of distinct strings, and chained concatenation on 128 KiB payloads.
+- `benchmark_application_settings_move.cpp` measures 100,000 moves of populated application settings and verifies the database path afterward.
+- `benchmark_application_auth_hex.cpp` measures 50,000 digest and hexadecimal formatting operations on a fixed test value. Build with `LIBFT_TEST_BUILD` to access the formatter through the auth service.
+- `benchmark_application_auth_key.cpp` measures 25,000 builds of a stored user key for a long test username and checks the exact key. Build with `LIBFT_TEST_BUILD`.
+- `benchmark_application_auth_session.cpp` measures 25,000 reads of the address and timestamp from a stored session record. Build with `LIBFT_TEST_BUILD`.
+- `benchmark_application_auth_session_write.cpp` measures 25,000 session record builds with an IPv6 address and checks the serialized bytes. Build with `LIBFT_TEST_BUILD`.
+- `benchmark_application_auth_list_sessions.cpp` measures listing two signed-in users from a 64-record store with 8 KiB values. Pass `--move` to measure moving the populated service, `--audit` for alternating failed and successful login audit updates, `--verify` for verification of a test account, `--record` for credential record creation, `--remove` for removing an account without optional records, or `--signal` for formatting and dispatching a one-time login code through a mock write syscall. Build with `LIBFT_TEST_BUILD`.
 - `benchmark_basic_text.cpp` measures string length, character and substring searches, and UTF-8 validation and counting.
 - `benchmark_basic_parsing.cpp` measures integer parsing and validation, tokenizing, and bounded string copies.
 - `benchmark_allocator_paths.cpp` measures CMA resize and reuse with and without other live allocations, plus single-request reads and writes, fragmented allocation, out-of-order compaction, and tail resize in SCMA.

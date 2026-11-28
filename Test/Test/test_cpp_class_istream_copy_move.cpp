@@ -166,6 +166,7 @@ FT_TEST(test_cpp_class_istream_move_constructor_preserves_read_state)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.initialize("xyz"));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.enable_thread_safety());
+    pt_recursive_mutex *source_mutex = source_stream._mutex;
     buffer[0] = '\0';
     buffer[1] = '\0';
     FT_ASSERT_EQ(1, static_cast<int>(source_stream.read(buffer, 1)));
@@ -175,15 +176,41 @@ FT_TEST(test_cpp_class_istream_move_constructor_preserves_read_state)
 
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.move(source_stream));
     FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source_stream._initialised_state);
+    FT_ASSERT_EQ(ft_nullptr, source_stream._mutex);
     FT_ASSERT_EQ(FT_CLASS_STATE_INITIALISED, moved_stream._initialised_state);
     FT_ASSERT_EQ(1U, moved_stream.gcount());
     FT_ASSERT_EQ(FT_TRUE, moved_stream.is_valid());
     FT_ASSERT_EQ(FT_TRUE, moved_stream.is_thread_safe());
+    FT_ASSERT_EQ(source_mutex, moved_stream._mutex);
     buffer[0] = '\0';
     buffer[1] = '\0';
     FT_ASSERT_EQ(1, static_cast<int>(moved_stream.read(buffer, 1)));
     FT_ASSERT_EQ('y', buffer[0]);
     FT_ASSERT_EQ(1U, moved_stream.gcount());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.destroy());
+    return (1);
+}
+
+FT_TEST(test_cpp_class_istream_read_preserves_state_when_lock_fails)
+{
+    test_cpp_class_istream_probe stream;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.initialize("abc"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.enable_thread_safety());
+    char byte = '\0';
+    FT_ASSERT_EQ(1, stream.read(&byte, 1));
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED);
+    const ssize_t result = stream.read(&byte, 1);
+    pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS);
+    FT_ASSERT_EQ(-1, result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_STATE, stream.get_error());
+    FT_ASSERT_EQ('a', byte);
+    FT_ASSERT_EQ(1U, stream.gcount());
+    FT_ASSERT_EQ(FT_TRUE, stream.is_valid());
+    FT_ASSERT_EQ(-1, stream.read(ft_nullptr, 1));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, stream.get_error());
+    FT_ASSERT_EQ(0U, stream.gcount());
+    FT_ASSERT_EQ(FT_FALSE, stream.is_valid());
+    FT_ASSERT_EQ(1, stream.read(&byte, 1));
+    FT_ASSERT_EQ('b', byte);
     return (1);
 }

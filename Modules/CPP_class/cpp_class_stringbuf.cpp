@@ -1,4 +1,5 @@
 #include "class_stringbuf.hpp"
+#include "../Basic/basic.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Errno/errno.hpp"
 #include "../PThread/pthread_internal.hpp"
@@ -52,7 +53,7 @@ int32_t ft_stringbuf::initialize(const ft_string &string) noexcept
         return (set_error(storage_initialize_error));
     }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
-    assign_error = this->_storage.assign(string.c_str(), string.size());
+    assign_error = this->_storage.assign(string);
     if (assign_error != FT_ERR_SUCCESS)
     {
         (void)this->_storage.destroy();
@@ -64,7 +65,6 @@ int32_t ft_stringbuf::initialize(const ft_string &string) noexcept
 
 int32_t ft_stringbuf::destroy() noexcept
 {
-    int32_t clear_error;
     int32_t storage_destroy_error;
     int32_t mutex_destroy_error;
 
@@ -74,17 +74,12 @@ int32_t ft_stringbuf::destroy() noexcept
         return (set_error(FT_ERR_SUCCESS));
     }
     mutex_destroy_error = this->disable_thread_safety();
-    clear_error = this->_storage.clear();
     storage_destroy_error = this->_storage.destroy();
     this->_position = 0;
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    if (clear_error != FT_ERR_SUCCESS)
-        return (set_error(clear_error));
-    if (storage_destroy_error != FT_ERR_SUCCESS)
-        return (set_error(storage_destroy_error));
     if (mutex_destroy_error != FT_ERR_SUCCESS)
         return (set_error(mutex_destroy_error));
-    return (set_error(FT_ERR_SUCCESS));
+    return (set_error(storage_destroy_error));
 }
 
 int32_t ft_stringbuf::move(ft_stringbuf &other) noexcept
@@ -109,39 +104,31 @@ int32_t ft_stringbuf::move(ft_stringbuf &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (set_error(FT_ERR_SUCCESS));
     }
-    ft_string empty_string;
-    uint32_t empty_initialize_error = empty_string.initialize();
-    if (empty_initialize_error != FT_ERR_SUCCESS)
-        return (set_error(empty_initialize_error));
-    uint32_t initialize_error = this->initialize(empty_string);
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (set_error(initialize_error));
-    int32_t storage_move_error = this->_storage.move(other._storage);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    pt_recursive_mutex *source_mutex = other._mutex;
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(source_mutex);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+    const int32_t storage_move_error = this->_storage.move(other._storage);
     if (storage_move_error != FT_ERR_SUCCESS)
     {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        (void)this->_storage.destroy();
+        (void)pt_recursive_mutex_unlock_if_not_null(source_mutex);
         return (set_error(storage_move_error));
     }
     this->_position = other._position;
+    this->_mutex = source_mutex;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
+    (void)other._storage.destroy();
     other._position = 0;
-    if (other._mutex != ft_nullptr)
-    {
-        int32_t thread_safety_error = this->enable_thread_safety();
-        if (thread_safety_error != FT_ERR_SUCCESS)
-        {
-            this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-            return (set_error(thread_safety_error));
-        }
-        (void)other.disable_thread_safety();
-    }
+    other._mutex = ft_nullptr;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    (void)pt_recursive_mutex_unlock_if_not_null(source_mutex);
     return (set_error(FT_ERR_SUCCESS));
 }
 
 int64_t ft_stringbuf::read(char *buffer, ft_size_t count) noexcept
 {
-    ft_size_t index;
-
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_stringbuf::read");
     if (buffer == ft_nullptr)
     {
@@ -158,19 +145,15 @@ int64_t ft_stringbuf::read(char *buffer, ft_size_t count) noexcept
         (void)set_error(FT_ERR_INVALID_STATE);
         return (-1);
     }
-    index = 0;
-    while (index < count && this->_position < this->_storage.size())
-    {
-        const char *character_pointer = this->_storage.at(this->_position);
-        if (character_pointer == ft_nullptr)
-            break ;
-        buffer[index] = *character_pointer;
-        index++;
-        this->_position++;
-    }
+    const ft_size_t remaining = this->_storage.size() - this->_position;
+    if (count > remaining)
+        count = remaining;
+    if (count != 0)
+        (void)ft_memcpy(buffer, this->_storage.c_str() + this->_position, count);
+    this->_position += count;
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
     (void)set_error(FT_ERR_SUCCESS);
-    return (static_cast<int64_t>(index));
+    return (static_cast<int64_t>(count));
 }
 
 ft_bool ft_stringbuf::is_valid() const noexcept

@@ -7,6 +7,7 @@
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/Errno/errno.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
+#include "../../Modules/System_utils/system_utils.hpp"
 #include <csetjmp>
 #include <unistd.h>
 #include <csignal>
@@ -240,6 +241,107 @@ FT_TEST(test_data_buffer_string_round_trip_preserves_instance_error_success)
     return (1);
 }
 
+FT_TEST(test_data_buffer_bulk_records_preserve_encoding_and_copy_cursor)
+{
+    DataBuffer source;
+    DataBuffer copy;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (source << -17).get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (source << std::string("abc\0def", 7)).get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (source << "").get_error());
+
+    const ft_vector<uint8_t> &bytes = source.data();
+    FT_ASSERT_EQ(3 * sizeof(ft_size_t) + 6, bytes.size());
+    ft_size_t wire_length = 0;
+    ft_memcpy(&wire_length, bytes.begin(), sizeof(wire_length));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), wire_length);
+    FT_ASSERT_EQ(0, ft_memcmp(bytes.begin() + sizeof(wire_length), "-17", 3));
+    ft_memcpy(&wire_length, bytes.begin() + sizeof(wire_length) + 3, sizeof(wire_length));
+    FT_ASSERT_EQ(static_cast<ft_size_t>(3), wire_length);
+    FT_ASSERT_EQ(0, ft_memcmp(bytes.begin() + 2 * sizeof(wire_length) + 3, "abc", 3));
+
+    int32_t number = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (source >> number).get_error());
+    FT_ASSERT_EQ(-17, number);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, copy.initialize(source));
+    FT_ASSERT_EQ(source.tell(), copy.tell());
+    ft_string text;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (copy >> text).get_error());
+    FT_ASSERT(text == "abc");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (copy >> text).get_error());
+    FT_ASSERT(text == "");
+    FT_ASSERT_EQ(copy.size(), copy.tell());
+    return (1);
+}
+
+FT_TEST(test_data_buffer_failed_payload_growth_leaves_previous_record_intact)
+{
+    DataBuffer buffer_value;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer_value.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value << 19).get_error());
+    const ft_size_t original_size = buffer_value.size();
+    const std::string large_value(4096, 'x');
+    buffer_value._buffer.reserve(original_size + sizeof(ft_size_t));
+    cma_set_alloc_limit(1);
+    const int32_t write_error = (buffer_value << large_value).get_error();
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, write_error);
+    FT_ASSERT_EQ(original_size, buffer_value.size());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value << 23).get_error());
+    int32_t number = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value >> number).get_error());
+    FT_ASSERT_EQ(19, number);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value >> number).get_error());
+    FT_ASSERT_EQ(23, number);
+    return (1);
+}
+
+FT_TEST(test_data_buffer_rejects_out_of_bounds_record_lengths)
+{
+    DataBuffer buffer_value;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer_value.initialize());
+    const ft_size_t invalid_lengths[] = { 1, FT_SYSTEM_SIZE_MAX };
+    ft_size_t index = 0;
+    while (index < sizeof(invalid_lengths) / sizeof(*invalid_lengths))
+    {
+        buffer_value.clear();
+        FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer_value._buffer.append(
+            reinterpret_cast<const uint8_t *>(&invalid_lengths[index]), sizeof(ft_size_t)));
+        int32_t output = 42;
+        FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, (buffer_value >> output).get_error());
+        FT_ASSERT_EQ(42, output);
+        FT_ASSERT_EQ(sizeof(ft_size_t), buffer_value.tell());
+        ++index;
+    }
+    buffer_value.clear();
+    int32_t output = 42;
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, (buffer_value >> output).get_error());
+    FT_ASSERT_EQ(static_cast<ft_size_t>(0), buffer_value.tell());
+    return (1);
+}
+
+struct data_buffer_custom_value
+{
+    int32_t number;
+};
+
+static ft_istringstream &operator>>(ft_istringstream &input,
+    data_buffer_custom_value &output)
+{
+    return (input >> output.number);
+}
+
+FT_TEST(test_data_buffer_custom_extraction_uses_the_stream)
+{
+    DataBuffer buffer_value;
+    data_buffer_custom_value output = { 0 };
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, buffer_value.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value << 123).get_error());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, (buffer_value >> output).get_error());
+    FT_ASSERT_EQ(123, output.number);
+    return (1);
+}
+
 FT_TEST(test_data_buffer_move_constructor_preserves_state_and_thread_safety)
 {
     DataBuffer source_buffer;
@@ -352,13 +454,23 @@ FT_TEST(test_ft_ofstream_move_constructor_preserves_open_file)
     (void)unlink(file_path);
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.initialize());
     FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.open(file_path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, source_stream.enable_thread_safety());
+    pt_recursive_mutex *source_mutex = source_stream._mutex;
     FT_ASSERT_EQ(static_cast<ssize_t>(3), source_stream.write("one"));
     {
         ft_ofstream moved_stream;
 
         FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.initialize());
+        pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SYS_MUTEX_LOCK_FAILED);
+        const int32_t failed_move = moved_stream.move(source_stream);
+        pt_recursive_mutex_lock_override_error_code.store(FT_ERR_SUCCESS);
+        FT_ASSERT_EQ(FT_ERR_SYS_MUTEX_LOCK_FAILED, failed_move);
+        FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, moved_stream._initialised_state);
+        FT_ASSERT_EQ(source_mutex, source_stream._mutex);
         FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.move(source_stream));
         FT_ASSERT_EQ(FT_CLASS_STATE_DESTROYED, source_stream._initialised_state);
+        FT_ASSERT_EQ(ft_nullptr, source_stream._mutex);
+        FT_ASSERT_EQ(source_mutex, moved_stream._mutex);
         FT_ASSERT_EQ(static_cast<ssize_t>(3), moved_stream.write("two"));
         FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.close());
         FT_ASSERT_EQ(FT_ERR_SUCCESS, moved_stream.destroy());
@@ -375,6 +487,24 @@ FT_TEST(test_ft_ofstream_move_constructor_preserves_open_file)
 #if defined(_WIN32) || defined(_WIN64)
     FT_ASSERT_EQ(FT_ERR_SUCCESS, file_path_storage.destroy());
 #endif
+    return (1);
+}
+
+FT_TEST(test_ft_ofstream_close_reports_native_descriptor_failure)
+{
+    ft_string path;
+    ft_ofstream stream;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, path.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, filesystem_temp_path("libft_ofstream_close_error", "txt", &path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.open(path.c_str()));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, su_close(stream._file.get_file_descriptor()));
+    const int32_t result = stream.close();
+    FT_ASSERT_EQ(FT_ERR_INVALID_HANDLE, result);
+    FT_ASSERT_EQ(FT_ERR_INVALID_HANDLE, stream.get_error());
+    FT_ASSERT_EQ(-1, stream._file._file_descriptor);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, stream.close());
+    (void)unlink(path.c_str());
     return (1);
 }
 

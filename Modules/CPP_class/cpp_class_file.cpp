@@ -80,7 +80,12 @@ int32_t ft_file::initialize() noexcept
             "called while object is already initialised");
         return (set_error(FT_ERR_INVALID_STATE));
     }
-    this->_file_descriptor = -1;
+    const int32_t close_error = this->close_descriptor();
+    if (close_error != FT_ERR_SUCCESS)
+    {
+        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+        return (set_error(close_error));
+    }
     this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     return (set_error(FT_ERR_SUCCESS));
 }
@@ -92,25 +97,18 @@ int32_t ft_file::destroy() noexcept
     if (this->_initialised_state != FT_CLASS_STATE_INITIALISED)
     {
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-        return (set_error(FT_ERR_SUCCESS));
+        return (set_error(this->close_descriptor()));
     }
     thread_safety_error = this->disable_thread_safety();
-    if (this->_file_descriptor >= 0)
-    {
-        if (su_close(this->_file_descriptor) == -1 && thread_safety_error == FT_ERR_SUCCESS)
-            thread_safety_error = cmp_map_system_error_to_ft(errno);
-        this->_file_descriptor = -1;
-    }
+    const int32_t close_error = this->close_descriptor();
     this->_initialised_state = FT_CLASS_STATE_DESTROYED;
-    return (set_error(thread_safety_error));
+    if (thread_safety_error != FT_ERR_SUCCESS)
+        return (set_error(thread_safety_error));
+    return (set_error(close_error));
 }
 
 int32_t ft_file::move(ft_file &other) noexcept
 {
-    int32_t lock_error;
-    int32_t initialize_error;
-    pt_recursive_mutex *moved_mutex;
-
     if (&other == this)
         return (set_error(FT_ERR_SUCCESS));
     if (other._initialised_state == FT_CLASS_STATE_UNINITIALISED)
@@ -119,7 +117,8 @@ int32_t ft_file::move(ft_file &other) noexcept
             "called with uninitialised source object");
         return (set_error(FT_ERR_INVALID_STATE));
     }
-    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED)
+    if (this->_initialised_state == FT_CLASS_STATE_INITIALISED
+        || this->_file_descriptor >= 0)
     {
         int32_t destroy_error = this->destroy();
         if (destroy_error != FT_ERR_SUCCESS)
@@ -131,22 +130,18 @@ int32_t ft_file::move(ft_file &other) noexcept
         this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (set_error(FT_ERR_SUCCESS));
     }
-    initialize_error = this->initialize();
-    if (initialize_error != FT_ERR_SUCCESS)
-        return (set_error(initialize_error));
-    lock_error = pt_recursive_mutex_lock_if_not_null(other._mutex);
+    this->_initialised_state = FT_CLASS_STATE_DESTROYED;
+    pt_recursive_mutex *source_mutex = other._mutex;
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(source_mutex);
     if (lock_error != FT_ERR_SUCCESS)
-    {
-        this->_initialised_state = FT_CLASS_STATE_DESTROYED;
         return (set_error(lock_error));
-    }
     this->_file_descriptor = other._file_descriptor;
+    this->_mutex = source_mutex;
+    this->_initialised_state = FT_CLASS_STATE_INITIALISED;
     other._file_descriptor = -1;
-    (void)pt_recursive_mutex_unlock_if_not_null(other._mutex);
-    moved_mutex = other._mutex;
     other._mutex = ft_nullptr;
-    this->_mutex = moved_mutex;
     other._initialised_state = FT_CLASS_STATE_DESTROYED;
+    (void)pt_recursive_mutex_unlock_if_not_null(source_mutex);
     return (set_error(FT_ERR_SUCCESS));
 }
 
@@ -158,82 +153,62 @@ ft_file::~ft_file() noexcept
 
 void    ft_file::close() noexcept
 {
-    int32_t lock_error;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
+    {
+        (void)set_error(lock_error);
         return ;
-    if (this->_file_descriptor >= 0 && su_close(this->_file_descriptor) == -1)
-        (void)cmp_map_system_error_to_ft(errno);
-    else if (this->_file_descriptor >= 0)
-        this->_file_descriptor = -1;
+    }
+    const int32_t close_error = this->close_descriptor();
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
+    (void)set_error(close_error);
     return ;
+}
+
+int32_t ft_file::close_descriptor() noexcept
+{
+    const int32_t file_descriptor = this->_file_descriptor;
+    if (file_descriptor < 0)
+        return (FT_ERR_SUCCESS);
+    this->_file_descriptor = -1;
+    return (su_close(file_descriptor));
+}
+
+int32_t ft_file::replace_descriptor(int32_t new_descriptor) noexcept
+{
+    if (new_descriptor < 0)
+        return (cmp_map_system_error_to_ft(errno));
+    if (new_descriptor == this->_file_descriptor)
+        return (FT_ERR_SUCCESS);
+    const int32_t close_error = this->close_descriptor();
+    if (close_error != FT_ERR_SUCCESS)
+    {
+        (void)su_close(new_descriptor);
+        return (close_error);
+    }
+    this->_file_descriptor = new_descriptor;
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t ft_file::open(const char* filename, int32_t flags, mode_t mode) noexcept
 {
-    int32_t lock_error;
-    int32_t final_error;
-    int32_t new_file_descriptor;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (set_error(FT_ERR_INVALID_STATE));
-    final_error = FT_ERR_SUCCESS;
     if (DEBUG == 1)
         pf_printf("Opening %s\n", filename);
-    new_file_descriptor = su_open(filename, flags, mode);
-    if (new_file_descriptor < 0)
-        final_error = cmp_map_system_error_to_ft(errno);
-    else
-    {
-        if (this->_file_descriptor >= 0)
-        {
-            if (su_close(this->_file_descriptor) == -1)
-            {
-                final_error = cmp_map_system_error_to_ft(errno);
-                su_close(new_file_descriptor);
-            }
-        }
-        if (final_error == FT_ERR_SUCCESS)
-            this->_file_descriptor = new_file_descriptor;
-    }
+    const int32_t final_error = this->replace_descriptor(su_open(filename, flags, mode));
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    if (final_error == FT_ERR_SUCCESS)
-        return (set_error(FT_ERR_SUCCESS));
     return (set_error(final_error));
 }
 
 int32_t ft_file::open(const char* filename, int32_t flags) noexcept
 {
-    int32_t lock_error;
-    int32_t final_error;
-    int32_t new_file_descriptor;
-
-    lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
+    const int32_t lock_error = pt_recursive_mutex_lock_if_not_null(this->_mutex);
     if (lock_error != FT_ERR_SUCCESS)
         return (set_error(FT_ERR_INVALID_STATE));
-    final_error = FT_ERR_SUCCESS;
-    new_file_descriptor = su_open(filename, flags);
-    if (new_file_descriptor < 0)
-        final_error = cmp_map_system_error_to_ft(errno);
-    else
-    {
-        if (this->_file_descriptor >= 0)
-        {
-            if (su_close(this->_file_descriptor) == -1)
-            {
-                final_error = cmp_map_system_error_to_ft(errno);
-                su_close(new_file_descriptor);
-            }
-        }
-        if (final_error == FT_ERR_SUCCESS)
-            this->_file_descriptor = new_file_descriptor;
-    }
+    const int32_t final_error = this->replace_descriptor(su_open(filename, flags));
     (void)pt_recursive_mutex_unlock_if_not_null(this->_mutex);
-    if (final_error == FT_ERR_SUCCESS)
-        return (set_error(FT_ERR_SUCCESS));
     return (set_error(final_error));
 }
 
@@ -319,7 +294,7 @@ ssize_t ft_file::write(const char *string) noexcept
         final_error = FT_ERR_INVALID_HANDLE;
     else
     {
-        result = su_write(this->_file_descriptor, string, ft_strlen(string));
+        result = su_write(this->_file_descriptor, string, ft_strlen_size_t(string));
         if (result == -1)
             final_error = cmp_map_system_error_to_ft(errno);
     }
