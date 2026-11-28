@@ -166,8 +166,10 @@ class kv_store
         int32_t prune_expired_locked(ft_size_t *lookup_index = ft_nullptr);
         int32_t apply_set_operation_locked(ft_map<ft_string, kv_store_entry> &data,
             const kv_store_operation &operation,
-            kv_store_entry *existing_entry);
-        int32_t apply_existing_updates_locked(const ft_vector<kv_store_operation> &operations,
+            kv_store_entry *existing_entry, ft_string *owned_value = ft_nullptr);
+        int32_t apply_operations(const ft_vector<kv_store_operation> &operations,
+            ft_string *owned_set_value);
+        int32_t apply_staged_operations_locked(const ft_vector<kv_store_operation> &operations,
             ft_size_t operation_count);
         int32_t apply_deletions_locked(const ft_vector<kv_store_operation> &operations,
             ft_size_t operation_count);
@@ -188,8 +190,8 @@ class kv_store
         int32_t export_snapshot_locked(ft_vector<kv_store_snapshot_entry> &entries) const;
         int32_t load_json_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t parse_json_groups(json_group *group_head, ft_vector<kv_store_snapshot_entry> &out_entries);
-        int32_t build_json_entries(const ft_vector<kv_store_snapshot_entry> &entries,
-            json_group **output) const;
+        int32_t prepare_json_snapshot(ft_vector<kv_store_snapshot_entry> &entries,
+            ft_string &algorithm) const;
         int32_t load_json_lines_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t flush_json_lines_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
         int32_t write_json_lines_descriptor(int32_t descriptor,
@@ -201,8 +203,8 @@ class kv_store
         int32_t flush_sqlite_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
 #endif
         int32_t load_memory_mapped_entries(const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
-        int32_t flush_memory_mapped_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
-        int32_t flush_backend_entries(const ft_vector<kv_store_snapshot_entry> &entries) const;
+        int32_t flush_memory_mapped_entries(ft_vector<kv_store_snapshot_entry> &entries) const;
+        int32_t flush_backend_entries(ft_vector<kv_store_snapshot_entry> &entries) const;
         int32_t load_backend_entries(kv_store_backend_type backend_type, const char *location, ft_vector<kv_store_snapshot_entry> &out_entries);
         int32_t assign_backend_location(const char *location);
         int32_t get_active_encryption_algorithm_name(ft_string &algorithm_name) const;

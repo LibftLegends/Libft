@@ -8,6 +8,8 @@
 #include "../../Modules/PThread/mutex.hpp"
 #include "../../Modules/PThread/recursive_mutex.hpp"
 #include <cstring>
+#include <limits>
+#include <string>
 
 struct histogram_export_capture
 {
@@ -124,5 +126,68 @@ FT_TEST(test_observability_histogram_records_and_exports)
     FT_ASSERT_EQ(0, buckets[2].count);
     FT_ASSERT_EQ(0, histogram.count);
     FT_ASSERT_EQ(0.0, histogram.sum);
+    return (1);
+}
+
+FT_TEST(test_observability_histogram_keeps_inclusive_duplicate_buckets)
+{
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double not_a_number = std::numeric_limits<double>::quiet_NaN();
+    ft_observability_histogram_bucket buckets[] = {{1.0, 9}, {not_a_number, 8}, {2.0, 7}, {2.0, 6}};
+    ft_observability_histogram histogram{};
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT,
+        observability_histogram_initialize(&histogram, "value", ft_nullptr, buckets, 4));
+    FT_ASSERT_EQ(9U, buckets[0].count);
+    FT_ASSERT_EQ(8U, buckets[1].count);
+    buckets[1].upper_bound = 2.0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_histogram_initialize(&histogram, "value", ft_nullptr, buckets, 4));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_histogram_record(&histogram, 2.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_histogram_record(&histogram, 1.0));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_histogram_record(&histogram, infinity));
+    FT_ASSERT_EQ(FT_ERR_INVALID_ARGUMENT, observability_histogram_record(&histogram, not_a_number));
+    FT_ASSERT_EQ(1U, buckets[0].count);
+    FT_ASSERT_EQ(2U, buckets[1].count);
+    FT_ASSERT_EQ(2U, buckets[2].count);
+    FT_ASSERT_EQ(3U, buckets[3].count);
+    FT_ASSERT_EQ(3U, histogram.count);
+    return (1);
+}
+
+struct histogram_json_capture
+{
+    std::string text;
+    ft_size_t chunks;
+};
+
+static void histogram_capture_json_chunk(const char *chunk, void *user_data)
+{
+    auto *capture = static_cast<histogram_json_capture *>(user_data);
+    capture->text.append(chunk);
+    ++capture->chunks;
+    return ;
+}
+
+FT_TEST(test_observability_histogram_json_batches_escaped_labels)
+{
+    const std::string prefix(248, 'x');
+    const std::string suffix(800, 'y');
+    const std::string name = prefix + "\x01\n\"\\" + suffix;
+    const double infinity = std::numeric_limits<double>::infinity();
+    ft_observability_histogram_bucket buckets[] = {{infinity, 0}};
+    ft_observability_histogram histogram{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS,
+        observability_histogram_initialize(&histogram, name.c_str(), ft_nullptr, buckets, 1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_histogram_record(&histogram, infinity));
+    histogram.count = UINT64_MAX;
+    buckets[0].count = UINT64_MAX;
+    histogram_json_capture capture{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, observability_histogram_export_json(
+        &histogram, histogram_capture_json_chunk, &capture));
+    const std::string expected = "{\"name\":\"" + prefix + "\\u0001\\n\\\"\\\\" + suffix
+        + "\",\"unit\":\"\",\"count\":18446744073709551615,\"sum\":null,"
+          "\"buckets\":[{\"upper_bound\":null,\"count\":18446744073709551615}]}";
+    FT_ASSERT_EQ(expected, capture.text);
+    FT_ASSERT(capture.chunks < 32U);
     return (1);
 }

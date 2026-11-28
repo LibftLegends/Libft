@@ -7,6 +7,7 @@
 #include "../../Modules/Template/vector.hpp"
 #include "../../Modules/Basic/class_nullptr.hpp"
 #include "../../Modules/Basic/basic.hpp"
+#include "../../Modules/CMA/CMA.hpp"
 
 #include "../../Modules/Basic/limits.hpp"
 #include "../../Modules/Errno/errno.hpp"
@@ -243,6 +244,42 @@ FT_TEST(test_json_stream_writer_batches_plain_spans_and_retries_partial_writes)
 static ft_size_t json_overreporting_sink(void *, const char *, ft_size_t size)
 {
     return (size + 1U);
+}
+
+FT_TEST(test_json_stream_writer_reset_reuses_storage_after_failed_document)
+{
+    json_stream_writer writer{};
+    json_partial_sink sink{};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_init(&writer, json_partial_sink_write, &sink));
+    const json_stream_event begin_document{JSON_STREAM_EVENT_BEGIN_DOCUMENT, {}, FT_FALSE};
+    const json_stream_event begin_array{JSON_STREAM_EVENT_BEGIN_ARRAY, {}, FT_FALSE};
+    const json_stream_event end_array{JSON_STREAM_EVENT_END_ARRAY, {}, FT_FALSE};
+    const json_stream_event end_document{JSON_STREAM_EVENT_END_DOCUMENT, {}, FT_FALSE};
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &begin_document));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, json_stream_writer_process(&writer, &begin_array));
+    FT_ASSERT(json_stream_writer_process(&writer, &end_document) != FT_ERR_SUCCESS);
+    const auto *const scratch = writer.context_stack;
+    FT_ASSERT(scratch != ft_nullptr);
+    sink.output.clear();
+    cma_set_alloc_limit(1);
+    const int32_t reset = json_stream_writer_reset(&writer);
+    const int32_t document = json_stream_writer_process(&writer, &begin_document);
+    const int32_t array = json_stream_writer_process(&writer, &begin_array);
+    const int32_t close_array = json_stream_writer_process(&writer, &end_array);
+    const int32_t close_document = json_stream_writer_process(&writer, &end_document);
+    const ft_bool reused = writer.context_stack == scratch;
+    cma_set_alloc_limit(0);
+    const int32_t finished = json_stream_writer_finish(&writer);
+    json_stream_writer_destroy(&writer);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reset);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, document);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, array);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, close_array);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, close_document);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, finished);
+    FT_ASSERT_EQ(FT_TRUE, reused);
+    FT_ASSERT_EQ(std::string("[]"), sink.output);
+    return (1);
 }
 
 FT_TEST(test_json_stream_writer_rejects_a_callback_that_overreports)

@@ -22,6 +22,7 @@ struct ft_observability_histogram
 typedef void (*ft_observability_histogram_exporter)(const char *chunk,
     void *user_data);
 
+// Upper bounds must be ordered, without NaNs, and remain unchanged while recording.
 int32_t observability_histogram_initialize(ft_observability_histogram *histogram,
     const char *name, const char *unit,
     ft_observability_histogram_bucket *buckets, ft_size_t bucket_count) noexcept;
@@ -31,6 +32,7 @@ int32_t observability_histogram_record(ft_observability_histogram *histogram,
 int32_t observability_histogram_export_text(
     const ft_observability_histogram *histogram,
     ft_observability_histogram_exporter exporter, void *user_data) noexcept;
+// Nonfinite sums and bounds are exported as JSON null.
 int32_t observability_histogram_export_json(
     const ft_observability_histogram *histogram,
     ft_observability_histogram_exporter exporter, void *user_data) noexcept;

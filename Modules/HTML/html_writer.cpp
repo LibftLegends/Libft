@@ -1,86 +1,58 @@
-#include <fcntl.h>
-#include "html_parser.hpp"
-#include "../Errno/errno.hpp"
-#include "../Printf/printf.hpp"
+#include "html_writer_internal.hpp"
 #include "../System_utils/system_utils.hpp"
-#include "../Compatebility/compatebility_internal.hpp"
-#include "../Basic/limits.hpp"
-#include "../PThread/mutex.hpp"
-#include "../PThread/recursive_mutex.hpp"
+#include <fcntl.h>
 
-static void html_write_attrs(int32_t file_descriptor, html_attr *attribute)
+struct html_file_output
 {
-    while (attribute)
-    {
-        html_attr *next_attribute;
+    int32_t descriptor;
+    ft_size_t used;
+    char buffer[16384];
+};
 
-        next_attribute = attribute->next;
-        if (attribute->key && attribute->value)
-            pf_printf_fd(file_descriptor, " %s=\"%s\"", attribute->key, attribute->value);
-        attribute = next_attribute;
-    }
+static int32_t html_flush_file_output(html_file_output &output)
+{
+    if (output.used != 0 && su_write(output.descriptor, output.buffer, output.used) < 0)
+        return (FT_ERR_INTERNAL);
+    output.used = 0;
+    return (FT_ERR_SUCCESS);
 }
 
-static void html_write_node(int32_t file_descriptor, html_node *node_item, int32_t indent)
+static int32_t html_append_file_output(html_file_output &output, std::string_view bytes)
 {
-    int32_t  indent_index;
-
-    indent_index = 0;
-    while (indent_index < indent)
+    if (bytes.empty())
+        return (FT_ERR_SUCCESS);
+    if (bytes.size() > sizeof(output.buffer) - output.used
+        && html_flush_file_output(output) != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    if (bytes.size() > sizeof(output.buffer))
     {
-        pf_printf_fd(file_descriptor, "  ");
-        ++indent_index;
+        if (su_write(output.descriptor, bytes.data(), bytes.size()) < 0)
+            return (FT_ERR_INTERNAL);
+        return (FT_ERR_SUCCESS);
     }
-    pf_printf_fd(file_descriptor, "<%s", node_item->tag);
-    html_write_attrs(file_descriptor, node_item->attributes);
-    if (!node_item->text && !node_item->children)
-    {
-        pf_printf_fd(file_descriptor, "/>\n");
-        return ;
-    }
-    pf_printf_fd(file_descriptor, ">");
-    if (node_item->text)
-        pf_printf_fd(file_descriptor, "%s", node_item->text);
-    if (node_item->children)
-    {
-        html_node *child_node;
-
-        pf_printf_fd(file_descriptor, "\n");
-        child_node = node_item->children;
-        while (child_node)
-        {
-            html_write_node(file_descriptor, child_node, indent + 1);
-            child_node = child_node->next;
-        }
-        indent_index = 0;
-        while (indent_index < indent)
-        {
-            pf_printf_fd(file_descriptor, "  ");
-            ++indent_index;
-        }
-    }
-    pf_printf_fd(file_descriptor, "</%s>\n", node_item->tag);
+    (void)ft_memcpy(output.buffer + output.used, bytes.data(), bytes.size());
+    output.used += bytes.size();
+    return (FT_ERR_SUCCESS);
 }
 
 int32_t html_write_to_file(const char *file_path, html_node *node_list)
 {
-    int32_t file_descriptor;
-    html_node *current_node;
-    html_node *next_node;
-
-    if (!file_path)
+    if (file_path == ft_nullptr)
         return (FT_ERR_INTERNAL);
-    file_descriptor = su_open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (file_descriptor < 0)
+    const int32_t descriptor = su_open(file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (descriptor < 0)
         return (FT_ERR_INTERNAL);
-    current_node = node_list;
-    while (current_node)
+    html_file_output output;
+    output.descriptor = descriptor;
+    output.used = 0;
+    auto emit = [&output](std::string_view bytes)
     {
-        next_node = current_node->next;
-        html_write_node(file_descriptor, current_node, 0);
-        current_node = next_node;
-    }
-    if (su_close(file_descriptor) != 0)
-        return (FT_ERR_INTERNAL);
-    return (FT_ERR_SUCCESS);
+        return (html_append_file_output(output, bytes));
+    };
+    int32_t result = html_emit_nodes(node_list, 0, "(null)", emit);
+    if (result == FT_ERR_SUCCESS)
+        result = html_flush_file_output(output);
+    if (su_close(descriptor) != FT_ERR_SUCCESS)
+        result = FT_ERR_INTERNAL;
+    return (result);
 }

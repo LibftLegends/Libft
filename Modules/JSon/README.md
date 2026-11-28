@@ -35,6 +35,7 @@ The `JSon` module provides a linked-list JSON tree, a lifecycle document wrapper
 - `json_stream_event` - One streaming parse event.
 - `json_stream_reader` - Callback or file backed reader state with buffer, cursor, end flag, mutex, and error code.
 - `json_stream_writer` and `json_stream_writer_context` - Incremental writer state and nesting context.
+- `json_stream_writer_reset` starts a fresh document with the same callback and nesting buffer. Discard any partial output before resetting an abandoned document.
 - Reader helpers - Initialize from callback/file, parse to groups, traverse events, read events from stream/file, destroy, lock, thread-safety, and error helpers.
 - Writer helpers - Initialize, begin/end document, begin/end object/array, write keys/scalars, destroy, lock, thread-safety, and error helpers.
 

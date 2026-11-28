@@ -1,178 +1,145 @@
 #include "html_parser.hpp"
 #include "../Basic/class_nullptr.hpp"
 #include "../Basic/basic.hpp"
-#include "../Advanced/advanced.hpp"
-#include "../CMA/CMA.hpp"
-#include "../Errno/errno.hpp"
-#include "../Basic/limits.hpp"
 
-static int32_t normalize_selector_value(char *value_string)
+template <typename Matches>
+static html_node *html_find_node(html_node *node, const Matches &matches)
 {
-    ft_size_t value_length;
-    char opening_character;
-    char closing_character;
-
-    if (!value_string)
-        return (FT_ERR_SUCCESS);
-    value_length = ft_strlen_size_t(value_string);
-    if (value_length < 2)
-        return (FT_ERR_SUCCESS);
-    opening_character = value_string[0];
-    closing_character = value_string[value_length - 1];
-    if ((opening_character == '"' && closing_character == '"')
-        || (opening_character == '\'' && closing_character == '\''))
+    while (node != ft_nullptr)
     {
-        ft_memmove(value_string, value_string + 1, value_length - 1);
-        value_string[value_length - 2] = '\0';
+        if (matches(*node))
+            return (node);
+        if (node->children != ft_nullptr)
+        {
+            html_node *found = html_find_node(node->children, matches);
+            if (found != ft_nullptr)
+                return (found);
+        }
+        node = node->next;
     }
-    return (FT_ERR_SUCCESS);
+    return (ft_nullptr);
+}
+
+template <typename Matches>
+static html_node *html_find_attribute(html_node *nodes, const Matches &matches)
+{
+    return (html_find_node(nodes, [&](const html_node &node)
+    {
+        const html_attr *attribute = node.attributes;
+        while (attribute != ft_nullptr)
+        {
+            if (matches(*attribute))
+                return (FT_TRUE);
+            attribute = attribute->next;
+        }
+        return (FT_FALSE);
+    }));
 }
 
 html_node *html_find_by_tag(html_node *node_list, const char *tag_name)
 {
-    html_node *current_node;
-
-    current_node = node_list;
-    while (current_node)
+    if (tag_name == ft_nullptr)
+        return (ft_nullptr);
+    return (html_find_node(node_list, [&](const html_node &node)
     {
-        html_node *next_node;
-
-        next_node = current_node->next;
-        if (current_node->tag && ft_strcmp(current_node->tag, tag_name) == 0)
-            return (current_node);
-        html_node *found = html_find_by_tag(current_node->children, tag_name);
-
-        if (found)
-            return (found);
-        current_node = next_node;
-    }
-    return (ft_nullptr);
+        return (node.tag != ft_nullptr && ft_strcmp(node.tag, tag_name) == 0);
+    }));
 }
 
 html_node *html_find_by_attr(html_node *node_list, const char *key, const char *value)
 {
-    html_node *current_node;
-
-    current_node = node_list;
-    while (current_node)
+    if (key == ft_nullptr)
+        return (ft_nullptr);
+    return (html_find_attribute(node_list, [&](const html_attr &attribute)
     {
-        html_node *next_node;
-
-        next_node = current_node->next;
-        html_attr *attribute = current_node->attributes;
-
-        while (attribute)
-        {
-            html_attr *next_attribute;
-
-            next_attribute = attribute->next;
-            if (attribute->key && ft_strcmp(attribute->key, key) == 0)
-            {
-                if (!value || (attribute->value && ft_strcmp(attribute->value, value) == 0))
-                    return (current_node);
-            }
-            attribute = next_attribute;
-        }
-        html_node *found = html_find_by_attr(current_node->children, key, value);
-
-        if (found)
-            return (found);
-        current_node = next_node;
-    }
-    return (ft_nullptr);
+        return (attribute.key != ft_nullptr && ft_strcmp(attribute.key, key) == 0
+            && (value == ft_nullptr
+                || (attribute.value != ft_nullptr && ft_strcmp(attribute.value, value) == 0)));
+    }));
 }
 
 html_node *html_find_by_text(html_node *node_list, const char *text_content)
 {
-    html_node *current_node;
-
-    current_node = node_list;
-    while (current_node)
+    if (text_content == ft_nullptr)
+        return (ft_nullptr);
+    return (html_find_node(node_list, [&](const html_node &node)
     {
-        html_node *next_node;
-
-        next_node = current_node->next;
-        if (current_node->text && ft_strcmp(current_node->text, text_content) == 0)
-            return (current_node);
-        html_node *found = html_find_by_text(current_node->children, text_content);
-
-        if (found)
-            return (found);
-        current_node = next_node;
-    }
-    return (ft_nullptr);
+        return (node.text != ft_nullptr && ft_strcmp(node.text, text_content) == 0);
+    }));
 }
 
 ft_size_t html_count_nodes_by_tag(html_node *node_list, const char *tag_name)
 {
-    ft_size_t count;
-    html_node *current_node;
-
-    count = 0;
-    current_node = node_list;
-    while (current_node)
+    if (tag_name == ft_nullptr)
+        return (0);
+    ft_size_t count = 0;
+    const html_node *node = node_list;
+    while (node != ft_nullptr)
     {
-        html_node *next_node;
-
-        next_node = current_node->next;
-        if (current_node->tag && ft_strcmp(current_node->tag, tag_name) == 0)
+        if (node->tag != ft_nullptr && ft_strcmp(node->tag, tag_name) == 0)
             ++count;
-        count += html_count_nodes_by_tag(current_node->children, tag_name);
-        current_node = next_node;
+        if (node->children != ft_nullptr)
+            count += html_count_nodes_by_tag(node->children, tag_name);
+        node = node->next;
     }
     return (count);
 }
 
+static ft_bool html_selector_matches(const char *string, const char *span, ft_size_t length)
+{
+    if (string == ft_nullptr)
+        return (FT_FALSE);
+    const char *const end = span + length;
+    // Selector spans exclude the terminator, so a shorter candidate mismatches at its NUL.
+    while (span != end && *string == *span)
+    {
+        ++span;
+        ++string;
+    }
+    return (span == end && *string == '\0');
+}
+
+static html_node *html_find_by_attribute_selector(html_node *nodes, const char *selector)
+{
+    const char *equal_sign = ft_nullptr;
+    const char *close_bracket = selector;
+    while (*close_bracket != '\0' && *close_bracket != ']')
+    {
+        if (*close_bracket == '=' && equal_sign == ft_nullptr)
+            equal_sign = close_bracket;
+        ++close_bracket;
+    }
+    if (*close_bracket != ']')
+        return (ft_nullptr);
+
+    const char *key_end = close_bracket;
+    const char *value = ft_nullptr;
+    ft_size_t value_length = 0;
+    if (equal_sign != ft_nullptr)
+    {
+        key_end = equal_sign;
+        value = equal_sign + 1;
+        value_length = static_cast<ft_size_t>(close_bracket - value);
+        if (value_length >= 2 && (value[0] == '"' || value[0] == '\'')
+            && value[0] == value[value_length - 1])
+        {
+            ++value;
+            value_length -= 2;
+        }
+    }
+    const ft_size_t key_length = static_cast<ft_size_t>(key_end - selector);
+    return (html_find_attribute(nodes, [&](const html_attr &attribute)
+    {
+        return (html_selector_matches(attribute.key, selector, key_length)
+            && (value == ft_nullptr || html_selector_matches(attribute.value, value, value_length)));
+    }));
+}
+
 html_node *html_find_by_selector(html_node *node_list, const char *selector)
 {
-    const char *close_bracket;
-    const char *equal_sign;
-    char *key;
-    char *value;
-    html_node *result;
-
-    if (!selector)
-        return (ft_nullptr);
-    if (selector[0] == '#')
-        return (html_find_by_attr(node_list, "id", selector + 1));
-    if (selector[0] == '.')
-        return (html_find_by_attr(node_list, "class", selector + 1));
-    if (selector[0] == '[')
-    {
-        close_bracket = ft_strchr(selector + 1, ']');
-        if (!close_bracket)
-            return (ft_nullptr);
-        equal_sign = ft_strchr(selector + 1, '=');
-        if (equal_sign && equal_sign < close_bracket)
-        {
-            key = adv_strndup(selector + 1, static_cast<ft_size_t>(equal_sign - selector - 1));
-            if (!key)
-                return (ft_nullptr);
-            value = adv_strndup(equal_sign + 1, static_cast<ft_size_t>(close_bracket - equal_sign - 1));
-            if (!value)
-            {
-                cma_free(key);
-                return (ft_nullptr);
-            }
-            if (normalize_selector_value(value) != 0)
-            {
-                cma_free(key);
-                cma_free(value);
-                return (ft_nullptr);
-            }
-            result = html_find_by_attr(node_list, key, value);
-            cma_free(key);
-            cma_free(value);
-            return (result);
-        }
-        key = adv_strndup(selector + 1, static_cast<ft_size_t>(close_bracket - selector - 1));
-        if (!key)
-            return (ft_nullptr);
-        result = html_find_by_attr(node_list, key, ft_nullptr);
-        cma_free(key);
-        return (result);
-    }
-    return (html_find_by_tag(node_list, selector));
+    if (selector != ft_nullptr && selector[0] == '[')
+        return (html_find_by_attribute_selector(node_list, selector + 1));
+    return (html_query_selector(node_list, selector));
 }
 
 html_node *html_query_selector(html_node *node_list, const char *selector)

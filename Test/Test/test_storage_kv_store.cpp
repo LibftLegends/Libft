@@ -258,7 +258,6 @@ FT_TEST(test_kv_store_transactional_batch_commit)
     kv_store_operation       delete_placeholder;
     ft_vector<kv_store_operation> operations;
     const char              *beta_value;
-    std::string              file_content;
 
     directory_path = "kv_store_transaction_directory";
     file_path = "kv_store_transaction_directory/kv_store.json";
@@ -281,9 +280,14 @@ FT_TEST(test_kv_store_transactional_batch_commit)
     FT_ASSERT(beta_value != ft_nullptr);
     FT_ASSERT_EQ(0, ft_strcmp(beta_value, "two"));
     FT_ASSERT_EQ(0, store.kv_flush());
-    file_content = read_file_contents(file_path);
-    FT_ASSERT(file_content.find("\"beta\": \"two\"") != std::string::npos);
-    FT_ASSERT(file_content.find("__ttl__beta") != std::string::npos);
+    kv_store reloaded;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reloaded.initialize(file_path));
+    FT_ASSERT_EQ(ft_nullptr, reloaded.kv_get("alpha"));
+    ft_vector<kv_store_snapshot_entry> saved_entries;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reloaded.export_snapshot(saved_entries));
+    FT_ASSERT_EQ(1U, saved_entries.size());
+    FT_ASSERT(saved_entries[0].key == "beta" && saved_entries[0].value == "two");
+    FT_ASSERT_EQ(FT_TRUE, saved_entries[0].has_expiration);
     cleanup_paths(directory_path, file_path);
     return (1);
 }

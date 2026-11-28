@@ -108,6 +108,11 @@ class ft_vector
         int32_t     disable_thread_safety();
         int32_t     copy_from(const ft_vector<ElementType> &other);
         int32_t     replace_from(const ft_vector<ElementType> &other);
+        // Replace from a staged vector while preserving both vectors' locks.
+        // Relocate must transfer into a default-constructed element, leave the source destructible,
+        // and neither fail nor reenter either vector.
+        template <typename Relocate>
+        int32_t     replace_from(ft_vector<ElementType> &&other, Relocate relocate);
         ft_bool is_thread_safe() const;
         // For lifecycle checks when the caller has exclusive access.
         ft_bool has_active_lock() const noexcept;
@@ -430,6 +435,57 @@ int32_t ft_vector<ElementType>::replace_from(const ft_vector<ElementType> &other
     (void)other.unlock_internal(other_locked);
     (void)this->unlock_internal(self_locked);
     return (set_error(result));
+}
+
+template <typename ElementType>
+template <typename Relocate>
+int32_t ft_vector<ElementType>::replace_from(ft_vector<ElementType> &&other, Relocate relocate)
+{
+    static_assert(std::is_nothrow_default_constructible_v<ElementType>);
+    static_assert(noexcept(relocate(std::declval<ElementType &>(), std::declval<ElementType &>())));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state,
+        "ft_vector::replace_from destination");
+    errno_abort_if_uninitialised_or_destroyed(other._initialised_state,
+        "ft_vector::replace_from source");
+    if (this == &other)
+        return (set_error(FT_ERR_SUCCESS));
+
+    ft_bool self_locked = FT_FALSE;
+    ft_bool other_locked = FT_FALSE;
+    const int32_t lock_error = this->lock_copy_pair(other, self_locked, other_locked);
+    if (lock_error != FT_ERR_SUCCESS)
+        return (set_error(lock_error));
+
+    this->destroy_elements_unlocked(0, this->_size);
+    this->_size = other._size;
+    if (other.using_small_buffer())
+    {
+        if (this->_capacity < other._size)
+        {
+            cma_free(this->_data);
+            this->reset_to_small_buffer();
+        }
+        ft_size_t index = 0;
+        while (index < other._size)
+        {
+            construct_at(this->_data + index);
+            relocate(this->_data[index], other._data[index]);
+            ++index;
+        }
+        other.destroy_elements_unlocked(0, other._size);
+    }
+    else
+    {
+        if (this->_data != ft_nullptr && !this->using_small_buffer())
+            cma_free(this->_data);
+        this->_data = other._data;
+        this->_capacity = other._capacity;
+        other.reset_to_small_buffer();
+    }
+    other._size = 0;
+    (void)other.unlock_internal(other_locked);
+    (void)this->unlock_internal(self_locked);
+    return (set_error(FT_ERR_SUCCESS));
 }
 
 template <typename ElementType>

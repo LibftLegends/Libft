@@ -3,6 +3,45 @@
 #include "../../Modules/CPP_class/class_string.hpp"
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
+FT_TEST(test_ft_map_insert_unique_relocates_only_after_successful_growth_allocation)
+{
+    ft_map<uint32_t, uint32_t> values(1);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.enable_thread_safety());
+    values.insert(11U, 21U);
+    uint32_t relocations = 0;
+    const auto relocate = [&relocations](Pair<uint32_t, uint32_t> &destination,
+        Pair<uint32_t, uint32_t> &source) noexcept
+    {
+        destination.key = source.key;
+        destination.value = source.value;
+        source.value = 0;
+        ++relocations;
+        return ;
+    };
+    Pair<uint32_t, uint32_t> duplicate(11U, 99U);
+    FT_ASSERT_EQ(FT_ERR_ALREADY_EXISTS, values.insert_unique(duplicate, relocate));
+    FT_ASSERT_EQ(99U, duplicate.value);
+    Pair<uint32_t, uint32_t> next(12U, 22U);
+    cma_set_alloc_limit(1);
+    const int32_t failed = values.insert_unique(next, relocate);
+    cma_set_alloc_limit(0);
+    FT_ASSERT_EQ(FT_ERR_NO_MEMORY, failed);
+    FT_ASSERT_EQ(22U, next.value);
+    FT_ASSERT_EQ(1U, values.capacity());
+    FT_ASSERT_EQ(21U, values.at(11U));
+    FT_ASSERT_EQ(0U, relocations);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, values.insert_unique(next, relocate));
+    FT_ASSERT_EQ(0U, next.value);
+    FT_ASSERT_EQ(2U, relocations);
+    const auto *entries = values.end() - 2;
+    FT_ASSERT_EQ(11U, entries[0].key);
+    FT_ASSERT_EQ(21U, entries[0].value);
+    FT_ASSERT_EQ(12U, entries[1].key);
+    FT_ASSERT_EQ(22U, entries[1].value);
+    return (1);
+}
+
 FT_TEST(test_ft_map_erase_at_shifts_only_the_suffix)
 {
     ft_map<uint32_t, uint32_t> values;

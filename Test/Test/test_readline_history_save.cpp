@@ -1,6 +1,7 @@
 #include "../test_internal.hpp"
 #include "../../Modules/Basic/basic.hpp"
 #include "../../Modules/CMA/CMA.hpp"
+#include "../../Modules/Compatebility/sqlite_support.hpp"
 #include "../../Modules/JSon/json.hpp"
 #include "../../Modules/ReadLine/readline.hpp"
 #include "../../Modules/ReadLine/readline_internal.hpp"
@@ -25,6 +26,65 @@ static int64_t fail_history_write(int32_t, const void *, ft_size_t)
 {
     return (-1);
 }
+
+FT_TEST(test_readline_history_respects_auto_save_toggle_and_manual_save)
+{
+    const char *path = "test_readline_history_auto_save.txt";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_history_set_storage_path(path));
+    rl_clear_history();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_history_enable_auto_save(FT_TRUE));
+    rl_update_history("automatic");
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_history_enable_auto_save(FT_FALSE));
+    rl_update_history("manual");
+    ft_string before_manual_save;
+    const int32_t read_before = file_read_all(path, before_manual_save);
+    const int32_t save_result = rl_history_save();
+    ft_string after_manual_save;
+    const int32_t read_after = file_read_all(path, after_manual_save);
+    const int32_t deleted = file_delete(path);
+    rl_clear_history();
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_before);
+    FT_ASSERT_EQ(0, ft_strcmp(before_manual_save.c_str(), "automatic\n"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, save_result);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, read_after);
+    FT_ASSERT_EQ(0, ft_strcmp(after_manual_save.c_str(), "automatic\nmanual\n"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, deleted);
+    return (1);
+}
+
+#if SQLITE3_AVAILABLE
+FT_TEST(test_readline_sqlite_history_round_trip_after_failed_reconfigure)
+{
+    const char *path = "test_readline_history_sqlite.db";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_history_set_backend("sqlite", path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, rl_history_enable_auto_save(FT_FALSE));
+    rl_clear_history();
+    char long_entry[4097];
+    (void)ft_memset(long_entry, 'x', sizeof(long_entry) - 1);
+    long_entry[sizeof(long_entry) - 1] = '\0';
+    rl_update_history("caf\xC3\xA9");
+    rl_update_history("");
+    rl_update_history(long_entry);
+    const int32_t reconfigure = rl_history_set_backend("sqlite", "test_readline_missing_history_dir/history.db");
+    const int32_t saved = rl_history_save();
+    rl_clear_history();
+    const int32_t loaded = rl_history_load();
+    const ft_bool entries_match = (history_count == 3 && ft_strcmp(history[0], "caf\xC3\xA9") == 0
+        && ft_strcmp(history[1], "") == 0 && ft_strcmp(history[2], long_entry) == 0);
+    const int32_t closed = rl_history_set_backend("plain-text", "test_readline_history_auto_save.txt");
+    const int32_t deleted = file_delete(path);
+    rl_clear_history();
+
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, saved);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, loaded);
+    FT_ASSERT_EQ(FT_TRUE, entries_match);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, closed);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, deleted);
+    FT_ASSERT_EQ(FT_ERR_INTERNAL, reconfigure);
+    return (1);
+}
+#endif
 
 FT_TEST(test_readline_plain_history_save_preserves_bytes_with_short_writes)
 {

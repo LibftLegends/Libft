@@ -33,8 +33,10 @@ void        html_remove_nodes_by_text(html_node **node_list, const char *text_co
 html_node   *html_find_by_tag(html_node *node_list, const char *tag_name);
 html_node   *html_find_by_attr(html_node *node_list, const char *key, const char *value);
 html_node   *html_find_by_text(html_node *node_list, const char *text_content);
+// Matches tag, ID, class, attribute presence, or exact attribute value in document order.
 html_node   *html_find_by_selector(html_node *node_list, const char *selector);
 
+// Matches tag, ID, or class in document order.
 html_node   *html_query_selector(html_node *node_list, const char *selector);
 ft_size_t   html_count_nodes_by_tag(html_node *node_list, const char *tag_name);
 

@@ -8,6 +8,33 @@
 
 static constexpr char EMPTY_JSON_STORE[] = "{\"kv_store\":{}}";
 
+FT_TEST(test_storage_kv_store_json_lines_loads_records_ending_at_block_boundary)
+{
+    const char *initial = "test_storage_lines_boundary_initial.json";
+    const char *path = "test_storage_lines_boundary.jsonl";
+    constexpr ft_size_t BLOCK_SIZE = 16384;
+    std::string contents = "{\"entry\":{\"key\":\"boundary\",\"value\":\"one\"}";
+    contents.resize(BLOCK_SIZE - 1, ' ');
+    contents += "}{\"entry\":{\"key\":\"adjacent\",\"value\":\"two\"}}"
+        "{\"entry\":{\"key\":\"final\",\"value\":\"three\"}}";
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(initial, EMPTY_JSON_STORE, sizeof(EMPTY_JSON_STORE) - 1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, contents.data(), contents.size()));
+    kv_store store;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.initialize(initial));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, store.set_backend(KV_STORE_BACKEND_JSON_LINES, path));
+    FT_ASSERT_EQ(0, ft_strcmp(store.kv_get("boundary"), "one"));
+    FT_ASSERT_EQ(0, ft_strcmp(store.kv_get("adjacent"), "two"));
+    FT_ASSERT_EQ(0, ft_strcmp(store.kv_get("final"), "three"));
+
+    contents.pop_back();
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(path, contents.data(), contents.size()));
+    FT_ASSERT_EQ(FT_ERR_INVALID_OPERATION, store.set_backend(KV_STORE_BACKEND_JSON_LINES, path));
+    FT_ASSERT_EQ(0, ft_strcmp(store.kv_get("final"), "three"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(initial));
+    return (1);
+}
+
 FT_TEST(test_storage_kv_store_json_lines_round_trips_escaped_records_and_wide_ttl)
 {
     const char *initial = "test_storage_lines_initial.json";
@@ -34,6 +61,11 @@ FT_TEST(test_storage_kv_store_json_lines_round_trips_escaped_records_and_wide_tt
         ++index;
     }
     FT_ASSERT_EQ(2U, line_count);
+    const char second_record[] = "{\"entry\":{\"key\":\"empty\",\"value\":\"\","
+        "\"has_expiration\":\"FT_FALSE\",\"expiration\":\"\"}}\n";
+    FT_ASSERT(file_contents.size() >= sizeof(second_record) - 1);
+    FT_ASSERT_EQ(0, ft_strcmp(file_contents.c_str() + file_contents.size() - (sizeof(second_record) - 1),
+        second_record));
     kv_store reader;
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.initialize(initial));
     FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.set_backend(KV_STORE_BACKEND_JSON_LINES, path));

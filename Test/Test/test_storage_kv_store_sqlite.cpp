@@ -4,6 +4,46 @@
 #include "../../Modules/System_utils/test_system_utils_runner.hpp"
 
 #if SQLITE3_AVAILABLE
+FT_TEST(test_storage_kv_store_sqlite_preserves_bytes_after_embedded_nul)
+{
+    const char *initial = "test_storage_sqlite_bytes_initial.json";
+    const char *path = "test_storage_sqlite_bytes.sqlite";
+    constexpr char EMPTY[] = "{\"kv_store\":{}}";
+    constexpr char EMBEDDED_KEY[] = "prefix\0tail";
+    constexpr char EMBEDDED_VALUE[] = "head\0tail";
+    (void)file_delete(path);
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_write_all(initial, EMPTY, sizeof(EMPTY) - 1));
+    kv_store writer;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.initialize(initial));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.set_backend(KV_STORE_BACKEND_SQLITE, path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.kv_set("prefix", "ordinary"));
+    ft_vector<kv_store_snapshot_entry> entries;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.export_snapshot(entries));
+    kv_store_snapshot_entry binary;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, binary.key.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, binary.key.assign(EMBEDDED_KEY, sizeof(EMBEDDED_KEY) - 1));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, binary.value.initialize());
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, binary.value.assign(EMBEDDED_VALUE, sizeof(EMBEDDED_VALUE) - 1));
+    binary.has_expiration = FT_FALSE;
+    binary.expiration_timestamp = 0;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, entries.push_back(binary));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.import_snapshot(entries));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, writer.kv_flush());
+
+    kv_store reader;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.initialize(initial));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.set_backend(KV_STORE_BACKEND_SQLITE, path));
+    ft_vector<kv_store_snapshot_entry> restored;
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, reader.export_snapshot(restored));
+    FT_ASSERT_EQ(2U, restored.size());
+    const ft_size_t binary_index = static_cast<ft_size_t>(restored[0].key != binary.key);
+    FT_ASSERT(restored[binary_index].key == binary.key && restored[binary_index].value == binary.value);
+    FT_ASSERT_EQ(0, ft_strcmp(reader.kv_get("prefix"), "ordinary"));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(path));
+    FT_ASSERT_EQ(FT_ERR_SUCCESS, file_delete(initial));
+    return (1);
+}
+
 FT_TEST(test_storage_kv_store_sqlite_round_trips_encrypted_rows_and_wide_ttl)
 {
     const char *initial = "test_storage_sqlite_crypto_initial.json";

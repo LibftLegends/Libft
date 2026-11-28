@@ -1,3 +1,4 @@
+#include <atomic>
 #include <charconv>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -48,7 +49,6 @@ struct rl_history_path_context
 #if SQLITE3_AVAILABLE
 struct rl_history_sqlite_context
 {
-    char *path;
     sqlite3 *database;
 };
 
@@ -66,10 +66,10 @@ struct rl_history_backend_state
 {
     const rl_history_backend *backend;
     void *backend_context;
-    ft_bool auto_save_enabled;
 };
 
-static rl_history_backend_state g_history_backend_state = {ft_nullptr, ft_nullptr, FT_FALSE};
+static rl_history_backend_state g_history_backend_state = {ft_nullptr, ft_nullptr};
+static std::atomic<ft_bool> g_history_auto_save_enabled{FT_FALSE};
 
 static int32_t rl_customization_lock(ft_bool *lock_acquired)
 {
@@ -373,68 +373,47 @@ static int32_t rl_history_json_save(void *context_pointer)
 #if SQLITE3_AVAILABLE
 static int32_t rl_history_sqlite_configure(void **context_pointer, const char *location)
 {
-    rl_history_sqlite_context *sqlite_context;
-    sqlite3 *database_handle;
-    char *error_message;
-
     if (context_pointer == ft_nullptr || location == ft_nullptr)
-    {
         return (FT_ERR_INTERNAL);
-    }
-    sqlite_context = static_cast<rl_history_sqlite_context *>(*context_pointer);
-    if (sqlite_context == ft_nullptr)
-    {
-        sqlite_context = static_cast<rl_history_sqlite_context *>(cma_malloc(sizeof(*sqlite_context)));
-        if (sqlite_context == ft_nullptr)
-        {
-            return (FT_ERR_INTERNAL);
-        }
-        sqlite_context->path = ft_nullptr;
-        sqlite_context->database = ft_nullptr;
-        *context_pointer = sqlite_context;
-    }
-    if (rl_history_assign_path(&sqlite_context->path, location) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    if (sqlite_context->database != ft_nullptr)
-    {
-        sqlite3_close(sqlite_context->database);
-        sqlite_context->database = ft_nullptr;
-    }
-    if (sqlite3_open(sqlite_context->path, &database_handle) != SQLITE_OK)
+    sqlite3 *database_handle = ft_nullptr;
+    if (sqlite3_open(location, &database_handle) != SQLITE_OK)
     {
         if (database_handle != ft_nullptr)
             sqlite3_close(database_handle);
         return (FT_ERR_INTERNAL);
     }
-    error_message = ft_nullptr;
     if (sqlite3_exec(database_handle,
             "CREATE TABLE IF NOT EXISTS readline_history ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "entry TEXT NOT NULL);",
-            ft_nullptr, ft_nullptr, &error_message) != SQLITE_OK)
+            ft_nullptr, ft_nullptr, ft_nullptr) != SQLITE_OK)
     {
-        if (error_message != ft_nullptr)
-            sqlite3_free(error_message);
         sqlite3_close(database_handle);
         return (FT_ERR_INTERNAL);
     }
-    if (error_message != ft_nullptr)
-        sqlite3_free(error_message);
+    auto *sqlite_context = static_cast<rl_history_sqlite_context *>(*context_pointer);
+    if (sqlite_context == ft_nullptr)
+    {
+        sqlite_context = static_cast<rl_history_sqlite_context *>(cma_malloc(sizeof(*sqlite_context)));
+        if (sqlite_context == ft_nullptr)
+        {
+            sqlite3_close(database_handle);
+            return (FT_ERR_INTERNAL);
+        }
+        *context_pointer = sqlite_context;
+    }
+    else
+        sqlite3_close(sqlite_context->database);
     sqlite_context->database = database_handle;
     return (FT_ERR_SUCCESS);
 }
 
 static void rl_history_sqlite_shutdown(void *context_pointer)
 {
-    rl_history_sqlite_context *sqlite_context;
-
-    if (context_pointer == ft_nullptr)
+    auto *sqlite_context = static_cast<rl_history_sqlite_context *>(context_pointer);
+    if (sqlite_context == ft_nullptr)
         return ;
-    sqlite_context = static_cast<rl_history_sqlite_context *>(context_pointer);
-    if (sqlite_context->database != ft_nullptr)
-        sqlite3_close(sqlite_context->database);
-    if (sqlite_context->path != ft_nullptr)
-        cma_free(sqlite_context->path);
+    sqlite3_close(sqlite_context->database);
     cma_free(sqlite_context);
     return ;
 }
@@ -488,7 +467,6 @@ static int32_t rl_history_sqlite_load(void *context_pointer)
 static int32_t rl_history_sqlite_save(void *context_pointer)
 {
     rl_history_sqlite_context *sqlite_context;
-    char *error_message;
     sqlite3_stmt *insert_statement;
     int32_t history_index;
 
@@ -497,28 +475,15 @@ static int32_t rl_history_sqlite_save(void *context_pointer)
     {
         return (FT_ERR_INTERNAL);
     }
-    error_message = ft_nullptr;
     if (sqlite3_exec(sqlite_context->database, "BEGIN IMMEDIATE TRANSACTION;",
-            ft_nullptr, ft_nullptr, &error_message) != SQLITE_OK)
-    {
-        if (error_message != ft_nullptr)
-            sqlite3_free(error_message);
+            ft_nullptr, ft_nullptr, ft_nullptr) != SQLITE_OK)
         return (FT_ERR_INTERNAL);
-    }
-    if (error_message != ft_nullptr)
-        sqlite3_free(error_message);
-    error_message = ft_nullptr;
-    if (sqlite3_exec(sqlite_context->database,
-            "DELETE FROM readline_history;",
-            ft_nullptr, ft_nullptr, &error_message) != SQLITE_OK)
+    if (sqlite3_exec(sqlite_context->database, "DELETE FROM readline_history;",
+            ft_nullptr, ft_nullptr, ft_nullptr) != SQLITE_OK)
     {
-        if (error_message != ft_nullptr)
-            sqlite3_free(error_message);
         sqlite3_exec(sqlite_context->database, "ROLLBACK;", ft_nullptr, ft_nullptr, ft_nullptr);
         return (FT_ERR_INTERNAL);
     }
-    if (error_message != ft_nullptr)
-        sqlite3_free(error_message);
     if (sqlite3_prepare_v2(sqlite_context->database,
             "INSERT INTO readline_history(entry) VALUES (?1);",
             -1, &insert_statement, ft_nullptr) != SQLITE_OK)
@@ -537,9 +502,8 @@ static int32_t rl_history_sqlite_save(void *context_pointer)
         if (history_entry == ft_nullptr)
             history_entry = "";
         sqlite3_reset(insert_statement);
-        sqlite3_clear_bindings(insert_statement);
-        bind_result = sqlite3_bind_text(insert_statement, 1, history_entry,
-                -1, SQLITE_TRANSIENT);
+        // History remains alive until the statement is rebound or finalized.
+        bind_result = sqlite3_bind_text(insert_statement, 1, history_entry, -1, SQLITE_STATIC);
         if (bind_result != SQLITE_OK)
         {
             sqlite3_finalize(insert_statement);
@@ -557,15 +521,11 @@ static int32_t rl_history_sqlite_save(void *context_pointer)
     }
     sqlite3_finalize(insert_statement);
     if (sqlite3_exec(sqlite_context->database, "COMMIT;",
-            ft_nullptr, ft_nullptr, &error_message) != SQLITE_OK)
+            ft_nullptr, ft_nullptr, ft_nullptr) != SQLITE_OK)
     {
-        if (error_message != ft_nullptr)
-            sqlite3_free(error_message);
         sqlite3_exec(sqlite_context->database, "ROLLBACK;", ft_nullptr, ft_nullptr, ft_nullptr);
         return (FT_ERR_INTERNAL);
     }
-    if (error_message != ft_nullptr)
-        sqlite3_free(error_message);
     return (FT_ERR_SUCCESS);
 }
 
@@ -1143,70 +1103,46 @@ int32_t rl_history_enable_auto_save(ft_bool enabled)
     lock_acquired = FT_FALSE;
     if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
         return (FT_ERR_INTERNAL);
-    g_history_backend_state.auto_save_enabled = enabled;
+    g_history_auto_save_enabled.store(enabled, std::memory_order_relaxed);
     rl_customization_unlock(lock_acquired);
+    return (FT_ERR_SUCCESS);
+}
+
+static int32_t rl_history_run(ft_bool load, ft_bool automatic)
+{
+    ft_bool lock_acquired = FT_FALSE;
+    if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
+    const rl_history_backend *backend = g_history_backend_state.backend;
+    int32_t result = FT_ERR_INTERNAL;
+    if (automatic == FT_TRUE && !g_history_auto_save_enabled.load(std::memory_order_relaxed))
+        result = FT_ERR_SUCCESS;
+    else if (backend != ft_nullptr)
+    {
+        if (load == FT_TRUE)
+            result = backend->load(g_history_backend_state.backend_context);
+        else
+            result = backend->save(g_history_backend_state.backend_context);
+    }
+    (void)rl_customization_unlock(lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (FT_ERR_INTERNAL);
     return (FT_ERR_SUCCESS);
 }
 
 int32_t rl_history_load(void)
 {
-    ft_bool lock_acquired;
-    const rl_history_backend *backend_pointer;
-    void *backend_context;
-
-    lock_acquired = FT_FALSE;
-    if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    backend_pointer = g_history_backend_state.backend;
-    backend_context = g_history_backend_state.backend_context;
-    rl_customization_unlock(lock_acquired);
-    if (backend_pointer == ft_nullptr || backend_pointer->load == ft_nullptr)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (backend_pointer->load(backend_context) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    return (FT_ERR_SUCCESS);
+    return (rl_history_run(FT_TRUE, FT_FALSE));
 }
 
 int32_t rl_history_save(void)
 {
-    ft_bool lock_acquired;
-    const rl_history_backend *backend_pointer;
-    void *backend_context;
-
-    lock_acquired = FT_FALSE;
-    if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    backend_pointer = g_history_backend_state.backend;
-    backend_context = g_history_backend_state.backend_context;
-    rl_customization_unlock(lock_acquired);
-    if (backend_pointer == ft_nullptr || backend_pointer->save == ft_nullptr)
-    {
-        return (FT_ERR_INTERNAL);
-    }
-    if (backend_pointer->save(backend_context) != FT_ERR_SUCCESS)
-        return (FT_ERR_INTERNAL);
-    return (FT_ERR_SUCCESS);
+    return (rl_history_run(FT_FALSE, FT_FALSE));
 }
 
 void rl_history_notify_updated(void)
 {
-    ft_bool lock_acquired;
-    ft_bool auto_save_enabled;
-    const rl_history_backend *backend_pointer;
-
-    lock_acquired = FT_FALSE;
-    auto_save_enabled = FT_FALSE;
-    backend_pointer = ft_nullptr;
-    if (rl_customization_lock(&lock_acquired) != FT_ERR_SUCCESS)
-        return ;
-    auto_save_enabled = g_history_backend_state.auto_save_enabled;
-    backend_pointer = g_history_backend_state.backend;
-    rl_customization_unlock(lock_acquired);
-    if (!auto_save_enabled || backend_pointer == ft_nullptr
-        || backend_pointer->save == ft_nullptr)
-        return ;
-    (void)rl_history_save();
+    if (g_history_auto_save_enabled.load(std::memory_order_relaxed))
+        (void)rl_history_run(FT_FALSE, FT_TRUE);
     return ;
 }

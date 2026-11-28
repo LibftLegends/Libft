@@ -304,6 +304,34 @@ static int32_t measure_history_load()
     return (0);
 }
 
+static int32_t measure_disabled_history_auto_save()
+{
+    constexpr int32_t ITERATIONS = 2000000;
+    if (rl_history_set_storage_path("benchmark-readline-disabled-history.tmp") != FT_ERR_SUCCESS
+        || rl_history_enable_auto_save(FT_FALSE) != FT_ERR_SUCCESS)
+        return (31);
+    rl_update_history("benchmark command");
+    if (history_count != 1)
+        return (31);
+    history_write_calls = 0;
+    su_set_write_syscall_hook(count_history_write);
+    int32_t iteration = 0;
+    const auto start = std::chrono::steady_clock::now();
+    while (iteration < ITERATIONS)
+    {
+        rl_history_notify_updated();
+        ++iteration;
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    su_reset_write_syscall_hook();
+    rl_clear_history();
+    if (history_write_calls != 0)
+        return (32);
+    std::printf("%.3f ns/operation\n",
+        std::chrono::duration<double, std::nano>(elapsed).count() / ITERATIONS);
+    return (0);
+}
+
 static int32_t measure_insert_growth()
 {
     constexpr int32_t ITERATIONS = 1000;
@@ -414,6 +442,8 @@ int main(int argument_count, char **arguments)
         return (measure_insert_growth());
     if (argument_count == 2 && ft_strcmp(arguments[1], "--history-load") == 0)
         return (measure_history_load());
+    if (argument_count == 2 && ft_strcmp(arguments[1], "--history-autosave-disabled") == 0)
+        return (measure_disabled_history_auto_save());
     if (argument_count == 2 && ft_strcmp(arguments[1], "--history-save") == 0)
         return (measure_history_save(FT_FALSE));
     if (argument_count == 2 && ft_strcmp(arguments[1], "--history-json") == 0)

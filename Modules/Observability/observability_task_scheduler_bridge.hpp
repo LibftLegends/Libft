@@ -28,6 +28,7 @@ struct ft_otel_span_metrics
 
 typedef void (*ft_otel_span_exporter)(const ft_otel_span_metrics &span);
 
+// Exporters run outside the bridge lock. Concurrent tasks may invoke them concurrently.
 int32_t observability_task_scheduler_bridge_initialize(ft_otel_span_exporter exporter);
 int32_t observability_task_scheduler_bridge_shutdown(void);
 

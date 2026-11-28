@@ -18,6 +18,8 @@
 template <typename Key, typename MappedType>
 class ft_map
 {
+    friend class kv_store;
+
 #ifdef LIBFT_TEST_BUILD
     public:
 #else
@@ -35,7 +37,13 @@ class ft_map
 
         int32_t set_error(int32_t error_code) const noexcept;
 
+        ft_size_t next_insert_capacity() const noexcept;
         int32_t grow_for_insert();
+        template <typename Relocate>
+        int32_t reserve_relocated_unlocked(ft_size_t capacity, Relocate relocate);
+        // The caller must own the map exclusively, have spare capacity, and prove uniqueness.
+        template <typename Relocate>
+        Pair<Key, MappedType> &append_prepared_unlocked(Pair<Key, MappedType> &entry, Relocate relocate);
         static int32_t copy_entries(Pair<Key, MappedType> *destination,
             const Pair<Key, MappedType> *source, ft_size_t count);
         int32_t remove_at_unlocked(ft_size_t index);
@@ -105,6 +113,11 @@ class ft_map
 
         void        insert(const Key& key, const MappedType& value);
         void        insert(const Key& key, MappedType&& value);
+        // Insert a prepared entry, leaving it intact on failure. Relocate must transfer
+        // into a default-constructed destination, leave the source destructible,
+        // and neither fail nor reenter the map.
+        template <typename Relocate>
+        int32_t     insert_unique(Pair<Key, MappedType> &entry, Relocate relocate);
         Pair<Key, MappedType>* find(const Key& key);
         const Pair<Key, MappedType>* find(const Key& key) const;
         // Looks up a comparable key without constructing a stored Key.
@@ -446,13 +459,21 @@ int32_t ft_map<Key, MappedType>::move_from(ft_map<Key, MappedType>& other)
 }
 
 template <typename Key, typename MappedType>
-int32_t ft_map<Key, MappedType>::grow_for_insert()
+ft_size_t ft_map<Key, MappedType>::next_insert_capacity() const noexcept
 {
     if (this->_capacity >= MAXIMUM_CAPACITY)
-        return (FT_ERR_NO_MEMORY);
-    ft_size_t new_capacity = this->_capacity + 1U;
+        return (0);
     if (this->_capacity != 0U && this->_capacity <= MAXIMUM_CAPACITY / 2U)
-        new_capacity = this->_capacity * 2U;
+        return (this->_capacity * 2U);
+    return (this->_capacity + 1U);
+}
+
+template <typename Key, typename MappedType>
+int32_t ft_map<Key, MappedType>::grow_for_insert()
+{
+    const ft_size_t new_capacity = this->next_insert_capacity();
+    if (new_capacity == 0)
+        return (FT_ERR_NO_MEMORY);
     auto *new_data = static_cast<Pair<Key, MappedType> *>(
         cma_malloc(sizeof(Pair<Key, MappedType>) * new_capacity));
     if (new_data == ft_nullptr)
@@ -474,6 +495,72 @@ int32_t ft_map<Key, MappedType>::grow_for_insert()
     this->_data = new_data;
     this->_capacity = new_capacity;
     return (FT_ERR_SUCCESS);
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::insert_unique(Pair<Key, MappedType> &entry, Relocate relocate)
+{
+    static_assert(std::is_nothrow_default_constructible_v<Key>
+        && std::is_nothrow_default_constructible_v<MappedType>);
+    static_assert(noexcept(relocate(entry, entry)));
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_map::insert_unique");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (result);
+    if (this->find_index(entry.key) != this->_size)
+        result = FT_ERR_ALREADY_EXISTS;
+    else if (this->_size == this->_capacity)
+    {
+        const ft_size_t new_capacity = this->next_insert_capacity();
+        if (new_capacity == 0)
+            result = FT_ERR_NO_MEMORY;
+        else
+            result = this->reserve_relocated_unlocked(new_capacity, relocate);
+    }
+    if (result == FT_ERR_SUCCESS)
+        (void)this->append_prepared_unlocked(entry, relocate);
+    (void)this->unlock_internal(lock_acquired);
+    return (this->set_error(result));
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+int32_t ft_map<Key, MappedType>::reserve_relocated_unlocked(ft_size_t capacity, Relocate relocate)
+{
+    if (capacity <= this->_capacity)
+        return (FT_ERR_SUCCESS);
+    if (capacity > MAXIMUM_CAPACITY)
+        return (FT_ERR_NO_MEMORY);
+    auto *replacement = static_cast<Pair<Key, MappedType> *>(
+        cma_malloc(capacity * sizeof(Pair<Key, MappedType>)));
+    if (replacement == ft_nullptr)
+        return (FT_ERR_NO_MEMORY);
+    ft_size_t index = 0;
+    while (index < this->_size)
+    {
+        construct_at(&replacement[index]);
+        relocate(replacement[index], this->_data[index]);
+        destroy_at(&this->_data[index]);
+        ++index;
+    }
+    cma_free(this->_data);
+    this->_data = replacement;
+    this->_capacity = capacity;
+    return (FT_ERR_SUCCESS);
+}
+
+template <typename Key, typename MappedType>
+template <typename Relocate>
+Pair<Key, MappedType> &ft_map<Key, MappedType>::append_prepared_unlocked(
+    Pair<Key, MappedType> &entry, Relocate relocate)
+{
+    auto *destination = this->_data + this->_size;
+    construct_at(destination);
+    relocate(*destination, entry);
+    ++this->_size;
+    return (*destination);
 }
 
 template <typename Key, typename MappedType>

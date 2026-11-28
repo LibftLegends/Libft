@@ -25,8 +25,8 @@ The `HTML` module provides a lightweight linked-node HTML tree, free functions f
 - `html_find_by_tag(html_node *node_list, const char *tag_name)` - Finds the first node with a tag.
 - `html_find_by_attr(html_node *node_list, const char *key, const char *value)` - Finds the first node with a matching attribute.
 - `html_find_by_text(html_node *node_list, const char *text_content)` - Finds the first node with matching text.
-- `html_find_by_selector(html_node *node_list, const char *selector)` - Finds the first node matching a simple selector.
-- `html_query_selector(html_node *node_list, const char *selector)` - Selector-query alias for `html_find_by_selector`.
+- `html_find_by_selector(html_node *node_list, const char *selector)` - Finds the first node matching a tag, ID, class, or attribute selector without allocating. Attribute values can use matching single or double quotes.
+- `html_query_selector(html_node *node_list, const char *selector)` - Finds the first node matching a tag, ID, or class selector.
 - `html_count_nodes_by_tag(html_node *node_list, const char *tag_name)` - Counts matching nodes.
 
 ## `html_document`

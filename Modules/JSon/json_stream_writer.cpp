@@ -336,6 +336,20 @@ int32_t json_stream_writer_init(json_stream_writer *writer,
     JSON_STREAM_WRITER_SUCCESS_RETURN(0);
 }
 
+int32_t json_stream_writer_reset(json_stream_writer *writer)
+{
+    if (!writer)
+        JSON_STREAM_WRITER_ERROR_RETURN(FT_ERR_INVALID_ARGUMENT, -1);
+    if (!writer->write_callback)
+        JSON_STREAM_WRITER_ERROR_RETURN(FT_ERR_INVALID_STATE, -1);
+    writer->context_size = 0;
+    writer->began_document = FT_FALSE;
+    writer->finished_document = FT_FALSE;
+    writer->root_value_emitted = FT_FALSE;
+    writer->error_code = FT_ERR_SUCCESS;
+    JSON_STREAM_WRITER_SUCCESS_RETURN(FT_ERR_SUCCESS);
+}
+
 void json_stream_writer_destroy(json_stream_writer *writer)
 {
     if (!writer)

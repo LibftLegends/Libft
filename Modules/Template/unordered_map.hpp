@@ -49,6 +49,7 @@ class ft_unordered_map
 
         ft_size_t  probe_slot_unlocked(const Key &key, ft_size_t start_index) const;
         ft_size_t  find_index_unlocked(const Key& key) const;
+        void erase_index_unlocked(ft_size_t index);
         int32_t insert_internal_unlocked(const Key& key, const MappedType& value);
         int32_t insert_new_unlocked(const Key &key, const MappedType &value,
             ft_size_t hash, ft_size_t &index);
@@ -186,6 +187,9 @@ class ft_unordered_map
         iterator        find(const Key& key);
         const_iterator  find(const Key& key) const;
         void            erase(const Key& key);
+        // Copy and erase under one lookup. Output must be independent of the map.
+        // A missing key leaves output intact.
+        int32_t         erase_and_copy(const Key &key, MappedType &output);
         ft_bool            empty() const;
         void            clear();
         ft_size_t          size() const;
@@ -856,7 +860,6 @@ void ft_unordered_map<Key, MappedType>::erase(const Key& key)
     ft_bool lock_acquired;
     int32_t lock_error;
     ft_size_t  index;
-    ft_size_t  next_index;
 
     errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_unordered_map::erase");
 
@@ -869,20 +872,44 @@ void ft_unordered_map<Key, MappedType>::erase(const Key& key)
     }
 
     index = this->find_index_unlocked(key);
-    if (index == this->_capacity)
-    {
-        (void)this->unlock_internal(lock_acquired);
-        ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
-        return ;
-    }
+    if (index != this->_capacity)
+        this->erase_index_unlocked(index);
+    (void)this->unlock_internal(lock_acquired);
+    ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
+    return ;
+}
 
+template <typename Key, typename MappedType>
+int32_t ft_unordered_map<Key, MappedType>::erase_and_copy(const Key &key, MappedType &output)
+{
+    static_assert(std::is_nothrow_copy_assignable_v<MappedType>);
+    errno_abort_if_uninitialised_or_destroyed(this->_initialised_state, "ft_unordered_map::erase_and_copy");
+    ft_bool lock_acquired = FT_FALSE;
+    int32_t result = this->lock_internal(&lock_acquired);
+    if (result != FT_ERR_SUCCESS)
+        return (set_error(result));
+    const ft_size_t index = this->find_index_unlocked(key);
+    if (index == this->_capacity)
+        result = FT_ERR_NOT_FOUND;
+    else
+    {
+        output = this->_data[index].second;
+        this->erase_index_unlocked(index);
+    }
+    (void)this->unlock_internal(lock_acquired);
+    return (set_error(result));
+}
+
+template <typename Key, typename MappedType>
+void ft_unordered_map<Key, MappedType>::erase_index_unlocked(ft_size_t index)
+{
     ::destroy_at(&this->_data[index]);
     this->_occupied[index] = FT_FALSE;
     if (this->_size > 0)
         this->_size -= 1;
 
     const ft_size_t capacity = this->_capacity;
-    next_index = index;
+    ft_size_t next_index = index;
     const auto probe_distance = [capacity](ft_size_t home, ft_size_t slot)
     {
         if (slot >= home)
@@ -907,8 +934,6 @@ void ft_unordered_map<Key, MappedType>::erase(const Key& key)
         }
     }
 
-    (void)this->unlock_internal(lock_acquired);
-    ft_unordered_map<Key, MappedType>::set_error(FT_ERR_SUCCESS);
     return ;
 }
 

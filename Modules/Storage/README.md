@@ -31,10 +31,10 @@ The `Storage` module provides `kv_store`, a lifecycle key/value database with JS
 - `kv_set(...)` - Stores a key/value pair with optional TTL seconds.
 - `kv_get(...)` - Returns a stored value pointer or null on miss.
 - `kv_delete(...)` - Deletes a key.
-- `kv_flush()` - Writes current data to the configured backend.
+- `kv_flush()` - Writes current data to the configured backend. JSON snapshots use compact JSON with escaped string fields and retain support for existing snapshots.
 - JSON, JSON Lines, and memory-mapped flushes write a sibling temporary file and atomically replace the previous snapshot once the write succeeds.
 - JSON Lines writes one compact JSON record per line. The reader also accepts the multiline records written by earlier versions.
-- SQLite loads encryption metadata and entries from the same read transaction. A failed write rolls back the full snapshot.
+- SQLite loads encryption metadata and entries from the same read transaction. A failed write rolls back the full snapshot. Snapshot imports and exports preserve the full key and value lengths, including embedded NUL bytes.
 - `prune_expired()` - Removes expired entries.
 - Expiration checks skip the entry scan until the earliest pending expiration is due. Pruning compacts the surviving entries in insertion order without allocating.
 - `configure_encryption(...)` - Updates encryption key, enable flag, and selected block-cipher name.
